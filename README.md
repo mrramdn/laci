@@ -20,11 +20,32 @@ Other commands:
 pnpm ls          # table of every project, newest first
 pnpm doctor      # what could lose work, open checkboxes, tidy-up suggestions
 pnpm proto       # read-only HTML snapshot at prototype/dist/index.html
-pnpm test        # move engine + API security tests (throwaway HOME)
+pnpm test        # move engine, API security and MCP tests (throwaway HOME)
 sh scripts/install-desktop.sh   # optional: add laci to your app launcher
 ```
 
 Settings via env: `LACI_PORT` (4747), `LACI_TERMINAL` (kitty; konsole also works), `LACI_EDITOR` (code), `LACI_FILES` (dolphin).
+
+## For agents (MCP)
+
+`src/mcp.ts` is an MCP server over stdio, so Claude Code, Codex and other agents can use laci instead of `ls`/`mv` when sorting projects. It runs on Electron's Node, like the app:
+
+```sh
+# Claude Code
+claude mcp add laci --scope user -e ELECTRON_RUN_AS_NODE=1 -- ~/project/laci/node_modules/electron/dist/electron ~/project/laci/src/mcp.ts
+```
+
+```toml
+# Codex: ~/.codex/config.toml
+[mcp_servers.laci]
+command = "/home/you/project/laci/node_modules/electron/dist/electron"
+args = ["/home/you/project/laci/src/mcp.ts"]
+env = { ELECTRON_RUN_AS_NODE = "1" }
+```
+
+Read: `list_projects`, `project_details`, `needs_attention`, `tidy_suggestions`, `recent_changes`.
+Edit `.laci.md`: `set_project_fields`, `add_next_step`, `complete_task`, `write_notes`.
+Move: `move_project`, `archive_project`, `apply_suggestion`, `undo_change`. These take two calls: without `confirm` they return the plan, with `confirm: true` they run it. Destinations must be inside your home folder. Every change is journaled and undoable, and only one laci process (app or agent) changes files at a time.
 
 ## What it reads
 
@@ -70,7 +91,8 @@ src/core/      scanner, parsers, health checks, tidy-up suggestions, move engine
 src/cli.ts     terminal commands
 src/server.ts  local API for the UI (127.0.0.1 only, per-launch token)
 src/term.ts    terminal sessions (node-pty), streamed to the UI
+src/mcp.ts     MCP server for agents
 electron/      desktop window; starts the server with Electron's Node
 prototype/     the UI (single HTML file)
-test/          move engine and API security tests
+test/          move engine, API security and MCP tests
 ```

@@ -12,6 +12,7 @@ export const DATA = path.join(HOME, '.local', 'share', 'laci')
 export const JOURNALS = path.join(DATA, 'journal')
 const BACKUPS = path.join(DATA, 'backup')
 const QUARANTINE = path.join(DATA, 'orphans')
+const LOCK = path.join(DATA, 'lock')
 
 interface Entry {
   kind: 'move' | 'rewrite' | 'mkdir' | 'rmdir' | 'trash' | 'file'
@@ -219,7 +220,11 @@ export async function journals(limit = 20): Promise<Journal[]> {
   return out
 }
 
-export async function undo(id: string) {
+export function undo(id: string) {
+  return withLock(() => undoJournal(id))
+}
+
+async function undoJournal(id: string) {
   const file = path.join(JOURNALS, `${path.basename(id)}.json`)
   const j: Journal = JSON.parse(await fs.readFile(file, 'utf8'))
   if (j.state !== 'applied') throw new Error(`This change is ${j.state}, nothing to undo`)
@@ -246,16 +251,48 @@ async function guard(paths: string[]) {
   if (busy.length) throw new Error(`In use by ${busy.map(b => `${b.name} (pid ${b.pid})`).join(', ')}. Close it first.`)
 }
 
-async function transact(title: string, fn: (tx: Tx) => Promise<void>) {
-  const tx = new Tx(title)
-  await tx.save()
+const alive = (pid: number) => {
   try {
-    await fn(tx)
-    return await tx.commit()
-  } catch (e) {
-    await tx.abort(e)
-    throw e
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
   }
+}
+
+/** One change at a time across every laci process: the app window and agents over MCP share the disk. */
+export async function withLock<T>(fn: () => Promise<T>): Promise<T> {
+  await fs.mkdir(DATA, { recursive: true })
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.writeFile(LOCK, String(process.pid), { flag: 'wx' })
+      break
+    } catch (e: any) {
+      if (e.code !== 'EEXIST' || attempt > 0) throw new Error('Another laci window or agent is changing files right now. Try again in a moment.')
+      const pid = Number(await fs.readFile(LOCK, 'utf8').catch(() => '0'))
+      if (pid && alive(pid)) throw new Error('Another laci window or agent is changing files right now. Try again in a moment.')
+      await fs.rm(LOCK, { force: true }) // left behind by a crashed process
+    }
+  }
+  try {
+    return await fn()
+  } finally {
+    await fs.rm(LOCK, { force: true })
+  }
+}
+
+function transact(title: string, fn: (tx: Tx) => Promise<void>) {
+  return withLock(async () => {
+    const tx = new Tx(title)
+    await tx.save()
+    try {
+      await fn(tx)
+      return await tx.commit()
+    } catch (e) {
+      await tx.abort(e)
+      throw e
+    }
+  })
 }
 
 /** Move a folder and carry its Claude/Codex history along. */

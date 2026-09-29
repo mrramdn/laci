@@ -7,6 +7,14 @@ import { readText, run } from './util.ts'
 export const SIDECAR = '.laci.md'
 
 const TEMPLATE = '---\n---\n\n## Next\n\n## Notes\n'
+
+/** Fields laci writes to the frontmatter, and what each accepts. Empty clears the field. */
+export const META_RULES: Record<string, RegExp> = {
+  status: /^(active|idle|dormant|idea|paused|done|archived)?$/,
+  priority: /^(high|medium|low)?$/,
+  deadline: /^(\d{4}-\d{2}-\d{2})?$/,
+  client: /^[^\n]{0,80}$/,
+}
 const CHECK = /^(\s*[-*+]\s+\[)([ xX])(\]\s+)(.+)$/
 
 function split(text: string) {

@@ -8,7 +8,7 @@ import type { Node, Snapshot } from './core/types.ts'
 import { issuesFor } from './core/health.ts'
 import { applyAction, archiveProject, backupHistory, journals, undo } from './core/ops.ts'
 import { autoStatus, scan } from './core/scan.ts'
-import { SIDECAR, addNext, deleteCheck, setMeta, setNotes, toggleCheck } from './core/sidecar.ts'
+import { META_RULES, SIDECAR, addNext, deleteCheck, setMeta, setNotes, toggleCheck } from './core/sidecar.ts'
 import { readTasks } from './core/tasks.ts'
 import { bytes } from './core/tidy.ts'
 import { tilde, within } from './core/util.ts'
@@ -124,13 +124,6 @@ function taskFile(n: Node, file: unknown) {
   return p
 }
 
-const META: Record<string, RegExp> = {
-  status: /^(active|idle|dormant|idea|paused|done|archived)?$/,
-  priority: /^(high|medium|low)?$/,
-  deadline: /^(\d{4}-\d{2}-\d{2})?$/,
-  client: /^[^\n]{0,80}$/,
-}
-
 const api: Record<string, (body: any) => Promise<unknown>> = {
   async snapshot() {
     return scanning
@@ -140,7 +133,7 @@ const api: Record<string, (body: any) => Promise<unknown>> = {
   },
   async meta({ id, key, value }) {
     const n = node(id)
-    need(META[key]?.test(String(value ?? '')), `Invalid ${key}`)
+    need(META_RULES[key]?.test(String(value ?? '')), `Invalid ${key}`)
     await setMeta(n.path, key, value || undefined)
     return refresh(n)
   },

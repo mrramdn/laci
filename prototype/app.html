@@ -370,6 +370,28 @@ textarea.notes:focus { outline: none; border-color: var(--accent); box-shadow: 0
 .busy div { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 10px; background: var(--bg); box-shadow: var(--shadow-lg); }
 .busy .spin { width: 14px; height: 14px; border: 2px solid var(--border-strong); border-top-color: var(--text); border-radius: 50%; animation: spin .7s linear infinite; }
 
+.setup { height: 100vh; overflow: auto; background: var(--bg); }
+.setup-in { max-width: 660px; margin: 0 auto; padding: 56px 24px 48px; }
+.setup-in.in-app { padding-top: 24px; }
+.setup h1, .setup-in h1.big { font: 600 22px/1.25 var(--sans); letter-spacing: -.02em; margin: 14px 0 6px; }
+.setup-in .lead { color: var(--muted); margin: 0 0 28px; max-width: 58ch; }
+.sset { border: 1px solid var(--border); border-radius: 12px; padding: 18px 18px 12px; margin-bottom: 14px; background: var(--bg); }
+.sset h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 2px; font: 600 14px var(--sans); }
+.sset h2 .num { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--hover); font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.sset > p { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; }
+.opt { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 8px; margin: 0 -8px; border-radius: 6px; cursor: pointer; }
+.opt:hover { background: var(--hover); }
+.opt .mono { font-size: 12.5px; }
+.opt .sub { color: var(--muted); font-size: 12px; }
+.opt .r { margin-left: auto; font-size: 12px; color: var(--faint); white-space: nowrap; }
+.opt .r.ok { color: var(--green); }
+.addrow { display: flex; gap: 8px; margin: 8px 0 6px; }
+.apps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 6px; }
+.apps .fld { margin-top: 0; }
+.setup-foot { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
+.setup-foot p { margin: 0 auto 0 0; color: var(--muted); font-size: 12px; }
+.setup-foot p.err { color: var(--red); }
+
 @media (max-width: 1240px) {
   .app { grid-template-columns: 236px minmax(0, 1fr); grid-template-areas: "side main" "side term"; }
   .insp { position: fixed; top: 0; right: 0; bottom: 0; width: min(400px, 100vw); z-index: 20; box-shadow: var(--shadow-lg); }
@@ -447,6 +469,8 @@ const date = at => at ? new Date(at).toLocaleDateString('en-GB', { day: 'numeric
 const bytes = b => !b ? '—' : b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : b >= 1e3 ? `${Math.round(b / 1e3)} KB` : `${b} B`
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1)
+const APP_NAMES = { code: 'VS Code', codium: 'VSCodium', subl: 'Sublime Text', 'gnome-terminal': 'Terminal', 'gnome-text-editor': 'Text Editor', 'xfce4-terminal': 'Terminal', pcmanfm: 'PCManFM' }
+const appName = k => { const a = st.apps?.[k] ?? { files: 'dolphin', terminal: 'kitty', editor: 'code' }[k]; return APP_NAMES[a] ?? cap(a) }
 const descendants = n => n.children.flatMap(c => [nodes[c], ...descendants(nodes[c])])
 const within = (p, d) => p === d || p.startsWith(d.endsWith('/') ? d : d + '/')
 const base = p => p === HOME ? 'Home' : p.slice(p.lastIndexOf('/') + 1)
@@ -492,6 +516,7 @@ const L = {
   route: '<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   home: '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   filter: '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
   play: '<polygon points="6 3 20 12 6 21 6 3"/>',
   commit: '<circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/>',
@@ -541,6 +566,13 @@ const fixBtn = (n, code, cls = '') => FIX_LABEL[code] ? `<button class="btn sm $
 
 /* ---------- render ---------- */
 function render() {
+  if (LIVE && !snap.configured && !st.skipSetup) {
+    const keep = $('.setup')?.scrollTop ?? 0
+    app.className = ''
+    app.innerHTML = `<div class="setup">${setupPage()}</div>`
+    $('.setup').scrollTop = keep
+    return
+  }
   const keepScroll = $('.main .body')?.scrollTop ?? 0
   const keepInsp = $('.ibody')?.scrollTop ?? 0
   const focused = document.activeElement?.closest?.('[data-id]')?.dataset.id
@@ -588,7 +620,7 @@ function side() {
     </div>
     <div class="sb-foot">
       <button class="sb-item" data-act="rescan" title="Scan again">${icon('refresh', 'sm')}<span>Scanned ${esc(scanned)}${LIVE ? '' : ' · read-only'}</span></button>
-      <button class="sb-item" data-act="theme">${icon('moon', 'sm')}<span>Switch theme</span></button>
+      <button class="sb-item" data-act="view" data-v="settings" ${st.view === 'settings' ? 'aria-current="page"' : ''}>${icon('gear', 'sm')}<span>Settings</span></button>
     </div>`
 }
 
@@ -596,6 +628,7 @@ function main() {
   if (st.view === 'folder') return folderView()
   if (st.view === 'tidy') return tidyView()
   if (st.view === 'agents') return agentsView()
+  if (st.view === 'settings') return settingsView()
   return todayView()
 }
 
@@ -745,6 +778,70 @@ function fileRow(e) {
     <span class="c-sum">${esc(EXT[ext] ?? EXT[ext.toLowerCase()] ?? (ext && !e.name.startsWith('.') ? ext.toUpperCase() + ' file' : ''))}</span><span class="c-stack"></span><span class="c-ai"></span>
     <span class="c-when">${esc(ago(e.at))}</span><span class="c-size">${esc(bytes(e.size))}</span><span class="c-health"></span>
   </div>`
+}
+
+/* ---------- Setup & Settings ---------- */
+let setupLoading = false
+async function loadSetup() {
+  if (setupLoading) return
+  setupLoading = true
+  try {
+    const info = await api('setup/info')
+    st.setup = { info, roots: new Set(info.roots), extra: info.roots.filter(r => !info.candidates.some(c => c.path === r)), presets: new Set(info.presets), apps: { ...info.apps } }
+  } catch (e) {
+    toast('Couldn’t read your settings', e.message, { error: true })
+  } finally {
+    setupLoading = false
+    render()
+  }
+}
+
+/** The three choices laci needs. Shown as the welcome screen on first run, and again in Settings. */
+function setupSections() {
+  const S = st.setup
+  if (!S) { loadSetup(); return '<div class="empty">Looking around your home folder…</div>' }
+  const cands = [...S.info.candidates, ...S.extra.filter(p => !S.info.candidates.some(c => c.path === p)).map(p => ({ path: p, repos: null }))]
+  const catalog = [...snap.connectors.filter(c => c.builtin).map(c => ({ id: c.id, name: c.name, about: c.about, found: c.present })), ...snap.suggestions]
+  const appSel = (k, label) => {
+    const opts = [...new Set([...S.info.installed[k], S.apps[k]])]
+    return `<label class="fld"><span>${label}</span><select class="inp" data-sapp="${k}">${opts.map(o => `<option value="${esc(o)}" ${S.apps[k] === o ? 'selected' : ''}>${esc(APP_NAMES[o] ?? cap(o))}${S.info.installed[k].includes(o) ? '' : ' (not installed)'}</option>`).join('')}</select></label>`
+  }
+  return `
+    <section class="sset"><h2><span class="num">1</span>Where do you keep projects?</h2>
+      <p>laci looks for projects in these folders. You can still browse everything else from Home.</p>
+      ${cands.map(c => `<label class="opt"><input type="checkbox" class="cb" data-sroot="${esc(c.path)}" ${S.roots.has(c.path) ? 'checked' : ''}><span class="mono">${esc(tilde(c.path))}</span><span class="r ${c.repos ? 'ok' : ''}">${c.repos === null ? 'added by you' : c.repos ? plural(c.repos, 'git repo') : 'no repos'}</span></label>`).join('')}
+      <form class="addrow" data-form="setupadd"><input class="inp mono" name="p" placeholder="~/somewhere/else" autocomplete="off" aria-label="Another folder"><button class="btn">Add folder</button></form>
+    </section>
+    <section class="sset"><h2><span class="num">2</span>Which AI tools do you use?</h2>
+      <p>Their sessions show on each project and move with it. Other tools can be added in Agent history.</p>
+      ${catalog.map(c => `<label class="opt"><input type="checkbox" class="cb" data-spreset="${esc(c.id)}" ${S.presets.has(c.id) ? 'checked' : ''}><span>${esc(c.name)}</span><span class="sub">${esc(c.about)}</span><span class="r ${c.found ? 'ok' : ''}">${c.found ? 'found on this PC' : 'not found'}</span></label>`).join('')}
+    </section>
+    <section class="sset"><h2><span class="num">3</span>Open things with</h2>
+      <p>What the Editor, Files and external terminal buttons launch.</p>
+      <div class="apps">${appSel('editor', 'Editor')}${appSel('files', 'File manager')}${appSel('terminal', 'Terminal')}</div>
+    </section>`
+}
+
+function setupPage() {
+  return `<div class="setup-in"><span class="logo" style="width:28px;height:28px;border-radius:7px">${icon('archive')}</span>
+    <h1>Welcome to laci</h1>
+    <p class="lead">laci is a file manager that knows which folders are projects: their git state, README, to-dos and the AI sessions that worked on them. Tell it where to look.</p>
+    ${setupSections()}
+    <div class="setup-foot">${st.setup?.error ? `<p class="err" role="alert">${esc(st.setup.error)}</p>` : '<p>Saved in ~/.config/laci/config.json. Change it any time in Settings.</p>'}
+      <button class="btn ghost" data-act="setupskip">Skip for now</button><button class="btn primary" data-act="setupsave" data-first="1" ${st.setup ? '' : 'disabled'}>Start using laci</button></div>
+  </div>`
+}
+
+function settingsView() {
+  const theme = document.documentElement.dataset.theme ?? 'system'
+  return `<div class="head"><h1>Settings</h1></div>
+    <div class="body"><div class="setup-in in-app">
+      ${setupSections()}
+      <section class="sset"><h2>Appearance</h2><p>Follows your system unless you pick one.</p>
+        <div class="apps"><label class="fld"><span>Theme</span><select class="inp" data-themepick>${['system', 'light', 'dark'].map(t => `<option value="${t}" ${theme === t ? 'selected' : ''}>${cap(t)}</option>`).join('')}</select></label></div></section>
+      <div class="setup-foot">${st.setup?.error ? `<p class="err" role="alert">${esc(st.setup.error)}</p>` : '<p>Saved in ~/.config/laci/config.json</p>'}
+        <button class="btn primary" data-act="setupsave" ${st.setup ? '' : 'disabled'}>Save and rescan</button></div>
+    </div></div>`
 }
 
 /* ---------- Tidy ---------- */
@@ -928,7 +1025,7 @@ function insp() {
     </div>
     <div class="ifoot">${primary}
       <button class="btn sm" data-act="open" data-id="${esc(n.id)}" data-what="editor">${icon('editor', 'sm')}Editor</button>
-      <button class="btn sm" data-act="open" data-id="${esc(n.id)}" data-what="files">${icon('open', 'sm')}Dolphin</button>
+      <button class="btn sm" data-act="open" data-id="${esc(n.id)}" data-what="files">${icon('open', 'sm')}${esc(appName('files'))}</button>
       <span class="spacer"></span>
       ${isProject && !n.archived && n.archivePlan ? `<button class="btn ghost sm" data-act="archive" data-id="${esc(n.id)}">${icon('archive', 'sm')}Archive…</button>` : ''}
     </div>`
@@ -1053,7 +1150,7 @@ function paletteItems(q) {
     .sort((a, b) => days(a.lastActivity?.at) - days(b.lastActivity?.at))
     .slice(0, 9)
     .map(n => ({ id: 'node:' + n.id, sec: n.kind === 'folder' ? 'Folders' : 'Projects', label: n.label, sub: tilde(n.path), icon: kindIcon(n), acc: ago(n.lastActivity?.at) }))
-  const acts = [['view:today', 'Open Today', 'inbox'], ['view:tidy', 'Open Tidy up', 'sparkles'], ['view:agents', 'Open Agent history', 'history'], ['rescan', 'Scan again', 'refresh'], ['theme', 'Switch theme', 'moon']]
+  const acts = [['view:today', 'Open Today', 'inbox'], ['view:tidy', 'Open Tidy up', 'sparkles'], ['view:agents', 'Open Agent history', 'history'], ['view:settings', 'Open Settings', 'gear'], ['rescan', 'Scan again', 'refresh'], ['theme', 'Switch theme', 'moon']]
     .filter(([, l]) => match(l.toLowerCase())).map(([id, label, ic]) => ({ id, sec: 'Actions', label, sub: '', icon: icon(ic), acc: '' }))
   return [...hits.filter(i => i.sec === 'Projects'), ...hits.filter(i => i.sec === 'Folders'), ...acts]
 }
@@ -1126,7 +1223,7 @@ function renderTermBar() {
   box.classList.toggle('max', T.max)
   $('.term-bar', box).innerHTML = T.tabs.map(t => `<button class="ttab ${t.exited !== undefined ? 'ended' : ''}" data-act="tsel" data-id="${esc(t.id)}" aria-selected="${t.id === T.active}" title="${esc(tilde(t.cwd))}">${icon('terminal', 'sm')}${esc(t.title)}<span class="x" data-act="tclose" data-id="${esc(t.id)}" aria-label="Close terminal">${icon('x', 'sm')}</span></button>`).join('')
     + `<button class="icon-btn" data-act="tnew" title="New terminal here" aria-label="New terminal">${icon('plus', 'sm')}</button><span class="grow"></span>`
-    + `<button class="icon-btn" data-act="text" title="Open in kitty" aria-label="Open this folder in an external terminal">${icon('open', 'sm')}</button>`
+    + `<button class="icon-btn" data-act="text" title="Open in ${esc(appName('terminal'))}" aria-label="Open this folder in an external terminal">${icon('open', 'sm')}</button>`
     + `<button class="icon-btn" data-act="tmax" title="${T.max ? 'Restore' : 'Maximize'}" aria-label="Maximize terminal">${icon(T.max ? 'x' : 'layers', 'sm')}</button>`
     + `<button class="icon-btn" data-act="thide" title="Hide (F4)" aria-label="Hide terminal">${icon('chev', 'sm')}</button>`
   for (const t of T.tabs) t.host.hidden = t.id !== T.active
@@ -1260,10 +1357,10 @@ function toggleTheme() {
   try { localStorage.setItem('laci:theme', r.dataset.theme) } catch {}
   applyTermTheme()
 }
-const OPENED = { terminal: 'Opened a terminal', editor: 'Opened in the editor', files: 'Opened in Dolphin', resume: 'Resuming the session in a terminal', fix: 'Opened a terminal', script: 'Running in a terminal', summary: 'Claude is writing a summary in a terminal' }
+const OPENED = { terminal: 'Opened a terminal', editor: 'Opened in the editor', files: 'Opened in the file manager', resume: 'Resuming the session in a terminal', fix: 'Opened a terminal', script: 'Running in a terminal', summary: 'Claude is writing a summary in a terminal' }
 
 const acts = {
-  view: d => { st.view = d.v; st.resetScroll = true; render(); if (d.v === 'tidy') refreshJournal() },
+  view: d => { st.view = d.v; st.resetScroll = true; if (d.v === 'settings') st.setup = null; render(); if (d.v === 'tidy') refreshJournal() },
   cd: d => {
     st.view = 'folder'
     st.cwd = d.id
@@ -1277,6 +1374,22 @@ const acts = {
   },
   twist: d => { st.tree.has(d.id) ? st.tree.delete(d.id) : st.tree.add(d.id); render() },
   ff: d => { st.filter = d.k; st.resetScroll = true; render() },
+  setupskip: () => { st.skipSetup = true; st.setup = null; render() },
+  setupsave: d => {
+    const S = st.setup
+    const first = !!d.first
+    busy(first ? 'Scanning your projects…' : 'Saving and scanning…')
+    api('setup/save', { roots: [...S.roots], presets: [...S.presets], apps: S.apps })
+      .then(async r => {
+        load(r)
+        st.apps = await api('apps').catch(() => st.apps)
+        st.setup = null
+        if (first) { st.view = 'today'; st.cwd = r.roots[0] }
+        render()
+        toast(first ? 'All set' : 'Settings saved', `${plural(projects.length, 'project')} in ${r.roots.map(tilde).join(', ')}`)
+      }, e => { S.error = e.message; render() })
+      .finally(() => busy())
+  },
   fsel: d => { st.fsel = d.id; render() },
   openfile: d => mutate(async () => { await api('open', { id: d.id, what: 'default' }); toast('Opened', tilde(d.id)) }),
   sel: d => select(d.id, d.tab),
@@ -1388,6 +1501,17 @@ document.addEventListener('change', e => {
   const t = e.target
   if (t.hasAttribute('data-archived')) { st.showArchived = t.checked; render(); return }
   if (t.hasAttribute('data-hidden')) { st.hidden = t.checked; render(); return }
+  if (t.dataset.sroot) { t.checked ? st.setup.roots.add(t.dataset.sroot) : st.setup.roots.delete(t.dataset.sroot); st.setup.error = null; return }
+  if (t.dataset.spreset) { t.checked ? st.setup.presets.add(t.dataset.spreset) : st.setup.presets.delete(t.dataset.spreset); return }
+  if (t.dataset.sapp) { st.setup.apps[t.dataset.sapp] = t.value; return }
+  if (t.hasAttribute('data-themepick')) {
+    const r = document.documentElement
+    if (t.value === 'system') delete r.dataset.theme
+    else r.dataset.theme = t.value
+    try { t.value === 'system' ? localStorage.removeItem('laci:theme') : localStorage.setItem('laci:theme', t.value) } catch {}
+    applyTermTheme()
+    return
+  }
   if (t.hasAttribute('data-check')) {
     const d = t.dataset
     const done = t.checked
@@ -1453,6 +1577,19 @@ document.addEventListener('submit', async e => {
     }
     return
   }
+  if (f.dataset.form === 'setupadd') {
+    e.preventDefault()
+    let p = f.p.value.trim().replace(/\/+$/, '')
+    if (!p) return
+    if (p === '~' || p.startsWith('~/')) p = HOME + p.slice(1)
+    if (!p.startsWith('/')) { st.setup.error = 'Use a full path like ~/work'; render(); return }
+    if (!within(p, HOME)) { st.setup.error = 'Pick a folder inside your home folder'; render(); return }
+    if (!st.setup.extra.includes(p) && !st.setup.info.candidates.some(c => c.path === p)) st.setup.extra.push(p)
+    st.setup.roots.add(p)
+    st.setup.error = null
+    render()
+    return
+  }
   if (f.dataset.form !== 'todo') return
   e.preventDefault()
   const text = f.t.value.trim()
@@ -1501,6 +1638,7 @@ try {
   app.innerHTML = `<div class="boot"><div><b>Scan failed</b>${esc(e.message)}</div></div>`
   return
 }
+if (LIVE) st.apps = await api('apps').catch(() => null)
 render()
 refreshJournal()
 restoreTerms()

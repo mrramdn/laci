@@ -1,13 +1,15 @@
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, promises as fs } from 'node:fs'
+import { promises as fs } from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Node, Snapshot } from './core/types.ts'
 import { issuesFor } from './core/health.ts'
 import { CATALOG, connectors, presetsFound } from './core/agents/connectors.ts'
-import { ConfigError, checkConnector, homePath, loadConfig, saveConfig } from './core/config.ts'
+import { ConfigError, checkApps, checkConnector, checkRoots, homePath, loadConfig, saveConfig } from './core/config.ts'
+import { defaultRoots } from './core/detect.ts'
+import { installedApps, onPath, rootCandidates } from './core/setup.ts'
 import { applyAction, archiveProject, backupHistory, journals, undo } from './core/ops.ts'
 import { autoStatus, scan } from './core/scan.ts'
 import { META_RULES, SIDECAR, addNext, deleteCheck, setMeta, setNotes, toggleCheck } from './core/sidecar.ts'
@@ -63,14 +65,26 @@ function detach(cmd: string, args: string[], cwd: string) {
 }
 
 /** Open a terminal in `cwd`, optionally running `cmd`. `confirm` shows the command and waits for Enter. */
+/** How each terminal is told where to start and what to run. The process also starts in `cwd`, for the rest. */
+const TERM_ARGS: Record<string, (cwd: string, run: string[]) => string[]> = {
+  kitty: (d, r) => ['--directory', d, ...r],
+  konsole: (d, r) => ['--workdir', d, ...(r.length ? ['-e', ...r] : [])],
+  alacritty: (d, r) => ['--working-directory', d, ...(r.length ? ['-e', ...r] : [])],
+  wezterm: (d, r) => ['start', '--cwd', d, ...(r.length ? ['--', ...r] : [])],
+  foot: (d, r) => [`--working-directory=${d}`, ...r],
+  ghostty: (d, r) => [`--working-directory=${d}`, ...(r.length ? ['-e', ...r] : [])],
+  'gnome-terminal': (d, r) => [`--working-directory=${d}`, ...(r.length ? ['--', ...r] : [])],
+  'xfce4-terminal': (d, r) => [`--working-directory=${d}`, ...(r.length ? ['-x', ...r] : [])],
+}
+
+/** Open a terminal in `cwd`, optionally running `cmd`. `confirm` shows the command and waits for Enter. */
 function terminal(app: string, cwd: string, cmd?: string, confirm = false) {
   const shell = `exec "\${SHELL:-bash}"`
   const script = !cmd ? undefined : confirm
     ? `printf '\\033[2m$ %s\\033[0m\\n' "$0"; read -rp 'Press Enter to run, Ctrl+C to cancel ' _ && eval "$0"; ${shell}`
     : `printf '\\033[2m$ %s\\033[0m\\n' "$0"; eval "$0"; ${shell}`
   const run = script ? ['bash', '-lc', script, cmd!] : []
-  if (app === 'konsole') detach('konsole', ['--workdir', cwd, ...(run.length ? ['-e', ...run] : [])], cwd)
-  else detach(app, ['--directory', cwd, ...run], cwd)
+  detach(app, TERM_ARGS[app]?.(cwd, run) ?? (run.length ? ['-e', ...run] : []), cwd)
 }
 
 const FIX: Record<string, (n: Node) => string> = {
@@ -274,6 +288,36 @@ function reconfigure(fn: (c: Awaited<ReturnType<typeof loadConfig>>) => Promise<
 }
 
 Object.assign(api, {
+  async apps() {
+    return apps()
+  },
+  /** Everything the setup screen and Settings need to offer choices. */
+  async 'setup/info'() {
+    const c = await loadConfig()
+    const s = await scanning
+    const candidates = await rootCandidates()
+    // First run: suggest the folders that actually hold repos, not the name-based guess the scan started with.
+    const withRepos = candidates.filter(x => x.repos).map(x => x.path)
+    return {
+      configured: !!c.roots,
+      roots: c.roots ?? (withRepos.length ? withRepos : await defaultRoots()),
+      candidates,
+      presets: s.connectors.filter(x => x.builtin).map(x => x.id),
+      custom: c.custom.length,
+      apps: await apps(),
+      installed: installedApps(),
+    }
+  },
+  async 'setup/save'({ roots, presets, apps: chosen }: { roots: unknown; presets: unknown; apps: unknown }) {
+    const r = await checkRoots(roots)
+    need(Array.isArray(presets) && presets.every(p => CATALOG.some(x => x.id === p)), 'Unknown connector')
+    const a = checkApps(chosen)
+    return reconfigure(c => {
+      c.roots = r
+      c.presets = [...new Set(presets as string[])]
+      c.apps = a
+    })
+  },
   /** Add a catalog connector (`preset`) or one the user described (`name` + `link`). */
   async 'connector/add'({ preset, name, link }: { preset: unknown; name: unknown; link: unknown }) {
     return reconfigure(async c => {
@@ -343,7 +387,6 @@ const server = http.createServer(async (req, res) => {
 })
 
 function openWindow(url: string) {
-  const onPath = (bin: string) => (process.env.PATH ?? '').split(':').some(d => existsSync(path.join(d, bin)))
   // Chromium's app mode gives a plain window without tabs or an address bar.
   const browser = ['chromium', 'google-chrome-stable', 'google-chrome', 'brave'].find(onPath)
   if (browser) detach(browser, [`--app=${url}`, '--class=laci'], process.env.HOME ?? '/')

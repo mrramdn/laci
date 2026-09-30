@@ -248,6 +248,8 @@ export interface Snapshot {
   home: string
   host: string
   roots: string[]
+  /** False until the user picked their folders in the setup screen (roots are a guess until then). */
+  configured: boolean
   rootIds: string[]
   nodes: Record<string, Node>
   claude: Record<string, ClaudeDir>

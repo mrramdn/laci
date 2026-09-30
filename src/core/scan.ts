@@ -163,6 +163,7 @@ export async function scan(opts: { roots?: string[] } = {}): Promise<Snapshot> {
     home: HOME,
     host: os.hostname(),
     roots,
+    configured: !!(opts.roots || cfg.roots),
     rootIds,
     nodes,
     claude,

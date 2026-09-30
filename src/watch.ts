@@ -192,7 +192,9 @@ export class Watcher {
       this.full ||= Date.now()
       return this.kick()
     }
-    if (name.startsWith('.') && name !== '.laci.md') return
+    // `.laci.md` is re-read (a status or to-do set elsewhere), but editing it isn't activity.
+    if (name === '.laci.md') return this.touch(id, 0)
+    if (name.startsWith('.')) return
     const s = await stat(full)
     // A new folder inside the project: watch it too, so edits in it count.
     if (s?.isDirectory() && !this.dirs.has(full)) this.open(full, new Set<Role>([`p:${id}`]))

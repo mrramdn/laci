@@ -112,7 +112,8 @@ export async function detectStack(dir: string): Promise<StackInfo & { descriptio
   let newestMs = 0
   let liquid = false
   const files = await walkFiles(dir, 4000, (rel, mtime) => {
-    if (mtime > newestMs) newestMs = mtime
+    // laci's own notes aren't work on the project: setting a status mustn't make it "active just now".
+    if (mtime > newestMs && rel !== '.laci.md') newestMs = mtime
     const ext = rel.split('.').at(-1)?.toLowerCase() ?? ''
     const lang = LANG[ext]
     if (lang) langCount.set(lang, (langCount.get(lang) ?? 0) + 1)

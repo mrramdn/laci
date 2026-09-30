@@ -24,7 +24,10 @@ export const stripMd = (s: string) =>
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/<[^>]+>/g, '')
-    .replace(/[*_`~]+/g, '')
+    // Only markers that wrap text: `~/`, `snake_case` and `_archive` are text, not formatting.
+    .replace(/(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1/g, '$2')
+    .replace(/(^|[^\w*])([*_])(?=\S)(.+?)(?<=\S)\2(?![\w*])/g, '$1$3')
+    .replace(/`([^`]*)`/g, '$1')
     .replace(/\s+/g, ' ')
     .trim()
 

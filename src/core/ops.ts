@@ -134,8 +134,11 @@ export class Tx {
     if (!changed) return 0
     const backup = path.join(BACKUPS, this.j.id, `${++this.n}-${path.basename(file)}`)
     await fs.mkdir(path.dirname(backup), { recursive: true })
+    const was = await fs.stat(file)
     const tmp = `${file}.laci-tmp`
     await fs.writeFile(tmp, out)
+    // A new path isn't new activity: the log keeps its time, so the session doesn't look like it just ran.
+    await fs.utimes(tmp, was.atimeMs / 1000, was.mtimeMs / 1000)
     await this.log({ kind: 'rewrite', path: file, backup })
     await rename(file, backup)
     await fs.rename(tmp, file)

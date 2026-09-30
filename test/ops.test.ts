@@ -137,10 +137,14 @@ test('reconnecting an orphan moves it to the new address and can be undone', asy
   const before = fingerprint()
   const snap = await scan({ roots: [P('project')] })
   const p = snap.proposals.find(x => x.category === 'reconnect')!
+  const log = path.join(snap.claude[snap.orphans.claude[0]].dir, 's2.jsonl')
+  const mtime = statSync(log).mtimeMs
   const j = await applyAction(snap, p.title, p.action!)
   const target = P('.claude', 'projects', enc(gammaNow))
   assert.ok(existsSync(path.join(target, 'memory', 'MEMORY.md')))
   assert.ok(readFileSync(path.join(target, 's2.jsonl'), 'utf8').includes(`"cwd":"${gammaNow}"`))
+  // Found in the demo: a rewritten log looked like a session from just now.
+  assert.ok(Math.abs(statSync(path.join(target, 's2.jsonl')).mtimeMs - mtime) < 1, 'rewriting a path keeps the log\'s time')
   const after = await scan({ roots: [P('project')] })
   assert.deepEqual(after.orphans.claude, [])
   assert.deepEqual(after.nodes[gammaNow].agents.claude, [enc(gammaNow)])

@@ -107,26 +107,67 @@ export interface ClaudeDir {
   gone: string[]
 }
 
-export interface CodexSession {
-  file: string
-  at: string
-  cwd?: string
-  subagent: boolean
-  cwdLines: number
+/** How a connector finds the project a piece of agent history belongs to. */
+export type Link =
+  /** Log files anywhere under `dir`; a JSON field in each (`cwd`) holds the project folder. */
+  | { kind: 'cwd'; dir: string; ext: string; field: string }
+  /** One folder per project under `dir`, named after the project path. */
+  | { kind: 'named'; dir: string; naming: 'dashes' | 'sha256' }
+  /** Lives inside the project folder itself, at `path`. Travels with the folder for free. */
+  | { kind: 'inside'; path: string }
+  /** Files under `dir` that mention project paths in their text (plans, notes). */
+  | { kind: 'mentions'; dir: string; ext: string }
+
+export interface ConnectorSpec {
+  id: string
+  name: string
+  link: Link
 }
 
-export interface Plan {
+/** A connector as the app shows it: what it reads, whether it's on, and what it found. */
+export interface ConnectorState extends ConnectorSpec {
+  /** From laci's catalog, as opposed to one the user described. */
+  builtin: boolean
+  /** One line on what it keeps, for the card. */
+  about: string
+  /** What a move or archive does with it. */
+  moves: string
+  where: string
+  present: boolean
+  bytes: number
+  count: number
+}
+
+/** A catalog connector the user hasn't added, and whether this PC has data for it. */
+export interface Suggestion {
+  id: string
+  name: string
+  about: string
+  where: string
+  found: boolean
+  /** e.g. "12 MB" or "in 3 projects", when found. */
+  detail?: string
+}
+
+/** One piece of agent history a connector found: a log file, or a project's folder in the tool's store. */
+export interface Item {
+  id: string
+  connector: string
   file: string
-  title: string
   at: string
+  bytes: number
+  /** Project folder it belongs to, when the connector can tell. */
+  cwd?: string
+  /** Lines that record `cwd` (what a move rewrites). */
+  lines: number
+  title?: string
 }
 
 export interface Agents {
   claude: string[]
-  codex: string[]
-  plans: string[]
+  /** Ids into `Snapshot.items`, from every other connector. */
+  items: string[]
   aiFiles: string[]
-  serenaMemories: number
 }
 
 export interface Size {
@@ -153,8 +194,9 @@ export interface ArchivePlan {
 export type Action =
   | { type: 'reconnect-claude'; dir: string; target: string; pairs: [string, string][] }
   | { type: 'rewrite-claude'; items: { dir: string; pairs: [string, string][] }[] }
-  | { type: 'rewrite-codex'; files: string[]; pairs: [string, string][] }
-  | { type: 'quarantine'; paths: string[] }
+  | { type: 'rewrite-logs'; field: string; files: string[]; pairs: [string, string][] }
+  /** `to` is relative to laci's quarantine folder. */
+  | { type: 'quarantine'; moves: { from: string; to: string }[] }
   | { type: 'trash'; paths: string[] }
   | { type: 'archive'; nodeId: string }
 
@@ -207,11 +249,16 @@ export interface Snapshot {
   rootIds: string[]
   nodes: Record<string, Node>
   claude: Record<string, ClaudeDir>
-  codex: Record<string, CodexSession>
-  plans: Record<string, Plan>
-  global: { claude: string[]; codex: string[] }
-  orphans: { claude: string[]; codex: string[] }
-  stores: { name: string; path: string; present: boolean; bytes: number; note: string }[]
+  items: Record<string, Item>
+  /** Connectors the user added (or, before they chose, the ones with data here). */
+  connectors: ConnectorState[]
+  suggestions: Suggestion[]
+  /** Agent history for folders outside the scanned roots. */
+  global: { claude: string[]; items: string[] }
+  /** Agent history whose folder is gone. */
+  orphans: { claude: string[]; items: string[] }
+  /** Folders in a hashed store that match no folder laci knows. They may still exist elsewhere. */
+  unmatched: string[]
   proposals: Proposal[]
   warnings: Issue[]
   tookMs: number

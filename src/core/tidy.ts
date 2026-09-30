@@ -1,6 +1,7 @@
 import path from 'node:path'
-import type { ArchivePlan, ClaudeDir, CodexSession, Node, Op, Proposal, Snapshot } from './types.ts'
+import type { ArchivePlan, ClaudeDir, ConnectorState, Item, Link, Node, Op, Proposal, Snapshot } from './types.ts'
 import { CLAUDE_PROJECTS } from './agents/claude.ts'
+import { storeName } from './agents/connectors.ts'
 import { goneStarts, staleCwds, staleRoots } from './health.ts'
 import { HOME, daysSince, enc, stat, tilde, within } from './util.ts'
 
@@ -24,8 +25,18 @@ export async function archiveDest(n: Node, roots: string[]) {
   return path.join(root, '_archive', path.relative(root, n.path))
 }
 
+type Parts = Pick<Snapshot, 'claude' | 'items' | 'connectors'>
+
+const spec = (snap: Pick<Snapshot, 'connectors'>, id: string) => snap.connectors.find(c => c.id === id)
+
+/** Where a `named` store folder goes when its project moves to `to`. */
+export function namedTarget(c: ConnectorState, it: Item, from: string, to: string) {
+  const l = c.link as Extract<Link, { kind: 'named' }>
+  return path.join(l.dir, storeName(l, to + it.cwd!.slice(from.length)))
+}
+
 /** Every operation a move of `from` to `to` implies, so the user sees agent data move with the folder. */
-export function moveOps(from: string, to: string, snap: Pick<Snapshot, 'claude' | 'codex'>): Op[] {
+export function moveOps(from: string, to: string, snap: Parts): Op[] {
   const ops: Op[] = [{ kind: 'move', label: 'Move folder', from: tilde(from), to: tilde(to) }]
 
   const dirs = Object.values(snap.claude).filter(c => c.path && within(c.path, from))
@@ -43,17 +54,27 @@ export function moveOps(from: string, to: string, snap: Pick<Snapshot, 'claude' 
     if (lines) ops.push({ kind: 'rewrite', label: 'Rewrite cwd in Claude logs', detail: `${count(lines, 'line')} → ${tilde(target)}${stale.length ? ' (also fixes paths left by earlier moves)' : ''}` })
   }
 
-  const codex = Object.values(snap.codex).filter(s => s.cwd && within(s.cwd, from))
-  if (codex.length) ops.push({ kind: 'rewrite', label: 'Rewrite cwd in Codex logs', detail: `${count(sum(codex.map(s => s.cwdLines)), 'line')} in ${count(codex.length, 'file')}` })
+  const mine = Object.values(snap.items).filter(it => it.cwd && within(it.cwd, from))
+  for (const c of snap.connectors) {
+    const its = mine.filter(it => it.connector === c.id)
+    if (!its.length) continue
+    if (c.link.kind === 'cwd') ops.push({ kind: 'rewrite', label: `Rewrite paths in ${c.name} logs`, detail: `${count(sum(its.map(it => it.lines)), 'line')} in ${count(its.length, 'file')}` })
+    else if (c.link.kind === 'named')
+      for (const it of its) ops.push({ kind: 'rename', label: `Move ${c.name} history`, from: tilde(it.cwd!), to: tilde(to + it.cwd!.slice(from.length)), detail: bytes(it.bytes) })
+  }
   return ops
 }
 
-export async function planArchive(n: Node, snap: Pick<Snapshot, 'claude' | 'codex' | 'roots'>): Promise<ArchivePlan> {
+export async function planArchive(n: Node, snap: Parts & Pick<Snapshot, 'roots'>): Promise<ArchivePlan> {
   const dest = await archiveDest(n, snap.roots)
   const checks = n.issues.filter(i => ['no-commits', 'no-remote', 'dirty', 'unpushed', 'stash'].includes(i.code))
   const ops = moveOps(n.path, dest, snap)
-  const inFolder = [...n.agents.aiFiles, '.laci.md']
+  const inside = n.agents.items.map(i => snap.items[i]).filter(it => spec(snap, it.connector)?.link.kind === 'inside').map(it => path.relative(n.path, it.file))
+  // `.serena` already covers `.serena/memories`: list each thing once.
+  const inFolder = [...new Set([...n.agents.aiFiles, ...inside.filter(p => !n.agents.aiFiles.some(f => within(p, f))), '.laci.md'])]
   ops.push({ kind: 'keep', label: 'Travels with the folder', detail: inFolder.join(', ') })
+  const mentions = n.agents.items.map(i => snap.items[i]).filter(it => spec(snap, it.connector)?.link.kind === 'mentions')
+  if (mentions.length) ops.push({ kind: 'keep', label: 'Left as is', detail: `${count(mentions.length, 'file')} that mention the old path (${[...new Set(mentions.map(it => spec(snap, it.connector)!.name))].join(', ')})` })
   ops.push({ kind: 'write', label: 'Set status: archived', to: `${tilde(dest)}/.laci.md` })
   if (n.size && n.size.reclaimable > 50e6)
     ops.push({ kind: 'delete', label: 'Optional: delete deps & build output', detail: `${bytes(n.size.reclaimable)} (${n.size.parts.map(p => p.path).join(', ')})` })
@@ -116,7 +137,7 @@ export function buildProposals(snap: Snapshot): Proposal[] {
         why: `Nothing on disk matches ${name}. Last used ${c.sessions[0]?.at.slice(0, 10) ?? 'unknown'}${c.sessions[0]?.title ? ` ("${c.sessions[0].title}")` : ''}.`,
         confidence: 'med',
         ops: [{ kind: 'move', label: 'Quarantine (restorable)', from: `~/.claude/projects/${name}`, to: `${tilde(QUARANTINE)}/claude/${name}` }],
-        action: { type: 'quarantine', paths: [c.dir] },
+        action: { type: 'quarantine', moves: [{ from: c.dir, to: path.join('claude', name) }] },
       })
     }
   }
@@ -136,36 +157,45 @@ export function buildProposals(snap: Snapshot): Proposal[] {
       action: { type: 'rewrite-claude', items: half.map(c => ({ dir: c.dir, pairs: staleRoots(c).map(r => [r, c.path!] as [string, string]) })) },
     })
 
-  const byCwd = new Map<string, CodexSession[]>()
-  for (const id of snap.orphans.codex) {
-    const s = snap.codex[id]
-    byCwd.set(s.cwd!, [...(byCwd.get(s.cwd!) ?? []), s])
+  // Other connectors: logs that record a folder that's gone, and store folders nothing resolves to.
+  const groups = new Map<string, Item[]>()
+  for (const id of snap.orphans.items) {
+    const it = snap.items[id]
+    const key = `${it.connector}\0${it.cwd ?? it.file}`
+    groups.set(key, [...(groups.get(key) ?? []), it])
   }
-  for (const [cwd, list] of byCwd) {
-    const was = formerly(cwd, snap, nodes)
+  for (const list of groups.values()) {
+    const c = spec(snap, list[0].connector)
+    if (!c) continue
     const s = list.length === 1 ? '' : 's'
-    if (was) {
-      const target = was.n.path + cwd.slice(was.old.length)
+    const cwd = list[0].cwd
+    const was = c.link.kind === 'cwd' && cwd ? formerly(cwd, snap, nodes) : undefined
+    const unit = c.link.kind === 'cwd' ? `session${s}` : `folder${s}`
+    if (was && c.link.kind === 'cwd') {
+      const target = was.n.path + cwd!.slice(was.old.length)
       out.push({
-        id: `codex-orphan:${cwd}`,
+        id: `orphan:${c.id}:${cwd}`,
         category: 'reconnect',
-        title: `Reconnect ${list.length} Codex session${s} to ${was.n.label}`,
-        why: `${was.n.label} used to live at ${tilde(was.old)}: its Claude logs still say so. These Codex sessions stayed at the old address.`,
+        title: `Reconnect ${list.length} ${c.name} ${unit} to ${was.n.label}`,
+        why: `${was.n.label} used to live at ${tilde(was.old)}: its Claude logs still say so. These ${c.name} sessions stayed at the old address.`,
         confidence: 'high',
         nodeId: was.n.id,
-        ops: [{ kind: 'rewrite', label: 'Rewrite cwd in Codex logs', from: tilde(cwd), to: tilde(target), detail: `${count(sum(list.map(x => x.cwdLines)), 'line')} in ${count(list.length, 'file')}` }],
-        action: { type: 'rewrite-codex', files: list.map(x => x.file), pairs: [[was.old, was.n.path]] },
+        ops: [{ kind: 'rewrite', label: `Rewrite paths in ${c.name} logs`, from: tilde(cwd!), to: tilde(target), detail: `${count(sum(list.map(x => x.lines)), 'line')} in ${count(list.length, 'file')}` }],
+        action: { type: 'rewrite-logs', field: c.link.field, files: list.map(x => x.file), pairs: [[was.old, was.n.path]] },
       })
-    } else
-      out.push({
-        id: `codex-orphan:${cwd}`,
-        category: 'orphan',
-        title: `${list.length} Codex session${s} for deleted ${path.basename(cwd)}`,
-        why: `${tilde(cwd)} no longer exists. Last used ${list[0].at.slice(0, 10)}.`,
-        confidence: 'med',
-        ops: list.map(x => ({ kind: 'move' as const, label: 'Quarantine (restorable)', from: tilde(x.file), to: `${tilde(QUARANTINE)}/codex/` })),
-        action: { type: 'quarantine', paths: list.map(x => x.file) },
-      })
+      continue
+    }
+    const store = 'dir' in c.link ? c.link.dir : ''
+    const name = cwd ? path.basename(cwd) : path.basename(list[0].file)
+    out.push({
+      id: `orphan:${c.id}:${cwd ?? list[0].file}`,
+      category: 'orphan',
+      title: `${list.length} ${c.name} ${unit} for deleted ${name}`,
+      why: `${cwd ? tilde(cwd) : 'Its folder'} no longer exists. Last used ${list[0].at.slice(0, 10)}.`,
+      confidence: 'med',
+      ops: list.map(x => ({ kind: 'move' as const, label: 'Quarantine (restorable)', from: tilde(x.file), to: `${tilde(QUARANTINE)}/${c.id}/` })),
+      action: { type: 'quarantine', moves: list.map(x => ({ from: x.file, to: path.join(c.id, path.relative(store, x.file)) })) },
+    })
   }
 
   for (const n of nodes) {

@@ -2,10 +2,10 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { Action, Snapshot } from './types.ts'
 import { CLAUDE_PROJECTS } from './agents/claude.ts'
-import { CODEX_SESSIONS } from './agents/codex.ts'
+import { fieldKey } from './agents/connectors.ts'
 import { staleRoots } from './health.ts'
 import { excludeFile, setMeta } from './sidecar.ts'
-import { archiveDest } from './tidy.ts'
+import { archiveDest, namedTarget } from './tidy.ts'
 import { HOME, enc, list, run, stat, tilde, within } from './util.ts'
 
 export const DATA = path.join(HOME, '.local', 'share', 'laci')
@@ -120,16 +120,16 @@ export class Tx {
     await this.log({ kind: 'rmdir', path: from })
   }
 
-  /** Replace `"cwd":"<from>…"` prefixes. The original file is kept in the backup dir for undo. */
-  async rewrite(file: string, pairs: [string, string][]) {
+  /** Replace `"<field>":"<from>…"` prefixes (`cwd` by default). The original file is kept in the backup dir for undo. */
+  async rewrite(file: string, pairs: [string, string][], field = 'cwd') {
     const text = await fs.readFile(file, 'utf8')
     let changed = 0
     let out = text
     for (const [from, to] of [...pairs].sort((a, b) => b[0].length - a[0].length)) {
       const f = JSON.stringify(from).slice(1, -1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      out = out.replace(new RegExp(`"cwd":"${f}(?=["/])`, 'g'), () => {
+      out = out.replace(new RegExp(`(${fieldKey(field)})${f}(?=["/])`, 'g'), (_, pre) => {
         changed++
-        return `"cwd":${JSON.stringify(to).slice(0, -1)}`
+        return pre + JSON.stringify(to).slice(1, -1)
       })
     }
     if (!changed) return 0
@@ -295,7 +295,7 @@ function transact(title: string, fn: (tx: Tx) => Promise<void>) {
   })
 }
 
-/** Move a folder and carry its Claude/Codex history along. */
+/** Move a folder and carry its agent history along: every enabled connector that keeps data outside the folder. */
 export async function moveProject(snap: Snapshot, id: string, dest: string, opts: { status?: string; trashHeavy?: boolean; title?: string } = {}) {
   const n = snap.nodes[id]
   if (!n) throw new Error('Unknown project. Rescan and try again.')
@@ -312,7 +312,12 @@ export async function moveProject(snap: Snapshot, id: string, dest: string, opts
       const pairs: [string, string][] = [[from, dest], ...staleRoots(c).map(r => [r, now] as [string, string])]
       for (const f of await jsonlUnder(target)) await tx.rewrite(f, pairs)
     }
-    for (const s of Object.values(snap.codex)) if (s.cwd && within(s.cwd, from)) await tx.rewrite(s.file, [[from, dest]])
+    for (const it of Object.values(snap.items)) {
+      if (!it.cwd || !within(it.cwd, from)) continue
+      const c = snap.connectors.find(x => x.id === it.connector)
+      if (c?.link.kind === 'cwd') await tx.rewrite(it.file, [[from, dest]], c.link.field)
+      else if (c?.link.kind === 'named') await tx.moveInto(it.file, namedTarget(c, it, from, dest))
+    }
     if (opts.status) await tx.sidecar(dest, () => setMeta(dest, 'status', opts.status))
     if (opts.trashHeavy && n.size) for (const p of n.size.parts) await tx.trash(path.join(dest, p.path))
   })
@@ -332,12 +337,13 @@ export async function applyAction(snap: Snapshot, title: string, a: Action) {
       for (const f of await jsonlUnder(a.target)) await tx.rewrite(f, a.pairs)
     } else if (a.type === 'rewrite-claude') {
       for (const it of a.items) for (const f of await jsonlUnder(it.dir)) await tx.rewrite(f, it.pairs)
-    } else if (a.type === 'rewrite-codex') {
-      for (const f of a.files) await tx.rewrite(f, a.pairs)
+    } else if (a.type === 'rewrite-logs') {
+      for (const f of a.files) await tx.rewrite(f, a.pairs, a.field)
     } else if (a.type === 'quarantine') {
-      for (const p of a.paths) {
-        const rel = within(p, CODEX_SESSIONS) ? path.join('codex', path.relative(CODEX_SESSIONS, p)) : path.join('claude', path.basename(p))
-        await tx.move(p, path.join(QUARANTINE, rel))
+      for (const m of a.moves) {
+        const to = path.join(QUARANTINE, m.to)
+        if (!within(to, QUARANTINE)) throw new Error('Bad quarantine path')
+        await tx.move(m.from, to)
       }
     } else if (a.type === 'trash') {
       for (const p of a.paths) await tx.trash(p)
@@ -346,7 +352,7 @@ export async function applyAction(snap: Snapshot, title: string, a: Action) {
 }
 
 /** Copy every agent log that isn't backed up yet. Claude deletes old transcripts; this keeps them. */
-export async function backupHistory() {
+export async function backupHistory(snap: Pick<Snapshot, 'connectors'>) {
   const dest = path.join(DATA, 'history')
   let copied = 0
   let bytes = 0
@@ -355,7 +361,7 @@ export async function backupHistory() {
       const s = path.join(src, e.name)
       const d = path.join(dst, e.name)
       if (e.isDirectory()) await walk(s, d)
-      else if (e.isFile() && /\.(jsonl|md)$/.test(e.name)) {
+      else if (e.isFile() && /\.(jsonl|json|md)$/.test(e.name)) {
         const [a, b] = await Promise.all([stat(s), stat(d)])
         if (b && a && b.size === a.size) continue
         await fs.mkdir(dst, { recursive: true })
@@ -365,7 +371,6 @@ export async function backupHistory() {
       }
     }
   }
-  await walk(CLAUDE_PROJECTS, path.join(dest, 'claude'))
-  await walk(CODEX_SESSIONS, path.join(dest, 'codex'))
+  for (const c of snap.connectors) if ('dir' in c.link && c.link.kind !== 'mentions') await walk(c.link.dir, path.join(dest, c.id))
   return { copied, bytes, dest }
 }

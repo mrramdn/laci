@@ -195,8 +195,42 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .stat .k { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
 .stat .v { font: 600 22px/1.2 var(--sans); letter-spacing: -.02em; margin: 8px 0 4px; font-variant-numeric: tabular-nums; }
 .stat p { margin: 0; font-size: 12px; color: var(--muted); }
-.stat .p { font: 11px var(--mono); color: var(--faint); margin-top: 8px; }
-.stat.off { opacity: .5; }
+.stat .p { font: 11px var(--mono); color: var(--faint); margin-top: 8px; overflow-wrap: anywhere; }
+.callout + .stats { padding-top: 4px; }
+.stat .top { display: flex; align-items: center; gap: 8px; }
+.stat .top .k { flex: 1; min-width: 0; color: var(--text); font-weight: 500; font-size: 13px; }
+.stat .v.none { font-size: 13px; font-weight: 400; color: var(--muted); letter-spacing: 0; margin: 12px 0 6px; }
+.stat .mv { font-size: 12px; color: var(--faint); margin-top: 6px; }
+.stat .foot { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.stat.add { display: grid; place-items: center; align-content: center; gap: 6px; min-height: 150px; height: 100%; border-style: dashed; box-shadow: none; background: none; color: var(--muted); cursor: pointer; }
+.stat.add:hover { color: var(--text); border-color: var(--border-strong); background: var(--subtle); }
+.fld { display: grid; gap: 6px; margin-top: 14px; }
+.fld > span { font-size: 12.5px; font-weight: 500; }
+.fld small { color: var(--faint); font-size: 12px; }
+.inp { height: 32px; width: 100%; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg); }
+.inp.mono { font: 12.5px var(--mono); }
+.inp:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.choices { display: grid; gap: 6px; }
+.choice { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.choice:hover { background: var(--subtle); }
+.choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.choice input { margin: 3px 0 0; accent-color: var(--accent); }
+.choice b { display: block; font-weight: 500; }
+.choice p { margin: 1px 0 0; color: var(--muted); font-size: 12px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.kf { display: none; }
+.cform:has([name=kind][value=cwd]:checked) .kf.cwd, .cform:has([name=kind][value=named]:checked) .kf.named,
+.cform:has([name=kind][value=inside]:checked) .kf.inside, .cform:has([name=kind][value=mentions]:checked) .kf.mentions { display: block; }
+.dialog .df p.err { color: var(--red); }
+.pick { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; margin-top: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); text-align: left; }
+.pick:hover { background: var(--subtle); border-color: var(--border-strong); }
+.pick .txt { flex: 1; min-width: 0; }
+.pick b { display: block; font-weight: 500; }
+.pick p { margin: 1px 0 0; color: var(--muted); font-size: 12px; }
+.pick .found { color: var(--green); font-size: 12px; white-space: nowrap; }
+.empty-hero { padding: 48px 20px 32px; text-align: center; }
+.empty-hero h2 { margin: 0 0 6px; font: 600 15px var(--sans); }
+.empty-hero p { margin: 0 auto 16px; max-width: 52ch; color: var(--muted); }
 .meter { width: 96px; height: 4px; border-radius: 2px; background: var(--hover); overflow: hidden; flex: none; }
 .meter i { display: block; height: 100%; background: var(--accent); }
 
@@ -409,7 +443,11 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1)
 const descendants = n => n.children.flatMap(c => [nodes[c], ...descendants(nodes[c])])
 const sessionsOf = n => n.agents.claude.flatMap(k => snap.claude[k].sessions).sort((a, b) => b.at.localeCompare(a.at))
-const agentCount = n => sessionsOf(n).length + n.agents.codex.length
+const conn = id => snap.connectors.find(c => c.id === id)
+/** Logs and store folders count as sessions; files inside the project or plans that mention it don't. */
+const counted = i => ['cwd', 'named'].includes(conn(snap.items[i].connector)?.link.kind)
+const agentCount = n => sessionsOf(n).length + n.agents.items.filter(counted).length
+const itemName = it => it.title ?? it.file.split('/').pop().replace(/^rollout-/, '').replace(/\.[a-z]+$/i, '')
 
 const L = {
   inbox: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
@@ -515,7 +553,7 @@ function render() {
 }
 
 function side() {
-  const nav = [['today', 'Today', 'inbox', hot(), true], ['tidy', 'Tidy up', 'sparkles', snap.proposals.filter(p => p.action).length], ['agents', 'Agent history', 'history', snap.orphans.claude.length + snap.orphans.codex.length]]
+  const nav = [['today', 'Today', 'inbox', hot(), true], ['tidy', 'Tidy up', 'sparkles', snap.proposals.filter(p => p.action).length], ['agents', 'Agent history', 'history', snap.orphans.claude.length + snap.orphans.items.length]]
   const treeRows = (ids, depth) => ids.map(id => nodes[id]).filter(n => n.kind === 'folder').map(n => {
     const sub = n.children.filter(c => nodes[c].kind === 'folder')
     const open = st.tree.has(n.id)
@@ -669,25 +707,101 @@ function opsList(ops, optional = false) {
 }
 
 /* ---------- Agents ---------- */
+const KIND = {
+  cwd: ['Log files that record the folder', 'Each log names the folder it ran in, like Codex.'],
+  named: ['One folder per project', 'The tool keeps a folder named after each project, like Claude Code.'],
+  inside: ['Inside the project', 'History sits in the project folder itself, like Aider.'],
+  mentions: ['Files that mention the project', 'Notes or plans that mention a project path, like Claude plans.'],
+}
 function agentsView() {
-  const linked = all.filter(n => n.agents.claude.length || n.agents.codex.length)
-    .map(n => ({ n, sessions: agentCount(n), mem: n.agents.claude.reduce((a, k) => a + snap.claude[k].memory.length, 0), bytes: n.agents.claude.reduce((a, k) => a + snap.claude[k].bytes, 0) }))
+  const bytesOf = n => n.agents.claude.reduce((a, k) => a + snap.claude[k].bytes, 0) + n.agents.items.filter(counted).reduce((a, i) => a + snap.items[i].bytes, 0)
+  const linked = all.filter(n => n.agents.claude.length || n.agents.items.some(counted))
+    .map(n => ({ n, sessions: agentCount(n), mem: n.agents.claude.reduce((a, k) => a + snap.claude[k].memory.length, 0), bytes: bytesOf(n) }))
     .sort((a, b) => b.bytes - a.bytes)
   const max = Math.max(...linked.map(l => l.bytes), 1)
   const globalDirs = snap.global.claude.map(k => snap.claude[k])
+  const byWhere = new Map()
+  for (const it of snap.orphans.items.map(i => snap.items[i])) {
+    const key = `${it.connector}\0${it.cwd ?? it.file}`
+    byWhere.set(key, [...(byWhere.get(key) ?? []), it])
+  }
   const orphanRows = [
-    ...snap.orphans.claude.map(k => ({ name: k, what: `${plural(snap.claude[k].sessions.length, 'session')} · ${plural(snap.claude[k].memory.length, 'memory file')}`, at: snap.claude[k].sessions[0]?.at, tool: 'Claude' })),
-    ...[...new Set(snap.orphans.codex.map(k => snap.codex[k].cwd))].map(cwd => ({ name: tilde(cwd), what: plural(snap.orphans.codex.filter(k => snap.codex[k].cwd === cwd).length, 'session'), at: snap.orphans.codex.map(k => snap.codex[k]).find(s => s.cwd === cwd)?.at, tool: 'Codex' })),
+    ...snap.orphans.claude.map(k => ({ name: k, what: `${plural(snap.claude[k].sessions.length, 'session')} · ${plural(snap.claude[k].memory.length, 'memory file')}`, at: snap.claude[k].sessions[0]?.at, tool: 'Claude Code' })),
+    ...[...byWhere.values()].map(list => ({ name: tilde(list[0].cwd ?? list[0].file), what: plural(list.length, conn(list[0].connector)?.link.kind === 'cwd' ? 'session' : 'folder'), at: list[0].at, tool: conn(list[0].connector)?.name ?? list[0].connector })),
   ]
-  return `<div class="head"><h1>Agent history</h1><span class="count">Where each tool keeps sessions and memory</span><span class="grow"></span><button class="btn sm" data-act="backup">Back up logs now</button></div>
-    <div class="body">
-      <div class="stats">${snap.stores.map(s => `<div class="stat ${s.present ? '' : 'off'}"><div class="k">${icon(s.name.startsWith('Claude') ? 'bot' : 'history', 'sm')}${esc(s.name)}</div><div class="v">${s.present ? esc(bytes(s.bytes)) : 'Not used'}</div><p>${esc(s.note)}</p><div class="p">${esc(s.path)}</div></div>`).join('')}</div>
-      <section class="group"><div class="group-h">Detached <span class="c">${orphanRows.length}</span><span class="hint">The folder moved or was deleted</span><span class="right"><button class="btn sm" data-act="view" data-v="tidy">Fix in Tidy up</button></span></div>
-        ${orphanRows.map(o => `<div class="item">${icon('unlink')}<span class="name mono" style="font-weight:400;max-width:48%">${esc(o.name)}</span><span class="d">${esc(o.what)}</span><span class="meta"><span class="pill">${o.tool}</span><span class="mono">${esc(date(o.at))}</span></span></div>`).join('') || '<div class="empty">Every session belongs to a folder that exists.</div>'}</section>
-      <section class="group"><div class="group-h">By project <span class="c">${linked.length}</span></div>
-        ${linked.map(({ n, sessions, mem, bytes: b }) => `<div class="item" data-act="sel" data-id="${esc(n.id)}" data-tab="agents" tabindex="0" aria-selected="${st.sel === n.id}">${kindIcon(n)}<span class="name">${esc(n.label)}</span><span class="d">${plural(sessions, 'session')}${mem ? ` · ${plural(mem, 'memory file')}` : ''}${n.agents.plans.length ? ` · ${plural(n.agents.plans.length, 'plan')}` : ''}</span><span class="meta"><span class="meter"><i style="width:${Math.max(2, (b / max) * 100)}%"></i></span><span class="mono" style="width:56px;text-align:right">${esc(bytes(b))}</span></span></div>`).join('')}</section>
-      ${globalDirs.length ? `<section class="group"><div class="group-h">Outside project folders <span class="c">${globalDirs.length}</span></div>${globalDirs.map(c => `<div class="item">${icon('folder')}<span class="name mono" style="font-weight:400">${esc(tilde(c.path))}</span><span class="d">${plural(c.sessions.length, 'session')} · ${plural(c.memory.length, 'memory file')}</span><span class="meta"><span class="mono">${esc(bytes(c.bytes))}</span></span></div>`).join('')}</section>` : ''}
+  const unmatched = snap.unmatched.map(i => snap.items[i])
+  const card = c => `<div class="stat">
+      <div class="top"><span class="k">${esc(c.name)}</span>${c.builtin ? '' : '<span class="tag">Custom</span>'}</div>
+      ${c.present ? `<div class="v">${esc(bytes(c.bytes))}</div>` : '<div class="v none">Nothing here yet</div>'}
+      <p>${esc(c.about)}${c.present && c.id !== 'claude' ? ` · ${plural(c.count, c.link.kind === 'cwd' ? 'log' : c.link.kind === 'named' ? 'folder' : 'file')}` : ''}</p>
+      <div class="p">${esc(c.where)}</div>
+      <div class="mv">On move: ${esc(c.moves.charAt(0).toLowerCase() + c.moves.slice(1))}</div>
+      <div class="foot"><span class="grow"></span><button class="btn sm ghost" data-act="connrm" data-id="${esc(c.id)}">Remove</button></div>
     </div>`
+  const found = snap.suggestions.filter(x => x.found)
+  const nudge = found.map(x => `<div class="callout">${icon('sparkles')}<div class="txt"><b>${esc(x.name)} history found on this PC</b><p>${esc(x.about)}${x.detail ? ` · ${esc(x.detail)}` : ''}. Add it so it shows on projects and moves with them.</p></div><button class="btn sm" data-act="connpreset" data-id="${esc(x.id)}">Add ${esc(x.name)}</button></div>`).join('')
+  const top = snap.connectors.length
+    ? `${nudge}<div class="stats">${snap.connectors.map(card).join('')}<button class="stat add" data-act="connadd">${icon('plus')}<span>Add a connector</span><small class="faint">Another AI tool you use</small></button></div>`
+    : `<div class="empty-hero"><h2>Connect the AI tools you use</h2><p>laci reads where each tool keeps its sessions, shows them on the right project, and carries them along when you move or archive one.</p><button class="btn primary" data-act="connadd">${icon('plus', 'sm')}Add a connector</button></div>${nudge}`
+  return `<div class="head"><h1>Agent history</h1><span class="count">${snap.connectors.length ? plural(snap.connectors.length, 'connector') : 'No connectors yet'}</span><span class="grow"></span>${snap.connectors.length ? '<button class="btn sm" data-act="backup">Back up logs now</button>' : ''}</div>
+    <div class="body">
+      ${top}
+      ${!snap.connectors.length ? '' : `<section class="group"><div class="group-h">Detached <span class="c">${orphanRows.length}</span><span class="hint">The folder moved or was deleted</span><span class="right"><button class="btn sm" data-act="view" data-v="tidy">Fix in Tidy up</button></span></div>
+        ${orphanRows.map(o => `<div class="item">${icon('unlink')}<span class="name mono" style="font-weight:400;max-width:48%">${esc(o.name)}</span><span class="d">${esc(o.what)}</span><span class="meta"><span class="pill">${esc(o.tool)}</span><span class="mono">${esc(date(o.at))}</span></span></div>`).join('') || '<div class="empty">Every session belongs to a folder that exists.</div>'}</section>
+      <section class="group"><div class="group-h">By project <span class="c">${linked.length}</span></div>
+        ${linked.map(({ n, sessions, mem, bytes: b }) => `<div class="item" data-act="sel" data-id="${esc(n.id)}" data-tab="agents" tabindex="0" aria-selected="${st.sel === n.id}">${kindIcon(n)}<span class="name">${esc(n.label)}</span><span class="d">${plural(sessions, 'session')}${mem ? ` · ${plural(mem, 'memory file')}` : ''}</span><span class="meta"><span class="meter"><i style="width:${Math.max(2, (b / max) * 100)}%"></i></span><span class="mono" style="width:56px;text-align:right">${esc(bytes(b))}</span></span></div>`).join('') || '<div class="empty">No project has agent history yet.</div>'}</section>`}
+      ${globalDirs.length ? `<section class="group"><div class="group-h">Outside project folders <span class="c">${globalDirs.length}</span></div>${globalDirs.map(c => `<div class="item">${icon('folder')}<span class="name mono" style="font-weight:400">${esc(tilde(c.path))}</span><span class="d">${plural(c.sessions.length, 'session')} · ${plural(c.memory.length, 'memory file')}</span><span class="meta"><span class="mono">${esc(bytes(c.bytes))}</span></span></div>`).join('')}</section>` : ''}
+      ${unmatched.length ? `<section class="group"><div class="group-h">Not matched <span class="c">${unmatched.length}</span><span class="hint">Named by a hash of a folder laci didn't scan</span></div>${unmatched.map(it => `<div class="item">${icon('history')}<span class="name mono" style="font-weight:400">${esc(it.file.split('/').pop().slice(0, 12))}…</span><span class="d">${esc(conn(it.connector)?.name ?? '')}</span><span class="meta"><span class="mono">${esc(bytes(it.bytes))}</span><span class="mono">${esc(date(it.at))}</span></span></div>`).join('')}</section>` : ''}
+    </div>`
+}
+
+/** Step one: pick a tool laci already knows, or describe another one. */
+function pickDialog() {
+  const list = [...snap.suggestions].sort((a, b) => Number(b.found) - Number(a.found))
+  return `<div class="scrim" data-act="scrim"><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="c-t">
+    <div class="dh"><h2 id="c-t">Add a connector</h2>
+      <p class="desc">Pick the AI tool. laci shows its history on each project and carries it along when you move or archive one.</p></div>
+    <div class="db">
+      ${list.map(x => `<button class="pick" data-act="connpreset" data-id="${esc(x.id)}">${icon('bot')}<div class="txt"><b>${esc(x.name)}</b><p>${esc(x.about)} · <span class="mono">${esc(x.where)}</span></p></div>${x.found ? `<span class="found">Found${x.detail ? ` · ${esc(x.detail)}` : ''}</span>` : '<span class="faint" style="font-size:12px">Not on this PC</span>'}</button>`).join('')}
+      <button class="pick" data-act="conncustom">${icon('plus')}<div class="txt"><b>Another tool…</b><p>Tell laci where it keeps its history</p></div>${icon('chev', 'sm')}</button>
+    </div>
+    <div class="df"><p>Saved in ~/.config/laci/config.json</p><button class="btn" data-act="closemodal">Cancel</button></div>
+  </div></div>`
+}
+
+function connectorDialog() {
+  if (st.modal.step !== 'custom') return pickDialog()
+  const d = st.modal.draft ?? {}
+  const v = k => esc(d[k] ?? '')
+  const kind = d.kind ?? 'cwd'
+  return `<div class="scrim" data-act="scrim"><form class="dialog cform" data-form="connector" role="dialog" aria-modal="true" aria-labelledby="c-t">
+    <div class="dh"><h2 id="c-t">Another tool</h2>
+      <p class="desc">Tell laci where it keeps its history. It will show up on each project, and move along when you move or archive one.</p></div>
+    <div class="db">
+      <label class="fld"><span>Name</span><input class="inp" name="name" value="${v('name')}" placeholder="OpenCode, Cursor, my own agent…" autocomplete="off" required maxlength="40"></label>
+      <div class="fld"><span>Where does it keep its history?</span><div class="choices">
+        ${Object.entries(KIND).map(([k, [t, p]]) => `<label class="choice"><input type="radio" name="kind" value="${k}" ${kind === k ? 'checked' : ''}><div><b>${t}</b><p>${p}</p></div></label>`).join('')}
+      </div></div>
+      <div class="kf cwd">
+        <label class="fld"><span>Folder with the logs</span><input class="inp mono" name="cwd_dir" value="${v('cwd_dir')}" placeholder="~/.tool/sessions"><small>Searched with every subfolder.</small></label>
+        <div class="row2"><label class="fld"><span>File type</span><input class="inp mono" name="cwd_ext" value="${esc(d.cwd_ext ?? '.jsonl')}"></label>
+          <label class="fld"><span>Field that holds the folder</span><input class="inp mono" name="cwd_field" value="${esc(d.cwd_field ?? 'cwd')}"></label></div>
+      </div>
+      <div class="kf named">
+        <label class="fld"><span>Folder that holds one folder per project</span><input class="inp mono" name="named_dir" value="${v('named_dir')}" placeholder="~/.tool/projects"></label>
+        <label class="fld"><span>How the folders are named</span><select class="inp" name="named_naming">
+          <option value="dashes" ${d.named_naming !== 'sha256' ? 'selected' : ''}>Path with dashes: -home-me-project-app</option>
+          <option value="sha256" ${d.named_naming === 'sha256' ? 'selected' : ''}>SHA-256 hash of the path</option></select></label>
+      </div>
+      <div class="kf inside"><label class="fld"><span>Path inside each project</span><input class="inp mono" name="inside_path" value="${v('inside_path')}" placeholder=".tool/history"><small>A file or a folder. It already moves with the project; laci shows it on the project.</small></label></div>
+      <div class="kf mentions">
+        <div class="row2"><label class="fld"><span>Folder</span><input class="inp mono" name="mentions_dir" value="${v('mentions_dir')}" placeholder="~/.tool/plans"></label>
+          <label class="fld"><span>File type</span><input class="inp mono" name="mentions_ext" value="${esc(d.mentions_ext ?? '.md')}"></label></div>
+      </div>
+    </div>
+    <div class="df">${st.modal.error ? `<p class="err" role="alert">${esc(st.modal.error)}</p>` : '<p>Saved in ~/.config/laci/config.json</p>'}
+      <button type="button" class="btn" data-act="connadd">Back</button><button class="btn primary">Add connector</button></div>
+  </form></div>`
 }
 
 /* ---------- Inspector ---------- */
@@ -698,7 +812,7 @@ function insp() {
   const isProject = n.kind === 'project'
   const tasks = n.tasks.filter(t => !t.done).length
   const sess = sessionsOf(n)
-  const tabs = [['health', 'Health'], ['todo', 'To-do', tasks], ['agents', 'Agents', sess.length + n.agents.codex.length], ...(n.readme ? [['readme', 'README']] : [])]
+  const tabs = [['health', 'Health'], ['todo', 'To-do', tasks], ['agents', 'Agents', agentCount(n)], ...(n.readme ? [['readme', 'README']] : [])]
   if (!tabs.some(t => t[0] === st.tab)) st.tab = 'health'
   const parent = nodes[n.parent]
   const g = n.git
@@ -807,15 +921,26 @@ function agentsTab(n) {
     ${sess.length > 8 ? `<button class="more" data-act="expand" data-k="sess:${esc(n.id)}">${st.expand['sess:' + n.id] ? 'Show fewer' : `Show all ${sess.length}`}</button>` : ''}`)
   const mem = n.agents.claude.flatMap(k => snap.claude[k].memory)
   if (mem.length) out.push(`<div class="sec-t">Memory <span class="grow"></span><span class="faint" style="font-weight:400">${plural(mem.length, 'file')}</span></div><div style="display:flex;flex-wrap:wrap;gap:4px">${mem.map(f => `<span class="tag mono">${esc(f)}</span>`).join('')}</div>`)
-  if (n.agents.codex.length) out.push(`<div class="sec-t">Codex <span class="grow"></span><span class="faint" style="font-weight:400">${plural(n.agents.codex.length, 'session')}</span></div>${n.agents.codex.map(k => snap.codex[k]).map(s => `<div class="sess">${icon('bot', 'sm')}<span class="t mono">${esc(s.file.split('/').pop().replace(/^rollout-/, '').slice(0, 19))}</span><span class="m">${esc(date(s.at))}${s.subagent ? ' · subagent' : ''}</span></div>`).join('')}`)
-  if (n.agents.plans.length) out.push(`<div class="sec-t">Plans that mention this folder</div>${n.agents.plans.map(k => snap.plans[k]).map(p => `<div class="sess">${icon('file', 'sm')}<span class="t">${esc(p.title)}</span><span class="m">${esc(date(p.at))}</span></div>`).join('')}`)
+  const groups = {}
+  for (const it of n.agents.items.map(i => snap.items[i]).sort((a, b) => b.at.localeCompare(a.at))) (groups[it.connector] ??= []).push(it)
+  for (const [id, list] of Object.entries(groups)) {
+    const c = conn(id)
+    const k = c?.link.kind
+    const lim = st.expand[`it:${id}:${n.id}`] ? Infinity : 6
+    const title = k === 'mentions' ? `${esc(c.name)} that mention this folder` : esc(c?.name ?? id)
+    out.push(`<div class="sec-t">${title}<span class="grow"></span><span class="faint" style="font-weight:400">${k === 'inside' ? 'in the folder' : plural(list.length, k === 'cwd' ? 'session' : k === 'named' ? 'folder' : 'file')}</span></div>
+      ${list.slice(0, lim).map(it => `<div class="sess">${icon(k === 'mentions' || k === 'inside' ? 'file' : 'bot', 'sm')}<span class="t ${it.title ? '' : 'mono'}">${esc(k === 'inside' ? tilde(it.file).split('/').pop() + (it.title ? ` · ${it.title}` : '') : itemName(it))}</span><span class="m">${esc(date(it.at))} · ${esc(bytes(it.bytes))}</span></div>`).join('')}
+      ${list.length > 6 ? `<button class="more" data-act="expand" data-k="it:${esc(id)}:${esc(n.id)}">${st.expand[`it:${id}:${n.id}`] ? 'Show fewer' : `Show all ${list.length}`}</button>` : ''}`)
+  }
   const dirs = n.agents.claude.map(k => snap.claude[k])
+  const stores = Object.keys(groups).map(conn).filter(c => c && c.link.kind !== 'inside')
   out.push(`<div class="sec-t">Stored at</div><dl class="kv">
-    ${dirs.map(c => `<dt>Claude</dt><dd class="mono" style="font-size:11px">~/.claude/projects/${esc(c.name)}<br><span class="faint">${esc(bytes(c.bytes))}${c.subagentLogs ? ` · ${c.subagentLogs} subagent logs` : ''}</span></dd>`).join('')}
-    ${n.agents.aiFiles.length ? `<dt>In folder</dt><dd class="mono" style="font-size:11px">${n.agents.aiFiles.map(esc).join(', ')}${n.agents.serenaMemories ? ` <span class="faint">· ${n.agents.serenaMemories} Serena memories</span>` : ''}</dd>` : ''}
+    ${dirs.map(c => `<dt>Claude Code</dt><dd class="mono" style="font-size:11px">~/.claude/projects/${esc(c.name)}<br><span class="faint">${esc(bytes(c.bytes))}${c.subagentLogs ? ` · ${c.subagentLogs} subagent logs` : ''}</span></dd>`).join('')}
+    ${stores.map(c => `<dt>${esc(c.name)}</dt><dd class="mono" style="font-size:11px">${esc(c.where)}</dd>`).join('')}
+    ${n.agents.aiFiles.length ? `<dt>In folder</dt><dd class="mono" style="font-size:11px">${n.agents.aiFiles.map(esc).join(', ')}</dd>` : ''}
     ${n.git ? `<dt>Git trailers</dt><dd>${n.git.aiTrailers ? `${plural(n.git.aiTrailers, 'commit')} credit an AI tool` : 'No commit credits an AI tool'}</dd>` : ''}
   </dl>`)
-  if (!sess.length && !n.agents.codex.length) out.unshift('<p class="muted" style="margin-top:14px">No agent has worked in this folder, as far as the logs show.</p>')
+  if (!sess.length && !n.agents.items.length) out.unshift('<p class="muted" style="margin-top:14px">No agent has worked in this folder, as far as the logs show.</p>')
   return out.join('')
 }
 
@@ -826,6 +951,7 @@ function readmeTab(n) {
 
 /* ---------- dialog, palette, toast ---------- */
 function dialog() {
+  if (st.modal.kind === 'connector') return connectorDialog()
   const n = nodes[st.modal.id]
   const plan = n.archivePlan
   return `<div class="scrim" data-act="scrim"><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="d-t">
@@ -1084,6 +1210,24 @@ const acts = {
   }, 'Applying changes…'),
   undo: d => mutate(async () => afterChange(await api('undo', { id: d.id }), 'Undone. Everything is back where it was.'), 'Undoing…'),
   archive: d => { st.modal = { id: d.id }; render() },
+  connadd: () => { st.modal = { kind: 'connector' }; render() },
+  conncustom: () => { st.modal = { kind: 'connector', step: 'custom', draft: {} }; render(); $('.cform [name=name]')?.focus() },
+  connpreset: d => {
+    const x = snap.suggestions.find(s => s.id === d.id)
+    st.modal = null
+    mutate(async () => {
+      load(await api('connector/add', { preset: d.id }))
+      render()
+      const c = conn(d.id)
+      toast(`Added ${x.name}`, !c?.present ? `Nothing at ${x.where} yet. It shows up once the tool writes there.` : c.link.kind === 'inside' ? `Found ${x.detail}` : `${bytes(c.bytes)} of history in ${c.where}`)
+    }, `Adding ${x.name}…`)
+  },
+  connrm: d => mutate(async () => {
+    const c = conn(d.id)
+    load(await api('connector/remove', { id: d.id }))
+    render()
+    toast(`Removed ${c.name}`, 'Its files stay where they are, but laci no longer shows them or moves them with projects.')
+  }),
   closemodal: () => { st.modal = null; render() },
   scrim: (d, e) => { if (e.target.classList.contains('scrim')) { st.modal = null; st.palette = null; render() } },
   doarchive: d => {
@@ -1178,8 +1322,38 @@ document.addEventListener('input', e => {
   }
   if (t.id === 'pal-in') { st.palette.q = t.value; st.palette.i = 0; render() }
 })
-document.addEventListener('submit', e => {
+/** The connector form's fields, flattened into the shape the server checks. */
+function connectorFromForm(f) {
+  const d = Object.fromEntries(new FormData(f))
+  const link = {
+    cwd: { kind: 'cwd', dir: d.cwd_dir, ext: d.cwd_ext, field: d.cwd_field },
+    named: { kind: 'named', dir: d.named_dir, naming: d.named_naming },
+    inside: { kind: 'inside', path: d.inside_path },
+    mentions: { kind: 'mentions', dir: d.mentions_dir, ext: d.mentions_ext },
+  }[d.kind]
+  return { draft: d, body: { name: d.name, link } }
+}
+document.addEventListener('submit', async e => {
   const f = e.target
+  if (f.dataset.form === 'connector') {
+    e.preventDefault()
+    const { draft, body } = connectorFromForm(f)
+    if (!LIVE) return toast('Read-only preview', 'Start laci with `pnpm start` in ~/project/laci to make changes.')
+    busy(`Adding ${body.name}…`)
+    try {
+      load(await api('connector/add', body))
+      st.modal = null
+      render()
+      const c = snap.connectors.at(-1)
+      toast(`Added ${c.name}`, c.present ? `Found ${plural(c.count, 'item')} in ${c.where}` : `Nothing at ${c.where} yet. It will show up once the tool writes there.`)
+    } catch (err) {
+      st.modal = { kind: 'connector', step: 'custom', draft, error: err.message }
+      render()
+    } finally {
+      busy()
+    }
+    return
+  }
   if (f.dataset.form !== 'todo') return
   e.preventDefault()
   const text = f.t.value.trim()

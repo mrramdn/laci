@@ -6,6 +6,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Node, Snapshot } from './core/types.ts'
 import { issuesFor } from './core/health.ts'
+import { CATALOG, connectors, presetsFound } from './core/agents/connectors.ts'
+import { ConfigError, checkConnector, loadConfig, saveConfig } from './core/config.ts'
 import { applyAction, archiveProject, backupHistory, journals, undo } from './core/ops.ts'
 import { autoStatus, scan } from './core/scan.ts'
 import { META_RULES, SIDECAR, addNext, deleteCheck, setMeta, setNotes, toggleCheck } from './core/sidecar.ts'
@@ -17,9 +19,15 @@ import { VENDOR } from './vendor.ts'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PORT = Number(process.env.LACI_PORT ?? 4747)
-const TERMINAL = process.env.LACI_TERMINAL ?? 'kitty'
-const EDITOR = process.env.LACI_EDITOR ?? 'code'
-const FILES = process.env.LACI_FILES ?? 'dolphin'
+/** Programs laci opens things with: an env var wins (tests, one-off runs), then Settings, then these. */
+async function apps() {
+  const c = (await loadConfig()).apps
+  return {
+    terminal: process.env.LACI_TERMINAL ?? c.terminal ?? 'kitty',
+    editor: process.env.LACI_EDITOR ?? c.editor ?? 'code',
+    files: process.env.LACI_FILES ?? c.files ?? 'dolphin',
+  }
+}
 // A page on any other site could POST to localhost; it can't read this token out of our page.
 const TOKEN = randomBytes(18).toString('base64url')
 
@@ -55,14 +63,14 @@ function detach(cmd: string, args: string[], cwd: string) {
 }
 
 /** Open a terminal in `cwd`, optionally running `cmd`. `confirm` shows the command and waits for Enter. */
-function terminal(cwd: string, cmd?: string, confirm = false) {
+function terminal(app: string, cwd: string, cmd?: string, confirm = false) {
   const shell = `exec "\${SHELL:-bash}"`
   const script = !cmd ? undefined : confirm
     ? `printf '\\033[2m$ %s\\033[0m\\n' "$0"; read -rp 'Press Enter to run, Ctrl+C to cancel ' _ && eval "$0"; ${shell}`
     : `printf '\\033[2m$ %s\\033[0m\\n' "$0"; eval "$0"; ${shell}`
   const run = script ? ['bash', '-lc', script, cmd!] : []
-  if (TERMINAL === 'konsole') detach('konsole', ['--workdir', cwd, ...(run.length ? ['-e', ...run] : [])], cwd)
-  else detach(TERMINAL, ['--directory', cwd, ...run], cwd)
+  if (app === 'konsole') detach('konsole', ['--workdir', cwd, ...(run.length ? ['-e', ...run] : [])], cwd)
+  else detach(app, ['--directory', cwd, ...run], cwd)
 }
 
 const FIX: Record<string, (n: Node) => string> = {
@@ -155,11 +163,12 @@ const api: Record<string, (body: any) => Promise<unknown>> = {
   /** Open something outside laci: the editor, the file manager, or an external terminal. */
   async open({ id, what, arg }) {
     const n = node(id)
-    if (what === 'editor') detach(EDITOR, [n.path], n.path)
-    else if (what === 'files') detach(FILES, [n.path], n.path)
+    const a = await apps()
+    if (what === 'editor') detach(a.editor, [n.path], n.path)
+    else if (what === 'files') detach(a.files, [n.path], n.path)
     else {
       const c = command(n, what === 'terminal' ? 'shell' : what, arg)
-      terminal(n.path, c.cmd, !!c.cmd && !c.run)
+      terminal(a.terminal, n.path, c.cmd, !!c.cmd && !c.run)
     }
     return { ok: true }
   },
@@ -207,10 +216,40 @@ const api: Record<string, (body: any) => Promise<unknown>> = {
     })
   },
   async backup() {
-    const r = await backupHistory()
+    const r = await backupHistory(await scanning)
     return { ...r, dest: tilde(r.dest), size: bytes(r.bytes) }
   },
 }
+
+/** Change the config, then rescan so the app shows the result. */
+function reconfigure(fn: (c: Awaited<ReturnType<typeof loadConfig>>) => Promise<void> | void) {
+  return exclusive(async () => {
+    const c = await loadConfig()
+    await fn(c)
+    await saveConfig(c)
+    return rescan()
+  })
+}
+
+Object.assign(api, {
+  /** Add a catalog connector (`preset`) or one the user described (`name` + `link`). */
+  async 'connector/add'({ preset, name, link }: { preset: unknown; name: unknown; link: unknown }) {
+    return reconfigure(async c => {
+      if (preset !== undefined) {
+        need(CATALOG.some(x => x.id === preset), 'Unknown connector')
+        c.presets = [...new Set([...(c.presets ?? (await presetsFound())), preset as string])]
+      } else c.custom.push(checkConnector({ name, link }, [...CATALOG.map(x => x.id), ...c.custom.map(x => x.id)]))
+    })
+  },
+  /** Stop using a connector. Its files stay where they are. */
+  async 'connector/remove'({ id }: { id: unknown }) {
+    return reconfigure(async c => {
+      need((await connectors(c)).some(x => x.id === id), 'Unknown connector')
+      c.presets = (c.presets ?? (await presetsFound())).filter(x => x !== id)
+      c.custom = c.custom.filter(x => x.id !== id)
+    })
+  },
+})
 
 async function page() {
   const html = await fs.readFile(path.join(ROOT, 'prototype', 'app.html'), 'utf8')
@@ -255,8 +294,9 @@ const server = http.createServer(async (req, res) => {
     send(res, 200, await api[name](body))
   } catch (e) {
     const err = e as Error
-    if (!(err instanceof Bad)) console.error(`[laci] ${url.pathname}:`, err)
-    send(res, err instanceof Bad ? 400 : 500, { error: err.message })
+    const user = err instanceof Bad || err instanceof ConfigError
+    if (!user) console.error(`[laci] ${url.pathname}:`, err)
+    send(res, user ? 400 : 500, { error: err.message })
   }
 })
 

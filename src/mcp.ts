@@ -7,7 +7,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
 import * as z from 'zod/v4'
 import type { Issue, Node, Op, Snapshot } from './core/types.ts'
 import { applyAction, archiveProject, journals, moveProject, undo } from './core/ops.ts'
-import { scan } from './core/scan.ts'
+import { scan, sessionCount } from './core/scan.ts'
 import { META_RULES, addNext, setMeta, setNotes, toggleCheck } from './core/sidecar.ts'
 import { moveOps } from './core/tidy.ts'
 import { HOME, stat, tilde, within } from './core/util.ts'
@@ -45,7 +45,7 @@ function find(s: Snapshot, ref: string): Node {
   throw new Error(`No project or folder "${ref}" in the last scan. Call list_projects to see what exists.`)
 }
 
-const sessions = (s: Snapshot, n: Node) => n.agents.claude.reduce((a, k) => a + s.claude[k].sessions.length, 0) + n.agents.codex.length
+const sessions = sessionCount
 
 function row(s: Snapshot, n: Node) {
   return {
@@ -159,8 +159,14 @@ server.registerTool(
       notes: n.notes,
       claude_sessions: n.agents.claude.flatMap(k => s.claude[k].sessions).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 10).map(x => `${x.at.slice(0, 10)} ${x.title ?? 'untitled'} (id ${x.id})`),
       claude_memory: n.agents.claude.flatMap(k => s.claude[k].memory),
-      codex_sessions: n.agents.codex.length || undefined,
-      plans: n.agents.plans.map(k => s.plans[k].title),
+      other_agent_history: (() => {
+        const by: Record<string, string[]> = {}
+        for (const it of n.agents.items.map(i => s.items[i]).sort((a, b) => b.at.localeCompare(a.at))) {
+          const name = s.connectors.find(c => c.id === it.connector)?.name ?? it.connector
+          ;(by[name] ??= []).push(`${it.at.slice(0, 10)} ${it.title ?? path.basename(it.file)}`)
+        }
+        return Object.keys(by).length ? Object.fromEntries(Object.entries(by).map(([k, v]) => [k, v.slice(0, 10)])) : undefined
+      })(),
       children: n.kind === 'folder' ? n.children.map(c => tilde(c)) : undefined,
       archive_to: n.archivePlan && tilde(n.archivePlan.dest),
     }

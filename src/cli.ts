@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Node, Snapshot } from './core/types.ts'
-import { scan } from './core/scan.ts'
+import { scan, sessionCount } from './core/scan.ts'
 import { bytes } from './core/tidy.ts'
 import { daysSince, tilde } from './core/util.ts'
 import { VENDOR } from './vendor.ts'
@@ -22,7 +22,7 @@ function table(snap: Snapshot) {
   const projects = Object.values(snap.nodes).filter(n => n.kind === 'project').sort((a, b) => (b.lastActivity?.at ?? '').localeCompare(a.lastActivity?.at ?? ''))
   console.log(bold(`${pad('PROJECT', 34)} ${pad('STATUS', 9)} ${pad('LAST', 6)} ${pad('AI', 6)} ISSUES`))
   for (const n of projects) {
-    const sessions = n.agents.claude.reduce((a, k) => a + snap.claude[k].sessions.length, 0) + n.agents.codex.length
+    const sessions = sessionCount(snap, n)
     const top = n.issues[0]
     const issue = top ? (top.severity === 'high' ? red : top.severity === 'med' ? yellow : dim)(top.title + (n.issues.length > 1 ? dim(` +${n.issues.length - 1}`) : '')) : green('ok')
     console.log(`${pad(tilde(n.path).replace('~/', ''), 34)} ${pad(n.status.value, 9)} ${pad(ago(n.lastActivity?.at), 6)} ${pad(sessions ? String(sessions) : '', 6)} ${issue}`)
@@ -57,7 +57,7 @@ async function proto(snap: Snapshot) {
 
 const [cmd = 'ls', ...args] = process.argv.slice(2)
 const snap = await scan()
-const summary = dim(`${Object.values(snap.nodes).filter(n => n.kind === 'project').length} projects · ${Object.keys(snap.claude).length} Claude dirs · ${Object.keys(snap.codex).length} Codex sessions · ${snap.tookMs}ms`)
+const summary = dim(`${Object.values(snap.nodes).filter(n => n.kind === 'project').length} projects · ${snap.connectors.filter(c => c.count).map(c => `${c.count} ${c.name}`).join(' · ')} · ${snap.tookMs}ms`)
 
 if (cmd === 'json') {
   const out = args[0] ?? path.join(ROOT, 'prototype', 'dist', 'snapshot.json')

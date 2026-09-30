@@ -1,17 +1,18 @@
 import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
-import type { Node, Snapshot } from './types.ts'
+import type { Connector } from './agents/connectors.ts'
+import type { Item, Link, Node, Snapshot } from './types.ts'
 import { scanClaude } from './agents/claude.ts'
-import { scanCodex } from './agents/codex.ts'
-import { scanPlans } from './agents/plans.ts'
+import { CATALOG, MOVES, connectors, readInside, readStores, storeName, where } from './agents/connectors.ts'
+import { loadConfig } from './config.ts'
 import { type Found, defaultRoots, detect } from './detect.ts'
 import { gitInfo } from './git.ts'
 import { issuesFor } from './health.ts'
 import { parseReadme } from './readme.ts'
 import { detectStack } from './stack.ts'
 import { readTasks } from './tasks.ts'
-import { buildProposals, planArchive } from './tidy.ts'
+import { buildProposals, bytes as bytesText, planArchive } from './tidy.ts'
 import { HEAVY, HOME, daysSince, du, iso, list, pool, readText, stat, tilde, within } from './util.ts'
 
 const AI_FILES = ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', '.claude', '.cursor', '.cursorrules', '.windsurf', '.serena', '.mcp.json', '.codex', '.aider.conf.yml', '.github/copilot-instructions.md']
@@ -46,12 +47,12 @@ function blank(f: Found, parent?: string): Node {
     status: { value: 'active', auto: true },
     tasks: [],
     taskFiles: [],
-    agents: { claude: [], codex: [], plans: [], aiFiles: [], serenaMemories: 0 },
+    agents: { claude: [], items: [], aiFiles: [] },
     issues: [],
   }
 }
 
-async function enrich(n: Node) {
+async function enrich(n: Node, inside: Connector[], items: Record<string, Item>) {
   const [readme, t] = await Promise.all([parseReadme(n.path), readTasks(n.path)])
   n.readme = readme
   n.meta = t.meta
@@ -62,7 +63,12 @@ async function enrich(n: Node) {
   else if (readme?.tagline && !readme.template) n.summary = { text: readme.tagline, source: readme.file }
 
   for (const f of AI_FILES) if (await stat(path.join(n.path, f))) n.agents.aiFiles.push(f)
-  n.agents.serenaMemories = (await list(path.join(n.path, '.serena', 'memories'))).length
+  for (const c of inside) {
+    const it = await readInside(c, c.link as Extract<Link, { kind: 'inside' }>, n.path)
+    if (!it) continue
+    items[it.id] = it
+    n.agents.items.push(it.id)
+  }
 
   const s = await stat(n.path)
   if (s?.birthtimeMs) n.createdAt = { at: iso(s.birthtimeMs), source: 'folder' }
@@ -87,6 +93,12 @@ async function enrich(n: Node) {
   n.size = { total: await du(n.path), reclaimable: big.reduce((a, p) => a + p.bytes, 0), parts: big.slice(0, 4) }
 }
 
+/** Agent sessions in a folder: Claude sessions plus every log or store folder another connector links to it. */
+export function sessionCount(s: Pick<Snapshot, 'claude' | 'items' | 'connectors'>, n: Node) {
+  const counted = new Set(s.connectors.filter(c => c.link.kind === 'cwd' || c.link.kind === 'named').map(c => c.id))
+  return n.agents.claude.reduce((a, k) => a + s.claude[k].sessions.length, 0) + n.agents.items.filter(i => counted.has(s.items[i].connector)).length
+}
+
 export function autoStatus(n: Node) {
   if (n.meta.status) return { value: n.meta.status, auto: false }
   if (n.archived) return { value: 'archived', auto: true }
@@ -96,14 +108,21 @@ export function autoStatus(n: Node) {
 
 export async function scan(opts: { roots?: string[] } = {}): Promise<Snapshot> {
   const t0 = Date.now()
-  const roots = opts.roots ?? (await defaultRoots())
-  const [claudeDirs, codexList, plans] = await Promise.all([scanClaude(), scanCodex(), scanPlans()])
+  const cfg = await loadConfig()
+  const roots = opts.roots ?? cfg.roots ?? (await defaultRoots())
+  const on = await connectors(cfg)
+  const claudeOn = on.some(c => c.id === 'claude')
+  const [claudeDirs, stores] = await Promise.all([claudeOn ? scanClaude() : Promise.resolve([]), readStores(on.filter(c => c.id !== 'claude'))])
+  const kind = Object.fromEntries(on.map(c => [c.id, c.link.kind]))
 
-  const codexAlive = await Promise.all(codexList.map(async s => !!s.cwd && !!(await stat(s.cwd))))
-  const agentPaths = new Set<string>([
-    ...claudeDirs.flatMap(c => (c.path ? [c.path] : [])),
-    ...codexList.flatMap((s, i) => (codexAlive[i] ? [s.cwd!] : [])),
-  ])
+  const exists = new Map<string, Promise<boolean>>()
+  const alive = (p: string) => {
+    if (!exists.has(p)) exists.set(p, stat(p).then(Boolean))
+    return exists.get(p)!
+  }
+  const linked = stores.items.filter(it => it.cwd)
+  const aliveCwd = await Promise.all(linked.map(it => alive(it.cwd!)))
+  const agentPaths = new Set<string>([...claudeDirs.flatMap(c => (c.path ? [c.path] : [])), ...linked.filter((_, i) => aliveCwd[i]).map(it => it.cwd!)])
 
   const found = await detect(roots, agentPaths)
   const nodes: Record<string, Node> = {}
@@ -114,7 +133,9 @@ export async function scan(opts: { roots?: string[] } = {}): Promise<Snapshot> {
     return n.id
   }
   const rootIds = found.map(f => add(f))
-  await pool(Object.values(nodes), 6, enrich)
+  const items: Record<string, Item> = Object.fromEntries(stores.items.map(it => [it.id, it]))
+  const inside = on.filter(c => c.link.kind === 'inside')
+  await pool(Object.values(nodes), 6, n => enrich(n, inside, items))
 
   const counts = new Map<string, number>()
   for (const n of Object.values(nodes)) counts.set(n.name, (counts.get(n.name) ?? 0) + 1)
@@ -124,8 +145,17 @@ export async function scan(opts: { roots?: string[] } = {}): Promise<Snapshot> {
   const byDepth = Object.values(nodes).sort((a, b) => b.path.length - a.path.length)
   const nearest = (p: string) => byDepth.find(n => within(p, n.path))
 
+  // A hashed store name can only be matched against folders we know of.
+  const hashed = on.filter(c => c.link.kind === 'named' && c.link.naming === 'sha256')
+  if (hashed.length) {
+    const known = new Set([HOME, ...roots, ...Object.keys(nodes), ...agentPaths])
+    for (const c of hashed) {
+      const byName = new Map([...known].map(p => [storeName(c.link as Extract<Link, { kind: 'named' }>, p), p]))
+      for (const it of stores.items) if (it.connector === c.id) it.cwd = byName.get(path.basename(it.file))
+    }
+  }
+
   const claude = Object.fromEntries(claudeDirs.map(c => [c.name, c]))
-  const codex = Object.fromEntries(codexList.map(s => [path.basename(s.file), s]))
   const snap: Snapshot = {
     scannedAt: new Date().toISOString(),
     home: HOME,
@@ -134,11 +164,12 @@ export async function scan(opts: { roots?: string[] } = {}): Promise<Snapshot> {
     rootIds,
     nodes,
     claude,
-    codex,
-    plans: {},
-    global: { claude: [], codex: [] },
-    orphans: { claude: [], codex: [] },
-    stores: [],
+    items,
+    connectors: [],
+    suggestions: [],
+    global: { claude: [], items: [] },
+    orphans: { claude: [], items: [] },
+    unmatched: [],
     proposals: [],
     warnings: [],
     tookMs: 0,
@@ -152,22 +183,23 @@ export async function scan(opts: { roots?: string[] } = {}): Promise<Snapshot> {
       else snap.global.claude.push(c.name)
     }
   }
-  codexList.forEach((s, i) => {
-    const id = path.basename(s.file)
-    if (!codexAlive[i]) snap.orphans.codex.push(id)
+  for (const it of stores.items) {
+    const k = kind[it.connector]
+    if (k === 'mentions') {
+      const text = stores.mentions.get(it.id) ?? ''
+      for (const n of byDepth) {
+        const hit = [n.path, tilde(n.path)].some(q => new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w./-])').test(text))
+        if (hit) n.agents.items.push(it.id)
+      }
+    } else if (!it.cwd) {
+      // Hashed names with no known folder, or a log with no folder in it: nothing to say about where it belongs.
+      if (k === 'named' && hashed.some(c => c.id === it.connector)) snap.unmatched.push(it.id)
+      else if (k === 'named') snap.orphans.items.push(it.id)
+    } else if (!(await alive(it.cwd))) snap.orphans.items.push(it.id)
     else {
-      const n = nearest(s.cwd!)
-      if (n) n.agents.codex.push(id)
-      else snap.global.codex.push(id)
-    }
-  })
-  for (const p of plans) {
-    const { text, ...plan } = p
-    const id = path.basename(p.file)
-    snap.plans[id] = plan
-    for (const n of byDepth) {
-      const hit = [n.path, tilde(n.path)].some(q => new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w./-])').test(text))
-      if (hit) n.agents.plans.push(id)
+      const n = nearest(it.cwd)
+      if (n) n.agents.items.push(it.id)
+      else snap.global.items.push(it.id)
     }
   }
 
@@ -175,33 +207,65 @@ export async function scan(opts: { roots?: string[] } = {}): Promise<Snapshot> {
   for (const n of byDepth) {
     const agentAt = [
       ...n.agents.claude.map(c => claude[c].sessions[0]?.at),
-      ...n.agents.codex.map(c => codex[c].at),
+      ...n.agents.items.filter(i => kind[items[i].connector] !== 'mentions').map(i => items[i].at),
       ...n.children.map(c => nodes[c].lastActivity?.at),
     ].filter(Boolean) as string[]
     for (const at of agentAt) if (!n.lastActivity || at > n.lastActivity.at) n.lastActivity = { at, source: n.children.length ? 'inside' : 'agent' }
     n.status = autoStatus(n)
     n.issues = issuesFor(n, claude)
   }
+  // Catalog connectors not added yet, with a hint when this PC has data for them.
+  const projectPaths = Object.values(nodes).filter(n => n.kind === 'project').map(n => n.path)
+  snap.suggestions = await Promise.all(
+    CATALOG.filter(c => !on.some(o => o.id === c.id)).map(async c => {
+      const l = c.link
+      let found = false
+      let detail: string | undefined
+      if (l.kind === 'inside') {
+        const hits = (await Promise.all(projectPaths.map(p => stat(path.join(p, l.path))))).filter(Boolean).length
+        found = hits > 0
+        if (found) detail = `in ${hits} project${hits === 1 ? '' : 's'}`
+      } else if ((await list(l.dir)).length) {
+        found = true
+        detail = bytesText(await du(l.dir))
+      }
+      return { id: c.id, name: c.name, about: c.about, where: where(l), found, detail }
+    }),
+  )
+
+  // Plans and proposals below read the connector list, so it's filled first.
+  const sessions = claudeDirs.reduce((a, c) => a + c.sessions.length, 0)
+  snap.connectors = await Promise.all(
+    on.map(async c => {
+      const l = c.link
+      const mine = Object.values(items).filter(it => it.connector === c.id)
+      const isClaude = c.id === 'claude'
+      const dir = 'dir' in l ? l.dir : undefined
+      const present = dir ? !!(await stat(dir)) : mine.length > 0
+      const bytes = dir ? (present ? await du(dir) : 0) : mine.reduce((a, it) => a + it.bytes, 0)
+      return {
+        id: c.id,
+        name: c.name,
+        link: l,
+        builtin: c.builtin,
+        about: isClaude ? `${claudeDirs.length} project folders · ${sessions} sessions` : c.about,
+        moves: isClaude ? 'Its folder is renamed and paths in the logs are rewritten' : MOVES[l.kind],
+        where: where(l),
+        present,
+        bytes,
+        count: isClaude ? sessions : mine.length,
+      }
+    }),
+  )
+
   for (const n of Object.values(nodes)) if (n.kind === 'project' && !n.archived) n.archivePlan = await planArchive(n, snap)
 
   snap.proposals = buildProposals(snap)
-  const store = async (name: string, rel: string, note: string) => {
-    const p = path.join(HOME, rel)
-    const present = !!(await stat(p))
-    snap.stores.push({ name, path: tilde(p), present, bytes: present ? await du(p) : 0, note })
-  }
-  const sessions = claudeDirs.reduce((a, c) => a + c.sessions.length, 0)
-  await store('Claude Code', '.claude/projects', `${claudeDirs.length} project dirs · ${sessions} sessions`)
-  await store('Codex', '.codex/sessions', `${codexList.length} sessions, linked by cwd inside each log`)
-  await store('Gemini CLI', '.gemini/tmp', 'keyed by a hash of the project path')
-  await store('Serena', '.serena/memories', `+ ${Object.values(nodes).filter(n => n.agents.serenaMemories).length} projects with .serena/ in the folder`)
-  await store('Claude plans', '.claude/plans', `${plans.length} plans, linked by paths they mention`)
-
   // Claude Code deletes transcripts after `cleanupPeriodDays` (default 30). Memory files survive; history doesn't.
   const settings = await readText(path.join(HOME, '.claude', 'settings.json'), 256 * 1024)
   const keep = Number(settings?.match(/"cleanupPeriodDays"\s*:\s*(\d+)/)?.[1] ?? 30)
   const oldest = claudeDirs.flatMap(c => c.sessions.map(s => s.at)).sort()[0]
-  if (keep < 3650)
+  if (claudeOn && keep < 3650)
     snap.warnings.push({
       code: 'claude-cleanup',
       severity: 'high',

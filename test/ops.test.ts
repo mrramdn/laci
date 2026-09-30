@@ -9,6 +9,7 @@ import { test } from 'node:test'
 
 const home = mkdtempSync(path.join(os.tmpdir(), 'laci-home-'))
 process.env.HOME = home
+delete process.env.XDG_CONFIG_HOME // config must come from the throwaway HOME, never the real one
 const { scan } = await import('../src/core/scan.ts')
 const { archiveProject, applyAction, undo, moveProject } = await import('../src/core/ops.ts')
 const { setMeta, addNext, setNotes, toggleCheck } = await import('../src/core/sidecar.ts')
@@ -55,6 +56,10 @@ const gammaNow = P('project', '_archive', 'gamma')
 const alphaDir = P('.claude', 'projects', enc(alpha))
 const gammaDir = P('.claude', 'projects', enc(P('project', 'gamma')))
 const codexFile = P('.codex', 'sessions', '2026', '09', '01', 'rollout-a.jsonl')
+const sha = (p: string) => createHash('sha256').update(p).digest('hex')
+const geminiDir = P('.gemini', 'tmp', sha(alpha))
+// A connector the user added: pretty-printed JSON logs whose folder is in `workdir`.
+const customLog = P('.mytool', 'logs', 'run1.json')
 
 repo(alpha, 'git@github.com:me/alpha.git')
 repo(P('project', 'beta'))
@@ -72,12 +77,19 @@ put(path.join(alphaDir, 'memory', 'MEMORY.md'), '- alpha facts\n')
 put(path.join(gammaDir, 's2.jsonl'), line({ type: 'user', cwd: P('project', 'gamma'), sessionId: 's2' }))
 put(path.join(gammaDir, 'memory', 'MEMORY.md'), '- gamma facts\n')
 put(codexFile, line({ type: 'session_meta', payload: { cwd: alpha, timestamp: '2026-09-01T00:00:00Z' } }) + line({ type: 'turn_context', payload: { cwd: alpha } }))
+put(path.join(geminiDir, 'chats', 'session-1.json'), '{"messages":[]}\n')
+put(customLog, JSON.stringify({ workdir: alpha, steps: [{ workdir: path.join(alpha, 'src') }, { workdir: P('project', 'alphabet') }] }, null, 2))
+put(P('.config', 'laci', 'config.json'), JSON.stringify({ custom: [{ id: 'custom-mytool', name: 'My tool', link: { kind: 'cwd', dir: '~/.mytool/logs', ext: '.json', field: 'workdir' } }] }))
 
 test('scan links sessions, flags the orphan and proposes a reconnect', async () => {
   const snap = await scan({ roots: [P('project')] })
   assert.equal(snap.claude[enc(alpha)].path, alpha)
   assert.deepEqual(snap.nodes[alpha].agents.claude, [enc(alpha)])
-  assert.equal(snap.nodes[alpha].agents.codex.length, 1)
+  const linked = snap.nodes[alpha].agents.items.map(i => snap.items[i].connector).sort()
+  assert.deepEqual(linked, ['codex', 'custom-mytool', 'gemini'])
+  // The plan shown before an archive must list every connector's change, not only Claude's.
+  const labels = snap.nodes[alpha].archivePlan!.ops.map(o => o.label)
+  for (const l of ['Rewrite paths in Codex logs', 'Rewrite paths in My tool logs', 'Move Gemini CLI history']) assert.ok(labels.includes(l), `plan is missing "${l}"`)
   assert.deepEqual(snap.orphans.claude, [enc(P('project', 'gamma'))])
   const rc = snap.proposals.find(p => p.category === 'reconnect')!
   assert.equal(rc.confidence, 'high')
@@ -108,6 +120,11 @@ test('archive moves the folder and its agent history, and undo restores every by
   assert.ok(log.includes(`work in ${alpha}`), 'message text is not rewritten, only cwd fields')
   assert.ok(readFileSync(path.join(newDir, 's1', 'subagents', 'a.jsonl'), 'utf8').includes(`"cwd":"${dest}"`))
   assert.equal(readFileSync(codexFile, 'utf8').split(`"cwd":"${dest}"`).length - 1, 2)
+  assert.ok(!existsSync(geminiDir) && existsSync(path.join(P('.gemini', 'tmp', sha(dest)), 'chats', 'session-1.json')), 'hashed store folder is renamed for the new path')
+  const custom = JSON.parse(readFileSync(customLog, 'utf8'))
+  assert.equal(custom.workdir, dest)
+  assert.equal(custom.steps[0].workdir, path.join(dest, 'src'))
+  assert.equal(custom.steps[1].workdir, P('project', 'alphabet'), 'a sibling with a shared prefix is left alone')
   assert.match(readFileSync(path.join(dest, '.laci.md'), 'utf8'), /status: archived/)
   assert.match(readFileSync(path.join(dest, '.git', 'info', 'exclude'), 'utf8'), /^\.laci\.md$/m)
 

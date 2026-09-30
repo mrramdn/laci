@@ -8,6 +8,8 @@ import * as z from 'zod/v4'
 import type { Issue, Node, Op, Snapshot } from './core/types.ts'
 import { entryForJournal, readLog, record, undoActivity } from './core/activity.ts'
 import { log, logAs } from './core/log.ts'
+import { homePath } from './core/config.ts'
+import { createProject } from './core/create.ts'
 import { applyAction, archiveProject, moveProject } from './core/ops.ts'
 import { stripMd } from './core/readme.ts'
 import { scan, sessionCount } from './core/scan.ts'
@@ -91,7 +93,7 @@ const tool =
   }
 
 const server = new McpServer(
-  { name: 'laci', version: '0.1.0' },
+  { name: 'laci', version: '1.0.0' },
   {
     instructions:
       "laci knows every project folder on this machine: git state, README summary, stack, open to-dos, and which Claude Code/Codex sessions and memory belong to it. Use it instead of ls/mv when sorting, moving or archiving projects: its moves carry the agent history along and can be undone. Changes are two-step: call without confirm to get a plan, show it to the user, then call again with confirm: true.",
@@ -350,6 +352,42 @@ server.registerTool(
     await record({ by: 'agent', title: j.title, path: p.nodeId, journal: j.id, undo: { type: 'journal', id: j.id } })
     stale()
     return done(`Applied: ${p.title}`, j.id)
+  }),
+)
+
+server.registerTool(
+  'create_project',
+  {
+    description:
+      'Make a new project folder: empty, from a template in ~/.config/laci/templates, or cloned; with git and a first commit, a .laci.md, and optionally a private repo on GitHub and/or GitLab (via gh/glab). Two-step: plan first, then confirm.',
+    inputSchema: z.object({
+      name: z.string().describe('Folder name: letters, numbers, dots, dashes or underscores'),
+      parent: z.string().describe('Where it goes, e.g. ~/project/clients'),
+      summary: z.string().max(300).optional().describe('One line about what it is; goes into the README and .laci.md'),
+      from: z.enum(['empty', 'template', 'clone']).optional().describe('Default empty'),
+      template: z.string().optional(),
+      url: z.string().optional().describe('Repo to clone (https:// or git@host:owner/repo)'),
+      remote: z.enum(['none', 'github', 'gitlab', 'both']).optional().describe('Create a private repo and push. Default none'),
+      confirm,
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  },
+  tool(async ({ confirm: go, ...a }) => {
+    const body = { from: 'empty', remote: 'none', ...a, parent: homePath(a.parent, 'Location') }
+    const dest = path.join(body.parent, a.name)
+    if (!go) {
+      const steps = [
+        body.from === 'clone' ? `Clone ${a.url}` : body.from === 'template' ? `Copy the template "${a.template}"` : 'Make the folder with a README',
+        ...(body.from === 'clone' ? [] : ['git init, and a first commit']),
+        'Write .laci.md (status active) and keep it out of git',
+        ...(body.remote !== 'none' && body.from !== 'clone' ? [`Create a private repo on ${body.remote === 'both' ? 'GitHub and GitLab' : body.remote === 'github' ? 'GitHub' : 'GitLab'} and push`] : []),
+      ]
+      return [`Plan: create ${tilde(dest)}`, '', ...steps.map((x, i) => `${i + 1}. ${x}`), '', CONFIRM_HINT].join('\n')
+    }
+    const r = await createProject(body)
+    await record({ by: 'agent', title: `Created ${path.basename(r.path)}`, detail: [tilde(r.path), ...r.warnings].join('. '), path: r.path })
+    stale()
+    return `Created ${tilde(r.path)}${r.warnings.length ? `. Warnings: ${r.warnings.join('; ')}` : ''}`
   }),
 )
 

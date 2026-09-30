@@ -14,7 +14,7 @@
     "doctor": "node src/cli.ts doctor",
     "json": "node src/cli.ts json",
     "proto": "node src/cli.ts proto",
-    "test": "node --test test/*.test.ts",
+    "test": "node --test --test-timeout=60000 test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "web": "node src/server.ts --open",
     "mcp": "node src/mcp.ts"

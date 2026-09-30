@@ -4,6 +4,8 @@ import os from 'node:os'
 import path from 'node:path'
 
 export const HOME = os.homedir()
+/** laci's own files: undo journals, the activity log, the debug log, backups. */
+export const DATA = path.join(HOME, '.local', 'share', 'laci')
 
 /** Claude Code's project-dir encoding: every non-alphanumeric char becomes `-`. Lossy on purpose. */
 export const enc = (p: string) => p.replace(/[^A-Za-z0-9]/g, '-')

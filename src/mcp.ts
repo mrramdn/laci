@@ -6,12 +6,16 @@ import { McpServer } from '@modelcontextprotocol/server'
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
 import * as z from 'zod/v4'
 import type { Issue, Node, Op, Snapshot } from './core/types.ts'
-import { applyAction, archiveProject, journals, moveProject, undo } from './core/ops.ts'
+import { entryForJournal, readLog, record, undoActivity } from './core/activity.ts'
+import { log, logAs } from './core/log.ts'
+import { applyAction, archiveProject, moveProject } from './core/ops.ts'
+import { stripMd } from './core/readme.ts'
 import { scan, sessionCount } from './core/scan.ts'
 import { META_RULES, addNext, setMeta, setNotes, toggleCheck } from './core/sidecar.ts'
 import { moveOps } from './core/tidy.ts'
 import { HOME, stat, tilde, within } from './core/util.ts'
 
+logAs('mcp')
 const RISK = new Set(['no-commits', 'no-remote', 'dirty', 'unpushed', 'stash', 'no-git'])
 const CONFIRM_HINT = 'Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true.'
 
@@ -81,6 +85,7 @@ const tool =
       const r = await fn(a)
       return text(typeof r === 'string' ? r : JSON.stringify(r, null, 1))
     } catch (e) {
+      log.warn(`tool failed: ${(e as Error).message ?? e}`)
       return { ...text((e as Error).message ?? String(e)), isError: true }
     }
   }
@@ -223,7 +228,12 @@ server.registerTool(
     const set = Object.entries(fields).filter(([, v]) => v !== undefined) as [string, string][]
     if (!set.length) throw new Error('Nothing to set')
     for (const [k, v] of set) if (!META_RULES[k].test(v)) throw new Error(`Invalid ${k}: ${v}`)
-    for (const [k, v] of set) await setMeta(n.path, k, v || undefined)
+    for (const [k, v] of set) {
+      const before = String(n.meta[k as keyof Node['meta']] ?? '')
+      await setMeta(n.path, k, v || undefined)
+      if (before !== v)
+        await record({ by: 'agent', title: `${k[0].toUpperCase() + k.slice(1)} of ${n.name} ${v ? `set to ${v}` : 'cleared'}`, path: n.path, key: `meta:${n.path}:${k}`, undo: { type: 'meta', key: k, value: before } })
+    }
     stale()
     return `Saved to ${tilde(n.path)}/.laci.md: ${set.map(([k, v]) => `${k}=${v || '(cleared)'}`).join(', ')}`
   }),
@@ -238,7 +248,9 @@ server.registerTool(
   },
   tool(async ({ project: ref, text: item }) => {
     const n = find(await current(), ref)
-    await addNext(n.path, item)
+    const clean = item.replace(/\s+/g, ' ').trim()
+    await addNext(n.path, clean)
+    await record({ by: 'agent', title: `Added a next step to ${n.name}`, detail: clean, path: n.path, key: `todo:${n.path}:${stripMd(clean)}`, undo: { type: 'drop', text: stripMd(clean) } })
     stale()
     return `Added to ${tilde(n.path)}/.laci.md`
   }),
@@ -257,6 +269,7 @@ server.registerTool(
     if (hits.length !== 1) throw new Error(hits.length ? `"${q}" matches ${hits.length} tasks: ${hits.map(t => t.text).join(' | ')}` : `No open checkbox matching "${q}"`)
     const t = hits[0]
     await toggleCheck(path.join(n.path, t.file), t.line, t.text, true)
+    await record({ by: 'agent', title: `Ticked a to-do in ${n.name}`, detail: t.text, path: n.path, key: `todo:${n.path}:${t.text}`, undo: { type: 'check', file: t.file, text: t.text, done: false } })
     stale()
     return `Ticked "${t.text}" in ${t.file}`
   }),
@@ -273,6 +286,7 @@ server.registerTool(
     const n = find(await current(0), ref)
     const next = mode === 'replace' || !n.notes ? notes : `${n.notes}\n\n${notes}`
     await setNotes(n.path, next)
+    await record({ by: 'agent', title: `${mode === 'replace' ? 'Rewrote' : 'Added to'} the notes of ${n.name}`, path: n.path, key: `notes:${n.path}`, undo: { type: 'notes', text: n.notes ?? '' } })
     stale()
     return `Notes ${mode === 'replace' ? 'replaced' : 'updated'} in ${tilde(n.path)}/.laci.md`
   }),
@@ -294,6 +308,7 @@ server.registerTool(
     if (await stat(dest)) throw new Error(`${tilde(dest)} already exists`)
     if (!go) return plan(`Move ${n.name} → ${tilde(dest)}`, moveOps(n.path, dest, s), n.issues.filter(i => RISK.has(i.code)))
     const j = await moveProject(s, n.id, dest)
+    await record({ by: 'agent', title: j.title, path: dest, journal: j.id, undo: { type: 'journal', id: j.id } })
     stale()
     return done(`Moved ${tilde(n.path)} → ${tilde(dest)}`, j.id)
   }),
@@ -312,6 +327,7 @@ server.registerTool(
     if (n.kind !== 'project' || n.archived || !n.archivePlan) throw new Error(`${tilde(n.path)} is ${n.archived ? 'already archived' : 'not a project'}`)
     if (!go) return plan(`Archive ${n.name} → ${tilde(n.archivePlan.dest)}`, n.archivePlan.ops, n.archivePlan.checks)
     const j = await archiveProject(s, n.id)
+    await record({ by: 'agent', title: j.title, path: n.archivePlan.dest, journal: j.id, undo: { type: 'journal', id: j.id } })
     stale()
     return done(`Archived ${n.name} to ${tilde(n.archivePlan.dest)}`, j.id)
   }),
@@ -331,6 +347,7 @@ server.registerTool(
     if (!p.action) throw new Error(`"${p.title}" is for a person to decide; there's nothing to apply automatically.`)
     if (!go) return plan(p.title, p.ops)
     const j = await applyAction(s, p.title, p.action)
+    await record({ by: 'agent', title: j.title, path: p.nodeId, journal: j.id, undo: { type: 'journal', id: j.id } })
     stale()
     return done(`Applied: ${p.title}`, j.id)
   }),
@@ -339,26 +356,30 @@ server.registerTool(
 server.registerTool(
   'recent_changes',
   {
-    description: 'Changes laci made (from the app or agents), newest first, with ids for undo_change.',
+    description: 'Changes laci made (from the app or agents): moves, archives, status, to-dos, notes, settings. Newest first, with ids for undo_change.',
     inputSchema: z.object({}),
     annotations: read,
   },
-  tool(async () => (await journals(15)).map(j => ({ id: j.id, title: j.title, state: j.state, at: j.at, error: j.error }))),
+  tool(async () =>
+    (await readLog(25)).map(e => ({ id: e.id, at: e.at, by: e.by, title: e.title, detail: e.detail, project: e.path && tilde(e.path), state: e.state, can_undo: e.canUndo, error: e.error })),
+  ),
 )
 
 server.registerTool(
   'undo_change',
   {
-    description: 'Undo a change laci made: folders, agent history and edited files go back exactly as they were.',
+    description: 'Undo a change laci made (an id from recent_changes, or the id a move returned): folders, agent history and edited files go back as they were.',
     inputSchema: z.object({ id: z.string() }),
     annotations: risky,
   },
   tool(async ({ id }) => {
-    const j = await undo(id)
+    const entries = await readLog(2000)
+    const entry = entries.some(e => e.id === id) ? id : await entryForJournal(id)
+    const r = await undoActivity(entry, 'agent')
     stale()
-    return `Undone: ${j.title}`
+    return r.entry.title
   }),
 )
 
 await server.connect(new StdioServerTransport())
-console.error('laci MCP server ready on stdio')
+log.info('MCP server ready on stdio')

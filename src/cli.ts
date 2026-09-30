@@ -14,7 +14,10 @@ const dim = c(2), red = c(31), yellow = c(33), green = c(32), bold = c(1)
 
 const ago = (at?: string) => {
   const d = daysSince(at)
-  return d === Infinity ? '—' : d < 1 ? 'today' : d < 2 ? '1d' : d < 60 ? `${Math.floor(d)}d` : `${Math.floor(d / 30)}mo`
+  if (d === Infinity) return '—'
+  if (d < 1 / 24) return `${Math.max(1, Math.floor(d * 1440))}m`
+  if (d < 1) return `${Math.floor(d * 24)}h`
+  return d < 60 ? `${Math.floor(d)}d` : `${Math.floor(d / 30)}mo`
 }
 const pad = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n))
 

@@ -1,5 +1,7 @@
 // Desktop shell: runs the laci server with Electron's own Node (no system Node needed) and shows it in a window.
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, nativeTheme, shell } from 'electron'
@@ -14,6 +16,17 @@ if (!app.requestSingleInstanceLock()) app.quit()
 
 let server
 let win
+
+/** The theme picked in laci (see src/core/config.ts), so the window opens in the colors the page will use. */
+function savedTheme() {
+  const dir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
+  try {
+    const t = JSON.parse(readFileSync(path.join(dir, 'laci', 'config.json'), 'utf8')).theme
+    return t === 'light' || t === 'dark' ? t : 'system'
+  } catch {
+    return 'system'
+  }
+}
 
 async function up() {
   try {
@@ -38,6 +51,7 @@ async function startServer() {
 }
 
 function createWindow() {
+  nativeTheme.themeSource = savedTheme()
   win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -46,8 +60,14 @@ function createWindow() {
     title: 'laci',
     autoHideMenuBar: true,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0C0C0D' : '#FFFFFF',
+    // Shown once the page has painted, so there's no blank frame first. The timer covers a page that
+    // waits on something slow (like the web font when offline); the background already matches.
+    show: false,
     webPreferences: { contextIsolation: true, sandbox: true },
   })
+  const show = () => win.isVisible() || win.show()
+  win.once('ready-to-show', show)
+  setTimeout(show, 2500)
   // Links in READMEs open in the real browser, never inside the app.
   win.webContents.setWindowOpenHandler(({ url: target }) => {
     shell.openExternal(target)

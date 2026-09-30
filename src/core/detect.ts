@@ -1,12 +1,12 @@
 import path from 'node:path'
 import { HEAVY, HOME, list, stat } from './util.ts'
 
-const CODE_MARKERS = new Set([
+export const CODE_MARKERS = new Set([
   'package.json', 'go.mod', 'Cargo.toml', 'pyproject.toml', 'requirements.txt', 'setup.py', 'pubspec.yaml',
   'composer.json', 'Gemfile', 'pom.xml', 'build.gradle', 'build.gradle.kts', 'CMakeLists.txt', 'Dockerfile',
   'docker-compose.yml', 'compose.yaml', 'wp-config.php', 'deno.json', 'shopify.theme.toml', 'artisan',
 ])
-const DOC_FILE = /^(readme|notes?|handoff|todo|tasks)[\w.-]*\.md$/i
+export const DOC_FILE = /^(readme|notes?|handoff|todo|tasks)[\w.-]*\.md$/i
 
 export const DEFAULT_ROOTS = ['project', 'projects', 'code', 'dev', 'src', 'repos', 'work', 'tugas', 'Documents', 'Desktop', 'Downloads']
 

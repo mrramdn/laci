@@ -10,6 +10,7 @@ import { test } from 'node:test'
 const home = mkdtempSync(path.join(os.tmpdir(), 'laci-home-'))
 process.env.HOME = home
 delete process.env.XDG_CONFIG_HOME // config must come from the throwaway HOME, never the real one
+delete process.env.XDG_CACHE_HOME
 const { scan } = await import('../src/core/scan.ts')
 const { archiveProject, applyAction, undo, moveProject } = await import('../src/core/ops.ts')
 const { setMeta, addNext, setNotes, toggleCheck } = await import('../src/core/sidecar.ts')
@@ -33,13 +34,13 @@ function repo(dir: string, remote?: string) {
   if (remote) git(dir, 'remote', 'add', 'origin', remote)
 }
 
-/** Hash every file under HOME except laci's own data, to prove undo restores bytes exactly. */
+/** Hash every file under HOME except laci's own data and cache, to prove undo restores bytes exactly. */
 function fingerprint() {
   const out: Record<string, string> = {}
   const walk = (d: string) => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       const p = path.join(d, e.name)
-      if (p.startsWith(P('.local', 'share', 'laci'))) continue
+      if (p.startsWith(P('.local', 'share', 'laci')) || p.startsWith(P('.cache', 'laci'))) continue
       if (e.isDirectory()) walk(p)
       else out[path.relative(home, p)] = createHash('sha1').update(readFileSync(p)).digest('hex')
     }

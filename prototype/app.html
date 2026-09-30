@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>laci</title>
+<script>/* Before anything paints. The app gets its theme from the server on <html>; the saved file preview keeps it here. */
+try { const r = document.documentElement, t = localStorage.getItem('laci:theme'); if (t && !r.dataset.theme) r.dataset.theme = t } catch {}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -102,12 +104,23 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .sb-foot { padding: 8px 8px 10px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); display: grid; gap: 2px; }
 .sb-foot .sb-item { font-weight: 400; color: var(--muted); height: 28px; }
 .sb-foot .sb-item:hover { color: var(--text); }
+.sb-row { display: flex; align-items: center; gap: 6px; }
+.live-dot { width: 16px; height: 16px; display: grid; place-items: center; flex: none; }
+.live-dot::after { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 20%, transparent); }
+.spin.sm { width: 12px; height: 12px; margin: 0 2px; border: 2px solid var(--border-strong); border-top-color: var(--text); border-radius: 50%; animation: spin .7s linear infinite; flex: none; }
+.sb-row .sb-item { flex: 1; min-width: 0; }
+.seg { display: inline-flex; gap: 1px; padding: 2px; border-radius: 7px; background: var(--hover); flex: none; }
+.seg button { display: grid; place-items: center; width: 24px; height: 22px; border: 0; border-radius: 5px; background: none; color: var(--faint); padding: 0; }
+.seg button:hover { color: var(--text); }
+.seg button[aria-pressed="true"] { background: var(--bg); color: var(--text); box-shadow: var(--shadow-sm), 0 0 0 1px var(--border); }
+.seg .i { width: 13px; height: 13px; }
 
 .group-h { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 16px 0 20px; background: var(--subtle); border-bottom: 1px solid var(--border); border-top: 1px solid var(--border); font-weight: 500; }
 .group:first-child .group-h { border-top: 0; }
 .group-h .c { color: var(--faint); font-weight: 400; }
 .group-h .hint { color: var(--faint); font-weight: 400; margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.group-h .right { margin-left: auto; display: flex; gap: 6px; }
+.group-h .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.group-h .ord { margin-left: auto; color: var(--faint); font-weight: 400; font-size: 12px; white-space: nowrap; }
 .item { position: relative; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 16px 0 20px; cursor: default; min-width: 0; }
 .item:hover { background: var(--hover); }
 .item[aria-selected="true"] { background: var(--active); }
@@ -160,7 +173,6 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .frow .gl { width: 14px; flex: none; }
 .frow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
 .frow.file .nm { font-weight: 400; }
-.filterbar .switch { margin-left: 8px; }
 .tag { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: 4px; background: var(--hover); font-size: 11.5px; color: var(--muted); white-space: nowrap; }
 .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .switch input { appearance: none; width: 26px; height: 16px; border-radius: 999px; background: var(--border-strong); position: relative; margin: 0; cursor: pointer; transition: background .15s; }
@@ -169,10 +181,28 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .switch input:checked::after { transform: translateX(10px); }
 
 .filterbar { display: flex; align-items: center; gap: 6px; padding: 8px 20px; border-bottom: 1px solid var(--border); overflow-x: auto; flex: none; }
-.chipf { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 1px dashed var(--border-strong); border-radius: 6px; background: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.showbar { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--hover); flex: none; }
+.chipf { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
 .chipf:hover { color: var(--text); }
-.chipf[aria-pressed="true"] { border-style: solid; background: var(--active); color: var(--text); }
-.chipf .n { color: var(--faint); }
+.chipf[aria-pressed="true"] { background: var(--bg); color: var(--text); box-shadow: var(--shadow-sm), 0 0 0 1px var(--border); }
+.chipf .n { color: var(--faint); font-weight: 400; }
+.chipf .i { width: 13px; height: 13px; }
+.filterbar .scope { font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cols .sortable { display: inline-flex; align-items: center; gap: 3px; height: 24px; margin: 0 -6px; padding: 0 6px; border-radius: 5px; cursor: pointer; }
+.cols .sortable:hover { background: var(--hover); color: var(--text); }
+.cols .sortable .ar { width: 9px; opacity: 0; }
+.cols .sortable:hover .ar { opacity: .5; }
+.cols .sortable[aria-sort] { color: var(--text); font-weight: 500; }
+.cols .sortable[aria-sort] .ar { opacity: 1; }
+.frow .nm .pre { color: var(--faint); font-weight: 400; }
+.menu-wrap { position: relative; flex: none; }
+.menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 25; width: 272px; padding: 6px 12px; background: var(--bg); border-radius: 10px; box-shadow: var(--shadow-lg); animation: pop .12s ease-out; cursor: default; }
+.menu .mrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 34px; font-size: 12.5px; }
+.menu .mrow > span:first-child { color: var(--muted); }
+.menu .inp { height: 28px; width: auto; min-width: 128px; padding: 0 8px; font-size: 12.5px; }
+.menu .switch { font-size: 12.5px; color: var(--text); justify-content: space-between; width: 100%; min-height: 32px; }
+.menu hr { border: 0; border-top: 1px solid var(--border); margin: 6px -12px; }
+.menu .faint { font-size: 11.5px; }
 .prop-row { border-bottom: 1px solid var(--border); }
 .prop-row > .item { min-height: 44px; cursor: pointer; }
 .prop-row .chev { color: var(--faint); transition: transform .12s; }
@@ -430,23 +460,29 @@ async function api(name, body) {
 }
 
 /* ---------- state ---------- */
-const st = {
-  view: 'today', cwd: null, sel: null, tab: 'health', modal: null, palette: null, showArchived: true,
-  sort: { key: 'last', dir: -1 }, tidy: 'all', open: {}, expand: {}, tree: new Set(), journal: [],
-  ls: {}, filter: 'all', hidden: false, fsel: null,
+/** Per-window conveniences (sort, toggles). Missing or blocked storage just means defaults. */
+const pref = {
+  get(k, d) { try { const v = localStorage.getItem('laci:' + k); return v === null ? d : JSON.parse(v) } catch { return d } },
+  set(k, v) { try { localStorage.setItem('laci:' + k, JSON.stringify(v)) } catch {} },
 }
-let snap, nodes, all, projects, HOME, NOW
-function load(s) {
+const st = {
+  view: 'today', cwd: null, sel: null, tab: 'health', modal: null, palette: null, menu: null,
+  showArchived: pref.get('archived', true), foldersFirst: pref.get('foldersFirst', false), hidden: pref.get('hidden', false),
+  sort: pref.get('sort', { key: 'last', dir: -1 }), tidy: 'all', open: {}, expand: {}, tree: new Set(), log: null, logf: 'all',
+  ls: {}, filter: 'all', fsel: null,
+}
+let snap, nodes, all, projects, HOME
+/** `live`: an update pushed by the watcher. Folder listings stay; the server says which ones changed. */
+function load(s, live = false) {
   snap = s
   nodes = s.nodes
   all = Object.values(nodes)
   projects = all.filter(n => n.kind === 'project')
   HOME = s.home
-  NOW = Date.parse(s.scannedAt)
   if (!st.cwd) st.cwd = s.roots[0] ?? s.home
   if (st.sel && !nodes[st.sel]) st.sel = null
   if (!st.tree.size && s.roots[0]) st.tree.add(s.roots[0])
-  st.ls = {} // folders may have changed on disk; listings are fetched again as they're shown
+  if (!live) st.ls = {} // after a change laci made, folders may differ; listings are fetched again as they're shown
 }
 function patch(n) {
   nodes[n.id] = n
@@ -458,17 +494,43 @@ function patch(n) {
 const $ = (s, el = document) => el.querySelector(s)
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 const tilde = p => (p === HOME ? '~' : p?.startsWith(HOME + '/') ? '~' + p.slice(HOME.length) : p)
-const days = at => (at ? (NOW - Date.parse(at)) / 864e5 : Infinity)
-const ago = at => {
-  const d = days(at)
-  if (d === Infinity) return '—'
-  if (d < 1) return 'today'
-  if (d < 2) return 'yesterday'
-  if (d < 14) return `${Math.floor(d)}d`
-  if (d < 60) return `${Math.floor(d / 7)}w`
-  return `${Math.floor(d / 30)}mo`
+/* Times use the real clock, not the scan's, and <time> elements tick along while the app is open. */
+const days = at => (at ? (Date.now() - Date.parse(at)) / 864e5 : Infinity)
+const midnight = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+const daysBack = d => Math.round((midnight(new Date()) - midnight(d)) / 864e5)
+const clock = d => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+const thisYear = d => d.getFullYear() === new Date().getFullYear()
+/** Short, for columns: just now, 5 min, 3 h, yesterday, 4 d, 3 wk, 5 mo, 2 yr. */
+function ago(at) {
+  if (!at) return '—'
+  const s = (Date.now() - Date.parse(at)) / 1000
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)} min`
+  if (s < 86400) return `${Math.floor(s / 3600)} h`
+  const d = daysBack(new Date(at))
+  if (d <= 1) return 'yesterday'
+  if (d < 14) return `${d} d`
+  if (d < 60) return `${Math.floor(d / 7)} wk`
+  if (d < 365) return `${Math.floor(d / 30.4)} mo`
+  return `${Math.floor(d / 365)} yr`
 }
-const date = at => at ? new Date(at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(new Date(at).getFullYear() !== new Date(NOW).getFullYear() && { year: 'numeric' }) }) : '—'
+/** Longer, with the time of day: 12 min ago, 3 h ago · 14:02, yesterday 14:02, Mon 14:02, 12 Sep 14:02. */
+function when(at) {
+  if (!at) return '—'
+  const t = new Date(at)
+  const s = (Date.now() - t) / 1000
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`
+  const d = daysBack(t)
+  if (d === 0) return `${Math.floor(s / 3600)} h ago · ${clock(t)}`
+  if (d === 1) return `yesterday ${clock(t)}`
+  if (d < 7) return `${t.toLocaleDateString('en-GB', { weekday: 'short' })} ${clock(t)}`
+  return `${date(at)}${thisYear(t) ? ` ${clock(t)}` : ''}`
+}
+const fullTime = at => new Date(at).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+/** A time that stays current, with the exact date and time on hover. */
+const tm = (at, long) => at ? `<time datetime="${esc(at)}" ${long ? 'data-long' : ''} title="${esc(fullTime(at))}">${esc(long ? when(at) : ago(at))}</time>` : '—'
+const date = at => at ? new Date(at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(!thisYear(new Date(at)) && { year: 'numeric' }) }) : '—'
 const bytes = b => !b ? '—' : b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : b >= 1e3 ? `${Math.round(b / 1e3)} KB` : `${b} B`
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1)
@@ -511,6 +573,8 @@ const L = {
   calendar: '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
   editor: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
   moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
   refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
   unlink: '<path d="m18.84 12.25 1.72-1.71a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5 5 0 0 0 7.07 7.07l1.71-1.71"/><line x1="8" x2="8" y1="2" y2="5"/><line x1="2" x2="5" y1="8" y2="8"/><line x1="16" x2="16" y1="19" y2="22"/><line x1="19" x2="22" y1="16" y2="16"/>',
@@ -524,6 +588,7 @@ const L = {
   play: '<polygon points="6 3 20 12 6 21 6 3"/>',
   commit: '<circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+  scroll: '<path d="M15 12h-5"/><path d="M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>',
   open: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
 }
 const icon = (k, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${L[k] ?? ''}</svg>`
@@ -560,15 +625,27 @@ const FIX_LABEL = { 'no-remote': 'Create remote', 'no-commits': 'First commit', 
 const RISK = new Set(['no-commits', 'no-remote', 'dirty', 'unpushed', 'stash', 'no-git'])
 const risky = () => all.flatMap(n => n.issues.filter(i => RISK.has(i.code)).map(i => ({ n, i })))
   .sort((a, b) => (a.i.severity === b.i.severity ? days(a.n.lastActivity?.at) - days(b.n.lastActivity?.at) : a.i.severity === 'high' ? -1 : 1))
-const openChecks = () => all.flatMap(n => n.tasks.filter(t => t.kind === 'check' && !t.done).map(t => ({ n, t })))
+const recency = (a, b) => (b.lastActivity?.at ?? '').localeCompare(a.lastActivity?.at ?? '')
+/** Grouped by project, the project you touched last first; in file order within one. */
+const openChecks = () => all.filter(n => !n.archived).sort(recency).flatMap(n => n.tasks.filter(t => t.kind === 'check' && !t.done).map(t => ({ n, t })))
 const handoffs = () => all.flatMap(n => n.taskFiles
   .map(f => ({ n, f, open: n.tasks.filter(t => t.file === f.file && t.kind === 'list' && !t.done).length }))
   .filter(h => h.open && !n.archived))
+  .sort((a, b) => b.f.at.localeCompare(a.f.at))
 const hot = () => risky().filter(r => r.i.severity === 'high').length
 const fixBtn = (n, code, cls = '') => FIX_LABEL[code] ? `<button class="btn sm ${cls}" data-act="term" data-id="${esc(n.id)}" data-what="fix" data-arg="${esc(code)}">${esc(FIX_LABEL[code])}</button>` : ''
 
 /* ---------- render ---------- */
+/** Someone is typing, picking or reading a dialog: a live update waits until they're done. */
+const interacting = () => !!(st.modal || st.palette || st.menu || document.activeElement?.matches?.('input:not([type=checkbox]), textarea, select'))
+function renderSoon() {
+  if (interacting()) st.dirty = true
+  else render()
+}
+document.addEventListener('focusout', () => setTimeout(() => { if (st.dirty && !interacting()) render() }))
+
 function render() {
+  st.dirty = false
   if (LIVE && !snap.configured && !st.skipSetup) {
     const keep = $('.setup')?.scrollTop ?? 0
     app.className = ''
@@ -599,7 +676,7 @@ function render() {
 }
 
 function side() {
-  const nav = [['today', 'Today', 'inbox', hot(), true], ['tidy', 'Tidy up', 'sparkles', snap.proposals.filter(p => p.action).length], ['agents', 'Agent history', 'history', snap.orphans.claude.length + snap.orphans.items.length]]
+  const nav = [['today', 'Today', 'inbox', hot(), true], ['tidy', 'Tidy up', 'sparkles', snap.proposals.filter(p => p.action).length], ['agents', 'Agent history', 'history', snap.orphans.claude.length + snap.orphans.items.length], ['log', 'Log', 'scroll']]
   const treeRows = (paths, depth) => paths.map(p => {
     const open = st.tree.has(p)
     const l = open ? listing(p) : null
@@ -623,8 +700,9 @@ function side() {
       <div class="tree">${treeRows(places, 0)}</div>
     </div>
     <div class="sb-foot">
-      <button class="sb-item" data-act="rescan" title="Scan again">${icon('refresh', 'sm')}<span>Scanned ${esc(scanned)}${LIVE ? '' : ' · read-only'}</span></button>
-      <button class="sb-item" data-act="view" data-v="settings" ${st.view === 'settings' ? 'aria-current="page"' : ''}>${icon('gear', 'sm')}<span>Settings</span></button>
+      <button class="sb-item" data-act="rescan" title="${LIVE ? `laci watches your folders and updates by itself. Last full scan ${esc(scanned)}. Click to scan everything again.` : 'Read-only preview'}">${!LIVE ? `${icon('refresh', 'sm')}<span>Scanned ${esc(scanned)} · read-only</span>` : st.busy ? '<span class="spin sm"></span><span>Updating…</span>' : `<span class="live-dot"></span><span>Up to date</span>`}</button>
+      <div class="sb-row"><button class="sb-item" data-act="view" data-v="settings" ${st.view === 'settings' ? 'aria-current="page"' : ''}>${icon('gear', 'sm')}<span>Settings</span></button>
+        <div class="seg" role="group" aria-label="Theme">${[['system', 'monitor', 'Follow the system'], ['light', 'sun', 'Light'], ['dark', 'moon', 'Dark']].map(([t, ic, label]) => `<button data-act="theme" data-v="${t}" aria-pressed="${theme() === t}" title="${label}" aria-label="${label} theme">${icon(ic)}</button>`).join('')}</div></div>
     </div>`
 }
 
@@ -633,76 +711,115 @@ function main() {
   if (st.view === 'tidy') return tidyView()
   if (st.view === 'agents') return agentsView()
   if (st.view === 'settings') return settingsView()
+  if (st.view === 'log') return logView()
   return todayView()
 }
 
 /* ---------- Today ---------- */
 function todayView() {
-  const d = new Date(NOW).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+  const d = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
   const risks = risky()
   const shown = st.expand.risks ? risks : risks.slice(0, 8)
-  const recent = projects.filter(n => !n.archived).sort((a, b) => (b.lastActivity?.at ?? '').localeCompare(a.lastActivity?.at ?? '')).slice(0, 5)
+  const recent = projects.filter(n => !n.archived).sort(recency).slice(0, 5)
   const checks = openChecks()
   const hand = handoffs()
 
   const riskRow = ({ n, i }) => `<div class="item" data-act="sel" data-id="${esc(n.id)}" tabindex="0" aria-selected="${st.sel === n.id}">
       ${sevGlyph(i.severity)}<span class="name">${esc(n.label)}</span><span class="t">${esc(i.title)}</span><span class="d">${esc(i.detail ?? '')}</span>
-      <span class="meta">${fixBtn(n, i.code, 'act')}${n.archived ? '<span class="pill">Archived</span>' : ''}<span class="mono">${esc(ago(n.lastActivity?.at))}</span></span>
+      <span class="meta">${fixBtn(n, i.code, 'act')}${n.archived ? '<span class="pill">Archived</span>' : ''}<span class="mono">${tm(n.lastActivity?.at)}</span></span>
     </div>`
   const recentRow = n => {
     const s = sessionsOf(n)[0]
     const g = n.git
-    const line2 = g?.lastSubject ? `${icon('commit')}<span>${esc(g.lastSubject)}</span>` : s ? '' : `<span>${esc(n.summary?.text ?? 'Files changed ' + ago(n.lastActivity?.at))}</span>`
+    const line2 = g?.lastSubject ? `${icon('commit')}<span>${esc(g.lastSubject)}</span>` : s ? '' : `<span>${esc(n.summary?.text ?? 'Files changed ' + when(n.lastActivity?.at))}</span>`
     return `<div class="item two" data-act="sel" data-id="${esc(n.id)}" tabindex="0" aria-selected="${st.sel === n.id}">
       ${statusGlyph(n.status.value)}
       <div class="lines"><div class="l1"><span class="name">${esc(n.label)}</span>${g?.branch ? `<span class="pill">${icon('branch', 'sm')}${esc(g.branch)}</span>` : ''}</div>
-        ${line2 ? `<div class="l2">${line2}</div>` : ''}${s ? `<div class="l2">${icon('bot')}<span>${esc(s.title ?? 'Untitled session')}</span><span class="faint">· ${esc(ago(s.at))}</span></div>` : ''}</div>
-      <span class="meta">${s ? `<button class="btn sm act" data-act="term" data-id="${esc(n.id)}" data-what="resume" data-arg="${esc(s.id)}">${icon('terminal', 'sm')}Resume</button>` : ''}<span class="mono">${esc(ago(n.lastActivity?.at))}</span></span>
+        ${line2 ? `<div class="l2">${line2}</div>` : ''}${s ? `<div class="l2">${icon('bot')}<span>${esc(s.title ?? 'Untitled session')}</span><span class="faint">· ${tm(s.at)}</span></div>` : ''}</div>
+      <span class="meta">${s ? `<button class="btn sm act" data-act="term" data-id="${esc(n.id)}" data-what="resume" data-arg="${esc(s.id)}">${icon('terminal', 'sm')}Resume</button>` : ''}<span class="mono">${tm(n.lastActivity?.at)}</span></span>
     </div>`
   }
 
   return `<div class="head"><h1>Today</h1><span class="count">${esc(d)}</span></div>
   <div class="body">
     ${snap.warnings.map(w => `<div class="callout">${icon('alert')}<div class="txt"><b>${esc(w.title)}</b><p>${esc(w.detail)}</p></div><button class="btn sm" data-act="backup">Back up logs now</button></div>`).join('')}
-    <section class="group"><div class="group-h">Could lose work <span class="c">${risks.length}</span><span class="hint">Only on this disk, or never committed</span></div>
+    <section class="group"><div class="group-h">Could lose work <span class="c">${risks.length}</span><span class="hint">Only on this disk, or never committed</span><span class="ord">Worst first, then most recent</span></div>
       ${shown.map(riskRow).join('') || '<div class="empty">Everything is committed and pushed.</div>'}
       ${risks.length > 8 ? `<div class="item"><button class="more" data-act="expand" data-k="risks">${st.expand.risks ? 'Show fewer' : `Show ${risks.length - 8} more`}</button></div>` : ''}
     </section>
-    <section class="group"><div class="group-h">Pick up where you left off <span class="c">${recent.length}</span></div>${recent.map(recentRow).join('')}</section>
-    <section class="group"><div class="group-h">Open to-dos <span class="c">${checks.length}</span><span class="hint">Checkboxes in your notes, plus next steps you add</span></div>
+    <section class="group"><div class="group-h">Pick up where you left off <span class="c">${recent.length}</span><span class="ord">Most recent first</span></div>${recent.map(recentRow).join('')}</section>
+    <section class="group"><div class="group-h">Open to-dos <span class="c">${checks.length}</span><span class="hint">Checkboxes in your notes, plus next steps you add</span><span class="ord">By project, most recent first</span></div>
       ${checks.map(({ n, t }) => `<label class="item"><input type="checkbox" class="cb" data-check data-id="${esc(n.id)}" data-file="${esc(t.file)}" data-line="${t.line}" data-text="${esc(t.text)}">
         <span class="t" style="max-width:none;flex:1;white-space:normal">${esc(t.text)}</span>
         <span class="meta"><span class="pill">${esc(n.label)}</span><span class="mono">${esc(t.file)}:${t.line}</span></span></label>`).join('') || '<div class="empty">No open checkboxes. Add the next step from a project’s To-do tab.</div>'}
     </section>
-    ${hand.length ? `<section class="group"><div class="group-h">Handoffs with open items <span class="c">${hand.length}</span></div>${hand.map(({ n, f, open }) => `<div class="item" data-act="sel" data-id="${esc(n.id)}" data-tab="todo" tabindex="0">${icon('file')}<span class="name mono" style="font-weight:400">${esc(f.file)}</span><span class="d">${esc(n.label)} · ${plural(open, 'item')} under a TODO heading</span><span class="meta"><span class="mono">${esc(ago(f.at))}</span></span></div>`).join('')}</section>` : ''}
+    ${hand.length ? `<section class="group"><div class="group-h">Handoffs with open items <span class="c">${hand.length}</span><span class="ord">Most recently edited first</span></div>${hand.map(({ n, f, open }) => `<div class="item" data-act="sel" data-id="${esc(n.id)}" data-tab="todo" tabindex="0">${icon('file')}<span class="name mono" style="font-weight:400">${esc(f.file)}</span><span class="d">${esc(n.label)} · ${plural(open, 'item')} under a TODO heading</span><span class="meta"><span class="mono">${tm(f.at)}</span></span></div>`).join('')}</section>` : ''}
   </div>`
 }
 
 /* ---------- Folder ---------- */
 const lsPending = new Set()
-/** A folder's entries, fetched once per scan. The read-only preview only knows scanned folders. */
-function listing(p) {
+/**
+ * A folder's entries, fetched once per scan. With `deep`, plain folders also get the newest change
+ * inside them (a second, slower request), so Modified means the same thing on every row.
+ * The read-only preview only knows scanned folders.
+ */
+function listing(p, deep = false) {
   if (!LIVE) return { entries: (nodes[p]?.children ?? []).map(c => ({ name: nodes[c].name, path: c, dir: true, at: nodes[c].lastActivity?.at })) }
-  if (!st.ls[p] && !lsPending.has(p)) {
+  const l = st.ls[p]
+  if (!l && !lsPending.has(p)) {
     lsPending.add(p)
     api('ls', { path: p })
       .then(r => { st.ls[p] = r }, e => { st.ls[p] = { entries: [], error: e.message } })
       .finally(() => { lsPending.delete(p); render() })
   }
-  return st.ls[p]
+  if (deep && l && !l.error && !l.deep) {
+    l.deep = 'pending'
+    if (!l.entries.some(e => e.dir && !nodes[e.path])) l.deep = 'done'
+    else api('ls/newest', { path: p }).then(m => {
+      for (const e of l.entries) if (m[e.name]) e.newest = m[e.name]
+      l.deep = 'done'
+      if (st.ls[p] === l) render()
+    }, () => { l.deep = 'done' })
+  }
+  return l
 }
 const worst = n => {
   const issues = n.kind === 'project' ? n.issues : descendants(n).filter(d => d.kind === 'project').flatMap(k => k.issues)
   return { issues, sev: issues.some(i => i.severity === 'high') ? 'high' : issues.some(i => i.severity === 'med') ? 'med' : null }
 }
 const FILTERS = [
-  ['all', 'Everything'],
-  ['projects', 'Projects', () => true],
-  ['laci', 'Uses laci', n => n.sidecar],
-  ['agents', 'Agent sessions', n => agentCount(n) > 0],
-  ['attention', 'Needs attention', n => n.issues.some(i => i.severity !== 'low')],
+  ['all', 'All files', 'Everything in this folder'],
+  ['projects', 'Projects', 'Every project in this folder and the folders below it', () => true],
+  ['laci', 'Uses laci', 'Projects with a .laci.md: a status, deadline, to-do or notes set in laci', n => n.sidecar],
+  ['agents', 'Agent sessions', 'Projects an AI agent has worked in', n => agentCount(n) > 0],
+  ['attention', 'Needs attention', 'Uncommitted, unpushed, no remote, or other problems', n => n.issues.some(i => i.severity !== 'low')],
 ]
 const EXT = { md: 'Markdown', txt: 'Text', pdf: 'PDF', png: 'Image', jpg: 'Image', jpeg: 'Image', webp: 'Image', gif: 'Image', svg: 'SVG', zip: 'Archive', gz: 'Archive', tar: 'Archive', json: 'JSON', csv: 'CSV', docx: 'Word', xlsx: 'Excel', pptx: 'Slides', mp4: 'Video', mp3: 'Audio', sh: 'Script', js: 'JavaScript', ts: 'TypeScript', py: 'Python', html: 'HTML', css: 'CSS', deb: 'Package', AppImage: 'App' }
+/** Each sort key, and how its two directions read. `first` is the direction a first click picks. */
+const SORTS = {
+  name: { label: 'Name', dirs: ['A to Z', 'Z to A'], first: 1 },
+  last: { label: 'Modified', dirs: ['Oldest first', 'Newest first'], first: -1 },
+  size: { label: 'Size', dirs: ['Smallest first', 'Largest first'], first: -1 },
+  ai: { label: 'Agent sessions', dirs: ['Fewest first', 'Most first'], first: -1 },
+}
+const MODIFIED_HINT = 'When anything inside last changed: a file, a commit or an agent session'
+const sortWords = () => `${SORTS[st.sort.key].label}, ${SORTS[st.sort.key].dirs[st.sort.dir > 0 ? 0 : 1].toLowerCase()}`
+const rollup = (n, f) => f(n) + descendants(n).reduce((a, d) => a + f(d), 0)
+/** Row values to sort by. Missing ones (a folder's size, a file's sessions) always go last. */
+const SORT_VAL = {
+  name: x => x.name.toLowerCase(),
+  last: x => (x.n ? x.n.lastActivity?.at : x.newest ?? x.at) || undefined,
+  size: x => (x.n ? x.n.size?.total ?? rollup(x.n, d => d.size?.total ?? 0) : x.dir ? undefined : x.size),
+  ai: x => (x.n ? rollup(x.n, agentCount) : undefined),
+}
+function rowOrder(a, b) {
+  if (st.foldersFirst && a.dir !== b.dir) return a.dir ? -1 : 1
+  const { key, dir } = st.sort
+  const va = SORT_VAL[key](a), vb = SORT_VAL[key](b)
+  if (va === undefined || vb === undefined) return va === vb ? a.name.localeCompare(b.name) : va === undefined ? 1 : -1
+  return (va > vb ? 1 : va < vb ? -1 : 0) * dir || a.name.localeCompare(b.name)
+}
 
 function folderView() {
   const cwd = st.cwd
@@ -710,60 +827,71 @@ function folderView() {
   const trail = [HOME, ...rel.map((_, i) => HOME + '/' + rel.slice(0, i + 1).join('/'))]
   const crumbs = trail.map((p, i) => i === trail.length - 1 ? `<h1>${esc(i ? base(p) : '~')}</h1>` : `<button class="btn ghost sm" data-act="cd" data-id="${esc(p)}" style="padding:0 4px">${esc(i ? base(p) : '~')}</button><span class="faint">/</span>`).join('')
   const scope = projects.filter(n => within(n.path, cwd) && (st.showArchived || !n.archived))
-  const val = {
-    name: x => x.name.toLowerCase(),
-    last: x => x.n?.lastActivity?.at ?? x.at ?? '',
-    size: x => x.n ? (x.n.size?.total ?? descendants(x.n).reduce((a, d) => a + (d.size?.total ?? 0), 0)) : x.size ?? -1,
-    ai: x => x.n ? agentCount(x.n) + descendants(x.n).reduce((a, d) => a + agentCount(d), 0) : 0,
-  }
   const { key, dir } = st.sort
-  const order = (a, b) => (a.dir !== b.dir ? (a.dir ? -1 : 1) : (val[key](a) > val[key](b) ? 1 : val[key](a) < val[key](b) ? -1 : 0) * dir)
-  const col = (k, label, cls) => `<span class="${cls}"><button data-act="sort" data-k="${k}" ${key === k ? `aria-sort="${dir > 0 ? 'ascending' : 'descending'}"` : ''}>${label}${key === k ? (dir > 0 ? ' ↑' : ' ↓') : ''}</button></span>`
+  const col = (k, label, cls, hint) => {
+    const on = key === k
+    const next = on ? -dir : SORTS[k].first
+    return `<span class="${cls}"><button class="sortable" data-act="sort" data-k="${k}" ${on ? `aria-sort="${dir > 0 ? 'ascending' : 'descending'}"` : ''} title="${esc(`${hint ? hint + '. ' : ''}${on ? `Sorted ${SORTS[k].dirs[dir > 0 ? 0 : 1].toLowerCase()}. ` : ''}Click to sort ${SORTS[k].dirs[next > 0 ? 0 : 1].toLowerCase()}`)}">${label}<span class="ar">${(on ? dir : SORTS[k].first) > 0 ? '↑' : '↓'}</span></button></span>`
+  }
+  const filter = FILTERS.find(x => x[0] === st.filter)
 
   let rows
   if (st.filter !== 'all') {
-    const f = FILTERS.find(x => x[0] === st.filter)[2]
-    rows = scope.filter(f).map(n => ({ n, name: n.name, dir: true, path: n.path })).sort(order)
-      .map(x => nodeRow(x.n, x.n.path.slice(cwd.length + 1) || x.n.name)).join('') || `<div class="empty">No project here matches “${esc(FILTERS.find(x => x[0] === st.filter)[1])}”.</div>`
+    rows = scope.filter(filter[3]).map(n => ({ n, name: n.name, dir: true, path: n.path })).sort(rowOrder)
+      .map(x => nodeRow(x.n, x.n.path.slice(cwd.length + 1).split('/').slice(0, -1).join('/'))).join('') || `<div class="empty">No project here matches “${esc(filter[1])}”.</div>`
   } else {
-    const l = listing(cwd)
+    const l = listing(cwd, true)
     if (!l) rows = '<div class="empty">Reading the folder…</div>'
     else if (l.error) rows = `<div class="empty">${esc(l.error)} <button class="linkbtn" data-act="cd" data-id="${esc(parentOf(cwd))}">Go up</button></div>`
     else rows = l.entries
       .filter(e => st.hidden || !e.name.startsWith('.'))
       .map(e => ({ ...e, n: nodes[e.path] }))
       .filter(x => !x.n || st.showArchived || !x.n.archived)
-      .sort(order)
+      .sort(rowOrder)
       .map(x => x.n ? nodeRow(x.n) : x.dir ? dirRow(x) : fileRow(x)).join('') || `<div class="empty">This folder is empty${!st.hidden && l.entries.length ? ' (except hidden files)' : ''}.</div>`
   }
-  const counts = Object.fromEntries(FILTERS.slice(1).map(([k, , f]) => [k, scope.filter(f).length]))
-  const hiddenCount = st.filter === 'all' ? (listing(cwd)?.entries ?? []).filter(e => e.name.startsWith('.')).length : 0
+  const counts = Object.fromEntries(FILTERS.slice(1).map(([k, , , f]) => [k, scope.filter(f).length]))
+  const hiddenCount = (st.ls[cwd]?.entries ?? []).filter(e => e.name.startsWith('.')).length
+  const scopeText = st.filter === 'all' ? `Sorted by ${sortWords()}` : `In ${tilde(cwd)} and every folder below it · sorted by ${sortWords()}`
 
   return `<div class="head">${crumbs}<span class="count">${scope.length ? plural(scope.length, 'project') : ''}</span><span class="grow"></span>
+      <div class="menu-wrap"><button class="btn sm ghost" data-act="menu" data-k="display" aria-expanded="${st.menu === 'display'}" title="Sort and what to show">${icon('filter', 'sm')}Display</button>${st.menu === 'display' ? displayMenu(hiddenCount) : ''}</div>
       <button class="icon-btn" data-act="open" data-id="${esc(cwd)}" data-what="files" title="Open in the file manager" aria-label="Open in file manager">${icon('open')}</button>
       <button class="icon-btn" data-act="term" data-id="${esc(cwd)}" data-what="shell" title="Terminal here (F4)" aria-label="Open terminal here">${icon('terminal')}</button></div>
-    <div class="filterbar">${FILTERS.map(([k, label]) => `<button class="chipf" data-act="ff" data-k="${k}" aria-pressed="${st.filter === k}">${label}${k === 'all' ? '' : ` <span class="n">${counts[k]}</span>`}</button>`).join('')}
-      <span class="grow"></span>
-      ${st.filter === 'all' ? `<label class="switch" title="Ctrl+H"><input type="checkbox" data-hidden ${st.hidden ? 'checked' : ''}>Hidden files${hiddenCount ? ` <span class="faint">${hiddenCount}</span>` : ''}</label>` : ''}
-      <label class="switch"><input type="checkbox" data-archived ${st.showArchived ? 'checked' : ''}>Archived</label></div>
+    <div class="filterbar"><div class="showbar" role="group" aria-label="Show">${FILTERS.map(([k, label, hint]) => `<button class="chipf" data-act="ff" data-k="${k}" aria-pressed="${st.filter === k}" title="${esc(hint)}">${label}${k === 'all' ? '' : ` <span class="n">${counts[k]}</span>`}</button>`).join('')}</div>
+      <span class="grow"></span><span class="scope" title="${esc(scopeText)}">${esc(scopeText)}</span></div>
     <div class="body">
-      <div class="cols">${col('name', 'Name', 'c-name')}<span class="c-sum">Summary</span><span class="c-stack">Stack</span>${col('ai', 'Agents', 'c-ai')}${col('last', 'Modified', 'c-when')}${col('size', 'Size', 'c-size')}<span class="c-health"></span></div>
+      <div class="cols">${col('name', 'Name', 'c-name')}<span class="c-sum">Summary</span><span class="c-stack">Stack</span>${col('ai', 'Agents', 'c-ai', 'Agent sessions in the folder')}${col('last', 'Modified', 'c-when', MODIFIED_HINT)}${col('size', 'Size', 'c-size')}<span class="c-health"></span></div>
       ${rows}
     </div>`
 }
 
+/** Sort order and what the folder view shows. Linear calls this Display. */
+function displayMenu(hiddenCount) {
+  const { key, dir } = st.sort
+  return `<div class="menu" role="dialog" aria-label="Display">
+    <div class="mrow"><span>Sort by</span><select class="inp" data-sortkey>${Object.entries(SORTS).map(([k, v]) => `<option value="${k}" ${key === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select></div>
+    <div class="mrow"><span>Order</span><select class="inp" data-sortdir>${SORTS[key].dirs.map((label, i) => `<option value="${i ? -1 : 1}" ${(dir > 0 ? 0 : 1) === i ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
+    ${key === 'last' ? `<div class="mrow faint">${MODIFIED_HINT}.</div>` : ''}
+    <hr>
+    <label class="switch">Folders first<input type="checkbox" data-pref="foldersFirst" ${st.foldersFirst ? 'checked' : ''}></label>
+    <label class="switch">Hidden files <span class="faint grow">${hiddenCount ? hiddenCount + ' here · ' : ''}Ctrl H</span><input type="checkbox" data-pref="hidden" ${st.hidden ? 'checked' : ''}></label>
+    <label class="switch">Archived projects<input type="checkbox" data-pref="showArchived" ${st.showArchived ? 'checked' : ''}></label>
+  </div>`
+}
+
 /** A scanned folder: a project with its status, summary and health, or a group of projects. */
-function nodeRow(n, label = n.name) {
+function nodeRow(n, pre = '') {
   const kids = descendants(n).filter(d => d.kind === 'project')
   const { issues, sev } = worst(n)
   const ai = agentCount(n) + descendants(n).reduce((a, d) => a + agentCount(d), 0)
   const size = n.size?.total ?? descendants(n).reduce((a, d) => a + (d.size?.total ?? 0), 0)
   return `<div class="item frow ${n.archived ? 'archived' : ''}" data-act="pick" data-dbl="cd" data-id="${esc(n.id)}" data-kind="node" tabindex="0" aria-selected="${st.sel === n.id}">
-    <span class="c-name">${n.kind === 'project' ? statusGlyph(n.status.value) : '<span class="gl"></span>'}${kindIcon(n)}<span class="nm">${esc(label)}</span>${n.sidecar ? '<span class="dot" title="Uses laci: has a .laci.md"></span>' : ''}</span>
+    <span class="c-name">${n.kind === 'project' ? statusGlyph(n.status.value) : '<span class="gl"></span>'}${kindIcon(n)}<span class="nm">${pre ? `<span class="pre">${esc(pre)}/</span>` : ''}${esc(n.name)}</span>${n.sidecar ? '<span class="dot" title="Uses laci: has a .laci.md"></span>' : ''}</span>
     <span class="c-sum">${n.kind === 'folder' ? esc(n.summary?.text ?? `${plural(kids.length, 'project')} inside`) : esc(n.summary?.text ?? '')}</span>
     <span class="c-stack">${(n.stack?.labels ?? []).slice(0, 2).map(l => `<span class="tag">${esc(l)}</span>`).join('')}</span>
     <span class="c-ai">${ai ? `${icon('bot', 'sm')}${ai}` : ''}</span>
-    <span class="c-when">${esc(ago(n.lastActivity?.at))}</span>
+    <span class="c-when">${tm(n.lastActivity?.at)}</span>
     <span class="c-size">${esc(bytes(size))}</span>
     <span class="c-health" title="${esc(issues.filter(i => i.severity !== 'low').map(i => i.title).join('\n'))}">${sev ? sevGlyph(sev) : ''}</span>
   </div>`
@@ -772,7 +900,7 @@ function dirRow(e) {
   return `<div class="item frow" data-act="cd" data-id="${esc(e.path)}" data-kind="dir" tabindex="0">
     <span class="c-name"><span class="gl"></span>${icon(e.git ? 'branch' : 'folder')}<span class="nm">${esc(e.name)}</span></span>
     <span class="c-sum">${e.git ? 'Git repo outside the folders laci scans' : ''}</span><span class="c-stack"></span><span class="c-ai"></span>
-    <span class="c-when">${esc(ago(e.at))}</span><span class="c-size">—</span><span class="c-health"></span>
+    <span class="c-when">${tm(e.newest ?? e.at)}</span><span class="c-size">—</span><span class="c-health"></span>
   </div>`
 }
 function fileRow(e) {
@@ -780,7 +908,7 @@ function fileRow(e) {
   return `<div class="item frow file" data-act="fsel" data-dbl="openfile" data-id="${esc(e.path)}" data-kind="file" tabindex="0" aria-selected="${st.fsel === e.path}" title="Double-click to open">
     <span class="c-name"><span class="gl"></span>${icon('file')}<span class="nm">${esc(e.name)}</span></span>
     <span class="c-sum">${esc(EXT[ext] ?? EXT[ext.toLowerCase()] ?? (ext && !e.name.startsWith('.') ? ext.toUpperCase() + ' file' : ''))}</span><span class="c-stack"></span><span class="c-ai"></span>
-    <span class="c-when">${esc(ago(e.at))}</span><span class="c-size">${esc(bytes(e.size))}</span><span class="c-health"></span>
+    <span class="c-when">${tm(e.at)}</span><span class="c-size">${esc(bytes(e.size))}</span><span class="c-health"></span>
   </div>`
 }
 
@@ -837,46 +965,48 @@ function setupPage() {
 }
 
 function settingsView() {
-  const theme = document.documentElement.dataset.theme ?? 'system'
   return `<div class="head"><h1>Settings</h1></div>
     <div class="body"><div class="setup-in in-app">
       ${setupSections()}
-      <section class="sset"><h2>Appearance</h2><p>Follows your system unless you pick one.</p>
-        <div class="apps"><label class="fld"><span>Theme</span><select class="inp" data-themepick>${['system', 'light', 'dark'].map(t => `<option value="${t}" ${theme === t ? 'selected' : ''}>${cap(t)}</option>`).join('')}</select></label></div></section>
       <div class="setup-foot">${st.setup?.error ? `<p class="err" role="alert">${esc(st.setup.error)}</p>` : '<p>Saved in ~/.config/laci/config.json</p>'}
         <button class="btn primary" data-act="setupsave" ${st.setup ? '' : 'disabled'}>Save and rescan</button></div>
     </div></div>`
 }
 
 /* ---------- Tidy ---------- */
-const CATS = { reconnect: ['Reconnect', 'link'], migration: ['Half-done moves', 'route'], space: ['Free space', 'drive'], duplicate: ['Duplicates', 'layers'], orphan: ['Orphaned', 'unlink'], status: ['Archive', 'archive'] }
+/** Tidy suggestions are shown in this order: fixes for broken links first, guesses about old projects last. */
+const CATS = {
+  reconnect: ['Reconnect', 'link', 'History that lost its folder, and where it probably went'],
+  migration: ['Half-done moves', 'route', 'Folders moved before, with history still pointing at the old place'],
+  space: ['Free space', 'drive', 'Dependencies and build output in projects you don’t use'],
+  duplicate: ['Duplicates', 'layers', 'The same repo cloned more than once'],
+  orphan: ['Orphaned', 'unlink', 'History for folders that no longer exist'],
+  status: ['Archive', 'archive', 'Projects with no activity for a long time'],
+}
 function tidyView() {
-  const list = snap.proposals.filter(p => st.tidy === 'all' || p.category === st.tidy)
   const counts = snap.proposals.reduce((a, p) => ((a[p.category] = (a[p.category] ?? 0) + 1), a), {})
-  const recent = st.journal.slice(0, 6)
-  return `<div class="head"><h1>Tidy up</h1><span class="count">${plural(snap.proposals.length, 'suggestion')}</span><span class="grow"></span><span class="muted" style="font-size:12px">Every change is listed before anything moves, and can be undone</span></div>
-    <div class="filterbar"><button class="chipf" data-act="tidyf" data-k="all" aria-pressed="${st.tidy === 'all'}">All <span class="n">${snap.proposals.length}</span></button>
-      ${Object.entries(CATS).filter(([k]) => counts[k]).map(([k, [label, ic]]) => `<button class="chipf" data-act="tidyf" data-k="${k}" aria-pressed="${st.tidy === k}">${icon(ic, 'sm')}${label} <span class="n">${counts[k]}</span></button>`).join('')}</div>
+  const cats = Object.keys(CATS).filter(k => counts[k] && (st.tidy === 'all' || st.tidy === k))
+  const row = p => {
+    const open = !!st.open[p.id]
+    return `<div class="prop-row" data-open="${open}">
+      <div class="item" data-act="toggle" data-id="${esc(p.id)}" tabindex="0" aria-expanded="${open}">
+        ${icon('chev', 'sm chev')}<span class="name" style="max-width:none;flex:1;white-space:normal">${esc(p.title)}</span>
+        <span class="meta"><span class="conf ${p.confidence}">${cap(p.confidence)} confidence</span><span>${plural(p.ops.length, 'change')}</span></span>
+      </div>
+      ${open ? `<div class="prop-body"><p>${esc(p.why)}</p>${opsList(p.ops)}
+        <div class="row-acts">${p.action
+          ? `<button class="btn sm primary" data-act="apply" data-id="${esc(p.id)}">Apply ${plural(p.ops.length, 'change')}</button>`
+          : '<span class="muted" style="font-size:12px">Nothing to apply automatically. Open both and decide which one to keep.</span>'}
+          ${p.nodeId && nodes[p.nodeId] ? `<span class="grow"></span><button class="btn sm ghost" data-act="sel" data-id="${esc(p.nodeId)}">Open ${esc(nodes[p.nodeId].label)}</button>` : ''}</div></div>` : ''}
+    </div>`
+  }
+  const conf = { high: 0, med: 1, low: 2 }
+  return `<div class="head"><h1>Tidy up</h1><span class="count">${plural(snap.proposals.length, 'suggestion')}</span><span class="grow"></span><span class="muted" style="font-size:12px">Every change is listed before anything moves, and can be undone from the Log</span></div>
+    <div class="filterbar"><div class="showbar" role="group" aria-label="Show"><button class="chipf" data-act="tidyf" data-k="all" aria-pressed="${st.tidy === 'all'}">All <span class="n">${snap.proposals.length}</span></button>
+      ${Object.entries(CATS).filter(([k]) => counts[k]).map(([k, [label, ic, hint]]) => `<button class="chipf" data-act="tidyf" data-k="${k}" aria-pressed="${st.tidy === k}" title="${esc(hint)}">${icon(ic, 'sm')}${label} <span class="n">${counts[k]}</span></button>`).join('')}</div></div>
     <div class="body">
-      ${recent.length ? `<section class="group"><div class="group-h">Recent changes <span class="c">${recent.length}</span></div>${recent.map(j => `<div class="item">${icon('history')}<span class="name" style="max-width:none;flex:1;font-weight:400">${esc(j.title)}</span>
-        <span class="meta">${j.state === 'applied' ? '<span class="pill ok">Applied</span>' : j.state === 'undone' ? '<span class="pill">Undone</span>' : `<span class="pill bad" title="${esc(j.error ?? '')}">${esc(cap(j.state))}</span>`}<span class="mono">${esc(ago(j.at))}</span>
-        ${j.state === 'applied' ? `<button class="btn sm" data-act="undo" data-id="${esc(j.id)}">${icon('undo', 'sm')}Undo</button>` : ''}</span></div>`).join('')}</section>` : ''}
-      <section class="group"><div class="group-h">Suggestions</div>
-      ${list.map(p => {
-        const open = !!st.open[p.id]
-        const [, ic] = CATS[p.category] ?? [p.category, 'sparkles']
-        return `<div class="prop-row" data-open="${open}">
-          <div class="item" data-act="toggle" data-id="${esc(p.id)}" tabindex="0" aria-expanded="${open}">
-            ${icon('chev', 'sm chev')}${icon(ic)}<span class="name" style="max-width:none;flex:1;white-space:normal">${esc(p.title)}</span>
-            <span class="meta"><span class="conf ${p.confidence}">${cap(p.confidence)} confidence</span><span>${plural(p.ops.length, 'change')}</span></span>
-          </div>
-          ${open ? `<div class="prop-body"><p>${esc(p.why)}</p>${opsList(p.ops)}
-            <div class="row-acts">${p.action
-              ? `<button class="btn sm primary" data-act="apply" data-id="${esc(p.id)}">Apply ${plural(p.ops.length, 'change')}</button>`
-              : '<span class="muted" style="font-size:12px">Nothing to apply automatically. Open both and decide which one to keep.</span>'}
-              ${p.nodeId && nodes[p.nodeId] ? `<span class="grow"></span><button class="btn sm ghost" data-act="sel" data-id="${esc(p.nodeId)}">Open ${esc(nodes[p.nodeId].label)}</button>` : ''}</div></div>` : ''}
-        </div>`
-      }).join('') || '<div class="empty">Nothing to tidy here.</div>'}</section>
+      ${cats.map(k => `<section class="group"><div class="group-h">${icon(CATS[k][2] ? CATS[k][1] : 'sparkles', 'sm')}${CATS[k][0]} <span class="c">${counts[k]}</span><span class="hint">${esc(CATS[k][2])}</span><span class="ord">Surest first</span></div>
+        ${snap.proposals.filter(p => p.category === k).sort((a, b) => conf[a.confidence] - conf[b.confidence]).map(row).join('')}</section>`).join('') || '<div class="empty">Nothing to tidy here.</div>'}
     </div>`
 }
 
@@ -884,6 +1014,65 @@ function opsList(ops, optional = false) {
   return `<ul class="ops">${ops.map((o, i) => `<li class="k-${esc(o.kind)}">${icon(o.kind)}<div class="lab">${optional && o.kind === 'delete' ? `<label><input type="checkbox" class="cb" id="opt-heavy">${esc(o.label)}</label>` : esc(o.label)}</div>
     ${o.from || o.to ? `<div class="ft">${o.from ? esc(o.from) : ''}${o.from && o.to ? '<span class="arr">→</span>' : ''}${o.to ? esc(o.to) : ''}</div>` : ''}
     ${o.detail ? `<div class="det">${esc(o.detail)}</div>` : ''}</li>`).join('')}</ul>`
+}
+
+/* ---------- Log ---------- */
+/** What kind of change a log entry is, from what it records. */
+function logKind(e) {
+  if (e.undoes) return 'undo'
+  if (e.journal) return 'move'
+  const k = e.key?.split(':')[0]
+  if (k === 'meta' || k === 'todo' || k === 'notes') return k
+  if (k === 'connector' || k === 'settings') return 'setup'
+  return e.title.startsWith('Created') ? 'new' : 'other'
+}
+const LOG_ICON = { undo: 'undo', move: 'route', meta: 'rename', todo: 'keep', notes: 'file', setup: 'gear', new: 'plus', other: 'history' }
+const LOG_FILTERS = [
+  ['all', 'All', () => true],
+  ['moves', 'Moves and archives', e => logKind(e) === 'move'],
+  ['projects', 'Project edits', e => ['meta', 'todo', 'notes', 'new'].includes(logKind(e))],
+  ['setup', 'Settings', e => logKind(e) === 'setup'],
+  ['agent', 'By agents', e => e.by === 'agent'],
+]
+function logView() {
+  if (!LIVE) return `<div class="head"><h1>Log</h1></div><div class="body"><div class="empty">The log lives in the app. Start laci with \`pnpm start\`.</div></div>`
+  const L = st.log
+  if (!L) { refreshLog(); return `<div class="head"><h1>Log</h1></div><div class="body"><div class="empty">Reading the log…</div></div>` }
+  const f = LOG_FILTERS.find(x => x[0] === st.logf) ?? LOG_FILTERS[0]
+  const list = L.entries.filter(f[2])
+  const days = []
+  for (const e of list) {
+    const d = new Date(e.at)
+    const back = daysBack(d)
+    const label = back === 0 ? 'Today' : back === 1 ? 'Yesterday' : d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', ...(!thisYear(d) && { year: 'numeric' }) })
+    if (days.at(-1)?.label !== label) days.push({ label, rows: [] })
+    days.at(-1).rows.push(e)
+  }
+  const row = e => {
+    const open = !!st.open['log:' + e.id]
+    const more = e.steps?.length || e.error
+    const project = e.path && nodes[e.path] && !e.title.includes(nodes[e.path].name) ? `<span class="pill">${esc(nodes[e.path].label)}</span>` : ''
+    const state = e.state === 'undone' ? '<span class="pill">Undone</span>' : e.state === 'failed' ? `<span class="pill bad">Failed</span>` : e.state === 'running' ? '<span class="pill bad">Didn’t finish</span>' : ''
+    const undo = e.canUndo ? `<button class="btn sm act" data-act="logundo" data-id="${esc(e.id)}">${icon('undo', 'sm')}Undo</button>`
+      : e.superseded ? '<span class="faint" style="font-size:12px" title="Changed again later. Undo the newer change first.">Changed since</span>' : ''
+    return `<div class="prop-row" data-open="${open}">
+      <div class="item two" ${more ? `data-act="toggle" data-id="log:${esc(e.id)}" tabindex="0" aria-expanded="${open}"` : ''}>
+        ${more ? icon('chev', 'sm chev') : ''}${icon(LOG_ICON[logKind(e)])}
+        <div class="lines"><div class="l1"><span class="t" style="max-width:none;white-space:normal">${esc(e.title)}</span>${project}</div>
+          ${e.detail ? `<div class="l2"><span>${esc(e.detail)}</span></div>` : ''}</div>
+        <span class="meta">${e.by === 'agent' ? `<span class="pill" title="Made by an AI agent through laci's MCP server">${icon('bot', 'sm')}Agent</span>` : ''}${state}${undo}<span class="mono">${tm(e.at, true)}</span></span>
+      </div>
+      ${open ? `<div class="prop-body">${e.error ? `<p style="color:var(--red)">${esc(e.error)}</p>` : ''}${e.steps?.length ? opsList(e.steps) : ''}</div>` : ''}
+    </div>`
+  }
+  return `<div class="head"><h1>Log</h1><span class="count">${plural(L.entries.length, 'change')}</span><span class="grow"></span>
+      <button class="btn sm ghost" data-act="openlog" title="${esc(L.file ?? '')}">${icon('file', 'sm')}Debug log</button></div>
+    <div class="filterbar"><div class="showbar" role="group" aria-label="Show">${LOG_FILTERS.map(([k, label, fn]) => `<button class="chipf" data-act="logf" data-k="${k}" aria-pressed="${st.logf === k}">${label}${k === 'all' ? '' : ` <span class="n">${L.entries.filter(fn).length}</span>`}</button>`).join('')}</div>
+      <span class="grow"></span><span class="scope">Everything laci changed, from the app or an agent · newest first</span></div>
+    <div class="body">
+      ${L.error ? `<div class="empty">${esc(L.error)}</div>` : ''}
+      ${days.map(d => `<section class="group"><div class="group-h">${esc(d.label)} <span class="c">${d.rows.length}</span></div>${d.rows.map(row).join('')}</section>`).join('') || '<div class="empty">Nothing yet. Moves, archives, status changes, to-dos and notes show up here, with a way to undo them.</div>'}
+    </div>`
 }
 
 /* ---------- Agents ---------- */
@@ -1021,7 +1210,7 @@ function insp() {
           <dt>Branch</dt><dd><span class="pval">${icon('branch', 'sm')}<span class="mono">${esc(g.branch ?? '—')}</span>${g.dirty ? `<span class="faint">· ${g.dirty} changed</span>` : ''}</span></dd>` : ''}
         ${n.stack?.labels.length ? `<dt>Stack</dt><dd style="padding:4px 0 4px 8px;gap:4px">${n.stack.labels.slice(0, 6).map(l => `<span class="tag">${esc(l)}</span>`).join('')}</dd>` : ''}
         ${n.kind === 'folder' ? `<dt>Inside</dt><dd><span class="pval">${plural(kids.length, 'project')} · ${kids.filter(k => k.archived).length} archived</span></dd>` : ''}
-        <dt>Activity</dt><dd><span class="pval"><span>${esc(ago(n.lastActivity?.at))}${n.lastActivity?.source ? ` <span class="faint">· ${esc(n.lastActivity.source)}</span>` : ''}</span></span></dd>
+        <dt>Activity</dt><dd><span class="pval"><span>${tm(n.lastActivity?.at, true)}${n.lastActivity?.source ? ` <span class="faint">· ${esc(n.lastActivity.source)}</span>` : ''}</span></span></dd>
         ${n.size ? `<dt>Size</dt><dd><span class="pval"><span>${esc(bytes(n.size.total))}${n.size.reclaimable ? ` <span class="faint">· ${esc(bytes(n.size.reclaimable))} reclaimable</span>` : ''}</span></span></dd>` : ''}
       </dl>
       <div class="tabs" role="tablist">${tabs.map(([k, label, c]) => `<button role="tab" data-act="tab" data-k="${k}" aria-selected="${st.tab === k}">${label}${c ? `<span class="n">${c}</span>` : ''}</button>`).join('')}</div>
@@ -1045,15 +1234,15 @@ function healthTab(n) {
     const mx = Math.max(...g.weekly, 1)
     out.push(`<div class="sec-t">Commits <span class="grow"></span><span class="faint" style="font-weight:400">${g.commits} total${g.authors > 1 ? ` · ${g.authors} authors` : ''}</span></div>
       <div class="spark" aria-label="Commits per week, last 26 weeks">${g.weekly.map(w => `<i class="${w ? '' : 'z'}" style="height:${w ? Math.max(10, (w / mx) * 100) : 6}%" title="${w} commits"></i>`).join('')}</div>
-      <div class="spark-cap"><span>${esc(date(new Date(NOW - 182 * 864e5).toISOString()))}</span><span>this week</span></div>
+      <div class="spark-cap"><span>${esc(date(new Date(Date.now() - 182 * 864e5).toISOString()))}</span><span>this week</span></div>
       <dl class="kv" style="margin-top:12px">
         <dt>First commit</dt><dd>${esc(date(g.firstCommitAt))}</dd>
-        <dt>Last commit</dt><dd>${g.lastSubject ? `${esc(g.lastSubject)} <span class="faint">· ${esc(ago(g.lastCommitAt))}</span>` : 'None yet'}</dd>
+        <dt>Last commit</dt><dd>${g.lastSubject ? `${esc(g.lastSubject)} <span class="faint">· ${tm(g.lastCommitAt, true)}</span>` : 'None yet'}</dd>
         ${g.upstream ? `<dt>Tracking</dt><dd class="mono">${esc(g.upstream)}${g.ahead || g.behind ? ` <span class="faint">· ${g.ahead} ahead, ${g.behind} behind</span>` : ''}</dd>` : ''}
         ${g.stashes ? `<dt>Stashes</dt><dd>${g.stashes}</dd>` : ''}
       </dl>`)
   } else if (n.kind === 'project') {
-    out.push(`<div class="sec-t">History</div><dl class="kv"><dt>Folder made</dt><dd>${esc(date(n.createdAt?.at))}</dd><dt>Last change</dt><dd>${esc(ago(n.lastActivity?.at))}</dd><dt>Git</dt><dd>Not tracked</dd></dl>`)
+    out.push(`<div class="sec-t">History</div><dl class="kv"><dt>Folder made</dt><dd>${esc(date(n.createdAt?.at))}</dd><dt>Last change</dt><dd>${tm(n.lastActivity?.at, true)}</dd><dt>Git</dt><dd>Not tracked</dd></dl>`)
   }
 
   const sk = n.stack
@@ -1086,7 +1275,7 @@ function todoTab(n) {
     ${mine.map(box).join('')}
     <form class="add" data-form="todo" data-id="${esc(n.id)}">${icon('plus', 'sm')}<input name="t" placeholder="Add the next step…" autocomplete="off" aria-label="New to-do"></form>
     ${byFile(checks).map(([file, ts]) => `<div class="sec-t">Checkboxes <span class="grow"></span><span class="faint mono" style="font-weight:400">${esc(file)}</span></div>${ts.map(box).join('')}`).join('')}
-    ${byFile(lists).map(([file, ts]) => `<div class="sec-t">Listed under TODO <span class="grow"></span><span class="faint mono" style="font-weight:400">${esc(file)} · ${esc(ago(n.taskFiles.find(f => f.file === file)?.at))}</span></div>
+    ${byFile(lists).map(([file, ts]) => `<div class="sec-t">Listed under TODO <span class="grow"></span><span class="faint mono" style="font-weight:400">${esc(file)} · ${tm(n.taskFiles.find(f => f.file === file)?.at)}</span></div>
       ${ts.slice(0, limit).map(t => `<div class="todo ${t.done ? 'done' : ''}"><span class="bullet">–</span><div class="txt">${esc(t.text)}${t.section ? `<div class="src">${esc(t.section)}</div>` : ''}</div></div>`).join('')}
       ${ts.length > 8 ? `<button class="more" data-act="expand" data-k="list:${esc(n.id)}">${st.expand['list:' + n.id] ? 'Show fewer' : `Show all ${ts.length}`}</button>` : ''}`).join('')}
     <div class="sec-t">Notes <span class="grow"></span><span class="faint" id="notes-state" style="font-weight:400"></span></div>
@@ -1097,7 +1286,7 @@ function agentsTab(n) {
   const out = []
   const sess = sessionsOf(n)
   const limit = st.expand['sess:' + n.id] ? Infinity : 8
-  if (sess.length) out.push(`<div class="sec-t">Claude Code <span class="grow"></span><span class="faint" style="font-weight:400">${plural(sess.length, 'session')}</span></div>${sess.slice(0, limit).map(s => `<div class="sess">${icon('bot', 'sm')}<span class="t">${esc(s.title ?? 'Untitled session')}</span><span class="m">${esc(date(s.at))}</span><button class="btn sm act" data-act="term" data-id="${esc(n.id)}" data-what="resume" data-arg="${esc(s.id)}">Resume</button></div>`).join('')}
+  if (sess.length) out.push(`<div class="sec-t">Claude Code <span class="grow"></span><span class="faint" style="font-weight:400">${plural(sess.length, 'session')}</span></div>${sess.slice(0, limit).map(s => `<div class="sess">${icon('bot', 'sm')}<span class="t">${esc(s.title ?? 'Untitled session')}</span><span class="m">${tm(s.at, true)}</span><button class="btn sm act" data-act="term" data-id="${esc(n.id)}" data-what="resume" data-arg="${esc(s.id)}">Resume</button></div>`).join('')}
     ${sess.length > 8 ? `<button class="more" data-act="expand" data-k="sess:${esc(n.id)}">${st.expand['sess:' + n.id] ? 'Show fewer' : `Show all ${sess.length}`}</button>` : ''}`)
   const mem = n.agents.claude.flatMap(k => snap.claude[k].memory)
   if (mem.length) out.push(`<div class="sec-t">Memory <span class="grow"></span><span class="faint" style="font-weight:400">${plural(mem.length, 'file')}</span></div><div style="display:flex;flex-wrap:wrap;gap:4px">${mem.map(f => `<span class="tag mono">${esc(f)}</span>`).join('')}</div>`)
@@ -1109,7 +1298,7 @@ function agentsTab(n) {
     const lim = st.expand[`it:${id}:${n.id}`] ? Infinity : 6
     const title = k === 'mentions' ? `${esc(c.name)} that mention this folder` : esc(c?.name ?? id)
     out.push(`<div class="sec-t">${title}<span class="grow"></span><span class="faint" style="font-weight:400">${k === 'inside' ? 'in the folder' : plural(list.length, k === 'cwd' ? 'session' : k === 'named' ? 'folder' : 'file')}</span></div>
-      ${list.slice(0, lim).map(it => `<div class="sess">${icon(k === 'mentions' || k === 'inside' ? 'file' : 'bot', 'sm')}<span class="t ${it.title ? '' : 'mono'}">${esc(k === 'inside' ? tilde(it.file).split('/').pop() + (it.title ? ` · ${it.title}` : '') : itemName(it))}</span><span class="m">${esc(date(it.at))} · ${esc(bytes(it.bytes))}</span></div>`).join('')}
+      ${list.slice(0, lim).map(it => `<div class="sess">${icon(k === 'mentions' || k === 'inside' ? 'file' : 'bot', 'sm')}<span class="t ${it.title ? '' : 'mono'}">${esc(k === 'inside' ? tilde(it.file).split('/').pop() + (it.title ? ` · ${it.title}` : '') : itemName(it))}</span><span class="m">${tm(it.at, true)} · ${esc(bytes(it.bytes))}</span></div>`).join('')}
       ${list.length > 6 ? `<button class="more" data-act="expand" data-k="it:${esc(id)}:${esc(n.id)}">${st.expand[`it:${id}:${n.id}`] ? 'Show fewer' : `Show all ${list.length}`}</button>` : ''}`)
   }
   const dirs = n.agents.claude.map(k => snap.claude[k])
@@ -1232,16 +1421,52 @@ async function mutate(fn, working) {
     if (working) busy()
   }
 }
-async function refreshJournal() {
+async function refreshLog() {
   if (!LIVE) return
-  st.journal = await api('journal').catch(() => [])
-  if (st.view === 'tidy') render()
+  st.log = await api('log').catch(e => ({ entries: [], error: e.message }))
+  if (st.view === 'log') render()
 }
 async function afterChange(r, done) {
   load(r.snapshot)
-  await refreshJournal()
+  refreshLog()
   render()
   toast(done, '', { undo: r.journal?.state === 'applied' ? r.journal.id : undefined })
+}
+
+/* ---------- live updates ---------- */
+let fetching = false, again = false
+/** The server says the snapshot changed: fetch it (one at a time; a burst ends with one more fetch). */
+async function liveSnapshot() {
+  if (fetching) { again = true; return }
+  fetching = true
+  try {
+    load(await api('snapshot'), true)
+    renderSoon()
+  } catch {} finally {
+    fetching = false
+    if (again) { again = false; liveSnapshot() }
+  }
+}
+/** A folder on screen changed: list it again, keeping the old rows until the new ones arrive. */
+function relist(p) {
+  const old = st.ls[p]
+  if (!old || lsPending.has(p)) return
+  lsPending.add(p)
+  api('ls', { path: p }).then(r => {
+    for (const x of r.entries) x.newest = old.entries.find(y => y.name === x.name)?.newest
+    st.ls[p] = r
+    renderSoon()
+  }, () => {}).finally(() => lsPending.delete(p))
+}
+function listen() {
+  const es = new EventSource(`/api/events?token=${encodeURIComponent(window.LACI.token)}`)
+  es.onmessage = m => {
+    const e = JSON.parse(m.data)
+    if (e.type === 'snapshot') liveSnapshot()
+    else if (e.type === 'status') { st.busy = e.busy; renderSoon() }
+    else if (e.type === 'ls') relist(e.path)
+    else if (e.type === 'log') { if (st.view === 'log') refreshLog() }
+  }
 }
 
 /* ---------- terminal panel ---------- */
@@ -1390,17 +1615,26 @@ function select(id, tab) {
   if (tab) st.tab = tab
   render()
 }
-function toggleTheme() {
+const theme = () => document.documentElement.dataset.theme ?? 'system'
+/** 'system', 'light' or 'dark'. The app saves it in the config, where the desktop window reads it at start. */
+function setTheme(t) {
   const r = document.documentElement
-  const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches
-  r.dataset.theme = dark ? 'light' : 'dark'
-  try { localStorage.setItem('laci:theme', r.dataset.theme) } catch {}
+  if (t === 'system') delete r.dataset.theme
+  else r.dataset.theme = t
   applyTermTheme()
+  if (LIVE) {
+    api('theme', { theme: t === 'system' ? '' : t }).catch(e => toast('Theme not saved', e.message, { error: true }))
+    try { localStorage.removeItem('laci:theme') } catch {}
+  } else try { t === 'system' ? localStorage.removeItem('laci:theme') : localStorage.setItem('laci:theme', t) } catch {}
+}
+function toggleTheme() {
+  const dark = theme() === 'system' ? matchMedia('(prefers-color-scheme: dark)').matches : theme() === 'dark'
+  setTheme(dark ? 'light' : 'dark')
 }
 const OPENED = { terminal: 'Opened a terminal', editor: 'Opened in the editor', files: 'Opened in the file manager', resume: 'Resuming the session in a terminal', fix: 'Opened a terminal', script: 'Running in a terminal', summary: 'Claude is writing a summary in a terminal' }
 
 const acts = {
-  view: d => { st.view = d.v; st.resetScroll = true; if (d.v === 'settings') st.setup = null; render(); if (d.v === 'tidy') refreshJournal() },
+  view: d => { st.view = d.v; st.resetScroll = true; if (d.v === 'settings') st.setup = null; render(); if (d.v === 'log') refreshLog() },
   cd: d => {
     st.view = 'folder'
     st.cwd = d.id
@@ -1441,10 +1675,11 @@ const acts = {
     await api('open', { id: d.id, what: d.what, arg: d.arg })
     toast(OPENED[d.what] ?? 'Opened', tilde(d.id))
   }),
-  theme: () => toggleTheme(),
+  theme: d => { setTheme(d.v); render() },
   copy: d => { navigator.clipboard?.writeText(d.text); toast('Path copied', tilde(d.text)) },
   expand: d => { st.expand[d.k] = !st.expand[d.k]; render() },
-  sort: d => { st.sort = st.sort.key === d.k ? { key: d.k, dir: -st.sort.dir } : { key: d.k, dir: d.k === 'name' ? 1 : -1 }; render() },
+  sort: d => { setSort(d.k, st.sort.key === d.k ? -st.sort.dir : SORTS[d.k].first) },
+  menu: d => { st.menu = st.menu === d.k ? null : d.k; render() },
   tidyf: d => { st.tidy = d.k; st.resetScroll = true; render() },
   toggle: d => { st.open[d.id] = !st.open[d.id]; render() },
   apply: d => mutate(async () => {
@@ -1454,6 +1689,16 @@ const acts = {
     await afterChange(r, `Done: ${p.title}`)
   }, 'Applying changes…'),
   undo: d => mutate(async () => afterChange(await api('undo', { id: d.id }), 'Undone. Everything is back where it was.'), 'Undoing…'),
+  logundo: d => mutate(async () => {
+    const r = await api('log/undo', { id: d.id })
+    if (r.snapshot) load(r.snapshot)
+    else if (r.node) patch(r.node)
+    await refreshLog()
+    render()
+    toast('Undone', 'It’s back the way it was.')
+  }, 'Undoing…'),
+  logf: d => { st.logf = d.k; st.resetScroll = true; render() },
+  openlog: () => mutate(async () => { await api('log/open'); toast('Opened the debug log', st.log?.file ?? '') }),
   archive: d => { st.modal = { id: d.id }; render() },
   connadd: () => { st.modal = { kind: 'connector' }; render() },
   newproj: () => {
@@ -1518,6 +1763,11 @@ const acts = {
   tmax: () => { T.max = !T.max; showTerm(true) },
   thide: () => showTerm(false),
 }
+function setSort(key, dir) {
+  st.sort = { key, dir }
+  pref.set('sort', st.sort)
+  render()
+}
 function setMeta(id, key, value) {
   mutate(async () => {
     patch(await api('meta', { id, key, value }))
@@ -1538,6 +1788,7 @@ function paletteGo(id) {
 }
 
 document.addEventListener('click', e => {
+  if (st.menu && !e.target.closest('.menu-wrap')) { st.menu = null; render() }
   const a = e.target.closest('[data-act]')
   if (!a || a.disabled || a.closest('[disabled]')) return
   // A plain link or form control inside a clickable row does its own thing.
@@ -1553,20 +1804,13 @@ document.addEventListener('dblclick', e => {
 })
 document.addEventListener('change', e => {
   const t = e.target
-  if (t.hasAttribute('data-archived')) { st.showArchived = t.checked; render(); return }
-  if (t.hasAttribute('data-hidden')) { st.hidden = t.checked; render(); return }
+  if (t.dataset.pref) { st[t.dataset.pref] = t.checked; pref.set({ showArchived: 'archived' }[t.dataset.pref] ?? t.dataset.pref, t.checked); render(); return }
+  if (t.hasAttribute('data-sortkey')) { setSort(t.value, SORTS[t.value].first); return }
+  if (t.hasAttribute('data-sortdir')) { setSort(st.sort.key, Number(t.value)); return }
   if (t.dataset.sroot) { t.checked ? st.setup.roots.add(t.dataset.sroot) : st.setup.roots.delete(t.dataset.sroot); st.setup.error = null; return }
   if (t.dataset.spreset) { t.checked ? st.setup.presets.add(t.dataset.spreset) : st.setup.presets.delete(t.dataset.spreset); return }
   if (t.dataset.sapp) { st.setup.apps[t.dataset.sapp] = t.value; return }
   if (t.name === 'parent' && t.closest('[data-form="new"]')) { t.dispatchEvent(new Event('input', { bubbles: true })); return }
-  if (t.hasAttribute('data-themepick')) {
-    const r = document.documentElement
-    if (t.value === 'system') delete r.dataset.theme
-    else r.dataset.theme = t.value
-    try { t.value === 'system' ? localStorage.removeItem('laci:theme') : localStorage.setItem('laci:theme', t.value) } catch {}
-    applyTermTheme()
-    return
-  }
   if (t.hasAttribute('data-check')) {
     const d = t.dataset
     const done = t.checked
@@ -1683,9 +1927,9 @@ document.addEventListener('submit', async e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'F4' || (e.ctrlKey && e.key === '`')) { e.preventDefault(); toggleTerm(); return }
   if (e.target.closest?.('.xterm')) return
-  if (e.ctrlKey && e.key.toLowerCase() === 'h' && st.view === 'folder') { e.preventDefault(); st.hidden = !st.hidden; render(); return }
+  if (e.ctrlKey && e.key.toLowerCase() === 'h' && st.view === 'folder') { e.preventDefault(); st.hidden = !st.hidden; pref.set('hidden', st.hidden); render(); return }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); st.palette = st.palette ? null : { q: '', i: 0 }; render(); return }
-  if (e.key === 'Escape') { if (st.palette || st.modal) { st.palette = null; st.modal = null } else if (st.sel) st.sel = null; render(); return }
+  if (e.key === 'Escape') { if (st.palette || st.modal || st.menu) { st.palette = null; st.modal = null; st.menu = null } else if (st.sel) st.sel = null; render(); return }
   if (st.palette) {
     const items = paletteItems(st.palette.q)
     if (e.key === 'ArrowDown') { e.preventDefault(); st.palette.i = Math.min(st.palette.i + 1, items.length - 1); render() }
@@ -1711,7 +1955,8 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Backspace' && st.view === 'folder' && st.cwd !== HOME && within(st.cwd, HOME)) acts.cd({ id: parentOf(st.cwd) })
 })
 
-try { const t = localStorage.getItem('laci:theme'); if (t) document.documentElement.dataset.theme = t } catch {}
+// Themes used to live only in this window's storage; move one over to the config once.
+if (LIVE && !window.LACI.theme && document.documentElement.dataset.theme) setTheme(document.documentElement.dataset.theme)
 try {
   load(S ?? (await api('snapshot')))
 } catch (e) {
@@ -1720,8 +1965,11 @@ try {
 }
 if (LIVE) st.apps = await api('apps').catch(() => null)
 render()
-refreshJournal()
 restoreTerms()
+if (LIVE) listen()
+setInterval(() => {
+  for (const el of document.querySelectorAll('time[datetime]')) el.textContent = el.hasAttribute('data-long') ? when(el.dateTime) : ago(el.dateTime)
+}, 30000)
 })()
 </script>
 </body>

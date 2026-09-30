@@ -7,19 +7,25 @@ import { fileURLToPath } from 'node:url'
 import type { Node, Snapshot } from './core/types.ts'
 import { issuesFor } from './core/health.ts'
 import { CATALOG, connectors, presetsFound } from './core/agents/connectors.ts'
-import { ConfigError, checkApps, checkConnector, checkRoots, homePath, loadConfig, saveConfig } from './core/config.ts'
+import { type Config, ConfigError, checkApps, checkConnector, checkRoots, homePath, loadConfig, updateConfig } from './core/config.ts'
 import { defaultRoots } from './core/detect.ts'
 import { TEMPLATES, createProject, hosts, templates } from './core/create.ts'
 import { installedApps, onPath, rootCandidates } from './core/setup.ts'
-import { applyAction, archiveProject, backupHistory, journals, undo } from './core/ops.ts'
-import { autoStatus, scan } from './core/scan.ts'
+import { applyAction, archiveProject, backupHistory, undo } from './core/ops.ts'
+import { CACHE_DIR } from './core/agents/cache.ts'
+import { autoStatus, refreshProject, relinkAgents, scan } from './core/scan.ts'
 import { META_RULES, SIDECAR, addNext, deleteCheck, setMeta, setNotes, toggleCheck } from './core/sidecar.ts'
 import { readTasks } from './core/tasks.ts'
 import { bytes } from './core/tidy.ts'
-import { iso, list, pool, stat, tilde, within } from './core/util.ts'
+import { HOME, iso, list, pool, stat, tilde, walkFiles, within } from './core/util.ts'
+import { entryForJournal, readLog, record, undoActivity } from './core/activity.ts'
+import { LOG_FILE, log, logAs } from './core/log.ts'
+import { stripMd } from './core/readme.ts'
 import * as term from './term.ts'
+import { Watcher } from './watch.ts'
 import { VENDOR } from './vendor.ts'
 
+logAs('app')
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PORT = Number(process.env.LACI_PORT ?? 4747)
 /** Programs laci opens things with: an env var wins (tests, one-off runs), then Settings, then these. */
@@ -36,7 +42,77 @@ const TOKEN = randomBytes(18).toString('base64url')
 
 let snap: Snapshot | undefined
 let scanning: Promise<Snapshot> = Promise.resolve(undefined as unknown as Snapshot)
-const rescan = () => (scanning = scan().then(s => (snap = s)))
+let busy = false
+/** A full scan. The app is told when it starts and when the new snapshot is ready. */
+const rescan = () => {
+  busy = true
+  watcher.scanStarted()
+  push({ type: 'status', busy })
+  scanning = scan().then(
+    async s => {
+      snap = s
+      busy = false
+      log.info(`scanned ${Object.values(s.nodes).filter(n => n.kind === 'project').length} projects in ${(s.tookMs / 1000).toFixed(1)}s`)
+      push({ type: 'snapshot' })
+      push({ type: 'status', busy })
+      void saveSnapshot(s)
+      await watcher.sync(s)
+      return s
+    },
+    e => {
+      busy = false
+      push({ type: 'status', busy })
+      throw e
+    },
+  )
+  return scanning
+}
+
+/* ---------- live updates ---------- */
+const listeners = new Set<http.ServerResponse>()
+function push(e: object) {
+  const line = `data: ${JSON.stringify(e)}\n\n`
+  for (const res of listeners) res.write(line)
+}
+const watcher = new Watcher({
+  snap: () => snap,
+  rescan: () => exclusive(() => rescan()),
+  relink: () =>
+    exclusive(async () => {
+      if (!snap) return
+      await relinkAgents(snap)
+      push({ type: 'snapshot' })
+    }),
+  refresh: projects =>
+    exclusive(async () => {
+      if (!snap) return
+      for (const [id, ms] of projects) if (snap.nodes[id]) await refreshProject(snap, snap.nodes[id], ms)
+      push({ type: 'snapshot' })
+    }),
+  notify: e => push(e),
+})
+
+/** The last full scan, so the next start shows something at once while it scans again. */
+const SNAPSHOT_CACHE = path.join(CACHE_DIR, 'snapshot.json')
+async function saveSnapshot(s: Snapshot) {
+  try {
+    await fs.mkdir(CACHE_DIR, { recursive: true })
+    await fs.writeFile(`${SNAPSHOT_CACHE}.tmp`, JSON.stringify(s))
+    await fs.rename(`${SNAPSHOT_CACHE}.tmp`, SNAPSHOT_CACHE)
+  } catch (e) {
+    log.warn(`couldn't cache the snapshot: ${(e as Error).message}`)
+  }
+}
+async function cachedSnapshot(): Promise<Snapshot | undefined> {
+  try {
+    const s: Snapshot = JSON.parse(await fs.readFile(SNAPSHOT_CACHE, 'utf8'))
+    const cfg = await loadConfig()
+    // Only if it was made for the same folders and connectors; otherwise it would show the wrong things.
+    const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i])
+    if (s.home !== HOME || !cfg.roots || !same(s.roots, cfg.roots) || !same(s.connectors.map(c => c.id), (await connectors(cfg)).map(c => c.id))) return
+    return s
+  } catch {}
+}
 let lock: Promise<unknown> = Promise.resolve()
 /** Changes on disk run one at a time, each against a fresh scan. */
 const exclusive = <T>(fn: () => Promise<T>): Promise<T> => {
@@ -157,9 +233,23 @@ function taskFile(n: Node, file: unknown) {
   return p
 }
 
+const notesSaved = new Map<string, number>()
+const FIELD_NAMES: Record<string, string> = { status: 'Status', priority: 'Priority', deadline: 'Deadline', client: 'Client' }
+function metaTitle(name: string, key: string, value: unknown) {
+  return value ? `${FIELD_NAMES[key] ?? key} of ${name} set to ${value}` : `${FIELD_NAMES[key] ?? key} of ${name} cleared`
+}
+/** Log a journaled change (move, archive, tidy). Its undo goes through the journal. */
+function journaled(j: { id: string; title: string }, p?: string) {
+  return record({ by: 'app', title: j.title, path: p, journal: j.id, undo: { type: 'journal', id: j.id } })
+}
+
 const api: Record<string, (body: any) => Promise<unknown>> = {
+  /** The latest snapshot: kept current by the watcher, or the cached one while the first scan runs. */
   async snapshot() {
-    return scanning
+    return snap ?? scanning
+  },
+  async status() {
+    return { busy }
   },
   async rescan() {
     return exclusive(() => rescan())
@@ -167,22 +257,39 @@ const api: Record<string, (body: any) => Promise<unknown>> = {
   async meta({ id, key, value }) {
     const n = node(id)
     need(META_RULES[key]?.test(String(value ?? '')), `Invalid ${key}`)
+    const before = String(n.meta[key as keyof Node['meta']] ?? '')
     await setMeta(n.path, key, value || undefined)
+    if (before !== (value ?? ''))
+      await record({ by: 'app', title: metaTitle(n.name, key, value), path: n.path, key: `meta:${n.path}:${key}`, undo: { type: 'meta', key, value: before } })
     return refresh(n)
   },
   async todo({ id, op, text, file, line, done }) {
     const n = node(id)
-    if (op === 'add') await addNext(n.path, need(typeof text === 'string' && text.trim().slice(0, 300), 'Write something first'))
-    else if (op === 'toggle') await toggleCheck(taskFile(n, file), Number(line), String(text), !!done)
-    else if (op === 'delete') {
+    const k = (t: string) => `todo:${n.path}:${t}`
+    if (op === 'add') {
+      const item = need(typeof text === 'string' && text.replace(/\s+/g, ' ').trim().slice(0, 300), 'Write something first')
+      await addNext(n.path, item)
+      await record({ by: 'app', title: `Added a next step to ${n.name}`, detail: item, path: n.path, key: k(stripMd(item)), undo: { type: 'drop', text: stripMd(item) } })
+    } else if (op === 'toggle') {
+      await toggleCheck(taskFile(n, file), Number(line), String(text), !!done)
+      await record({ by: 'app', title: `${done ? 'Ticked' : 'Unticked'} a to-do in ${n.name}`, detail: String(text), path: n.path, key: k(String(text)), undo: { type: 'check', file: String(file), text: String(text), done: !done } })
+    } else if (op === 'delete') {
       need(file === SIDECAR, 'Only items in .laci.md can be deleted here')
+      const was = n.tasks.find(t => t.file === SIDECAR && t.text === text)
       await deleteCheck(taskFile(n, file), Number(line), String(text))
+      await record({ by: 'app', title: `Deleted a next step from ${n.name}`, detail: String(text), path: n.path, key: k(String(text)), undo: { type: 'add', text: String(text), done: !!was?.done } })
     } else throw new Bad('Unknown to-do operation')
     return refresh(n)
   },
   async notes({ id, text }) {
     const n = node(id)
+    const before = n.notes ?? ''
     await setNotes(n.path, String(text ?? '').slice(0, 20000))
+    // Notes save as you type; one log entry per sitting, and its undo goes back to before the sitting.
+    const last = notesSaved.get(n.path) ?? 0
+    notesSaved.set(n.path, Date.now())
+    if (Date.now() - last > 10 * 60_000)
+      await record({ by: 'app', title: `Edited the notes of ${n.name}`, path: n.path, key: `notes:${n.path}`, undo: { type: 'notes', text: before } })
     return refresh(n)
   },
   /** Open something outside laci: the editor, the file manager, or an external terminal. */
@@ -228,7 +335,9 @@ const api: Record<string, (body: any) => Promise<unknown>> = {
   },
   async archive({ id, trashHeavy }) {
     return exclusive(async () => {
-      const journal = await archiveProject(snap!, node(id).id, { trashHeavy: !!trashHeavy })
+      const n = node(id)
+      const journal = await archiveProject(snap!, n.id, { trashHeavy: !!trashHeavy })
+      await journaled(journal, n.path)
       return { journal, snapshot: await rescan() }
     })
   },
@@ -236,6 +345,7 @@ const api: Record<string, (body: any) => Promise<unknown>> = {
     return exclusive(async () => {
       const p = need(snap!.proposals.find(x => x.id === id), 'That suggestion is gone after the last scan')
       const journal = await applyAction(snap!, p.title, need(p.action, 'Nothing to apply here; open the folders and decide'))
+      await journaled(journal, p.nodeId)
       return { journal, snapshot: await rescan() }
     })
   },
@@ -244,6 +354,7 @@ const api: Record<string, (body: any) => Promise<unknown>> = {
     const dir = homePath(p ?? snap?.home, 'Folder')
     need((await stat(dir))?.isDirectory(), "That folder doesn't exist anymore")
     const entries = (await list(dir)).slice(0, 5000)
+    watcher.listing(dir)
     return {
       path: dir,
       entries: await pool(entries, 16, async e => {
@@ -263,14 +374,45 @@ const api: Record<string, (body: any) => Promise<unknown>> = {
       }),
     }
   },
-  async journal() {
-    return journals()
+  /**
+   * The newest change inside each plain folder of a listing, so Modified means the same on every row.
+   * Walks up to a few thousand files per folder, skipping hidden and build folders like a scan does.
+   */
+  async 'ls/newest'({ path: p }) {
+    const dir = homePath(p, 'Folder')
+    const dirs = (await list(dir)).filter(e => e.isDirectory() && !snap?.nodes[path.join(dir, e.name)]).slice(0, 500)
+    const out: Record<string, string> = {}
+    await pool(dirs, 6, async e => {
+      const full = path.join(dir, e.name)
+      let newest = (await stat(full))?.mtimeMs ?? 0
+      await walkFiles(full, 3000, (_, ms) => (newest = Math.max(newest, ms)))
+      if (newest) out[e.name] = iso(newest)
+    })
+    return out
   },
+  /** Undo a move or archive by its journal (the Undo button in the toast right after it). */
   async undo({ id }) {
     return exclusive(async () => {
       const journal = await undo(need(typeof id === 'string' && id, 'Unknown change'))
+      await record({ by: 'app', title: `Undid: ${journal.title}`, undoes: await entryForJournal(journal.id) })
       return { journal, snapshot: await rescan() }
     })
+  },
+  async log() {
+    return { entries: await readLog(), file: tilde(LOG_FILE) }
+  },
+  async 'log/undo'({ id }) {
+    return exclusive(async () => {
+      const r = await undoActivity(need(typeof id === 'string' && id, 'Unknown change'), 'app')
+      if (r.refresh === 'all') return { snapshot: await rescan() }
+      const n = Object.values(snap!.nodes).find(x => x.path === r.path)
+      return n ? { node: await refresh(n) } : { snapshot: await rescan() }
+    })
+  },
+  async 'log/open'() {
+    need(await stat(LOG_FILE), 'Nothing logged yet')
+    detach('xdg-open', [LOG_FILE], path.dirname(LOG_FILE))
+    return { ok: true }
   },
   async backup() {
     const r = await backupHistory(await scanning)
@@ -279,11 +421,9 @@ const api: Record<string, (body: any) => Promise<unknown>> = {
 }
 
 /** Change the config, then rescan so the app shows the result. */
-function reconfigure(fn: (c: Awaited<ReturnType<typeof loadConfig>>) => Promise<void> | void) {
+function reconfigure(fn: (c: Config) => Promise<void> | void) {
   return exclusive(async () => {
-    const c = await loadConfig()
-    await fn(c)
-    await saveConfig(c)
+    await updateConfig(fn)
     return rescan()
   })
 }
@@ -291,6 +431,14 @@ function reconfigure(fn: (c: Awaited<ReturnType<typeof loadConfig>>) => Promise<
 Object.assign(api, {
   async apps() {
     return apps()
+  },
+  /** Light, dark, or '' to follow the system. No rescan: only the page and the next window's colors change. */
+  async theme({ theme }: { theme: unknown }) {
+    need(theme === '' || theme === 'light' || theme === 'dark', 'Unknown theme')
+    await updateConfig(c => {
+      c.theme = (theme || undefined) as Config['theme']
+    })
+    return { theme }
   },
   /** Everything the setup screen and Settings need to offer choices. */
   async 'setup/info'() {
@@ -313,19 +461,22 @@ Object.assign(api, {
     const r = await checkRoots(roots)
     need(Array.isArray(presets) && presets.every(p => CATALOG.some(x => x.id === p)), 'Unknown connector')
     const a = checkApps(chosen)
-    return reconfigure(c => {
+    return reconfigure(async c => {
+      const before = { type: 'config' as const, roots: c.roots, presets: c.presets, apps: c.apps }
       c.roots = r
       c.presets = [...new Set(presets as string[])]
       c.apps = a
+      await record({ by: 'app', title: before.roots ? 'Changed settings' : 'Finished setup', detail: `Projects in ${r.map(tilde).join(', ')}`, key: 'settings', undo: before.roots ? before : undefined })
     })
   },
   /** What the New project form can offer: templates on disk, and which hosts gh/glab can create repos on. */
   async 'new/info'() {
     return { templates: await templates(), templatesDir: tilde(TEMPLATES), hosts: await hosts() }
   },
-  async new(body: unknown) {
+  async new(body: any) {
     return exclusive(async () => {
       const r = await createProject(body)
+      await record({ by: 'app', title: `Created ${path.basename(r.path)}`, detail: [tilde(r.path), ...r.warnings].join('. '), path: r.path })
       return { ...r, snapshot: await rescan() }
     })
   },
@@ -333,24 +484,35 @@ Object.assign(api, {
   async 'connector/add'({ preset, name, link }: { preset: unknown; name: unknown; link: unknown }) {
     return reconfigure(async c => {
       if (preset !== undefined) {
-        need(CATALOG.some(x => x.id === preset), 'Unknown connector')
-        c.presets = [...new Set([...(c.presets ?? (await presetsFound())), preset as string])]
-      } else c.custom.push(checkConnector({ name, link }, [...CATALOG.map(x => x.id), ...c.custom.map(x => x.id)]))
+        const x = need(CATALOG.find(x => x.id === preset), 'Unknown connector')
+        c.presets = [...new Set([...(c.presets ?? (await presetsFound())), x.id])]
+        await record({ by: 'app', title: `Added ${x.name} history`, key: `connector:${x.id}`, undo: { type: 'connector', remove: x.id } })
+      } else {
+        const spec = checkConnector({ name, link }, [...CATALOG.map(x => x.id), ...c.custom.map(x => x.id)])
+        c.custom.push(spec)
+        await record({ by: 'app', title: `Added ${spec.name} history`, detail: 'Custom connector', key: `connector:${spec.id}`, undo: { type: 'connector', remove: spec.id } })
+      }
     })
   },
   /** Stop using a connector. Its files stay where they are. */
   async 'connector/remove'({ id }: { id: unknown }) {
     return reconfigure(async c => {
-      need((await connectors(c)).some(x => x.id === id), 'Unknown connector')
-      c.presets = (c.presets ?? (await presetsFound())).filter(x => x !== id)
-      c.custom = c.custom.filter(x => x.id !== id)
+      const x = need((await connectors(c)).find(x => x.id === id), 'Unknown connector')
+      c.presets = (c.presets ?? (await presetsFound())).filter(p => p !== id)
+      const spec = c.custom.find(s => s.id === id)
+      c.custom = c.custom.filter(s => s.id !== id)
+      await record({ by: 'app', title: `Removed ${x.name} history`, detail: 'Its files stay where they are', key: `connector:${x.id}`, undo: { type: 'connector', ...(spec ? { spec } : { preset: x.id }) } })
     })
   },
 })
 
 async function page() {
   const html = await fs.readFile(path.join(ROOT, 'prototype', 'app.html'), 'utf8')
-  return html.replace('/*__SNAPSHOT__*/null;', `null; window.LACI = ${JSON.stringify({ token: TOKEN })};`)
+  // The saved theme goes on <html> before anything paints, so the window never flashes the other color.
+  const { theme } = await loadConfig()
+  return html
+    .replace('<html lang="en">', theme ? `<html lang="en" data-theme="${theme}">` : '<html lang="en">')
+    .replace('/*__SNAPSHOT__*/null;', `null; window.LACI = ${JSON.stringify({ token: TOKEN, theme: theme ?? '' })};`)
 }
 
 function send(res: http.ServerResponse, status: number, body: unknown, type = 'application/json') {
@@ -370,6 +532,18 @@ const server = http.createServer(async (req, res) => {
       if (!rel) return send(res, 404, { error: 'Not found' })
       const type = rel.endsWith('.css') ? 'text/css' : 'text/javascript'
       return send(res, 200, await fs.readFile(path.join(ROOT, 'node_modules', rel), 'utf8'), type)
+    }
+    if (req.method === 'GET' && url.pathname === '/api/events') {
+      if (url.searchParams.get('token') !== TOKEN) return send(res, 403, { error: 'Missing token' })
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
+      res.write(`data: ${JSON.stringify({ type: 'status', busy })}\n\n`)
+      listeners.add(res)
+      const ping = setInterval(() => res.write(': ping\n\n'), 25000)
+      req.on('close', () => {
+        clearInterval(ping)
+        listeners.delete(res)
+      })
+      return
     }
     if (req.method === 'GET' && url.pathname === '/api/term/stream') {
       // EventSource can't send headers, so the token comes in the query string here.
@@ -392,7 +566,8 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     const err = e as Error
     const user = err instanceof Bad || err instanceof ConfigError
-    if (!user) console.error(`[laci] ${url.pathname}:`, err)
+    if (!user) log.error(url.pathname, err)
+    else log.debug(`${url.pathname}: ${err.message}`)
     send(res, user ? 400 : 500, { error: err.message })
   }
 })
@@ -419,14 +594,14 @@ server.on('error', async (e: NodeJS.ErrnoException) => {
 for (const sig of ['SIGINT', 'SIGTERM'] as const)
   process.on(sig, () => {
     term.closeAll()
+    watcher.close()
     process.exit(0)
   })
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`laci running at ${url} (scanning…)`)
-  rescan().then(
-    s => console.log(`scanned ${Object.values(s.nodes).filter(n => n.kind === 'project').length} projects in ${(s.tookMs / 1000).toFixed(1)}s`),
-    e => console.error('[laci] scan failed:', e),
-  )
+server.listen(PORT, '127.0.0.1', async () => {
+  log.info(`running at ${url} (scanning…)`)
+  snap = await cachedSnapshot()
+  if (snap) log.info('showing the last scan while scanning again')
+  rescan().catch(e => log.error('scan failed', e))
   if (process.argv.includes('--open')) openWindow(url)
 })

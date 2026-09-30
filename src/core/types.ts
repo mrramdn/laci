@@ -228,6 +228,8 @@ export interface Node {
   summary?: { text: string; source: string }
   createdAt?: { at: string; source: string }
   lastActivity?: { at: string; source: string }
+  /** Newest file change or commit in the folder itself, before agent sessions and children count. */
+  ownActivity?: { at: string; source: string }
   git?: GitInfo
   readme?: ReadmeInfo
   stack?: StackInfo

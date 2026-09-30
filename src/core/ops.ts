@@ -6,9 +6,8 @@ import { fieldKey } from './agents/connectors.ts'
 import { staleRoots } from './health.ts'
 import { excludeFile, setMeta } from './sidecar.ts'
 import { archiveDest, namedTarget } from './tidy.ts'
-import { HOME, enc, list, run, stat, tilde, within } from './util.ts'
+import { DATA, enc, list, run, stat, tilde, within } from './util.ts'
 
-export const DATA = path.join(HOME, '.local', 'share', 'laci')
 export const JOURNALS = path.join(DATA, 'journal')
 const BACKUPS = path.join(DATA, 'backup')
 const QUARANTINE = path.join(DATA, 'orphans')

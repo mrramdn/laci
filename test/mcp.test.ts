@@ -13,7 +13,7 @@ execFileSync(process.execPath, ['scripts/sandbox.ts', home])
 const client = new Client({ name: 'laci-test', version: '0' })
 
 before(async () => {
-  await client.connect(new StdioClientTransport({ command: process.execPath, args: ['src/mcp.ts'], env: { ...process.env, HOME: home, XDG_CONFIG_HOME: '' } as Record<string, string>, stderr: 'ignore' }))
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: ['src/mcp.ts'], env: { ...process.env, HOME: home, XDG_CONFIG_HOME: '', XDG_CACHE_HOME: '' } as Record<string, string>, stderr: 'ignore' }))
 })
 after(() => client.close())
 

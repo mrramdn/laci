@@ -23,6 +23,8 @@ export interface Config {
   presets?: string[]
   custom: ConnectorSpec[]
   apps: Apps
+  /** Missing means follow the system. The desktop window reads it too, so it opens in the right colors. */
+  theme?: 'light' | 'dark'
 }
 
 export class ConfigError extends Error {}
@@ -118,6 +120,7 @@ export async function loadConfig(): Promise<Config> {
         return {}
       }
     })(),
+    theme: raw.theme === 'light' || raw.theme === 'dark' ? raw.theme : undefined,
   }
 }
 
@@ -127,11 +130,25 @@ export async function saveConfig(c: Config) {
     presets: c.presets,
     custom: c.custom.map(x => ({ ...x, link: store(x.link) })),
     apps: c.apps,
+    theme: c.theme,
   }
   await fs.mkdir(CONFIG_DIR, { recursive: true })
   const tmp = `${FILE}.tmp`
   await fs.writeFile(tmp, JSON.stringify(out, null, 2) + '\n')
   await fs.rename(tmp, FILE)
+}
+
+let saving: Promise<unknown> = Promise.resolve()
+/** Read, change and write the config, one change at a time, so two quick edits can't undo each other. */
+export function updateConfig(fn: (c: Config) => Promise<void> | void) {
+  const run = saving.then(async () => {
+    const c = await loadConfig()
+    await fn(c)
+    await saveConfig(c)
+    return c
+  })
+  saving = run.catch(() => {})
+  return run
 }
 
 /** Roots the user picked: each must be an existing folder in the home folder. */

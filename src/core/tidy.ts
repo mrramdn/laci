@@ -238,8 +238,9 @@ export function buildProposals(snap: Snapshot): Proposal[] {
     })
   }
 
-  // Surest and most useful first: a wrong "archive?" guess costs less attention at the bottom.
+  // By kind, fixes for broken links first; a wrong "archive?" guess costs less attention at the bottom.
+  // The app groups them in this same order. Within a kind, surest first.
   const conf = { high: 0, med: 1, low: 2 }
   const cat = ['reconnect', 'migration', 'space', 'duplicate', 'orphan', 'status']
-  return out.sort((a, b) => conf[a.confidence] - conf[b.confidence] || cat.indexOf(a.category) - cat.indexOf(b.category))
+  return out.sort((a, b) => cat.indexOf(a.category) - cat.indexOf(b.category) || conf[a.confidence] - conf[b.confidence])
 }

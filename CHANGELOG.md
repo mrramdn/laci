@@ -1,0 +1,53 @@
+# Changelog
+
+What changed in laci, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [Unreleased]
+
+### Added
+
+- **Log.** A page listing every change laci made, from the app or from an agent over MCP: moves, archives, Tidy fixes, status, priority and deadline, to-dos, notes, connectors, settings and new projects. Most of them can be undone from there. A change that was changed again later says so instead of overwriting the newer one.
+- **Live updates.** laci watches your project folders, each project's files and git state, the agent logs and the folders you have open. New folders, edits, commits and agent sessions show up by themselves; *Scan again* is only needed if something looks off.
+- **Instant start.** The last scan shows right away while a fresh one runs in the background.
+- **Display menu** in the folder view: sort by name, modified, size or agent sessions in either direction, and choose whether folders come first and whether hidden files and archived projects show.
+- **Theme switch** (system, light, dark) in the sidebar.
+- **Debug log** at `~/.local/share/laci/laci.log` (rotated at 1 MB), with a *Debug log* button on the Log page. `LACI_DEBUG=1` adds file watcher events.
+- This changelog.
+
+### Changed
+
+- Times are real and relative: *just now*, *5 min*, *3 h*, *yesterday*, with the time of day where it helps (*yesterday 14:02*) and the full date on hover. They stay current while the app is open.
+- *Modified* means the same on every row: when anything inside last changed (a file, a commit or an agent session). Plain folders now look inside too.
+- Column headers show which ones sort and which way; the order is written above the list.
+- Filters say what they cover: *All files* is this folder, the others list projects in this folder and every folder below it.
+- Today's lists and Tidy's suggestions state their order. Tidy groups suggestions by kind, broken links first.
+- Scans are about three times faster: agent logs are read once and cached (`~/.cache/laci`), and a growing log is read from where the last read stopped. The MCP server benefits too.
+- The theme is saved in `~/.config/laci/config.json`, and the desktop window opens in it.
+
+### Fixed
+
+- The window no longer flashes the other theme's colors at start.
+- A repo pushed to GitHub (`origin`) and mirrored to a second remote showed the mirror as its remote.
+
+## [0.2.0] - 2026-09-30
+
+### Added
+
+- **Connectors** for agent history. Claude Code, Codex, Gemini CLI, Claude plans, Serena and Aider are in the catalog, and any other tool can be described in a form (log files that record the folder, one folder per project, inside the project, or files that mention it). Only the ones you add show; tools with data on this PC are suggested.
+- **Browse everything** like a file manager, with filters for projects, projects that use laci, projects with agent sessions and projects that need attention.
+- **Welcome screen and Settings**: which folders hold your projects, which AI tools you use, and which terminal, editor and file manager to open things with.
+- **New project**: empty, from a template in `~/.config/laci/templates`, or cloned; with git, a first commit, `.laci.md`, and optionally a private repo on GitHub, GitLab or both.
+
+### Fixed
+
+- The terminal panel follows the light and dark theme.
+
+## [0.1.0] - 2026-09-30
+
+### Added
+
+- Scanner that finds projects in your folders and reads their git state, README, stack, to-dos and agent sessions.
+- Archive and move engine that carries agent history along, with an undo journal for every step.
+- Desktop app (Electron) with Today, Tidy up, Agent history, a project inspector and a built-in terminal.
+- MCP server so agents can list, sort and archive projects through laci instead of `mv`.
+- README with screenshots from demo data (`node scripts/demo.ts <dir>`).

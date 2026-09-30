@@ -13,7 +13,8 @@ const home = mkdtempSync(path.join(os.tmpdir(), 'laci-srv-'))
 let server: ReturnType<typeof spawn>
 
 before(async () => {
-  server = spawn(process.execPath, [path.resolve('src/server.ts')], { env: { ...process.env, HOME: home, XDG_CONFIG_HOME: '', LACI_PORT: String(port) }, stdio: 'ignore' })
+  // LACI_DEBUG on: the debug log once watched its own folder and logged its own writes forever, which hung the server.
+  server = spawn(process.execPath, [path.resolve('src/server.ts')], { env: { ...process.env, HOME: home, XDG_CONFIG_HOME: '', XDG_CACHE_HOME: '', LACI_DEBUG: '1', LACI_PORT: String(port) }, stdio: 'ignore' })
   for (let i = 0; i < 100; i++) {
     if (await fetch(`${base}/health`).then(r => r.ok, () => false)) return
     await new Promise(r => setTimeout(r, 100))

@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { Config } from '../config.ts'
 import type { ConnectorSpec, Item, Link } from '../types.ts'
 import { HOME, du, iso, list, pool, readEdges, readText, stat, tilde, within } from '../util.ts'
+import { cached, sweep } from './cache.ts'
 import { resolveEncoded } from './claude.ts'
 
 export interface Connector extends ConnectorSpec {
@@ -87,22 +88,31 @@ async function filesUnder(dir: string, ext: string): Promise<string[]> {
 
 async function readCwd(c: ConnectorSpec, l: Extract<Link, { kind: 'cwd' }>): Promise<Item[]> {
   const files = await filesUnder(l.dir, l.ext)
-  return pool(files, 8, async file => {
-    const { head } = await readEdges(file, 64 * 1024, 0)
-    const raw = head.match(fieldRe(l.field))?.[1]
-    const found = raw ? unjson(raw) : undefined
-    const cwd = found && path.isAbsolute(found) ? found.replace(/\/+$/, '') || '/' : undefined
-    let lines = 0
-    if (cwd) {
-      const text = await fs.readFile(file, 'utf8')
-      for (const m of text.matchAll(fieldRe(l.field, 'g'))) {
-        const v = unjson(m[1])
-        if (v && within(v, cwd)) lines++
-      }
-    }
+  const kind = `cwd:${c.id}:${l.field}`
+  const seen = new Set<string>()
+  const out = await pool(files, 8, async file => {
     const s = await fs.stat(file)
+    seen.add(file)
+    // Unchanged logs come from the cache; a changed one is read again whole (these are small).
+    const { cwd, lines } = await cached(kind, file, s, async () => {
+      const { head } = await readEdges(file, 64 * 1024, 0)
+      const raw = head.match(fieldRe(l.field))?.[1]
+      const found = raw ? unjson(raw) : undefined
+      const cwd = found && path.isAbsolute(found) ? found.replace(/\/+$/, '') || '/' : undefined
+      let lines = 0
+      if (cwd) {
+        const text = await fs.readFile(file, 'utf8')
+        for (const m of text.matchAll(fieldRe(l.field, 'g'))) {
+          const v = unjson(m[1])
+          if (v && within(v, cwd)) lines++
+        }
+      }
+      return { cwd, lines }
+    })
     return { id: `${c.id}:${path.relative(l.dir, file)}`, connector: c.id, file, at: iso(s.mtimeMs), bytes: s.size, cwd, lines }
   })
+  await sweep(kind, seen)
+  return out
 }
 
 async function readNamed(c: ConnectorSpec, l: Extract<Link, { kind: 'named' }>): Promise<Item[]> {

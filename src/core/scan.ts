@@ -47,6 +47,7 @@ function blank(f: Found, parent?: string): Node {
     status: { value: 'active', auto: true },
     tasks: [],
     taskFiles: [],
+    sidecar: false,
     agents: { claude: [], items: [], aiFiles: [] },
     issues: [],
   }
@@ -59,6 +60,7 @@ async function enrich(n: Node, inside: Connector[], items: Record<string, Item>)
   n.tasks = t.tasks
   n.taskFiles = t.files
   n.notes = t.notes
+  n.sidecar = t.sidecar
   if (t.summary) n.summary = { text: t.summary, source: '.laci.md' }
   else if (readme?.tagline && !readme.template) n.summary = { text: readme.tagline, source: readme.file }
 

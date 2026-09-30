@@ -235,6 +235,8 @@ export interface Node {
   taskFiles: TaskFile[]
   /** Body of the `## Notes` section in `.laci.md`. */
   notes?: string
+  /** Has a `.laci.md`: the user gave it a status, deadline, to-do or notes in laci. */
+  sidecar: boolean
   agents: Agents
   size?: Size
   issues: Issue[]

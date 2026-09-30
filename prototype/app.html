@@ -157,6 +157,10 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .c-name .i { color: var(--muted); }
 .frow { height: 38px; }
 .frow.archived .nm { color: var(--muted); }
+.frow .gl { width: 14px; flex: none; }
+.frow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+.frow.file .nm { font-weight: 400; }
+.filterbar .switch { margin-left: 8px; }
 .tag { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: 4px; background: var(--hover); font-size: 11.5px; color: var(--muted); white-space: nowrap; }
 .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .switch input { appearance: none; width: 26px; height: 16px; border-radius: 999px; background: var(--border-strong); position: relative; margin: 0; cursor: pointer; transition: background .15s; }
@@ -404,6 +408,7 @@ async function api(name, body) {
 const st = {
   view: 'today', cwd: null, sel: null, tab: 'health', modal: null, palette: null, showArchived: true,
   sort: { key: 'last', dir: -1 }, tidy: 'all', open: {}, expand: {}, tree: new Set(), journal: [],
+  ls: {}, filter: 'all', hidden: false, fsel: null,
 }
 let snap, nodes, all, projects, HOME, NOW
 function load(s) {
@@ -413,9 +418,10 @@ function load(s) {
   projects = all.filter(n => n.kind === 'project')
   HOME = s.home
   NOW = Date.parse(s.scannedAt)
-  if (!nodes[st.cwd]) st.cwd = s.rootIds[0]
+  if (!st.cwd) st.cwd = s.roots[0] ?? s.home
   if (st.sel && !nodes[st.sel]) st.sel = null
-  if (!st.tree.size) st.tree.add(s.rootIds[0])
+  if (!st.tree.size && s.roots[0]) st.tree.add(s.roots[0])
+  st.ls = {} // folders may have changed on disk; listings are fetched again as they're shown
 }
 function patch(n) {
   nodes[n.id] = n
@@ -442,6 +448,9 @@ const bytes = b => !b ? '—' : b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1)
 const descendants = n => n.children.flatMap(c => [nodes[c], ...descendants(nodes[c])])
+const within = (p, d) => p === d || p.startsWith(d.endsWith('/') ? d : d + '/')
+const base = p => p === HOME ? 'Home' : p.slice(p.lastIndexOf('/') + 1)
+const parentOf = p => p.slice(0, p.lastIndexOf('/')) || '/'
 const sessionsOf = n => n.agents.claude.flatMap(k => snap.claude[k].sessions).sort((a, b) => b.at.localeCompare(a.at))
 const conn = id => snap.connectors.find(c => c.id === id)
 /** Logs and store folders count as sessions; files inside the project or plans that mention it don't. */
@@ -482,6 +491,8 @@ const L = {
   layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
   route: '<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  home: '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  filter: '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
   play: '<polygon points="6 3 20 12 6 21 6 3"/>',
   commit: '<circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
@@ -554,22 +565,26 @@ function render() {
 
 function side() {
   const nav = [['today', 'Today', 'inbox', hot(), true], ['tidy', 'Tidy up', 'sparkles', snap.proposals.filter(p => p.action).length], ['agents', 'Agent history', 'history', snap.orphans.claude.length + snap.orphans.items.length]]
-  const treeRows = (ids, depth) => ids.map(id => nodes[id]).filter(n => n.kind === 'folder').map(n => {
-    const sub = n.children.filter(c => nodes[c].kind === 'folder')
-    const open = st.tree.has(n.id)
-    const count = descendants(n).filter(d => d.kind === 'project').length
-    return `<div class="tree-row" style="padding-left:${depth * 14}px" ${st.view === 'folder' && st.cwd === n.id ? 'aria-current="true"' : ''}>
-      ${sub.length ? `<button class="tw" data-act="twist" data-id="${esc(n.id)}" aria-expanded="${open}" aria-label="${open ? 'Collapse' : 'Expand'} ${esc(n.name)}">${icon('chev')}</button>` : '<span class="tw"></span>'}
-      <button class="tl" data-act="cd" data-id="${esc(n.id)}">${icon('folder')}<span class="${depth ? '' : 'mono'}">${esc(depth ? n.name : tilde(n.path))}</span><span class="n">${count}</span></button>
-    </div>${open ? treeRows(sub, depth + 1) : ''}`
+  const treeRows = (paths, depth) => paths.map(p => {
+    const open = st.tree.has(p)
+    const l = open ? listing(p) : null
+    const kids = (l?.entries ?? []).filter(e => e.dir && !e.name.startsWith('.')).map(e => e.path).sort((x, y) => x.localeCompare(y))
+    const leaf = l && !l.error && !kids.length
+    const count = projects.filter(n => within(n.path, p)).length
+    const label = depth ? base(p) : p === HOME ? 'Home' : tilde(p)
+    return `<div class="tree-row" style="padding-left:${depth * 14}px" ${st.view === 'folder' && st.cwd === p ? 'aria-current="true"' : ''}>
+      ${leaf ? '<span class="tw"></span>' : `<button class="tw" data-act="twist" data-id="${esc(p)}" aria-expanded="${open}" aria-label="${open ? 'Collapse' : 'Expand'} ${esc(label)}">${icon('chev')}</button>`}
+      <button class="tl" data-act="cd" data-id="${esc(p)}">${icon(depth ? 'folder' : p === HOME ? 'home' : 'drive')}<span class="${depth || p === HOME ? '' : 'mono'}">${esc(label)}</span>${count ? `<span class="n">${count}</span>` : ''}</button>
+    </div>${open ? treeRows(kids, depth + 1) : ''}`
   }).join('')
+  const places = [...snap.roots, ...(snap.roots.includes(HOME) ? [] : [HOME])]
   const scanned = new Date(snap.scannedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
   return `<div class="sb-top"><span class="logo">${icon('archive')}</span><b>laci</b><span class="grow"></span>
       <button class="icon-btn" data-act="palette" title="Search (Ctrl K)" aria-label="Search">${icon('search')}</button></div>
     <div class="sb-scroll">
       ${nav.map(([v, label, ic, n, isHot]) => `<button class="sb-item" data-act="view" data-v="${v}" ${st.view === v ? 'aria-current="page"' : ''}>${icon(ic)}<span>${label}</span>${n ? `<span class="n ${isHot ? 'hot' : ''}">${n}</span>` : ''}</button>`).join('')}
       <div class="sb-sec">Places</div>
-      <div class="tree">${treeRows(snap.rootIds, 0)}</div>
+      <div class="tree">${treeRows(places, 0)}</div>
     </div>
     <div class="sb-foot">
       <button class="sb-item" data-act="rescan" title="Scan again">${icon('refresh', 'sm')}<span>Scanned ${esc(scanned)}${LIVE ? '' : ' · read-only'}</span></button>
@@ -627,45 +642,109 @@ function todayView() {
 }
 
 /* ---------- Folder ---------- */
+const lsPending = new Set()
+/** A folder's entries, fetched once per scan. The read-only preview only knows scanned folders. */
+function listing(p) {
+  if (!LIVE) return { entries: (nodes[p]?.children ?? []).map(c => ({ name: nodes[c].name, path: c, dir: true, at: nodes[c].lastActivity?.at })) }
+  if (!st.ls[p] && !lsPending.has(p)) {
+    lsPending.add(p)
+    api('ls', { path: p })
+      .then(r => { st.ls[p] = r }, e => { st.ls[p] = { entries: [], error: e.message } })
+      .finally(() => { lsPending.delete(p); render() })
+  }
+  return st.ls[p]
+}
+const worst = n => {
+  const issues = n.kind === 'project' ? n.issues : descendants(n).filter(d => d.kind === 'project').flatMap(k => k.issues)
+  return { issues, sev: issues.some(i => i.severity === 'high') ? 'high' : issues.some(i => i.severity === 'med') ? 'med' : null }
+}
+const FILTERS = [
+  ['all', 'Everything'],
+  ['projects', 'Projects', () => true],
+  ['laci', 'Uses laci', n => n.sidecar],
+  ['agents', 'Agent sessions', n => agentCount(n) > 0],
+  ['attention', 'Needs attention', n => n.issues.some(i => i.severity !== 'low')],
+]
+const EXT = { md: 'Markdown', txt: 'Text', pdf: 'PDF', png: 'Image', jpg: 'Image', jpeg: 'Image', webp: 'Image', gif: 'Image', svg: 'SVG', zip: 'Archive', gz: 'Archive', tar: 'Archive', json: 'JSON', csv: 'CSV', docx: 'Word', xlsx: 'Excel', pptx: 'Slides', mp4: 'Video', mp3: 'Audio', sh: 'Script', js: 'JavaScript', ts: 'TypeScript', py: 'Python', html: 'HTML', css: 'CSS', deb: 'Package', AppImage: 'App' }
+
 function folderView() {
-  const cwd = nodes[st.cwd]
-  const chain = []
-  for (let n = cwd; n; n = nodes[n.parent]) chain.unshift(n)
-  const crumbs = chain.map((n, i) => i === chain.length - 1 ? `<h1>${esc(i ? n.name : tilde(n.path))}</h1>` : `<button class="btn ghost sm" data-act="cd" data-id="${esc(n.id)}" style="padding:0 4px">${esc(i ? n.name : tilde(n.path))}</button><span class="faint">/</span>`).join('')
-  const rows = cwd.children.map(c => nodes[c]).filter(n => st.showArchived || !n.archived)
+  const cwd = st.cwd
+  const rel = within(cwd, HOME) ? cwd.slice(HOME.length).split('/').filter(Boolean) : []
+  const trail = [HOME, ...rel.map((_, i) => HOME + '/' + rel.slice(0, i + 1).join('/'))]
+  const crumbs = trail.map((p, i) => i === trail.length - 1 ? `<h1>${esc(i ? base(p) : '~')}</h1>` : `<button class="btn ghost sm" data-act="cd" data-id="${esc(p)}" style="padding:0 4px">${esc(i ? base(p) : '~')}</button><span class="faint">/</span>`).join('')
+  const scope = projects.filter(n => within(n.path, cwd) && (st.showArchived || !n.archived))
   const val = {
-    name: n => n.name.toLowerCase(),
-    last: n => n.lastActivity?.at ?? '',
-    size: n => n.size?.total ?? descendants(n).reduce((a, d) => a + (d.size?.total ?? 0), 0),
-    ai: n => agentCount(n) + descendants(n).reduce((a, d) => a + agentCount(d), 0),
+    name: x => x.name.toLowerCase(),
+    last: x => x.n?.lastActivity?.at ?? x.at ?? '',
+    size: x => x.n ? (x.n.size?.total ?? descendants(x.n).reduce((a, d) => a + (d.size?.total ?? 0), 0)) : x.size ?? -1,
+    ai: x => x.n ? agentCount(x.n) + descendants(x.n).reduce((a, d) => a + agentCount(d), 0) : 0,
   }
   const { key, dir } = st.sort
-  rows.sort((a, b) => (a.kind !== b.kind ? (a.kind === 'folder' ? -1 : 1) : (val[key](a) > val[key](b) ? 1 : val[key](a) < val[key](b) ? -1 : 0) * dir))
+  const order = (a, b) => (a.dir !== b.dir ? (a.dir ? -1 : 1) : (val[key](a) > val[key](b) ? 1 : val[key](a) < val[key](b) ? -1 : 0) * dir)
   const col = (k, label, cls) => `<span class="${cls}"><button data-act="sort" data-k="${k}" ${key === k ? `aria-sort="${dir > 0 ? 'ascending' : 'descending'}"` : ''}>${label}${key === k ? (dir > 0 ? ' ↑' : ' ↓') : ''}</button></span>`
-  const inside = descendants(cwd).filter(d => d.kind === 'project')
 
-  return `<div class="head">${crumbs}<span class="count">${plural(inside.length, 'project')}</span><span class="grow"></span>
-      <label class="switch"><input type="checkbox" data-archived ${st.showArchived ? 'checked' : ''}>Show archived</label>
-      <button class="icon-btn" data-act="open" data-id="${esc(cwd.id)}" data-what="files" title="Open in Dolphin" aria-label="Open in file manager">${icon('open')}</button>
-      <button class="icon-btn" data-act="term" data-id="${esc(cwd.id)}" data-what="shell" title="Terminal here (F4)" aria-label="Open terminal here">${icon('terminal')}</button></div>
+  let rows
+  if (st.filter !== 'all') {
+    const f = FILTERS.find(x => x[0] === st.filter)[2]
+    rows = scope.filter(f).map(n => ({ n, name: n.name, dir: true, path: n.path })).sort(order)
+      .map(x => nodeRow(x.n, x.n.path.slice(cwd.length + 1) || x.n.name)).join('') || `<div class="empty">No project here matches “${esc(FILTERS.find(x => x[0] === st.filter)[1])}”.</div>`
+  } else {
+    const l = listing(cwd)
+    if (!l) rows = '<div class="empty">Reading the folder…</div>'
+    else if (l.error) rows = `<div class="empty">${esc(l.error)} <button class="linkbtn" data-act="cd" data-id="${esc(parentOf(cwd))}">Go up</button></div>`
+    else rows = l.entries
+      .filter(e => st.hidden || !e.name.startsWith('.'))
+      .map(e => ({ ...e, n: nodes[e.path] }))
+      .filter(x => !x.n || st.showArchived || !x.n.archived)
+      .sort(order)
+      .map(x => x.n ? nodeRow(x.n) : x.dir ? dirRow(x) : fileRow(x)).join('') || `<div class="empty">This folder is empty${!st.hidden && l.entries.length ? ' (except hidden files)' : ''}.</div>`
+  }
+  const counts = Object.fromEntries(FILTERS.slice(1).map(([k, , f]) => [k, scope.filter(f).length]))
+  const hiddenCount = st.filter === 'all' ? (listing(cwd)?.entries ?? []).filter(e => e.name.startsWith('.')).length : 0
+
+  return `<div class="head">${crumbs}<span class="count">${scope.length ? plural(scope.length, 'project') : ''}</span><span class="grow"></span>
+      <button class="icon-btn" data-act="open" data-id="${esc(cwd)}" data-what="files" title="Open in the file manager" aria-label="Open in file manager">${icon('open')}</button>
+      <button class="icon-btn" data-act="term" data-id="${esc(cwd)}" data-what="shell" title="Terminal here (F4)" aria-label="Open terminal here">${icon('terminal')}</button></div>
+    <div class="filterbar">${FILTERS.map(([k, label]) => `<button class="chipf" data-act="ff" data-k="${k}" aria-pressed="${st.filter === k}">${label}${k === 'all' ? '' : ` <span class="n">${counts[k]}</span>`}</button>`).join('')}
+      <span class="grow"></span>
+      ${st.filter === 'all' ? `<label class="switch" title="Ctrl+H"><input type="checkbox" data-hidden ${st.hidden ? 'checked' : ''}>Hidden files${hiddenCount ? ` <span class="faint">${hiddenCount}</span>` : ''}</label>` : ''}
+      <label class="switch"><input type="checkbox" data-archived ${st.showArchived ? 'checked' : ''}>Archived</label></div>
     <div class="body">
-      <div class="cols">${col('name', 'Name', 'c-name')}<span class="c-sum">Summary</span><span class="c-stack">Stack</span>${col('ai', 'Agents', 'c-ai')}${col('last', 'Activity', 'c-when')}${col('size', 'Size', 'c-size')}<span class="c-health"></span></div>
-      ${rows.map(n => {
-        const kids = descendants(n).filter(d => d.kind === 'project')
-        const issues = n.kind === 'project' ? n.issues : kids.flatMap(k => k.issues)
-        const worst = issues.some(i => i.severity === 'high') ? 'high' : issues.some(i => i.severity === 'med') ? 'med' : null
-        const ai = val.ai(n)
-        return `<div class="item frow ${n.archived ? 'archived' : ''}" data-act="pick" data-id="${esc(n.id)}" tabindex="0" aria-selected="${st.sel === n.id}">
-          <span class="c-name">${n.kind === 'project' ? statusGlyph(n.status.value) : ''}${kindIcon(n)}<span class="nm">${esc(n.name)}</span></span>
-          <span class="c-sum">${n.kind === 'folder' ? esc(n.summary?.text ?? `${plural(kids.length, 'project')} inside`) : esc(n.summary?.text ?? '')}</span>
-          <span class="c-stack">${(n.stack?.labels ?? []).slice(0, 2).map(l => `<span class="tag">${esc(l)}</span>`).join('')}</span>
-          <span class="c-ai">${ai ? `${icon('bot', 'sm')}${ai}` : ''}</span>
-          <span class="c-when">${esc(ago(n.lastActivity?.at))}</span>
-          <span class="c-size">${esc(bytes(val.size(n)))}</span>
-          <span class="c-health" title="${esc(issues.filter(i => i.severity !== 'low').map(i => i.title).join('\n'))}">${worst ? sevGlyph(worst) : ''}</span>
-        </div>`
-      }).join('') || '<div class="empty">Nothing here.</div>'}
+      <div class="cols">${col('name', 'Name', 'c-name')}<span class="c-sum">Summary</span><span class="c-stack">Stack</span>${col('ai', 'Agents', 'c-ai')}${col('last', 'Modified', 'c-when')}${col('size', 'Size', 'c-size')}<span class="c-health"></span></div>
+      ${rows}
     </div>`
+}
+
+/** A scanned folder: a project with its status, summary and health, or a group of projects. */
+function nodeRow(n, label = n.name) {
+  const kids = descendants(n).filter(d => d.kind === 'project')
+  const { issues, sev } = worst(n)
+  const ai = agentCount(n) + descendants(n).reduce((a, d) => a + agentCount(d), 0)
+  const size = n.size?.total ?? descendants(n).reduce((a, d) => a + (d.size?.total ?? 0), 0)
+  return `<div class="item frow ${n.archived ? 'archived' : ''}" data-act="pick" data-dbl="cd" data-id="${esc(n.id)}" data-kind="node" tabindex="0" aria-selected="${st.sel === n.id}">
+    <span class="c-name">${n.kind === 'project' ? statusGlyph(n.status.value) : '<span class="gl"></span>'}${kindIcon(n)}<span class="nm">${esc(label)}</span>${n.sidecar ? '<span class="dot" title="Uses laci: has a .laci.md"></span>' : ''}</span>
+    <span class="c-sum">${n.kind === 'folder' ? esc(n.summary?.text ?? `${plural(kids.length, 'project')} inside`) : esc(n.summary?.text ?? '')}</span>
+    <span class="c-stack">${(n.stack?.labels ?? []).slice(0, 2).map(l => `<span class="tag">${esc(l)}</span>`).join('')}</span>
+    <span class="c-ai">${ai ? `${icon('bot', 'sm')}${ai}` : ''}</span>
+    <span class="c-when">${esc(ago(n.lastActivity?.at))}</span>
+    <span class="c-size">${esc(bytes(size))}</span>
+    <span class="c-health" title="${esc(issues.filter(i => i.severity !== 'low').map(i => i.title).join('\n'))}">${sev ? sevGlyph(sev) : ''}</span>
+  </div>`
+}
+function dirRow(e) {
+  return `<div class="item frow" data-act="cd" data-id="${esc(e.path)}" data-kind="dir" tabindex="0">
+    <span class="c-name"><span class="gl"></span>${icon(e.git ? 'branch' : 'folder')}<span class="nm">${esc(e.name)}</span></span>
+    <span class="c-sum">${e.git ? 'Git repo outside the folders laci scans' : ''}</span><span class="c-stack"></span><span class="c-ai"></span>
+    <span class="c-when">${esc(ago(e.at))}</span><span class="c-size">—</span><span class="c-health"></span>
+  </div>`
+}
+function fileRow(e) {
+  const ext = e.name.includes('.') ? e.name.slice(e.name.lastIndexOf('.') + 1) : ''
+  return `<div class="item frow file" data-act="fsel" data-dbl="openfile" data-id="${esc(e.path)}" data-kind="file" tabindex="0" aria-selected="${st.fsel === e.path}" title="Double-click to open">
+    <span class="c-name"><span class="gl"></span>${icon('file')}<span class="nm">${esc(e.name)}</span></span>
+    <span class="c-sum">${esc(EXT[ext] ?? EXT[ext.toLowerCase()] ?? (ext && !e.name.startsWith('.') ? ext.toUpperCase() + ' file' : ''))}</span><span class="c-stack"></span><span class="c-ai"></span>
+    <span class="c-when">${esc(ago(e.at))}</span><span class="c-size">${esc(bytes(e.size))}</span><span class="c-health"></span>
+  </div>`
 }
 
 /* ---------- Tidy ---------- */
@@ -1185,8 +1264,21 @@ const OPENED = { terminal: 'Opened a terminal', editor: 'Opened in the editor', 
 
 const acts = {
   view: d => { st.view = d.v; st.resetScroll = true; render(); if (d.v === 'tidy') refreshJournal() },
-  cd: d => { st.view = 'folder'; st.cwd = d.id; for (let p = nodes[d.id]; p; p = nodes[p.parent]) st.tree.add(p.id); st.resetScroll = true; render() },
+  cd: d => {
+    st.view = 'folder'
+    st.cwd = d.id
+    st.fsel = null
+    // Inside a project folder, keep its details open, like a file manager's info panel.
+    if (nodes[d.id]?.kind === 'project' && st.sel !== d.id) { st.sel = d.id; st.resetInsp = true }
+    const place = [...snap.roots, HOME].filter(r => within(d.id, r)).sort((a, b) => b.length - a.length)[0]
+    for (let p = parentOf(d.id); place && within(p, place); p = parentOf(p)) { st.tree.add(p); if (p === place) break }
+    st.resetScroll = true
+    render()
+  },
   twist: d => { st.tree.has(d.id) ? st.tree.delete(d.id) : st.tree.add(d.id); render() },
+  ff: d => { st.filter = d.k; st.resetScroll = true; render() },
+  fsel: d => { st.fsel = d.id; render() },
+  openfile: d => mutate(async () => { await api('open', { id: d.id, what: 'default' }); toast('Opened', tilde(d.id)) }),
   sel: d => select(d.id, d.tab),
   // Single click opens folders, like Dolphin's default; projects open in the side panel.
   pick: d => { if (nodes[d.id].kind === 'folder') { st.sel = d.id; st.resetInsp = true; acts.cd(d) } else select(d.id) },
@@ -1286,9 +1378,16 @@ document.addEventListener('click', e => {
   if (inner && inner !== a && a.contains(inner)) return
   acts[a.dataset.act]?.(a.dataset, e)
 })
+document.addEventListener('dblclick', e => {
+  const row = e.target.closest('[data-dbl]')
+  if (!row || e.target.closest('button, a, input, select')) return
+  if (row.dataset.dbl === 'cd') acts.cd({ id: row.dataset.id })
+  else acts[row.dataset.dbl]?.(row.dataset, e)
+})
 document.addEventListener('change', e => {
   const t = e.target
   if (t.hasAttribute('data-archived')) { st.showArchived = t.checked; render(); return }
+  if (t.hasAttribute('data-hidden')) { st.hidden = t.checked; render(); return }
   if (t.hasAttribute('data-check')) {
     const d = t.dataset
     const done = t.checked
@@ -1367,6 +1466,7 @@ document.addEventListener('submit', async e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'F4' || (e.ctrlKey && e.key === '`')) { e.preventDefault(); toggleTerm(); return }
   if (e.target.closest?.('.xterm')) return
+  if (e.ctrlKey && e.key.toLowerCase() === 'h' && st.view === 'folder') { e.preventDefault(); st.hidden = !st.hidden; render(); return }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); st.palette = st.palette ? null : { q: '', i: 0 }; render(); return }
   if (e.key === 'Escape') { if (st.palette || st.modal) { st.palette = null; st.modal = null } else if (st.sel) st.sel = null; render(); return }
   if (st.palette) {
@@ -1384,8 +1484,14 @@ document.addEventListener('keydown', e => {
     const rows = [...document.querySelectorAll('.main .item[tabindex]')]
     rows[rows.indexOf(row) + (e.key === 'ArrowDown' ? 1 : -1)]?.focus()
   }
-  if (e.key === 'Enter') { e.preventDefault(); const n = nodes[row.dataset.id]; if (n?.kind === 'folder' && st.view === 'folder') acts.cd({ id: n.id }); else row.click() }
-  if (e.key === 'Backspace' && st.view === 'folder' && nodes[st.cwd].parent) acts.cd({ id: nodes[st.cwd].parent })
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    const k = row.dataset.kind
+    if (k === 'file') acts.openfile(row.dataset)
+    else if (k === 'dir' || (k === 'node' && nodes[row.dataset.id]?.kind === 'folder')) acts.cd({ id: row.dataset.id })
+    else row.click()
+  }
+  if (e.key === 'Backspace' && st.view === 'folder' && st.cwd !== HOME && within(st.cwd, HOME)) acts.cd({ id: parentOf(st.cwd) })
 })
 
 try { const t = localStorage.getItem('laci:theme'); if (t) document.documentElement.dataset.theme = t } catch {}

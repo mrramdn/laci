@@ -57,13 +57,14 @@ function parseTasks(text: string, file: string): Task[] {
   return out
 }
 
-export async function readTasks(dir: string): Promise<{ meta: Meta; tasks: Task[]; files: TaskFile[]; notes?: string; summary?: string }> {
+export async function readTasks(dir: string): Promise<{ meta: Meta; tasks: Task[]; files: TaskFile[]; notes?: string; summary?: string; sidecar: boolean }> {
   const names = (await list(dir)).filter(e => e.isFile() && TASK_FILE.test(e.name)).map(e => e.name)
   for (const n of NESTED) if (await stat(path.join(dir, n))) names.push(n)
 
   let meta: Meta = {}
   let notes: string | undefined
   let summary: string | undefined
+  let sidecar = false
   const tasks: Task[] = []
   const files: TaskFile[] = []
   for (const name of names) {
@@ -71,6 +72,7 @@ export async function readTasks(dir: string): Promise<{ meta: Meta; tasks: Task[
     const text = await readText(full, 128 * 1024)
     if (!text) continue
     if (name === SIDECAR) {
+      sidecar = true
       meta = parseMeta(text)
       notes = section(text, 'Notes')
       summary = section(text, 'Summary')
@@ -81,5 +83,5 @@ export async function readTasks(dir: string): Promise<{ meta: Meta; tasks: Task[
     const s = await stat(full)
     files.push({ file: name, at: iso(s!.mtimeMs), open: found.filter(t => !t.done).length, done: found.filter(t => t.done).length })
   }
-  return { meta, tasks, files, notes, summary }
+  return { meta, tasks, files, notes, summary, sidecar }
 }

@@ -26,7 +26,7 @@ const post = (p: string, headers: Record<string, string> = {}) =>
   fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' })
 
 test('API calls without the page token are refused', async () => {
-  for (const p of ['/api/term/open', '/api/term/input', '/api/open', '/api/archive', '/api/apply'])
+  for (const p of ['/api/term/open', '/api/term/input', '/api/open', '/api/ls', '/api/archive', '/api/apply', '/api/connector/add'])
     assert.equal((await post(p)).status, 403, p)
   assert.equal((await post('/api/term/open', { 'x-laci-token': 'guess' })).status, 403)
   assert.equal((await fetch(`${base}/api/term/stream?id=x`)).status, 403)
@@ -45,4 +45,15 @@ test('the page served to the app carries a token that works', async () => {
   assert.ok(token)
   const r = await post('/api/term/list', { 'x-laci-token': token! })
   assert.equal(r.status, 200)
+})
+
+test('listing and opening stay inside the home folder', async () => {
+  const html = await (await fetch(`${base}/`)).text()
+  const token = html.match(/"token":"([^"]+)"/)![1]
+  const call = (name: string, body: object) =>
+    fetch(`${base}/api/${name}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-laci-token': token }, body: JSON.stringify(body) })
+  for (const p of ['/etc', `${home}/../..`, 'relative']) assert.equal((await call('ls', { path: p })).status, 400, p)
+  assert.equal((await call('ls', { path: home })).status, 200)
+  assert.equal((await call('open', { id: '/etc/passwd', what: 'default' })).status, 400)
+  assert.equal((await call('term/open', { id: '/etc', what: 'shell' })).status, 400)
 })

@@ -7,13 +7,13 @@ import { fileURLToPath } from 'node:url'
 import type { Node, Snapshot } from './core/types.ts'
 import { issuesFor } from './core/health.ts'
 import { CATALOG, connectors, presetsFound } from './core/agents/connectors.ts'
-import { ConfigError, checkConnector, loadConfig, saveConfig } from './core/config.ts'
+import { ConfigError, checkConnector, homePath, loadConfig, saveConfig } from './core/config.ts'
 import { applyAction, archiveProject, backupHistory, journals, undo } from './core/ops.ts'
 import { autoStatus, scan } from './core/scan.ts'
 import { META_RULES, SIDECAR, addNext, deleteCheck, setMeta, setNotes, toggleCheck } from './core/sidecar.ts'
 import { readTasks } from './core/tasks.ts'
 import { bytes } from './core/tidy.ts'
-import { tilde, within } from './core/util.ts'
+import { iso, list, pool, stat, tilde, within } from './core/util.ts'
 import * as term from './term.ts'
 import { VENDOR } from './vendor.ts'
 
@@ -112,6 +112,15 @@ function node(id: unknown): Node {
   return need(typeof id === 'string' && snap?.nodes[id], 'That folder is not in the last scan. Rescan and try again.')
 }
 
+/** A scanned folder, or any existing folder in the home folder (for a terminal, editor or file manager there). */
+async function place(id: unknown): Promise<Pick<Node, 'name' | 'path'>> {
+  if (typeof id === 'string' && snap?.nodes[id]) return snap.nodes[id]
+  const p = homePath(id, 'Folder')
+  need((await stat(p))?.isDirectory(), 'That folder is gone. Rescan and try again.')
+  return { name: path.basename(p) || '~', path: p }
+}
+const PLAIN = new Set(['shell', 'terminal', 'editor', 'files'])
+
 /** Re-read what laci and the user edit (sidecar and task files) without a full rescan. */
 async function refresh(n: Node) {
   const t = await readTasks(n.path)
@@ -119,6 +128,7 @@ async function refresh(n: Node) {
   n.tasks = t.tasks
   n.taskFiles = t.files
   n.notes = t.notes
+  n.sidecar = t.sidecar
   if (t.summary) n.summary = { text: t.summary, source: SIDECAR }
   n.status = autoStatus(n)
   n.issues = issuesFor(n, snap!.claude)
@@ -162,20 +172,28 @@ const api: Record<string, (body: any) => Promise<unknown>> = {
   },
   /** Open something outside laci: the editor, the file manager, or an external terminal. */
   async open({ id, what, arg }) {
-    const n = node(id)
     const a = await apps()
+    if (what === 'default') {
+      // A file (or folder) with whatever the desktop opens it with, like double-clicking it in a file manager.
+      const p = homePath(id, 'File')
+      need(await stat(p), 'That file is gone')
+      detach('xdg-open', [p], path.dirname(p))
+      return { ok: true }
+    }
+    const n = PLAIN.has(what) ? await place(id) : node(id)
     if (what === 'editor') detach(a.editor, [n.path], n.path)
     else if (what === 'files') detach(a.files, [n.path], n.path)
     else {
-      const c = command(n, what === 'terminal' ? 'shell' : what, arg)
+      const c = command(n as Node, what === 'terminal' ? 'shell' : what, arg)
       terminal(a.terminal, n.path, c.cmd, !!c.cmd && !c.run)
     }
     return { ok: true }
   },
   async 'term/open'({ id, what, arg }) {
     if (!id) return term.open(snap?.home ?? process.env.HOME ?? '/', '~')
-    const n = node(id)
-    const c = command(n, String(what ?? 'shell'), arg)
+    const w = String(what ?? 'shell')
+    const n = w === 'shell' ? await place(id) : node(id)
+    const c = command(n as Node, w, arg)
     return term.open(n.path, c.title, c.cmd, c.run)
   },
   async 'term/list'() {
@@ -205,6 +223,30 @@ const api: Record<string, (body: any) => Promise<unknown>> = {
       const journal = await applyAction(snap!, p.title, need(p.action, 'Nothing to apply here; open the folders and decide'))
       return { journal, snapshot: await rescan() }
     })
+  },
+  /** What's in a folder, like a file manager shows it. Only inside the home folder. */
+  async ls({ path: p }) {
+    const dir = homePath(p ?? snap?.home, 'Folder')
+    need((await stat(dir))?.isDirectory(), "That folder doesn't exist anymore")
+    const entries = (await list(dir)).slice(0, 5000)
+    return {
+      path: dir,
+      entries: await pool(entries, 16, async e => {
+        const full = path.join(dir, e.name)
+        const s = e.isSymbolicLink() ? await stat(full) : await fs.lstat(full).catch(() => undefined)
+        const isDir = !!s?.isDirectory()
+        return {
+          name: e.name,
+          path: full,
+          dir: isDir,
+          link: e.isSymbolicLink(),
+          size: isDir ? undefined : s?.size,
+          at: s ? iso(s.mtimeMs) : undefined,
+          // Repos outside the scanned folders still look like projects.
+          git: isDir && !snap?.nodes[full] ? !!(await stat(path.join(full, '.git'))) : undefined,
+        }
+      }),
+    }
   },
   async journal() {
     return journals()

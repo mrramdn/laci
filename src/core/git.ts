@@ -38,6 +38,11 @@ export async function gitInfo(dir: string): Promise<GitInfo> {
   const lines = status.out.split('\n')
   const head = lines[0]?.startsWith('## ') ? lines.shift()! : ''
   const upstream = head.match(/\.\.\.(\S+)/)?.[1]
+  // `git remote` lists by name, so a mirror named `gitlab` would come before `origin`. The remote the
+  // branch tracks comes first, then origin: that's the one people mean by "the remote".
+  const tracked = upstream?.split('/')[0]
+  const rank = (r: Remote) => (r.name === tracked ? 0 : r.name === 'origin' ? 1 : 2)
+  remoteList.sort((a, b) => rank(a) - rank(b))
   const ahead = Number(head.match(/ahead (\d+)/)?.[1] ?? 0)
   const behind = Number(head.match(/behind (\d+)/)?.[1] ?? 0)
 

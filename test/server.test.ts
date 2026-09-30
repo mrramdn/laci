@@ -1,7 +1,7 @@
 // The terminal API runs commands on this machine, so any page on the web must not be able to reach it.
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -56,4 +56,19 @@ test('listing and opening stay inside the home folder', async () => {
   assert.equal((await call('ls', { path: home })).status, 200)
   assert.equal((await call('open', { id: '/etc/passwd', what: 'default' })).status, 400)
   assert.equal((await call('term/open', { id: '/etc', what: 'shell' })).status, 400)
+})
+
+test('a new project is made only from a safe name, place and URL', async () => {
+  const html = await (await fetch(`${base}/`)).text()
+  const token = html.match(/"token":"([^"]+)"/)![1]
+  const make = (body: object) =>
+    fetch(`${base}/api/new`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-laci-token': token }, body: JSON.stringify({ parent: home, from: 'empty', remote: 'none', ...body }) })
+  for (const bad of [{ name: '../escape' }, { name: 'a/b' }, { name: '-rf' }, { name: 'ok', parent: '/tmp' }, { name: 'ok', from: 'clone', url: '--upload-pack=touch /tmp/x' }, { name: 'ok', from: 'clone', url: 'file:///etc' }])
+    assert.equal((await make(bad)).status, 400, JSON.stringify(bad))
+  const r = await make({ name: 'fresh', summary: 'A thing' })
+  assert.equal(r.status, 200)
+  const made = path.join(home, 'fresh')
+  assert.ok(existsSync(path.join(made, '.git')) && existsSync(path.join(made, 'README.md')))
+  assert.match(readFileSync(path.join(made, '.laci.md'), 'utf8'), /status: active[\s\S]*## Summary\n\nA thing/)
+  assert.equal((await make({ name: 'fresh' })).status, 400, 'an existing folder is never reused')
 })

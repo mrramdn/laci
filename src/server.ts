@@ -9,6 +9,7 @@ import { issuesFor } from './core/health.ts'
 import { CATALOG, connectors, presetsFound } from './core/agents/connectors.ts'
 import { ConfigError, checkApps, checkConnector, checkRoots, homePath, loadConfig, saveConfig } from './core/config.ts'
 import { defaultRoots } from './core/detect.ts'
+import { TEMPLATES, createProject, hosts, templates } from './core/create.ts'
 import { installedApps, onPath, rootCandidates } from './core/setup.ts'
 import { applyAction, archiveProject, backupHistory, journals, undo } from './core/ops.ts'
 import { autoStatus, scan } from './core/scan.ts'
@@ -316,6 +317,16 @@ Object.assign(api, {
       c.roots = r
       c.presets = [...new Set(presets as string[])]
       c.apps = a
+    })
+  },
+  /** What the New project form can offer: templates on disk, and which hosts gh/glab can create repos on. */
+  async 'new/info'() {
+    return { templates: await templates(), templatesDir: tilde(TEMPLATES), hosts: await hosts() }
+  },
+  async new(body: unknown) {
+    return exclusive(async () => {
+      const r = await createProject(body)
+      return { ...r, snapshot: await rescan() }
     })
   },
   /** Add a catalog connector (`preset`) or one the user described (`name` + `link`). */

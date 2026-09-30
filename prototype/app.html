@@ -226,6 +226,9 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .cform:has([name=kind][value=cwd]:checked) .kf.cwd, .cform:has([name=kind][value=named]:checked) .kf.named,
 .cform:has([name=kind][value=inside]:checked) .kf.inside, .cform:has([name=kind][value=mentions]:checked) .kf.mentions { display: block; }
 .dialog .df p.err { color: var(--red); }
+.cform:has([name=from][value=template]:checked) .kf.template, .cform:has([name=from][value=clone]:checked) .kf.clone { display: block; }
+.cform:has([name=from]) .kf.push { display: block; }
+.cform:has([name=from][value=clone]:checked) .kf.push { display: none; }
 .pick { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; margin-top: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); text-align: left; }
 .pick:hover { background: var(--subtle); border-color: var(--border-strong); }
 .pick .txt { flex: 1; min-width: 0; }
@@ -612,6 +615,7 @@ function side() {
   const places = [...snap.roots, ...(snap.roots.includes(HOME) ? [] : [HOME])]
   const scanned = new Date(snap.scannedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
   return `<div class="sb-top"><span class="logo">${icon('archive')}</span><b>laci</b><span class="grow"></span>
+      <button class="icon-btn" data-act="newproj" title="New project" aria-label="New project">${icon('plus')}</button>
       <button class="icon-btn" data-act="palette" title="Search (Ctrl K)" aria-label="Search">${icon('search')}</button></div>
     <div class="sb-scroll">
       ${nav.map(([v, label, ic, n, isHot]) => `<button class="sb-item" data-act="view" data-v="${v}" ${st.view === v ? 'aria-current="page"' : ''}>${icon(ic)}<span>${label}</span>${n ? `<span class="n ${isHot ? 'hot' : ''}">${n}</span>` : ''}</button>`).join('')}
@@ -1128,6 +1132,7 @@ function readmeTab(n) {
 /* ---------- dialog, palette, toast ---------- */
 function dialog() {
   if (st.modal.kind === 'connector') return connectorDialog()
+  if (st.modal.kind === 'new') return newDialog()
   const n = nodes[st.modal.id]
   const plan = n.archivePlan
   return `<div class="scrim" data-act="scrim"><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="d-t">
@@ -1142,6 +1147,41 @@ function dialog() {
   </div></div>`
 }
 
+/** Where a new project goes by default: the folder you're looking at, if it's one of yours. */
+function newParent() {
+  if (st.view !== 'folder' || !within(st.cwd, HOME)) return snap.roots[0] ?? HOME
+  return nodes[st.cwd]?.kind === 'project' ? parentOf(st.cwd) : st.cwd
+}
+function newDialog() {
+  const m = st.modal
+  const d = m.draft
+  const info = m.info
+  const parents = [...new Set([d.parent, ...snap.roots, ...all.filter(n => n.kind === 'folder' && !n.archived).map(n => n.path)])]
+  const host = (k, label) => `<option value="${k}" ${d.remote === k ? 'selected' : ''} ${info && k !== 'none' && !(k === 'both' ? info.hosts.github && info.hosts.gitlab : info.hosts[k]) ? 'disabled' : ''}>${label}</option>`
+  const from = d.from ?? 'empty'
+  return `<div class="scrim" data-act="scrim"><form class="dialog cform" data-form="new" role="dialog" aria-modal="true" aria-labelledby="n-t">
+    <div class="dh"><h2 id="n-t">New project</h2>
+      <p class="desc">Makes the folder, starts git with a first commit, and sets it up in laci.</p></div>
+    <div class="db">
+      <div class="row2"><label class="fld"><span>Name</span><input class="inp mono" name="name" value="${esc(d.name ?? '')}" placeholder="my-app" autocomplete="off" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" maxlength="100"></label>
+        <label class="fld"><span>In</span><select class="inp mono" name="parent">${parents.map(p => `<option value="${esc(p)}" ${d.parent === p ? 'selected' : ''}>${esc(tilde(p))}</option>`).join('')}</select></label></div>
+      <label class="fld"><span>What is it? <span class="faint" style="font-weight:400">Optional</span></span><input class="inp" name="summary" value="${esc(d.summary ?? '')}" placeholder="Landing page for the coffee shop" maxlength="300" autocomplete="off"><small>Goes into the README and the project's summary.</small></label>
+      <div class="fld"><span>Start from</span><div class="choices">
+        <label class="choice"><input type="radio" name="from" value="empty" ${from === 'empty' ? 'checked' : ''}><div><b>Empty folder</b><p>A README and nothing else.</p></div></label>
+        <label class="choice"><input type="radio" name="from" value="template" ${from === 'template' ? 'checked' : ''} ${info?.templates.length ? '' : 'disabled'}><div><b>A template</b><p>${info?.templates.length ? `Copies a folder from ${esc(info.templatesDir)}` : `None yet. Put starter folders in ${esc(info?.templatesDir ?? '~/.config/laci/templates')} to use them here.`}</p></div></label>
+        <label class="choice"><input type="radio" name="from" value="clone" ${from === 'clone' ? 'checked' : ''}><div><b>Clone a repo</b><p>From GitHub, GitLab or any git URL.</p></div></label>
+      </div></div>
+      <div class="kf template">${info?.templates.length ? `<label class="fld"><span>Template</span><select class="inp" name="template">${info.templates.map(t => `<option ${d.template === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}</div>
+      <div class="kf clone"><label class="fld"><span>Repo URL</span><input class="inp mono" name="url" value="${esc(d.url ?? '')}" placeholder="https://github.com/owner/repo" autocomplete="off"></label></div>
+      <div class="kf push"><label class="fld"><span>Push to</span><select class="inp" name="remote">
+        ${host('none', 'Only this PC for now')}${host('github', 'New private repo on GitHub')}${host('gitlab', 'New private repo on GitLab')}${host('both', 'GitHub and GitLab (one push updates both)')}
+      </select><small>${!info ? 'Checking gh and glab…' : info.hosts.github || info.hosts.gitlab ? `Uses your ${[info.hosts.github && 'gh', info.hosts.gitlab && 'glab'].filter(Boolean).join(' and ')} login.` : 'Log in with gh or glab to create repos from here.'}</small></label></div>
+    </div>
+    <div class="df">${m.error ? `<p class="err" role="alert">${esc(m.error)}</p>` : `<p class="mono">${esc(tilde((d.parent ?? '') + '/' + (d.name || 'name')))}</p>`}
+      <button type="button" class="btn" data-act="closemodal">Cancel</button><button class="btn primary">Create project</button></div>
+  </form></div>`
+}
+
 function paletteItems(q) {
   const qq = q.trim().toLowerCase()
   const match = hay => !qq || qq.split(/\s+/).every(t => hay.includes(t))
@@ -1150,7 +1190,7 @@ function paletteItems(q) {
     .sort((a, b) => days(a.lastActivity?.at) - days(b.lastActivity?.at))
     .slice(0, 9)
     .map(n => ({ id: 'node:' + n.id, sec: n.kind === 'folder' ? 'Folders' : 'Projects', label: n.label, sub: tilde(n.path), icon: kindIcon(n), acc: ago(n.lastActivity?.at) }))
-  const acts = [['view:today', 'Open Today', 'inbox'], ['view:tidy', 'Open Tidy up', 'sparkles'], ['view:agents', 'Open Agent history', 'history'], ['view:settings', 'Open Settings', 'gear'], ['rescan', 'Scan again', 'refresh'], ['theme', 'Switch theme', 'moon']]
+  const acts = [['view:today', 'Open Today', 'inbox'], ['view:tidy', 'Open Tidy up', 'sparkles'], ['view:agents', 'Open Agent history', 'history'], ['new', 'New project', 'plus'], ['view:settings', 'Open Settings', 'gear'], ['rescan', 'Scan again', 'refresh'], ['theme', 'Switch theme', 'moon']]
     .filter(([, l]) => match(l.toLowerCase())).map(([id, label, ic]) => ({ id, sec: 'Actions', label, sub: '', icon: icon(ic), acc: '' }))
   return [...hits.filter(i => i.sec === 'Projects'), ...hits.filter(i => i.sec === 'Folders'), ...acts]
 }
@@ -1416,6 +1456,19 @@ const acts = {
   undo: d => mutate(async () => afterChange(await api('undo', { id: d.id }), 'Undone. Everything is back where it was.'), 'Undoing…'),
   archive: d => { st.modal = { id: d.id }; render() },
   connadd: () => { st.modal = { kind: 'connector' }; render() },
+  newproj: () => {
+    if (!LIVE) return toast('Read-only preview', 'Start laci with `pnpm start` in ~/project/laci to make changes.')
+    st.palette = null
+    st.modal = { kind: 'new', draft: { parent: newParent(), from: 'empty', remote: 'none' } }
+    render()
+    $('.cform [name=name]')?.focus()
+    api('new/info').then(info => {
+      if (st.modal?.kind !== 'new') return
+      st.modal.info = info
+      Object.assign(st.modal.draft, Object.fromEntries(new FormData($('.cform'))))
+      render()
+    }, () => {})
+  },
   conncustom: () => { st.modal = { kind: 'connector', step: 'custom', draft: {} }; render(); $('.cform [name=name]')?.focus() },
   connpreset: d => {
     const x = snap.suggestions.find(s => s.id === d.id)
@@ -1480,6 +1533,7 @@ function paletteGo(id) {
     select(n.id)
   } else if (id.startsWith('view:')) acts.view({ v: id.slice(5) })
   else if (id === 'rescan') acts.rescan()
+  else if (id === 'new') acts.newproj()
   else if (id === 'theme') { toggleTheme(); render() }
 }
 
@@ -1504,6 +1558,7 @@ document.addEventListener('change', e => {
   if (t.dataset.sroot) { t.checked ? st.setup.roots.add(t.dataset.sroot) : st.setup.roots.delete(t.dataset.sroot); st.setup.error = null; return }
   if (t.dataset.spreset) { t.checked ? st.setup.presets.add(t.dataset.spreset) : st.setup.presets.delete(t.dataset.spreset); return }
   if (t.dataset.sapp) { st.setup.apps[t.dataset.sapp] = t.value; return }
+  if (t.name === 'parent' && t.closest('[data-form="new"]')) { t.dispatchEvent(new Event('input', { bubbles: true })); return }
   if (t.hasAttribute('data-themepick')) {
     const r = document.documentElement
     if (t.value === 'system') delete r.dataset.theme
@@ -1544,6 +1599,8 @@ document.addEventListener('input', e => {
     }, 600)
   }
   if (t.id === 'pal-in') { st.palette.q = t.value; st.palette.i = 0; render() }
+  const nf = t.closest?.('[data-form="new"]')
+  if (nf) { const p = $('.df p.mono', nf); if (p) p.textContent = tilde(`${nf.parent.value}/${nf.name.value.trim() || 'name'}`) }
 })
 /** The connector form's fields, flattened into the shape the server checks. */
 function connectorFromForm(f) {
@@ -1571,6 +1628,29 @@ document.addEventListener('submit', async e => {
       toast(`Added ${c.name}`, c.present ? `Found ${plural(c.count, 'item')} in ${c.where}` : `Nothing at ${c.where} yet. It will show up once the tool writes there.`)
     } catch (err) {
       st.modal = { kind: 'connector', step: 'custom', draft, error: err.message }
+      render()
+    } finally {
+      busy()
+    }
+    return
+  }
+  if (f.dataset.form === 'new') {
+    e.preventDefault()
+    const body = Object.fromEntries(new FormData(f))
+    st.modal.draft = body
+    busy(body.from === 'clone' ? 'Cloning…' : body.remote !== 'none' ? 'Creating the project and its repo…' : 'Creating the project…')
+    try {
+      const r = await api('new', body)
+      st.modal = null
+      load(r.snapshot)
+      st.view = 'folder'
+      st.cwd = body.parent
+      st.sel = nodes[r.path] ? r.path : null
+      st.resetInsp = true
+      render()
+      toast(`Created ${body.name}`, r.warnings.length ? r.warnings.join('. ') : tilde(r.path), { error: r.warnings.length > 0 })
+    } catch (err) {
+      st.modal.error = err.message
       render()
     } finally {
       busy()

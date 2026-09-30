@@ -279,19 +279,19 @@ textarea.notes:focus { outline: none; border-color: var(--accent); box-shadow: 0
 .ifoot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 48px; flex: none; padding: 10px 12px 10px 16px; border-top: 1px solid var(--border); background: var(--bg); }
 .ifoot .spacer { flex: 1; }
 
-/* terminal panel (VS Code / Dolphin F4 style), always dark */
-.term { grid-area: term; position: relative; display: flex; flex-direction: column; height: var(--term-h, 300px); background: #0A0A0B; border-top: 1px solid var(--border); min-width: 0; }
+/* terminal panel (VS Code / Dolphin F4 style), follows the theme */
+.term { grid-area: term; position: relative; display: flex; flex-direction: column; height: var(--term-h, 300px); background: var(--bg); border-top: 1px solid var(--border); min-width: 0; }
 .term.max { height: calc(100vh - 88px); }
 .term-resize { position: absolute; top: -3px; left: 0; right: 0; height: 6px; cursor: ns-resize; z-index: 3; }
-.term-bar { display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 6px 0 8px; border-bottom: 1px solid #1C1C1F; flex: none; overflow-x: auto; }
-.ttab { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 4px 0 10px; border: 0; border-radius: 6px; background: none; color: #8E8E96; font-size: 12px; white-space: nowrap; }
-.ttab:hover { background: #17171A; color: #EDEDEF; }
-.ttab[aria-selected="true"] { background: #1E1E22; color: #EDEDEF; }
+.term-bar { display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 6px 0 8px; border-bottom: 1px solid var(--border); flex: none; overflow-x: auto; }
+.ttab { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 4px 0 10px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.ttab:hover { background: var(--hover); color: var(--text); }
+.ttab[aria-selected="true"] { background: var(--active); color: var(--text); }
 .ttab.ended { opacity: .55; }
 .ttab .x { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; }
-.ttab .x:hover { background: #2B2B2F; }
-.term-bar .icon-btn { color: #8E8E96; width: 26px; height: 26px; }
-.term-bar .icon-btn:hover { background: #17171A; color: #EDEDEF; }
+.ttab .x:hover { background: var(--border-strong); }
+.term-bar .icon-btn { color: var(--muted); width: 26px; height: 26px; }
+.term-bar .icon-btn:hover { background: var(--hover); color: var(--text); }
 .term-body { position: relative; flex: 1; min-height: 0; }
 .xhost { position: absolute; inset: 6px 4px 2px 12px; }
 .xhost[hidden] { display: none; }
@@ -903,7 +903,14 @@ async function afterChange(r, done) {
 }
 
 /* ---------- terminal panel ---------- */
-const XTHEME = { background: '#0A0A0B', foreground: '#D4D4D8', cursor: '#EDEDEF', selectionBackground: '#3F3F46', black: '#18181B', red: '#F87171', green: '#4ADE80', yellow: '#FACC15', blue: '#60A5FA', magenta: '#C084FC', cyan: '#22D3EE', white: '#E4E4E7', brightBlack: '#52525B', brightRed: '#FCA5A5', brightGreen: '#86EFAC', brightYellow: '#FDE047', brightBlue: '#93C5FD', brightMagenta: '#D8B4FE', brightCyan: '#67E8F9', brightWhite: '#FAFAFA' }
+const XTHEMES = {
+  dark: { background: '#0C0C0D', foreground: '#D4D4D8', cursor: '#EDEDEF', cursorAccent: '#0C0C0D', selectionBackground: '#3F3F46', black: '#18181B', red: '#F87171', green: '#4ADE80', yellow: '#FACC15', blue: '#60A5FA', magenta: '#C084FC', cyan: '#22D3EE', white: '#E4E4E7', brightBlack: '#52525B', brightRed: '#FCA5A5', brightGreen: '#86EFAC', brightYellow: '#FDE047', brightBlue: '#93C5FD', brightMagenta: '#D8B4FE', brightCyan: '#67E8F9', brightWhite: '#FAFAFA' },
+  // On white, "white" text has to stay dark enough to read.
+  light: { background: '#FFFFFF', foreground: '#27272A', cursor: '#18181B', cursorAccent: '#FFFFFF', selectionBackground: '#D4D4D8', black: '#18181B', red: '#DC2626', green: '#15803D', yellow: '#A16207', blue: '#2563EB', magenta: '#9333EA', cyan: '#0E7490', white: '#52525B', brightBlack: '#71717A', brightRed: '#B91C1C', brightGreen: '#166534', brightYellow: '#854D0E', brightBlue: '#1D4ED8', brightMagenta: '#7E22CE', brightCyan: '#155E75', brightWhite: '#18181B' },
+}
+const xtheme = () => XTHEMES[getComputedStyle(document.documentElement).colorScheme === 'dark' ? 'dark' : 'light']
+function applyTermTheme() { for (const t of T.tabs) t.xt.options.theme = xtheme() }
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTermTheme())
 const T = { tabs: [], active: null, shown: false, max: false }
 const queues = {}
 
@@ -930,7 +937,7 @@ function addTab(info) {
   const host = document.createElement('div')
   host.className = 'xhost'
   $('#term .term-body').append(host)
-  const xt = new Terminal({ fontFamily: '"Geist Mono", "JetBrainsMono Nerd Font", "Symbols Nerd Font", monospace', fontSize: 13, lineHeight: 1.2, cursorBlink: true, scrollback: 5000, theme: XTHEME })
+  const xt = new Terminal({ fontFamily: '"Geist Mono", "JetBrainsMono Nerd Font", "Symbols Nerd Font", monospace', fontSize: 13, lineHeight: 1.2, cursorBlink: true, scrollback: 5000, theme: xtheme() })
   const fit = new FitAddon.FitAddon()
   xt.loadAddon(fit)
   xt.open(host)
@@ -1046,6 +1053,7 @@ function toggleTheme() {
   const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches
   r.dataset.theme = dark ? 'light' : 'dark'
   try { localStorage.setItem('laci:theme', r.dataset.theme) } catch {}
+  applyTermTheme()
 }
 const OPENED = { terminal: 'Opened a terminal', editor: 'Opened in the editor', files: 'Opened in Dolphin', resume: 'Resuming the session in a terminal', fix: 'Opened a terminal', script: 'Running in a terminal', summary: 'Claude is writing a summary in a terminal' }
 

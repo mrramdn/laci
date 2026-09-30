@@ -10,6 +10,7 @@ export const bytes = (b: number) =>
   b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : b >= 1e3 ? `${Math.round(b / 1e3)} KB` : `${b} B`
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
+const count = (k: number, w: string) => `${k} ${w}${k === 1 ? '' : 's'}`
 
 /** Archive into the nearest existing `_archive` up the tree, keeping the path below it (matches the layout already on disk). */
 export async function archiveDest(n: Node, roots: string[]) {
@@ -33,17 +34,17 @@ export function moveOps(from: string, to: string, snap: Pick<Snapshot, 'claude' 
     ops.push({
       kind: 'rename',
       label: 'Move Claude sessions + memory',
-      from: `~/.claude/projects/${c.name}`,
-      to: `~/.claude/projects/${enc(target)}`,
+      from: tilde(c.path!),
+      to: tilde(target),
       detail: `${c.sessions.length} sessions · ${c.memory.length} memory files · ${bytes(c.bytes)}`,
     })
     const stale = staleCwds(c)
     const lines = sum(Object.entries(c.cwds).filter(([cwd]) => within(cwd, from)).map(([, k]) => k)) + sum(stale.map(([, k]) => k))
-    if (lines) ops.push({ kind: 'rewrite', label: 'Rewrite cwd in Claude logs', detail: `${lines} lines → ${tilde(target)}${stale.length ? ' (also fixes paths left by earlier moves)' : ''}` })
+    if (lines) ops.push({ kind: 'rewrite', label: 'Rewrite cwd in Claude logs', detail: `${count(lines, 'line')} → ${tilde(target)}${stale.length ? ' (also fixes paths left by earlier moves)' : ''}` })
   }
 
   const codex = Object.values(snap.codex).filter(s => s.cwd && within(s.cwd, from))
-  if (codex.length) ops.push({ kind: 'rewrite', label: 'Rewrite cwd in Codex logs', detail: `${sum(codex.map(s => s.cwdLines))} lines in ${codex.length} files` })
+  if (codex.length) ops.push({ kind: 'rewrite', label: 'Rewrite cwd in Codex logs', detail: `${count(sum(codex.map(s => s.cwdLines)), 'line')} in ${count(codex.length, 'file')}` })
   return ops
 }
 
@@ -102,8 +103,8 @@ export function buildProposals(snap: Snapshot): Proposal[] {
         confidence: exact ? 'high' : cands.length === 1 ? 'med' : 'low',
         nodeId: n.id,
         ops: [
-          { kind: 'rename', label: 'Move Claude sessions + memory', from: `~/.claude/projects/${name}`, to: `~/.claude/projects/${enc(n.path)}`, detail: what },
-          ...(lines ? [{ kind: 'rewrite' as const, label: 'Rewrite cwd in Claude logs', detail: `${lines} lines → ${tilde(n.path)}` }] : []),
+          { kind: 'rename', label: 'Move Claude sessions + memory', from: goneStarts(c)[0] ? tilde(goneStarts(c)[0]) : `~/.claude/projects/${name}`, to: tilde(n.path), detail: what },
+          ...(lines ? [{ kind: 'rewrite' as const, label: 'Rewrite cwd in Claude logs', detail: `${count(lines, 'line')} → ${tilde(n.path)}` }] : []),
         ],
         action: { type: 'reconnect-claude', dir: c.dir, target: path.join(CLAUDE_PROJECTS, enc(n.path)), pairs: goneStarts(c).map(r => [r, n.path]) },
       })
@@ -125,12 +126,12 @@ export function buildProposals(snap: Snapshot): Proposal[] {
     out.push({
       id: 'migration:stale-cwd',
       category: 'migration',
-      title: `Finish ${half.length} half-done moves`,
+      title: `Finish ${half.length} half-done move${half.length === 1 ? '' : 's'}`,
       why: 'These session folders were renamed after a move, but the logs inside still record the old path. Resume works; search, stats and the next move would get it wrong.',
       confidence: 'high',
       ops: half.map(c => {
         const stale = staleCwds(c)
-        return { kind: 'rewrite', label: tilde(c.path!), from: stale.map(([p]) => tilde(p)).join(', '), to: tilde(c.path!), detail: `${sum(stale.map(([, k]) => k))} lines` }
+        return { kind: 'rewrite', label: tilde(c.path!), from: stale.map(([p]) => tilde(p)).join(', '), to: tilde(c.path!), detail: count(sum(stale.map(([, k]) => k)), 'line') }
       }),
       action: { type: 'rewrite-claude', items: half.map(c => ({ dir: c.dir, pairs: staleRoots(c).map(r => [r, c.path!] as [string, string]) })) },
     })
@@ -152,7 +153,7 @@ export function buildProposals(snap: Snapshot): Proposal[] {
         why: `${was.n.label} used to live at ${tilde(was.old)}: its Claude logs still say so. These Codex sessions stayed at the old address.`,
         confidence: 'high',
         nodeId: was.n.id,
-        ops: [{ kind: 'rewrite', label: 'Rewrite cwd in Codex logs', from: tilde(cwd), to: tilde(target), detail: `${sum(list.map(x => x.cwdLines))} lines in ${list.length} file${s}` }],
+        ops: [{ kind: 'rewrite', label: 'Rewrite cwd in Codex logs', from: tilde(cwd), to: tilde(target), detail: `${count(sum(list.map(x => x.cwdLines)), 'line')} in ${count(list.length, 'file')}` }],
         action: { type: 'rewrite-codex', files: list.map(x => x.file), pairs: [[was.old, was.n.path]] },
       })
     } else

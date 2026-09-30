@@ -55,7 +55,7 @@ export function issuesFor(n: Node, claude: Record<string, ClaudeDir>, now = Date
     const stale = staleCwds(claude[name])
     if (!stale.length) continue
     const lines = stale.reduce((s, [, k]) => s + k, 0)
-    out.push({ code: 'stale-cwd', severity: 'low', title: 'Agent logs point to an old path', detail: `${plural(lines, 'line')} still say ${stale.map(([p]) => tilde(p)).slice(0, 2).join(', ')}` })
+    out.push({ code: 'stale-cwd', severity: 'low', title: 'Agent logs point to an old path', detail: `${plural(lines, 'line')} still ${lines === 1 ? 'says' : 'say'} ${stale.map(([p]) => tilde(p)).slice(0, 2).join(', ')}` })
   }
 
   const deadline = n.meta.deadline ? Date.parse(n.meta.deadline) : NaN

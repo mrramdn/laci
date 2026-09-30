@@ -2,7 +2,9 @@
 
 What changed in laci, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.0] - 2026-09-30
+
+The first tagged release: a file manager for your projects that keeps their agent history attached, now live and with a log of everything it changes.
 
 ### Added
 
@@ -11,8 +13,9 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 - **Instant start.** The last scan shows right away while a fresh one runs in the background.
 - **Display menu** in the folder view: sort by name, modified, size or agent sessions in either direction, and choose whether folders come first and whether hidden files and archived projects show.
 - **Theme switch** (system, light, dark) in the sidebar.
+- **`create_project`** MCP tool: agents can start a project the same way the app does, with a plan first.
 - **Debug log** at `~/.local/share/laci/laci.log` (rotated at 1 MB), with a *Debug log* button on the Log page. `LACI_DEBUG=1` adds file watcher events.
-- This changelog.
+- This changelog, and a README with new screenshots.
 
 ### Changed
 
@@ -28,6 +31,9 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 - The window no longer flashes the other theme's colors at start.
 - A repo pushed to GitHub (`origin`) and mirrored to a second remote showed the mirror as its remote.
+- A to-do containing `~/` or `snake_case` lost those characters (`~/.local` became `/.local`).
+- Rewriting paths in an agent log made that session look like it just ran; logs now keep their time.
+- Setting a status, to-do or note in laci no longer counts as activity on the project.
 
 ## [0.2.0] - 2026-09-30
 

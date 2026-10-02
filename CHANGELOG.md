@@ -15,6 +15,12 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 - Linux AppImage, Debian and RPM packaging, native window checks and a CI build workflow.
 - Cross-process regression checks for metadata/task/notes undo, linked paths, destination collisions and rollback.
 
+### Fixed
+
+- Dialogs retain drafts and keyboard focus when application shortcuts are pressed; Escape dismisses one layer, and custom connector forms focus their first field.
+- Enter activates a focused row action without also activating its parent row.
+- Closing a live terminal asks for confirmation with Cancel focused. Cancel and Escape keep its processes running; exited terminals close directly.
+
 ## [1.0.0] - 2026-09-30
 
 The first tagged release: a file manager for your projects that keeps their agent history attached, now live and with a log of everything it changes.

@@ -4,14 +4,14 @@
 
 *Laci* is Indonesian for "drawer".
 
-laci shows every folder like a file manager, and for each project it adds its git state, README summary, stack, open to-dos, and the Claude Code, Codex or other agent sessions that worked in it. It warns you about work that exists only on this disk. When you move or archive a project, its agent history and memory move with it. Every change laci makes is logged and can be undone, and the app keeps itself up to date as you work.
+laci shows every folder like a file manager, and for each project it adds its git state, README summary, stack, open to-dos, and the Claude Code, Codex or other agent sessions that worked in it. It warns you about work that exists only on this disk. When you move or archive a project, its agent history and memory move with it. laci logs its changes, offers Undo for most actions, and keeps itself up to date as you work.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/today-dark.png">
   <img alt="The Today view: work that could be lost, projects to pick up again, and open to-dos" src="docs/screenshots/today-light.png">
 </picture>
 
-> Status: v1.0, Linux only. Early software: expect rough edges. See the [changelog](CHANGELOG.md).
+> Status: v2 development, Linux only. Rust + Tauri 2, with a React interface. See the [changelog](CHANGELOG.md).
 
 ## Contents
 
@@ -91,7 +91,9 @@ Archiving moves a project into the nearest `_archive/` folder. laci also moves i
 
 ### Log
 
-Every change laci makes, from the app or from an agent through MCP: moves, archives, Tidy fixes, status, priority and deadline, to-dos, notes, connectors, settings and new projects. Moves expand to show what went where. Most changes have an *Undo*; one that was changed again later says so instead of overwriting the newer change.
+Every change laci makes, from the app or from an agent through MCP: moves, archives, Tidy fixes, status, priority and deadline, to-dos, notes, connectors, settings and new projects. Moves expand to show what went where. Most changes have an *Undo*; simple edits that were changed again later say so instead of overwriting the newer change.
+
+Undoing a deleted to-do requires its `.laci.md` to remain unchanged after deletion. If you edited it afterward, undo the newer edit first or restore the to-do manually.
 
 ![The Log: an archive expanded to show its steps, and edits made by an agent](docs/screenshots/log.png)
 
@@ -121,36 +123,32 @@ laci ships an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Cod
 
 ### In the terminal
 
-`pnpm doctor` prints what could be lost, open checkboxes and tidy-up suggestions without opening the app.
+`laci doctor` prints what could be lost, open checkboxes and tidy-up suggestions without opening the app.
 
 ## Getting started
 
 ### Requirements
 
-- Linux (tested on Arch with Hyprland)
-- git
-- Node.js 23.6 or newer and pnpm, for installing and for the CLI
-- A C/C++ toolchain (`make`, `g++`, `python3`), because `node-pty` builds locally
-- Optional: `gh` and `glab`, to create repos from *New project*
+Installed builds require Linux, WebKitGTK 4.1, git, `gio` (GLib) for trash operations, and `xdg-open` (xdg-utils) for opening files and URLs. To build from source, install Node and Rust too. `gh` and `glab` are optional, for creating remote repositories from *New project*.
 
 ### Install
 
+Install the `.deb` or `.rpm` from a local build, or run its AppImage. AppImages may need FUSE 2; `./laci.AppImage --appimage-extract-and-run` works without mounting it. Packages install a launcher and the `laci` binary.
+
+To build from source, install Rust (the pinned version is in `rust-toolchain.toml`), Node 24+ and pnpm. Install the platform dependencies in [Tauri's prerequisites](https://v2.tauri.app/start/prerequisites/). On Debian/Ubuntu:
+
 ```sh
-git clone <this repo> ~/project/laci
-cd ~/project/laci
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev librsvg2-dev patchelf git libglib2.0-bin xdg-utils
 pnpm install
-pnpm start
+pnpm build
 ```
 
-The first launch asks three things: which folders hold your projects (laci suggests the ones with git repos), which AI tools you use, and which editor, file manager and terminal to open things with. You can change them later in Settings.
+The packages appear in `target/release/bundle/`. Run `target/release/laci`, or install that binary and its launcher with `sh scripts/install-desktop.sh`.
 
-The first scan reads every agent log once, which can take 10 seconds or more if you have a lot of history. laci remembers what it read (in `~/.cache/laci`), so later scans take a few seconds, and the app opens with the last scan while it checks for changes. The desktop app runs on Electron's bundled Node, so it works even when your shell's Node comes from a version manager.
+The first launch asks which folders hold your projects, which AI tools you use, and which editor, file manager and terminal to open things with. You can change these in Settings. Your existing v1 config is read directly; no import is needed. Journals, backups, activity and `.laci.md` keep their v1 formats.
 
-To add laci to your app launcher:
-
-```sh
-sh scripts/install-desktop.sh     # writes ~/.local/share/applications/laci.desktop
-```
+The app opens with its cached scan while checking for changes. Fonts are bundled locally. The desktop, CLI and MCP server share the Rust engine; installed builds run without Node or Electron.
 
 ## Using it
 
@@ -167,32 +165,29 @@ sh scripts/install-desktop.sh     # writes ~/.local/share/applications/laci.desk
 
 In the details panel, click **Status**, **Priority** or **Deadline** to change them. They are saved to the project's [`.laci.md`](#the-lacimd-file). **Editor** and the file manager button open the apps you picked in Settings. The theme switch (system, light, dark) is at the bottom of the sidebar.
 
-Prefer a browser? `pnpm web` serves the same UI and opens it in Chromium's app mode, or in your default browser.
+The interface runs inside Tauri’s native WebKit webview. Use `pnpm dev` when developing it.
 
 ### CLI
 
 ```sh
-pnpm ls        # every project, newest activity first
-pnpm doctor    # could lose work, open checkboxes, tidy-up suggestions
-pnpm proto     # a read-only HTML snapshot at prototype/dist/index.html
+laci ls        # every project, newest activity first
+laci doctor    # work at risk, open checkboxes and tidy-up suggestions
+laci json      # the complete scan as JSON
 ```
 
 ### Agents (MCP)
 
-Register the server once. It runs on Electron's Node, like the app.
+Register the installed binary as a stdio server. The MCP path runs without creating a window.
 
 ```sh
-# Claude Code
-claude mcp add laci --scope user -e ELECTRON_RUN_AS_NODE=1 -- \
-  ~/project/laci/node_modules/electron/dist/electron ~/project/laci/src/mcp.ts
+claude mcp add laci --scope user -- /home/you/.local/bin/laci mcp
 ```
 
 ```toml
 # Codex: ~/.codex/config.toml
 [mcp_servers.laci]
-command = "/home/you/project/laci/node_modules/electron/dist/electron"
-args = ["/home/you/project/laci/src/mcp.ts"]
-env = { ELECTRON_RUN_AS_NODE = "1" }
+command = "/home/you/.local/bin/laci"
+args = ["mcp"]
 ```
 
 Then ask your agent things like *"which projects could lose work?"*, *"archive dummy2"*, *"move ~/Downloads/foo into ~/project/clients"* or *"start a new project called shop-api in ~/project/clients"*.
@@ -270,10 +265,11 @@ laci adds `.laci.md` to the repo's `.git/info/exclude` (not `.gitignore`), so it
 | New project | Makes the folder; creates a remote repo only if you pick one |
 
 - **Undo.** Every move and rewrite is written to `~/.local/share/laci/journal/` *before* it happens. Rewritten files are kept in `~/.local/share/laci/backup/`. Undo restores them byte for byte. If a step fails midway, laci rolls back what it already did.
+- **Archive and trash recovery.** Undoing an archive restores the saved `.laci.md` in full and can replace edits made while archived. Recover trashed dependencies from the system trash; journal Undo does not restore them.
 - **Log.** Every change is also listed in `~/.local/share/laci/activity.jsonl`, which the Log page reads. Undo from the Log goes through the same checks as the app, and never reaches outside your home folder.
 - **Busy folders are refused.** If a running process (a `claude` session, a dev server) has a folder open, laci won't move it.
 - **One change at a time.** A lock file keeps the app and agents from changing files at once.
-- **Local only.** The UI talks to a server on `127.0.0.1` that requires a per-launch token and rejects other host names, so websites can't reach it. The only network request is the Geist font from Google Fonts. There is no telemetry.
+- **Local only.** The React interface uses Tauri IPC, with no local HTTP server. Fonts are bundled. Rendered Markdown is sanitized, and only scanned project folders can serve local README images. There is no telemetry.
 
 ## Configuration
 
@@ -291,7 +287,7 @@ Environment variables win over the file, for one-off runs:
 
 | Variable | Default | |
 | --- | --- | --- |
-| `LACI_PORT` | `4747` | Port of the local server |
+| `LACI_HOME` | your home folder | Isolated project/config/data/cache home for demos and tests |
 | `LACI_TERMINAL` | from Settings, else `kitty` | External terminal |
 | `LACI_EDITOR` | from Settings, else `code` | Editor opened by **Editor** |
 | `LACI_FILES` | from Settings, else `dolphin` | File manager |
@@ -307,41 +303,35 @@ Other files laci keeps:
 
 ## Development
 
+```text
+crates/laci-core/  scanner, readers, connectors, moves, journal, activity, config
+src-tauri/        desktop IPC, watchers, PTY sessions, CLI and stdio MCP
+ui/               React/TypeScript components, styles and local assets
+prototype/        preserved interface reference
+scripts/          desktop install, isolated demo and validation
 ```
-src/core/        scanner, parsers, health checks, tidy-up suggestions, move engine, log
-  agents/        connectors: Claude Code and the generic readers, plus their cache
-src/server.ts    local API for the UI
-src/watch.ts     file watching for live updates
-src/term.ts      terminal sessions (node-pty), streamed to the UI
-src/mcp.ts       MCP server
-src/cli.ts       CLI
-electron/        desktop window; starts the server with Electron's Node
-prototype/       the UI, one HTML file
-scripts/         launcher install, sandbox and demo data
-test/            tests
-```
-
-The code is TypeScript that runs directly on Node 23.6+ (type stripping), with no build step. Stack: Electron 44, node-pty, xterm.js and the MCP TypeScript SDK v2.
 
 ```sh
-pnpm test        # move engine, undo, API security and MCP tests, against a throwaway HOME
+pnpm dev                 # Tauri + Vite, with reload
 pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build               # AppImage, deb and rpm
 ```
 
-To try changes without touching your real projects, run laci against a fake home:
+Use an isolated demo to try write actions:
 
 ```sh
-node scripts/demo.ts /tmp/laci-demo          # clients, a thesis, side projects, agent history
-HOME=/tmp/laci-demo XDG_CONFIG_HOME= XDG_CACHE_HOME= LACI_PORT=4848 node src/server.ts --open
+node scripts/demo.ts /tmp/laci-demo
+LACI_HOME=/tmp/laci-demo pnpm dev
 ```
 
-The screenshots in this README come from that demo data.
+`LACI_HOME` changes only the locations laci reads and writes. It leaves your shell's `HOME` and XDG variables alone. See [CONTRIBUTING.md](CONTRIBUTING.md) for native window checks and demo scan benchmarks, and [architecture](docs/ARCHITECTURE.md) for the engine and disk contracts.
 
 ## Roadmap
 
 - Manage agent sessions from laci
 - File operations in the browser: copy, rename, delete, preview
-- Packages: AppImage and `.deb`
 - Search across agent sessions ("when did I talk about Midtrans?")
 - Summaries written by an agent for projects without a README
 - Windows

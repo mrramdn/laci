@@ -1,0 +1,135 @@
+use crate::{Result, env::Env, files, paths};
+use serde_json::{Value, json};
+
+pub fn load(env: &Env) -> Value {
+    let mut c = files::text(&env.config_dir.join("config.json"))
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    c["custom"] = json!(
+        c["custom"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| validate_connector(env, v).ok())
+            .collect::<Vec<_>>()
+    );
+    c["apps"] = validate_apps(&c["apps"]).unwrap_or_else(|_| json!({}));
+    if !matches!(c["theme"].as_str(), Some("light" | "dark")) {
+        c.as_object_mut().expect("config object").remove("theme");
+    }
+    if !c["roots"].is_array() {
+        c.as_object_mut().expect("config object").remove("roots");
+    }
+    if !c["presets"].is_array() {
+        c.as_object_mut().expect("config object").remove("presets");
+    }
+    c
+}
+pub fn save(env: &Env, c: &Value) -> Result<()> {
+    let mut text = serde_json::to_string_pretty(c).map_err(|e| e.to_string())?;
+    text.push('\n');
+    files::replace(&env.config_dir.join("config.json"), text.as_bytes())
+}
+pub fn validate_roots(env: &Env, roots: &Value) -> Result<Value> {
+    let array = roots.as_array().ok_or("Pick folders to scan")?;
+    if array.is_empty() {
+        return Err("Pick at least one folder".into());
+    }
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+    for value in array {
+        let p = paths::home_path(value.as_str().ok_or("Invalid folder")?, env)?;
+        if !p.is_dir() {
+            return Err(format!("{} doesn't exist", paths::tilde(&p, &env.home)));
+        }
+        if !roots.iter().any(|r| paths::within(&p, r)) {
+            roots.push(p);
+        }
+    }
+    let minimal: Vec<_> = roots
+        .iter()
+        .filter(|p| !roots.iter().any(|r| r != *p && paths::within(p, r)))
+        .map(|p| Value::String(paths::tilde(p, &env.home)))
+        .collect();
+    Ok(Value::Array(minimal))
+}
+pub fn validate_apps(apps: &Value) -> Result<Value> {
+    let mut out = json!({});
+    let name = regex::Regex::new(r"^[\w.+-]{1,40}$").map_err(|e| e.to_string())?;
+    for key in ["terminal", "editor", "files"] {
+        if let Some(s) = apps[key].as_str().filter(|s| !s.is_empty()) {
+            if !name.is_match(s) {
+                return Err(format!("{key}: use a program name"));
+            }
+            out[key] = json!(s);
+        }
+    }
+    Ok(out)
+}
+pub fn validate_connector(env: &Env, raw: &Value) -> Result<Value> {
+    let name = raw["name"].as_str().unwrap_or("").trim();
+    if name.is_empty() || name.chars().count() > 40 {
+        return Err("Give the connector a name (up to 40 characters)".into());
+    }
+    let mut link = raw["link"].clone();
+    let kind = raw["link"]["kind"].as_str().unwrap_or("");
+    if kind == "inside" {
+        let p = link["path"].as_str().ok_or("Pick a path inside the project")?.trim().trim_end_matches('/');
+        if p.is_empty() || p.len() > 200 || p.starts_with('/') || p.split('/').any(|s| s == ".." || s.is_empty()) {
+            return Err("History path must stay inside the project".into());
+        }
+        link["path"] = json!(p);
+    } else if ["cwd", "named", "mentions"].contains(&kind) {
+        let dir = paths::home_path(link["dir"].as_str().ok_or("Pick a history folder")?, env)?;
+        link["dir"] = json!(paths::tilde(&dir, &env.home));
+        if kind == "named" && !matches!(link["naming"].as_str(), Some("dashes" | "sha256")) {
+            return Err("Pick the folder naming scheme".into());
+        }
+        if kind == "cwd" || kind == "mentions" {
+            let ext = link["ext"].as_str().unwrap_or(if kind == "cwd" { ".jsonl" } else { ".md" }).trim();
+            if !regex::Regex::new(r"^\.[A-Za-z0-9]{1,10}$").map_err(|e| e.to_string())?.is_match(ext) {
+                return Err("File type: use .jsonl or .md".into());
+            }
+            link["ext"] = json!(ext);
+        }
+        if kind == "cwd" {
+            let field = link["field"].as_str().unwrap_or("cwd").trim();
+            if !regex::Regex::new(r"^[A-Za-z_][\w.-]{0,40}$").map_err(|e| e.to_string())?.is_match(field) {
+                return Err("Invalid JSON field".into());
+            }
+            link["field"] = json!(field);
+        }
+    } else {
+        return Err("Pick how the history links to a project".into());
+    }
+    let slug = regex::Regex::new(r"[^a-z0-9]+")
+        .map_err(|e| e.to_string())?
+        .replace_all(&name.to_lowercase(), "-")
+        .trim_matches('-')
+        .to_owned();
+    let id = raw["id"]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("custom-{}", if slug.is_empty() { "tool" } else { &slug }));
+    if !regex::Regex::new(r"^custom-[a-z0-9][a-z0-9-]*$").map_err(|e| e.to_string())?.is_match(&id) {
+        return Err("Invalid connector id".into());
+    }
+    Ok(json!({"id":id,"name":name,"link":link}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn legacy_config_keeps_preset_defaults_and_tilde_paths() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        save(&env,&json!({"roots":["~/project"],"custom":[{"id":"custom-old","name":"Old","link":{"kind":"cwd","dir":"~/history","field":"project.cwd","ext":".jsonl"}}],"apps":{"editor":"code"},"theme":"dark"})).unwrap();
+        let cfg = load(&env);
+        assert!(cfg["presets"].is_null());
+        assert_eq!(cfg["roots"][0], "~/project");
+        assert_eq!(cfg["custom"][0]["link"]["dir"], "~/history");
+        assert_eq!(cfg["apps"]["editor"], "code");
+        assert!(validate_connector(&env, &json!({"name":"Bad","link":{"kind":"inside","path":"../history"}})).is_err());
+    }
+}

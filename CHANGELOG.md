@@ -2,6 +2,19 @@
 
 What changed in laci, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- Desktop runtime migrated to Rust and Tauri 2. React preserves the current interface, with local fonts and direct IPC.
+- The desktop, CLI and 14 stdio MCP tools share one Rust engine. Installed builds no longer need Electron or Node.
+- Existing config, `.laci.md`, activity logs, move journals and backups are read directly. Move journals can be undone by either v1 or v2.
+
+### Added
+
+- Linux AppImage, Debian and RPM packaging, native window checks and a CI build workflow.
+- Cross-process regression checks for metadata/task/notes undo, linked paths, destination collisions and rollback.
+
 ## [1.0.0] - 2026-09-30
 
 The first tagged release: a file manager for your projects that keeps their agent history attached, now live and with a log of everything it changes.

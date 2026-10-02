@@ -3,6 +3,16 @@ import { ago, when, FIX_LABEL } from "./helpers";
 import { useApp, toggleExpanded } from "./store";
 import type { Node, Op, Severity } from "./types";
 import { openTerminal } from "./terminal-api";
+export function restoreFocus(previous: HTMLElement | null) {
+  const target = [previous, document.getElementById("main")].find(
+    (element) =>
+      element?.isConnected &&
+      element.offsetParent !== null &&
+      !element.closest("[inert]") &&
+      !element.matches(":disabled"),
+  );
+  target?.focus({ preventScroll: true });
+}
 export function Icon({
   name,
   className = "",

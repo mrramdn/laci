@@ -101,25 +101,35 @@ export default function App() {
     };
   }, []);
   useEffect(() => {
-    const key = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      const input = target.matches("input,textarea,select");
+    const hotkey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      const terminal =
+        event.key === "F4" || (event.ctrlKey && event.key === "`");
+      const palette =
+        (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k";
+      if (!terminal && !palette) return;
+      event.preventDefault();
+      event.stopPropagation();
       const state = useApp.getState();
-      if (event.key === "F4" || (event.ctrlKey && event.key === "`")) {
-        event.preventDefault();
-        toggleTerminal();
-        return;
-      }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        useApp.setState({ palette: !state.palette });
-        return;
-      }
+      if (state.modal || state.working) return;
+      if (palette) useApp.setState({ palette: !state.palette });
+      else if (!state.palette) toggleTerminal();
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      const target = event.target as HTMLElement;
+      if (!(target instanceof HTMLElement)) return;
+      const input =
+        target.matches("input,textarea,select") || target.isContentEditable;
+      const state = useApp.getState();
+      if (state.working) return;
       if (event.key === "Escape") {
-        event.preventDefault();
-        if (state.palette || state.modal || state.display)
-          useApp.setState({ palette: false, modal: null, display: false });
+        if (state.palette) useApp.setState({ palette: false });
+        else if (state.modal) useApp.setState({ modal: null });
+        else if (state.display) useApp.setState({ display: false });
+        else if (target.closest(".xterm")) return;
         else useApp.setState({ selected: null });
+        event.preventDefault();
         return;
       }
       if (target.closest(".xterm") || state.palette || state.modal) return;
@@ -143,14 +153,17 @@ export default function App() {
       }
       if (input) return;
       const row = target.closest<HTMLElement>(".main .item[tabindex]");
-      if (row && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      if (
+        row === target &&
+        (event.key === "ArrowDown" || event.key === "ArrowUp")
+      ) {
         event.preventDefault();
         const rows = Array.from(
           document.querySelectorAll<HTMLElement>(".main .item[tabindex]"),
         );
         rows[rows.indexOf(row) + (event.key === "ArrowDown" ? 1 : -1)]?.focus();
       }
-      if (row && event.key === "Enter") {
+      if (row === target && event.key === "Enter") {
         event.preventDefault();
         if (row.dataset.kind === "file" && row.dataset.id)
           void run(() => api("open", { id: row.dataset.id, what: "default" }));
@@ -169,8 +182,12 @@ export default function App() {
         state.cd(parentOf(state.cwd));
       }
     };
+    window.addEventListener("keydown", hotkey, true);
     window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("keydown", hotkey, true);
+      window.removeEventListener("keydown", key);
+    };
   }, []);
   useEffect(() => {
     document.querySelector(".main .body")?.scrollTo(0, 0);
@@ -200,9 +217,13 @@ export default function App() {
       {!s.snapshot.configured && !s.skipSetup ? (
         <Settings first />
       ) : (
-        <div className="app" id="app">
+        <div
+          className="app"
+          id="app"
+          inert={Boolean(s.modal || s.palette || s.working)}
+        >
           <Sidebar />
-          <main id="main" className="main">
+          <main id="main" className="main" tabIndex={-1}>
             {s.view === "folder" ? (
               <Folder />
             ) : s.view === "tidy" ? (
@@ -230,7 +251,11 @@ export default function App() {
       <Dialogs />
       {s.palette ? <Palette /> : null}
       {s.toast ? (
-        <div className={`toast ${s.toast.error ? "error" : ""}`} role="status">
+        <div
+          className={`toast ${s.toast.error ? "error" : ""}`}
+          role="status"
+          inert={Boolean(s.modal || s.palette || s.working)}
+        >
           <div className="txt">
             <b>{s.toast.title}</b>
             {s.toast.message ? <p>{s.toast.message}</p> : null}

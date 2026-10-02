@@ -36,17 +36,28 @@ export async function openTerminal(
   });
 }
 export async function closeTerminal(id: string) {
-  await run(async () => {
-    await invoke("term_close", { id });
-    useTerms.setState((s) => {
-      const tabs = s.tabs.filter((t) => t.id !== id);
-      return {
-        tabs,
-        active: s.active === id ? (tabs.at(-1)?.id ?? null) : s.active,
-        shown: tabs.length ? s.shown : false,
-      };
-    });
-  });
+  return run(
+    async () => {
+      await invoke("term_close", { id });
+      useTerms.setState((s) => {
+        const tabs = s.tabs.filter((t) => t.id !== id);
+        return {
+          tabs,
+          active: s.active === id ? (tabs.at(-1)?.id ?? null) : s.active,
+          shown: tabs.length ? s.shown : false,
+        };
+      });
+      return true;
+    },
+    "Closing terminal…",
+  );
+}
+export function requestTerminalClose(id: string) {
+  const terminal = useTerms.getState().tabs.find((tab) => tab.id === id);
+  if (!terminal) return;
+  if (terminal.exited !== undefined && terminal.exited !== false)
+    void closeTerminal(id);
+  else useApp.setState({ modal: { kind: "terminal-close", id } });
 }
 export function toggleTerminal() {
   const terms = useTerms.getState();

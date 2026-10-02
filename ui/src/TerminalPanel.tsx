@@ -4,7 +4,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { Icon } from "./common";
-import { closeTerminal, openTerminal, useTerms } from "./terminal-api";
+import { openTerminal, requestTerminalClose, useTerms } from "./terminal-api";
 import { external, run, useApp } from "./store";
 import { tilde } from "./helpers";
 import type { TerminalInfo } from "./types";
@@ -117,13 +117,13 @@ export default function TerminalPanel() {
               aria-label={`Close terminal ${tab.title}`}
               onClick={(e) => {
                 e.stopPropagation();
-                void closeTerminal(tab.id);
+                requestTerminalClose(tab.id);
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
                   e.stopPropagation();
-                  void closeTerminal(tab.id);
+                  requestTerminalClose(tab.id);
                 }
               }}
             >
@@ -289,7 +289,8 @@ function TerminalTab({
             cols: terminal.cols,
             rows: terminal.rows,
           }).catch(() => {});
-          terminal.focus();
+          const state = useApp.getState();
+          if (!state.modal && !state.palette && !state.working) terminal.focus();
         }
       });
       return () => cancelAnimationFrame(frame);

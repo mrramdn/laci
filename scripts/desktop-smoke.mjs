@@ -7,6 +7,7 @@
  * LACI_SCREENSHOTS optionally receives screenshots from the real app window.
  * LACI_ONBOARDING_ONLY=1 checks the first-run wizard on an unconfigured fixture.
  * LACI_WATCHER_ONLY=1 checks archived Git and continuously written session logs.
+ * LACI_KEYBOARD_ONLY=1 checks modal, connector, row and terminal keyboard behavior.
  * LACI_STARTUP_PROJECT/TEXT optionally check a README changed after a cached scan.
  */
 import assert from "node:assert/strict";
@@ -37,6 +38,7 @@ const screenshotDir =
   process.env.LACI_SCREENSHOTS && path.resolve(process.env.LACI_SCREENSHOTS);
 const onboardingOnly = process.env.LACI_ONBOARDING_ONLY === "1";
 const watcherOnly = process.env.LACI_WATCHER_ONLY === "1";
+const keyboardOnly = process.env.LACI_KEYBOARD_ONLY === "1";
 const elementKey = "element-6066-11e4-a52e-4f735466cecf";
 const stamp = Date.now().toString(36);
 const projectName = `desktop-smoke-${stamp}`;
@@ -47,6 +49,8 @@ const watcherText = `Live watcher refreshed this README (${stamp}).`;
 const terminalText = `LACI_DESKTOP_SMOKE_TERMINAL_${stamp}`;
 const results = [];
 const frontendErrors = [];
+const keyboardTerminalIds = new Set();
+const keyboardFiles = [];
 let session;
 let fixtureHome;
 let originalTheme;
@@ -145,17 +149,88 @@ async function type(selector, value) {
     text: value,
   });
 }
-async function key(value, control = false) {
+async function key(value, control = false, shift = false) {
   const actions = [
     ...(control ? [{ type: "keyDown", value: "\uE009" }] : []),
+    ...(shift ? [{ type: "keyDown", value: "\uE008" }] : []),
     { type: "keyDown", value },
     { type: "keyUp", value },
+    ...(shift ? [{ type: "keyUp", value: "\uE008" }] : []),
     ...(control ? [{ type: "keyUp", value: "\uE009" }] : []),
   ];
   await command("POST", "/actions", {
     actions: [{ type: "key", id: "keyboard", actions }],
   });
 }
+async function keyboardText(value) {
+  await command("POST", "/actions", {
+    actions: [
+      {
+        type: "key",
+        id: "keyboard",
+        actions: Array.from(value).flatMap((value) => [
+          { type: "keyDown", value },
+          { type: "keyUp", value },
+        ]),
+      },
+    ],
+  });
+}
+async function painted() {
+  await asyncExecute(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))),
+      ),
+  );
+}
+async function focused(selector, text = "", exact = false) {
+  return execute(
+    (selector, text, exact) => {
+      const active = document.activeElement;
+      const value = active?.textContent?.trim() ?? "";
+      return Boolean(
+        active?.matches(selector) &&
+        (!text || (exact ? value === text : value.includes(text))),
+      );
+    },
+    selector,
+    text,
+    exact,
+  );
+}
+async function tabTo(selector, text = "", exact = false) {
+  await element(selector, text, exact);
+  for (let count = 0; count < 150; count++) {
+    if (await focused(selector, text, exact)) return;
+    await key("\uE004");
+  }
+  throw new Error(`Tab did not reach ${selector} ${text}`);
+}
+async function terminalFocused() {
+  await wait("real keyboard focus in xterm", () =>
+    focused(
+      ".term:not([hidden]) .term-host:not([hidden]) .xterm-helper-textarea",
+    ),
+  );
+}
+async function processIdentity(pid) {
+  try {
+    const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+    const fields = stat
+      .slice(stat.lastIndexOf(")") + 1)
+      .trim()
+      .split(/\s+/);
+    assert.ok(fields.length > 19, `Invalid /proc/${pid}/stat`);
+    return { state: fields[0], started: fields[19] };
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ESRCH") return null;
+    throw error;
+  }
+}
+const sameLiveProcess = (current, original) =>
+  current?.started === original.started && !["Z", "X"].includes(current.state);
+const shellQuote = (value) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
 async function select(selector, value) {
   await execute(
     (selector, value) => {
@@ -256,6 +331,470 @@ async function installErrorCollection() {
       window.__LACI_SMOKE_ERRORS__.push(String(event.reason)),
     );
   });
+}
+
+async function newTerminalUI() {
+  const before = new Set((await invoke("term_list")).map((term) => term.id));
+  if (
+    !(await execute(() => document.querySelector("#term")?.hidden === false))
+  ) {
+    await key("\uE034");
+    await wait("terminal shown through F4", () =>
+      execute(() => document.querySelector("#term")?.hidden === false),
+    );
+    if (before.size) await click('.term [aria-label="New terminal"]');
+  } else {
+    await click('.term [aria-label="New terminal"]');
+  }
+  const terminal = await wait("new native terminal session", async () => {
+    const added = (await invoke("term_list")).filter(
+      (term) => !before.has(term.id),
+    );
+    return added.length === 1 && added[0];
+  });
+  keyboardTerminalIds.add(terminal.id);
+  await terminalFocused();
+  return terminal;
+}
+
+async function closeExitedTerminalUI(id) {
+  await wait(
+    "shell exited successfully",
+    async () =>
+      (await invoke("term_list")).find((term) => term.id === id)?.exited === 0,
+  );
+  await wait("exited state rendered on the selected terminal tab", () =>
+    execute(() =>
+      Boolean(document.querySelector('.ttab.ended[aria-selected="true"]')),
+    ),
+  );
+  const count = await execute(() => document.querySelectorAll(".ttab").length);
+  await click('.ttab[aria-selected="true"]');
+  await wait("keyboard focus moved out of the exited xterm", () =>
+    focused('.ttab[aria-selected="true"]'),
+  );
+  await key("\uE004");
+  assert.ok(
+    await focused(
+      '.ttab[aria-selected="true"] [role="button"][aria-label^="Close terminal "]',
+    ),
+    "Tab from the terminal tab must reach its close control",
+  );
+  await key("\uE007");
+  await wait(
+    "exited terminal removed without confirmation",
+    async () => !(await invoke("term_list")).some((term) => term.id === id),
+  );
+  await wait("exited terminal tab removed", () =>
+    execute(
+      (count) => document.querySelectorAll(".ttab").length === count - 1,
+      count,
+    ),
+  );
+  await painted();
+  assert.equal(
+    await execute(() =>
+      Boolean(document.querySelector('.dialog[role="dialog"]')),
+    ),
+    false,
+  );
+  keyboardTerminalIds.delete(id);
+}
+
+async function keyboardRegressions() {
+  await check(
+    "Modal shortcuts preserve draft input and isolate the PTY",
+    async () => {
+      await nav("Today", "Today");
+      const hiddenTerminal = await newTerminalUI();
+      await click('.term [aria-label="Hide terminal"]');
+      await wait("live terminal hidden before opening a draft", () =>
+        execute(() => document.querySelector("#term")?.hidden === true),
+      );
+      await tabTo('.sb-top [aria-label="New project"]');
+      await key("\uE007");
+      await wait("New project keyboard focus", () =>
+        focused(".dialog input[pattern]"),
+      );
+      const terminalsBefore = (await invoke("term_list"))
+        .map((term) => term.id)
+        .sort();
+      const terminalWasShown = await execute(
+        () => document.querySelector("#term")?.hidden === false,
+      );
+      let draft = `keyboard-draft-${stamp}`;
+      await keyboardText(draft);
+      for (const [value, control, suffix] of [
+        ["k", true, "-search"],
+        ["\uE034", false, "-terminal"],
+        ["`", true, "-toggle"],
+      ]) {
+        await key(value, control);
+        await painted();
+        assert.equal(
+          await execute(() => Boolean(document.querySelector("#pal-in"))),
+          false,
+          "A modal must not stack the command palette",
+        );
+        assert.equal(
+          await execute(
+            () => document.querySelectorAll('.dialog[role="dialog"]').length,
+          ),
+          1,
+        );
+        assert.ok(
+          await focused(".dialog input[pattern]"),
+          "App shortcuts must leave focus in the draft",
+        );
+        assert.deepEqual(
+          (await invoke("term_list")).map((term) => term.id).sort(),
+          terminalsBefore,
+          "A modal must not create or close a PTY",
+        );
+        assert.equal(
+          await execute(
+            () => document.querySelector("#term")?.hidden === false,
+          ),
+          terminalWasShown,
+        );
+        await keyboardText(suffix);
+        draft += suffix;
+        assert.equal(
+          await execute(
+            () => document.querySelector(".dialog input[pattern]")?.value,
+          ),
+          draft,
+          "Native typing after a shortcut must reach the draft input",
+        );
+      }
+      await key("\uE00C");
+      await wait("Escape closed the draft dialog", () =>
+        execute(() => !document.querySelector('.dialog[role="dialog"]')),
+      );
+      assert.equal(
+        await execute(() => Boolean(document.querySelector("#pal-in"))),
+        false,
+      );
+      await key("\uE034");
+      await terminalFocused();
+      await keyboardText("exit");
+      await key("\uE007");
+      await closeExitedTerminalUI(hiddenTerminal.id);
+    },
+  );
+
+  await check(
+    "Enter on a Today child button opens Review changes",
+    async () => {
+      await nav("Today", "Today");
+      await tabTo(".main .item button", "Review changes", true);
+      const project = await execute(
+        () => document.activeElement.closest(".item").dataset.id,
+      );
+      assert.ok(project);
+      const before = new Set(
+        (await invoke("term_list")).map((term) => term.id),
+      );
+      await key("\uE007");
+      const terminal = await wait(
+        "Review changes button created a terminal",
+        async () => {
+          const added = (await invoke("term_list")).filter(
+            (term) => !before.has(term.id),
+          );
+          return added.length === 1 && added[0];
+        },
+      );
+      keyboardTerminalIds.add(terminal.id);
+      assert.equal(terminal.cwd, project);
+      await terminalFocused();
+      await wait(
+        "Review changes command prefilled through the native PTY",
+        () =>
+          textContains(".term-host:not([hidden]) .xterm", "git status --short"),
+      );
+      await key("u", true);
+      await keyboardText("exit");
+      await key("\uE007");
+      await closeExitedTerminalUI(terminal.id);
+    },
+  );
+
+  await check(
+    "Connector steps focus Name, trap Tab and restore the opener",
+    async () => {
+      await nav("Agent history", "Agent history");
+      await tabTo(".stat.add, .empty-hero button", "Add a connector");
+      const opener = await command("GET", "/element/active");
+      await key("\uE007");
+      await tabTo(".dialog .pick", "Another tool…");
+      await key("\uE007");
+      await wait("custom connector form rendered", () =>
+        textContains(".dialog .dh h2", "Another tool"),
+      );
+      await painted();
+      assert.ok(
+        await focused(".dialog input[name=name]"),
+        "Name must receive focus before another key or click",
+      );
+      const name = `Keyboard connector ${stamp}`;
+      await keyboardText(name);
+      assert.equal(
+        await execute(
+          () => document.querySelector(".dialog input[name=name]").value,
+        ),
+        name,
+      );
+      await key("\uE004", false, true);
+      assert.ok(
+        await focused(".dialog .df button", "Add connector", true),
+        "Shift+Tab wraps to the dialog footer",
+      );
+      await key("\uE004");
+      assert.ok(await focused(".dialog input[name=name]"), "Tab wraps to Name");
+      const controls = await execute(
+        () =>
+          [
+            ...document.querySelectorAll(
+              ".dialog button:not([disabled]),.dialog input:not([disabled]),.dialog select:not([disabled])",
+            ),
+          ].filter((control) => control.getClientRects().length).length,
+      );
+      for (let index = 0; index < controls + 2; index++) {
+        await key("\uE004");
+        assert.equal(
+          await execute(() =>
+            Boolean(document.activeElement?.closest('.dialog[role="dialog"]')),
+          ),
+          true,
+          "Tab must stay inside the custom connector dialog",
+        );
+      }
+      await tabTo(".dialog .df button", "Back", true);
+      await key("\uE007");
+      await wait("connector picker returned", () =>
+        textContains(".dialog .dh h2", "Add a connector"),
+      );
+      await painted();
+      assert.ok(
+        await focused(".dialog button:not([disabled])"),
+        "Back must focus an enabled picker control",
+      );
+      await key("\uE00C");
+      await wait("connector dialog closed", () =>
+        execute(() => !document.querySelector('.dialog[role="dialog"]')),
+      );
+      await painted();
+      assert.equal(
+        (await command("GET", "/element/active"))[elementKey],
+        opener[elementKey],
+        "Closing the dialog must restore its real keyboard opener",
+      );
+    },
+  );
+
+  await check(
+    "Focused xterm F4 and terminal close preserve or stop the real job",
+    async () => {
+      await nav("Today", "Today");
+      const reference = Object.values((await snapshot()).nodes).find(
+        (node) => node.kind === "project" && !node.archived,
+      );
+      assert.ok(
+        reference,
+        "Fixture needs a project for inspector focus restoration",
+      );
+      await showProject(reference);
+      const inspector = await execute(
+        () => document.querySelector(".insp .ititle h2")?.textContent,
+      );
+      const terminal = await newTerminalUI();
+      const ids = (await invoke("term_list")).map((term) => term.id).sort();
+      await key("\uE034");
+      await wait("F4 hides the panel from focused xterm", () =>
+        execute(() => document.querySelector("#term")?.hidden === true),
+      );
+      assert.deepEqual(
+        (await invoke("term_list")).map((term) => term.id).sort(),
+        ids,
+      );
+      await key("\uE034");
+      await terminalFocused();
+      assert.deepEqual(
+        (await invoke("term_list")).map((term) => term.id).sort(),
+        ids,
+      );
+
+      await key("k", true);
+      await wait("Ctrl+K from focused xterm focuses the palette", () =>
+        focused("#pal-in"),
+      );
+      await key("\uE034");
+      await painted();
+      assert.ok(
+        await focused("#pal-in"),
+        "F4 in the palette must preserve its input focus",
+      );
+      assert.equal(
+        await execute(() => document.querySelector("#term")?.hidden === false),
+        true,
+      );
+      assert.deepEqual(
+        (await invoke("term_list")).map((term) => term.id).sort(),
+        ids,
+      );
+      const search = `keyboard-palette-${stamp}`;
+      await keyboardText(search);
+      assert.equal(
+        await execute(() => document.querySelector("#pal-in")?.value),
+        search,
+      );
+      await key("\uE00C");
+      await wait("Escape closed only the palette", () =>
+        execute(() => !document.querySelector("#pal-in")),
+      );
+      await terminalFocused();
+      assert.equal(
+        await execute(
+          () => document.querySelector(".insp .ititle h2")?.textContent,
+        ),
+        inspector,
+        "Palette Escape must preserve the selected inspector",
+      );
+
+      const shellFile = path.join(fixtureHome, `.keyboard-shell-${stamp}`);
+      const jobFile = path.join(fixtureHome, `.keyboard-job-${stamp}`);
+      keyboardFiles.push(shellFile, jobFile);
+      const jobCommand = `printf '%s\\n' "$$" > ${shellQuote(jobFile)}; exec sleep 120`;
+      await keyboardText(
+        `printf '%s\\n' "$$" > ${shellQuote(shellFile)}; sh -c ${shellQuote(jobCommand)}`,
+      );
+      await key("\uE007");
+      const pids = await wait(
+        "foreground sleep recorded its shell and job PIDs",
+        async () => {
+          const values = await Promise.all(
+            [shellFile, jobFile].map((file) => readFile(file, "utf8")),
+          );
+          return (
+            values.every(
+              (value) => /^\d+\s*$/.test(value) && Number(value.trim()) > 1,
+            ) && values.map((value) => Number(value.trim()))
+          );
+        },
+      );
+      await wait("the foreground wrapper became sleep 120", async () => {
+        const args = (await readFile(`/proc/${pids[1]}/cmdline`, "utf8"))
+          .split("\0")
+          .filter(Boolean);
+        return (
+          args.length === 2 &&
+          path.basename(args[0]) === "sleep" &&
+          args[1] === "120"
+        );
+      });
+      const original = await Promise.all(pids.map(processIdentity));
+      assert.ok(
+        original.every(
+          (process) => process && !["Z", "X"].includes(process.state),
+        ),
+      );
+      await click(
+        '.ttab[aria-selected="true"] [role="button"][aria-label^="Close terminal "]',
+      );
+      await wait("live terminal close confirmation", () =>
+        textContains(".dialog .dh h2", `Close terminal ${terminal.title}?`),
+      );
+      assert.ok(
+        (await invoke("term_list")).some(
+          (term) => term.id === terminal.id && term.exited === undefined,
+        ),
+      );
+      const duringDialog = await Promise.all(pids.map(processIdentity));
+      assert.ok(
+        duringDialog.every((process, index) =>
+          sameLiveProcess(process, original[index]),
+        ),
+        "Opening confirmation must keep the shell and job alive",
+      );
+      await shot("terminal-close-confirmation");
+      await tabTo(".dialog .df button", "Cancel", true);
+      await key("\uE007");
+      await wait("Cancel dismissed terminal close confirmation", () =>
+        execute(() => !document.querySelector('.dialog[role="dialog"]')),
+      );
+      assert.ok(
+        (await invoke("term_list")).some(
+          (term) => term.id === terminal.id && term.exited === undefined,
+        ),
+      );
+      const afterCancel = await Promise.all(pids.map(processIdentity));
+      assert.ok(
+        afterCancel.every((process, index) =>
+          sameLiveProcess(process, original[index]),
+        ),
+        "Cancel must preserve the same shell and foreground job",
+      );
+      await click(
+        '.ttab[aria-selected="true"] [role="button"][aria-label^="Close terminal "]',
+      );
+      await wait("live terminal confirmation reopened", () =>
+        textContains(".dialog .dh h2", `Close terminal ${terminal.title}?`),
+      );
+      await key("\uE00C");
+      await wait("Escape dismissed terminal close confirmation", () =>
+        execute(() => !document.querySelector('.dialog[role="dialog"]')),
+      );
+      assert.ok(
+        (await invoke("term_list")).some(
+          (term) => term.id === terminal.id && term.exited === undefined,
+        ),
+      );
+      const afterEscape = await Promise.all(pids.map(processIdentity));
+      assert.ok(
+        afterEscape.every((process, index) =>
+          sameLiveProcess(process, original[index]),
+        ),
+        "Escape must preserve the same shell and foreground job",
+      );
+      await click(
+        '.ttab[aria-selected="true"] [role="button"][aria-label^="Close terminal "]',
+      );
+      await wait("terminal close confirmation ready to commit", () =>
+        textContains(".dialog .dh h2", `Close terminal ${terminal.title}?`),
+      );
+      await tabTo(".dialog .df button", "Close terminal", true);
+      await key("\uE007");
+      await wait(
+        "confirmed close removed the native session",
+        async () =>
+          !(await invoke("term_list")).some((term) => term.id === terminal.id),
+      );
+      await wait(
+        "confirmed close stopped the same shell and foreground job",
+        async () => {
+          const current = await Promise.all(pids.map(processIdentity));
+          return current.every(
+            (process, index) => !sameLiveProcess(process, original[index]),
+          );
+        },
+        10_000,
+      );
+      keyboardTerminalIds.delete(terminal.id);
+      await wait("terminal confirmation finished", () =>
+        execute(() => !document.querySelector('.dialog[role="dialog"]')),
+      );
+
+      const exited = await newTerminalUI();
+      await keyboardText("exit");
+      await key("\uE007");
+      await closeExitedTerminalUI(exited.id);
+      await key("\uE00C");
+      await wait("keyboard checks leave the inspector closed", () =>
+        execute(() => !document.querySelector(".insp")),
+      );
+    },
+  );
 }
 
 async function watcherRegressions() {
@@ -425,6 +964,56 @@ try {
         await wait("onboarding choices loaded", () =>
           textContains(".setup .sset", "Where do you keep projects?"),
         );
+        await tabTo('.setup input[type="checkbox"]');
+        await key("k", true);
+        await wait("onboarding palette keyboard focus", () =>
+          focused("#pal-in"),
+        );
+        await keyboardText("New project");
+        await wait("New project palette action", () =>
+          textContains(".pal-item", "New project"),
+        );
+        await key("\uE007");
+        await wait("New project dialog opened from onboarding", () =>
+          execute(() =>
+            Boolean(document.querySelector(".dialog input[pattern]")),
+          ),
+        );
+        await painted();
+        assert.ok(
+          await focused(".dialog input[pattern]"),
+          "A wizard opener must not steal focus from the modal Name input",
+        );
+        const wizardDraft = `onboarding-draft-${stamp}`;
+        await keyboardText(wizardDraft);
+        assert.equal(
+          await execute(
+            () => document.querySelector(".dialog input[pattern]")?.value,
+          ),
+          wizardDraft,
+        );
+        await key("\uE00C");
+        await wait("onboarding draft cancelled", () =>
+          execute(() => !document.querySelector('.dialog[role="dialog"]')),
+        );
+        await painted();
+        assert.equal(
+          await execute(() => {
+            const active = document.activeElement;
+            return Boolean(
+              active?.isConnected &&
+              active.closest(".setup") &&
+              !active.closest("[inert]"),
+            );
+          }),
+          true,
+          "Modal close must return focus to a connected, usable wizard control or main fallback",
+        );
+        assert.equal(
+          (await snapshot()).configured,
+          false,
+          "Opening and cancelling a draft must not configure the wizard",
+        );
         await shot("first-run");
         const rootInputs = await execute(() =>
           [...document.querySelectorAll(".setup .sset:first-of-type .opt")].map(
@@ -553,7 +1142,7 @@ try {
       execute(() => Boolean(document.querySelector(".main"))),
     );
 
-    if (!watcherOnly) {
+    if (!watcherOnly && !keyboardOnly) {
       await check(
         "Startup sidebar follows the completed native scan",
         async () => {
@@ -603,6 +1192,27 @@ try {
           2,
         ),
       );
+    } else if (keyboardOnly) {
+      await keyboardRegressions();
+      await check("No unhandled frontend errors", async () => {
+        assert.deepEqual(
+          await execute(() => window.__LACI_SMOKE_ERRORS__ ?? []),
+          [],
+        );
+      });
+      console.log(
+        JSON.stringify(
+          {
+            passed: true,
+            binary,
+            fixtureHome,
+            mode: "keyboard",
+            checks: results,
+          },
+          null,
+          2,
+        ),
+      );
     } else {
       const reference =
         Object.values(current.nodes).find(
@@ -616,6 +1226,8 @@ try {
           (n) => n.kind === "project" && n.readme && !n.archived,
         );
       assert.ok(reference, "Fixture needs at least one project with a README");
+
+      await keyboardRegressions();
 
       await check("Six views and both themes", async () => {
         await nav("Today", "Today");
@@ -1041,7 +1653,11 @@ try {
           await wait("terminal output replayed after reload", () =>
             textContains(".term .xterm", terminalText),
           );
-          await click(".ttab .x");
+          await click('.ttab[aria-selected="true"] .x');
+          await wait("terminal close confirmation after replay", () =>
+            textContains(".dialog .dh h2", `Close terminal ${terminal.title}?`),
+          );
+          await click(".dialog .df button", "Close terminal", true);
           await wait(
             "terminal closed through UI",
             async () =>
@@ -1136,6 +1752,13 @@ try {
 } finally {
   if (watchedFile) await rm(watchedFile, { force: true }).catch(() => {});
   if (session) {
+    await command("DELETE", "/actions").catch(() => {});
+    for (const id of keyboardTerminalIds) {
+      await invoke("term_close", { id }).catch(() => {});
+    }
+    for (const file of keyboardFiles) {
+      await rm(file, { force: true }).catch(() => {});
+    }
     if (originalTheme) {
       await execute((theme) => {
         try {

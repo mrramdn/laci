@@ -111,6 +111,8 @@ A connector tells laci where an AI tool keeps its history, so it shows on the ri
 
 Press <kbd>F4</kbd> for a terminal panel with real shells, one tab per project, each opened in the project's folder. *Resume session* runs `claude --resume <id>` there, and script buttons run `pnpm dev` and the like. Fix buttons type the command but wait for you to press Enter. Tabs survive a window reload.
 
+Hiding the panel keeps its sessions running. Closing a live tab asks for confirmation because it ends the shell and any running commands, and discards its output. Tabs whose shells have exited close directly.
+
 ![The terminal panel under a project](docs/screenshots/terminal.png)
 
 ### Stays current
@@ -162,6 +164,8 @@ The app opens with its cached scan while checking for changes. Fonts are bundled
 | <kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd> | Move through lists and open |
 | <kbd>Backspace</kbd> | Go up one folder |
 | <kbd>Esc</kbd> | Close the details panel, a menu or a dialog |
+
+Escape closes one active layer at a time. While a dialog is open, Tab stays inside it, and the palette and terminal shortcuts are inactive. F4 also works while typing in the terminal; it stays blocked while the command palette is open.
 
 In the details panel, click **Status**, **Priority** or **Deadline** to change them. They are saved to the project's [`.laci.md`](#the-lacimd-file). **Editor** and the file manager button open the apps you picked in Settings. The theme switch (system, light, dark) is at the bottom of the sidebar.
 

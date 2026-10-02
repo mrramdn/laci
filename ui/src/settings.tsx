@@ -266,7 +266,14 @@ export function Settings({ first = false }: { first?: boolean }) {
     </div>
   );
   return first ? (
-    <div className="setup">{content}</div>
+    <div
+      className="setup"
+      id="main"
+      tabIndex={-1}
+      inert={Boolean(s.modal || s.palette || s.working)}
+    >
+      {content}
+    </div>
   ) : (
     <>
       <div className="head">

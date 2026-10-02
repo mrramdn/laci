@@ -15,6 +15,7 @@ export type SortKey = "name" | "last" | "size" | "ai";
 export type Modal =
   | { kind: "shortcuts" | "connector" | "new" }
   | { kind: "archive"; id: string }
+  | { kind: "terminal-close"; id: string }
   | null;
 interface Toast {
   title: string;

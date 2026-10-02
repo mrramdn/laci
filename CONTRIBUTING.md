@@ -39,6 +39,8 @@ Stop the driver with Ctrl+C after the check.
 
 The smoke harness drives WebKitWebDriver through `tauri-driver` on port 4444. Install WebKitWebDriver alongside WebKitGTK. Run under `xvfb-run` in a headless environment. The harness exercises the built native application; Vite alone does not provide desktop IPC.
 
+For focused keyboard regression checks, use a fresh demo home and run `LACI_HOME=/tmp/laci-demo LACI_KEYBOARD_ONLY=1 node scripts/desktop-smoke.mjs target/debug/laci`. The full harness includes the same checks: real keyboard shortcuts in dialogs and xterm, Enter on row buttons, connector focus and Tab containment, and terminal close confirmation. The terminal check starts a disposable shell and `sleep` process; Cancel and Escape must preserve both process identities, and confirmation must stop both. It also checks that a shell exiting with code zero closes without a prompt.
+
 Use a disposable demo home when testing move, archive, undo or new-project flows. `LACI_HOME` isolates laci's files without changing the caller's `HOME`. Never replace the real home folder while running package managers or Rust tools.
 
 ## Demo scan benchmarks

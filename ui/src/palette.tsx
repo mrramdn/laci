@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useApp, rescan, setTheme } from "./store";
 import { ago, days, tilde } from "./helpers";
-import { Icon, KindIcon } from "./common";
+import { Icon, KindIcon, restoreFocus } from "./common";
 import type { Node, View } from "./types";
 export function Palette() {
   const s = useApp();
@@ -9,6 +9,11 @@ export function Palette() {
   const [selected, setSelected] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
+  const previous = useRef(
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const matches = (hay: string) =>
     terms.every((t) => hay.toLowerCase().includes(t));
@@ -77,10 +82,12 @@ export function Palette() {
       setTheme(dark ? "light" : "dark");
     }
   }
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
+  useLayoutEffect(() => {
     input.current?.focus();
-    return () => previous?.focus();
+  }, []);
+  useEffect(() => {
+    const before = previous.current;
+    return () => restoreFocus(before);
   }, []);
   useEffect(() => {
     list.current

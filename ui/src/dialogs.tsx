@@ -1,12 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api, errorText } from "./api";
 import { useApp, changed, toast } from "./store";
 import { parentOf, plural, tilde, within } from "./helpers";
-import { Icon, Ops, SeverityGlyph } from "./common";
+import { Icon, Ops, restoreFocus, SeverityGlyph } from "./common";
+import { closeTerminal, useTerms } from "./terminal-api";
 import type { Change, Link, NewInfo, Snapshot } from "./types";
 function close() {
   useApp.setState({ modal: null });
+}
+function dialogControls(host: HTMLElement | null) {
+  return Array.from(
+    host?.querySelectorAll<HTMLElement>(
+      'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]',
+    ) ?? [],
+  ).filter((element) => element.offsetParent !== null);
 }
 function DialogFrame({
   title,
@@ -24,23 +32,38 @@ function DialogFrame({
   onSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const previous = useRef(
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+  useLayoutEffect(() => {
+    const items = dialogControls(ref.current);
+    const first =
+      items.find(
+        (element) =>
+          !element.matches("input[type=checkbox],input[type=radio]"),
+      ) ?? items[0];
+    (first ?? ref.current?.querySelector<HTMLElement>(".dialog"))?.focus();
+  }, [title, form]);
   useEffect(() => {
-    const before = document.activeElement as HTMLElement | null;
     const host = ref.current;
-    host
-      ?.querySelector<HTMLElement>("input:not([type=checkbox]),button,select")
-      ?.focus();
+    const before = previous.current;
     const key = (e: KeyboardEvent) => {
-      if (e.key !== "Tab") return;
-      const items = Array.from(
-        host?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea,[tabindex="0"]',
-        ) ?? [],
-      ).filter((e) => e.offsetParent !== null);
-      if (!items.length) return;
+      if (e.defaultPrevented || e.key !== "Tab" || useApp.getState().palette)
+        return;
+      const items = dialogControls(host);
+      if (!items.length) {
+        e.preventDefault();
+        host?.querySelector<HTMLElement>(".dialog")?.focus();
+        return;
+      }
       const first = items[0],
         last = items.at(-1)!;
-      if (e.shiftKey && document.activeElement === first) {
+      if (!host?.contains(document.activeElement)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && document.activeElement === first) {
         e.preventDefault();
         last.focus();
       } else if (!e.shiftKey && document.activeElement === last) {
@@ -48,10 +71,10 @@ function DialogFrame({
         first.focus();
       }
     };
-    host?.addEventListener("keydown", key);
+    document.addEventListener("keydown", key);
     return () => {
-      host?.removeEventListener("keydown", key);
-      before?.focus();
+      document.removeEventListener("keydown", key);
+      restoreFocus(before);
     };
   }, []);
   const body = (
@@ -78,6 +101,7 @@ function DialogFrame({
           role="dialog"
           aria-modal="true"
           aria-labelledby="dialog-title"
+          tabIndex={-1}
           onSubmit={onSubmit}
         >
           {body}
@@ -88,6 +112,7 @@ function DialogFrame({
           role="dialog"
           aria-modal="true"
           aria-labelledby="dialog-title"
+          tabIndex={-1}
         >
           {body}
         </div>
@@ -105,7 +130,50 @@ export function Dialogs() {
     <NewProject />
   ) : modal?.kind === "connector" ? (
     <ConnectorDialog />
+  ) : modal?.kind === "terminal-close" ? (
+    <TerminalClose id={modal.id} />
   ) : null;
+}
+function TerminalClose({ id }: { id: string }) {
+  const terminal = useTerms((s) => s.tabs.find((tab) => tab.id === id));
+  const present = Boolean(terminal);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    const modal = useApp.getState().modal;
+    if (!present && modal?.kind === "terminal-close" && modal.id === id) close();
+  }, [present, id]);
+  if (!terminal) return null;
+  async function confirm() {
+    setSaving(true);
+    if (await closeTerminal(id)) {
+      const modal = useApp.getState().modal;
+      if (modal?.kind === "terminal-close" && modal.id === id) close();
+    }
+    setSaving(false);
+  }
+  return (
+    <DialogFrame
+      title={`Close terminal ${terminal.title}?`}
+      description="Closing this terminal ends its shell and any programs running in it. Cancel, then use F4 to hide it and keep the session running."
+      footer={
+        <>
+          <p>Terminal output will be discarded.</p>
+          <button className="btn" disabled={saving} onClick={close}>
+            Cancel
+          </button>
+          <button
+            className="btn primary"
+            disabled={saving}
+            onClick={() => void confirm()}
+          >
+            Close terminal
+          </button>
+        </>
+      }
+    >
+      {null}
+    </DialogFrame>
+  );
 }
 function Shortcuts() {
   const sections = [

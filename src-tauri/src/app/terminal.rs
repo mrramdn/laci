@@ -65,6 +65,13 @@ impl Terminals {
             .openpty(PtySize { rows: 30, cols: 120, pixel_width: 0, pixel_height: 0 })
             .map_err(|e| e.to_string())?;
         let mut cmd = CommandBuilder::new(&command.executable);
+        for (key, value) in laci_core::process::host_env_overrides() {
+            if let Some(value) = value {
+                cmd.env(key, value);
+            } else {
+                cmd.env_remove(key);
+            }
+        }
         cmd.args(&command.args);
         cmd.cwd(cwd);
         cmd.env("TERM", "xterm-256color");

@@ -5,7 +5,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     fs,
     path::Path,
-    process::{Command, Stdio},
+    process::Stdio,
     time::{Duration, Instant},
 };
 
@@ -858,7 +858,7 @@ impl Service {
     }
 }
 pub fn installed_apps() -> Value {
-    let path = std::env::var_os("PATH").unwrap_or_default();
+    let path = crate::process::host_path();
     let mut result = json!({});
     for (kind, choices) in [
         (
@@ -888,7 +888,7 @@ pub fn installed_apps() -> Value {
     result
 }
 pub fn detach(program: &str, args: &[String], cwd: &Path) -> Result<()> {
-    let mut child = Command::new(program)
+    let mut child = crate::process::command(program)
         .args(args)
         .current_dir(cwd)
         .env_remove("ELECTRON_RUN_AS_NODE")

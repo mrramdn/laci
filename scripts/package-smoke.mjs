@@ -15,7 +15,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const version = JSON.parse(readFileSync(path.join(root, "package.json"))).version;
+const target = path.resolve(
+  process.env.CARGO_TARGET_DIR ?? path.join(root, "target"),
+);
+const version = JSON.parse(
+  readFileSync(path.join(root, "package.json")),
+).version;
 const output = process.argv[2]
   ? path.resolve(process.argv[2])
   : mkdtempSync(path.join(tmpdir(), "laci-package-smoke-"));
@@ -34,7 +39,7 @@ function buildId(file) {
   assert.ok(id, `Missing build identity: ${file}`);
   return id;
 }
-const releaseId = buildId(path.join(root, "target/release/laci"));
+const releaseId = buildId(path.join(target, "release/laci"));
 const assets = readdirSync(path.join(root, "ui/dist/assets")).filter((name) =>
   /\.(js|css)$/.test(name),
 );
@@ -47,7 +52,7 @@ try {
     ["rpm", `laci-${version}-1.x86_64.rpm`],
     ["appimage", `laci_${version}_amd64.AppImage`],
   ]) {
-    const archive = path.join(root, "target/release/bundle", kind, name);
+    const archive = path.join(target, "release/bundle", kind, name);
     let extracted = path.join(output, kind);
     // A dedicated empty directory avoids mixing files from different package revisions.
     mkdirSync(extracted);
@@ -88,7 +93,8 @@ try {
       extracted = path.join(extracted, "squashfs-root");
     }
     const binary = path.join(extracted, "usr/bin/laci");
-    const runner = kind === "appimage" ? path.join(extracted, "AppRun") : binary;
+    const runner =
+      kind === "appimage" ? path.join(extracted, "AppRun") : binary;
     assert.equal(buildId(binary), releaseId);
     const embedded = readFileSync(binary);
     for (const asset of assets) {

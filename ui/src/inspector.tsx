@@ -15,6 +15,8 @@ import {
   descendants,
   plural,
   sessionsOf,
+  hasSessionFile,
+  groupSessions,
   taskIdentity,
   tilde,
 } from "./helpers";
@@ -28,12 +30,18 @@ import {
   StatusGlyph,
   Time,
 } from "./common";
+import { Select } from "./select";
+import { TerminalButton } from "./terminal-controls";
+import { SessionList, requestResume } from "./session-ui";
 import { openTerminal } from "./terminal-api";
 import type { Node, Snapshot, Task } from "./types";
 export function Inspector({ node: n }: { node: Node }) {
   const s = useApp();
   const snapshot = s.snapshot!;
   const sessions = sessionsOf(n, snapshot);
+  const resumable = sessions.find(
+    (session) => session.resumeCapability === "supported" && !session.parentId,
+  );
   const parent = n.parent ? snapshot.nodes[n.parent] : null;
   const git = n.git;
   const remote = git?.remotes[0];
@@ -75,11 +83,14 @@ export function Inspector({ node: n }: { node: Node }) {
         >
           <Icon name="copy" />
         </button>
+        <TerminalButton path={n.path} />
         <button
           className="icon-btn"
           title="Close (Esc)"
           aria-label="Close details"
-          onClick={() => useApp.setState({ selected: null, pendingSelection: null })}
+          onClick={() =>
+            useApp.setState({ selected: null, pendingSelection: null })
+          }
         >
           <Icon name="x" />
         </button>
@@ -100,9 +111,18 @@ export function Inspector({ node: n }: { node: Node }) {
               No summary yet.{" "}
               <button
                 className="linkbtn"
-                onClick={() => void openTerminal(n.id, "summary")}
+                onClick={() =>
+                  useApp.setState({
+                    modal: {
+                      kind: "agent",
+                      projectPath: n.id,
+                      prompt:
+                        "Read this project's README, package files and recent commits. Save a two-sentence project summary under ## Summary in .laci.md. Change nothing else.",
+                    },
+                  })
+                }
               >
-                Ask Claude to write one
+                Ask a connected agent
               </button>
             </p>
           ) : null}
@@ -112,19 +132,15 @@ export function Inspector({ node: n }: { node: Node }) {
             <p className="aka">README title: {n.readme.title}</p>
           ) : null}
           <div className="iacts">
-            <button
-              className="btn primary sm"
-              onClick={() =>
-                void openTerminal(
-                  n.id,
-                  sessions[0] ? "resume" : "shell",
-                  sessions[0]?.id,
-                )
-              }
-            >
-              <Icon name="terminal" className="sm" />
-              {sessions[0] ? "Resume last session" : "Terminal"}
-            </button>
+            {resumable ? (
+              <button
+                className="btn primary sm"
+                onClick={() => requestResume(resumable, n.id)}
+              >
+                <Icon name="terminal" className="sm" />
+                Resume last session
+              </button>
+            ) : null}
             <button className="btn sm" onClick={() => external(n.id, "editor")}>
               <Icon name="editor" className="sm" />
               {APP_NAMES[s.apps.editor] ?? cap(s.apps.editor)}
@@ -133,7 +149,7 @@ export function Inspector({ node: n }: { node: Node }) {
               <Icon name="open" className="sm" />
               {APP_NAMES[s.apps.files] ?? cap(s.apps.files)}
             </button>
-            {isProject && !n.archived && n.archivePlan ? (
+            {isProject && !n.archived ? (
               <button
                 className="btn ghost sm"
                 title="Archive project"
@@ -163,17 +179,14 @@ export function Inspector({ node: n }: { node: Node }) {
         <dl className="props">
           <dt>Status</dt>
           <dd>
-            <label className="pbtn">
-              <StatusGlyph status={n.status.value} />
-              <span>{cap(n.status.value)}</span>
-              {n.status.auto ? <span className="sub">auto</span> : null}
-              <select
-                value={n.status.auto ? "" : n.status.value}
-                onChange={(e) => meta("status", e.target.value)}
-                aria-label="Status"
-              >
-                <option value="">Automatic</option>
-                {[
+            <Select
+              label="Status"
+              className="pbtn"
+              value={n.status.auto ? "" : n.status.value}
+              onValueChange={(value) => meta("status", value)}
+              options={[
+                { value: "", label: "Automatic" },
+                ...[
                   "active",
                   "idle",
                   "dormant",
@@ -181,33 +194,31 @@ export function Inspector({ node: n }: { node: Node }) {
                   "paused",
                   "done",
                   "archived",
-                ].map((status) => (
-                  <option key={status} value={status}>
-                    {cap(status)}
-                  </option>
-                ))}
-              </select>
-            </label>
+                ].map((value) => ({ value, label: cap(value) })),
+              ]}
+            >
+              <StatusGlyph status={n.status.value} />
+              <span>{cap(n.status.value)}</span>
+              {n.status.auto ? <span className="sub">auto</span> : null}
+            </Select>
           </dd>
           <dt>Priority</dt>
           <dd>
-            <label className={`pbtn ${!n.meta.priority ? "placeholder" : ""}`}>
+            <Select
+              label="Priority"
+              className={`pbtn ${!n.meta.priority ? "placeholder" : ""}`}
+              value={n.meta.priority ?? ""}
+              onValueChange={(value) => meta("priority", value)}
+              options={["", "high", "medium", "low"].map((value) => ({
+                value,
+                label: value ? cap(value) : "No priority",
+              }))}
+            >
               <PriorityGlyph priority={n.meta.priority} />
               <span>
                 {n.meta.priority ? cap(n.meta.priority) : "No priority"}
               </span>
-              <select
-                value={n.meta.priority ?? ""}
-                onChange={(e) => meta("priority", e.target.value)}
-                aria-label="Priority"
-              >
-                {["", "high", "medium", "low"].map((p) => (
-                  <option key={p} value={p}>
-                    {p ? cap(p) : "No priority"}
-                  </option>
-                ))}
-              </select>
-            </label>
+            </Select>
           </dd>
           <dt>Deadline</dt>
           <dd>
@@ -340,7 +351,7 @@ export function Inspector({ node: n }: { node: Node }) {
             </>
           ) : null}
         </dl>
-        <div className="tabs" role="tablist">
+        <div className="tabs" role="tablist" aria-label="Project details">
           {tabs.map(([tab, label, count]) => (
             <button
               key={tab}
@@ -348,6 +359,24 @@ export function Inspector({ node: n }: { node: Node }) {
               id={`tab-${tab}`}
               aria-controls="inspector-panel"
               aria-selected={active === tab}
+              tabIndex={active === tab ? 0 : -1}
+              onKeyDown={(event) => {
+                const index = tabs.findIndex(([key]) => key === tab);
+                const next =
+                  event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                      ? tabs.length - 1
+                      : event.key === "ArrowRight"
+                        ? (index + 1) % tabs.length
+                        : event.key === "ArrowLeft"
+                          ? (index + tabs.length - 1) % tabs.length
+                          : -1;
+                if (next < 0) return;
+                event.preventDefault();
+                useApp.setState({ tab: tabs[next][0] as typeof s.tab });
+                document.getElementById(`tab-${tabs[next][0]}`)?.focus();
+              }}
               onClick={() => useApp.setState({ tab: tab as typeof s.tab })}
             >
               {label}
@@ -409,8 +438,24 @@ function HealthTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
         <div className="issue">
           <StatusGlyph status="done" />
           <div className="txt">
-            <p>All clear</p>
-            <p className="d">Committed, pushed, nothing forgotten.</p>
+            <p>No issues found</p>
+            <p className="d">
+              {git
+                ? !git.commits
+                  ? "This repository has no commits yet."
+                  : git.dirty
+                    ? "There are local changes in this repository."
+                    : !git.remotes.length
+                      ? "Working tree is clean. No remote is configured."
+                      : git.ahead || git.behind
+                        ? "Working tree is clean. Local and remote commits differ."
+                        : git.upstream
+                          ? "Working tree is clean and matches its last fetched upstream."
+                          : "Working tree is clean. No upstream branch is configured."
+                : n.kind === "folder"
+                  ? "No high-priority issues found in the projects inside."
+                  : "No Git repository detected. Available project checks passed."}
+            </p>
           </div>
         </div>
       )}
@@ -800,12 +845,14 @@ function Notes({ node }: { node: Node }) {
   return (
     <>
       <div className="sec-t">
-        Notes <span className="grow" />
+        <label htmlFor="project-notes">Notes</label> <span className="grow" />
         <span className="faint" style={{ fontWeight: 400 }}>
           {status}
         </span>
       </div>
       <textarea
+        id="project-notes"
+        name="notes"
         className="notes"
         value={text}
         onChange={change}
@@ -822,12 +869,17 @@ function Notes({ node }: { node: Node }) {
 function AgentsTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
   const expanded = useApp((s) => s.expanded);
   const sessions = sessionsOf(n, snapshot);
+  const sessionGroups = groupSessions(sessions);
   const memory = n.agents.claude.flatMap(
     (id) => snapshot.claude[id]?.memory ?? [],
   );
   const groups = new Map<string, (typeof snapshot.items)[string][]>();
   for (const item of n.agents.items
-    .flatMap((id) => (snapshot.items[id] ? [snapshot.items[id]] : []))
+    .flatMap((id) =>
+      snapshot.items[id] && !hasSessionFile(snapshot.items[id].file, snapshot)
+        ? [snapshot.items[id]]
+        : [],
+    )
     .sort((a, b) => b.at.localeCompare(a.at)))
     groups.set(item.connector, [...(groups.get(item.connector) ?? []), item]);
   return (
@@ -840,30 +892,18 @@ function AgentsTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
       {sessions.length ? (
         <>
           <div className="sec-t">
-            Claude Code <span className="grow" />
+            Sessions <span className="grow" />
             <span className="faint" style={{ fontWeight: 400 }}>
               {plural(sessions.length, "session")}
             </span>
           </div>
-          {sessions
-            .slice(0, expanded["sess:" + n.id] ? undefined : 8)
-            .map((session) => (
-              <div className="sess" key={session.id}>
-                <Icon name="bot" className="sm" />
-                <span className="t">{session.title ?? "Untitled session"}</span>
-                <span className="m">
-                  <Time at={session.at} long />
-                </span>
-                <button
-                  className="btn sm act"
-                  onClick={() => void openTerminal(n.id, "resume", session.id)}
-                >
-                  Resume
-                </button>
-              </div>
-            ))}
-          {sessions.length > 8 ? (
-            <Expand name={"sess:" + n.id} count={sessions.length} />
+          <SessionList
+            sessions={sessions}
+            limit={expanded["sess:" + n.id] ? undefined : 8}
+            projectPath={n.id}
+          />
+          {sessionGroups.length > 8 ? (
+            <Expand name={"sess:" + n.id} count={sessionGroups.length} />
           ) : null}
         </>
       ) : null}
@@ -969,16 +1009,6 @@ function AgentsTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
             <dt>In folder</dt>
             <dd className="mono" style={{ fontSize: 11 }}>
               {n.agents.aiFiles.join(", ")}
-            </dd>
-          </>
-        ) : null}
-        {n.git ? (
-          <>
-            <dt>Git trailers</dt>
-            <dd>
-              {n.git.aiTrailers
-                ? `${plural(n.git.aiTrailers, "commit")} credit an AI tool`
-                : "No commit credits an AI tool"}
             </dd>
           </>
         ) : null}

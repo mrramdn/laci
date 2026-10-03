@@ -8,6 +8,8 @@
  * LACI_ONBOARDING_ONLY=1 checks the first-run wizard on an unconfigured fixture.
  * LACI_WATCHER_ONLY=1 checks archived/worktree Git and continuously written session logs.
  * LACI_KEYBOARD_ONLY=1 checks modal, connector, row and terminal keyboard behavior.
+ * LACI_PATCH_ONLY=1 checks themed selects, empty roots after reload, and isolated generator cancellation/failure.
+ * LACI_AGENT_ONLY=1 uses fixture bin scripts and LACI_AGENT_CAPTURE; driver PATH must be fixture/bin:/usr/bin:/bin.
  * LACI_STARTUP_PROJECT/TEXT optionally check a README changed after a cached scan.
  */
 import assert from "node:assert/strict";
@@ -15,6 +17,7 @@ import { execFileSync } from "node:child_process";
 import {
   access,
   appendFile,
+  chmod,
   mkdir,
   mkdtemp,
   rename,
@@ -43,6 +46,9 @@ const onboardingOnly = process.env.LACI_ONBOARDING_ONLY === "1";
 const watcherOnly = process.env.LACI_WATCHER_ONLY === "1";
 const keyboardOnly = process.env.LACI_KEYBOARD_ONLY === "1";
 const modularOnly = process.env.LACI_MODULAR_ONLY === "1";
+const patchOnly = process.env.LACI_PATCH_ONLY === "1";
+const agentOnly = process.env.LACI_AGENT_ONLY === "1";
+const fakeAgentProcesses = new Map();
 const elementKey = "element-6066-11e4-a52e-4f735466cecf";
 const stamp = Date.now().toString(36);
 const projectName = `desktop-smoke-${stamp}`;
@@ -67,12 +73,14 @@ async function request(method, route, body, timeout = 180_000) {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(timeout),
   }).catch((error) => {
-    throw new Error(`${method} ${route}: ${error.message ?? error}`, { cause: error });
+    throw new Error(`${method} ${route}: ${error.message ?? error}`, {
+      cause: error,
+    });
   });
   const reply = await response.json();
   if (!response.ok || reply.value?.error) {
     throw new Error(
-      `${method} ${route}: ${reply.value?.message ?? JSON.stringify(reply)}`,
+      `${method} ${route}: ${reply.value?.message || JSON.stringify(reply)}`,
     );
   }
   return reply.value;
@@ -100,6 +108,18 @@ const invoke = (name, body = {}) =>
   );
 const api = (name, body = {}) => invoke("request", { name, body });
 const snapshot = () => api("snapshot");
+async function saveSetup(body) {
+  await wait(
+    "settings history ready",
+    async () => !(await api("status")).historyPending,
+  );
+  const result = await api("setup/save", body);
+  await wait(
+    "settings refresh complete",
+    async () => !(await api("status")).historyPending,
+  );
+  return result;
+}
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function wait(label, condition, timeout = 45_000) {
   const deadline = Date.now() + timeout;
@@ -151,9 +171,16 @@ async function click(selector, text, exact = false) {
 async function type(selector, value) {
   const target = await element(selector);
   await command("POST", `/element/${target[elementKey]}/clear`, {});
-  await command("POST", `/element/${target[elementKey]}/value`, {
-    text: value,
-  });
+  if (!value) return;
+  const lines = value.split("\n");
+  for (const [index, line] of lines.entries()) {
+    // WebKit's text endpoint drops LF; a real Enter preserves textarea newlines.
+    if (index) await key("\uE007");
+    if (line)
+      await command("POST", `/element/${target[elementKey]}/value`, {
+        text: line,
+      });
+  }
 }
 async function key(value, control = false, shift = false) {
   const actions = [
@@ -237,16 +264,37 @@ async function processIdentity(pid) {
 const sameLiveProcess = (current, original) =>
   current?.started === original.started && !["Z", "X"].includes(current.state);
 const shellQuote = (value) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
+async function selectOptions(selector) {
+  await click(selector);
+  await element("[data-laci-select-popup]");
+  return execute(() =>
+    [
+      ...document.querySelectorAll('[data-laci-select-popup] [role="option"]'),
+    ].map((option) => ({
+      value: option.getAttribute("data-value"),
+      label: option.textContent.trim(),
+      selected: option.getAttribute("data-state") === "checked",
+      disabled: option.hasAttribute("data-disabled"),
+    })),
+  );
+}
 async function select(selector, value) {
-  await execute(
-    (selector, value) => {
-      const select = document.querySelector(selector);
-      if (!select) throw new Error(`Missing select ${selector}`);
-      select.value = value;
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    selector,
-    value,
+  await click(selector);
+  await click(
+    `[data-laci-select-popup] [role="option"][data-value=${JSON.stringify(value)}]`,
+  );
+  await wait("selection popup closed", () =>
+    execute(() => !document.querySelector("[data-laci-select-popup]")),
+  );
+}
+async function discardDraft() {
+  await key("\uE00C");
+  await wait("draft retained for an explicit decision", () =>
+    textContains(".dialog .df", "Keep editing"),
+  );
+  await click(".dialog .df button", "Discard draft", true);
+  await wait("draft discarded", () =>
+    execute(() => !document.querySelector(".dialog")),
   );
 }
 async function textContains(selector, text) {
@@ -263,16 +311,17 @@ async function nav(label, heading) {
   await click(".sb-item", label);
   await wait(`${heading} view`, () => textContains(".main .head h1", heading));
 }
-async function shot(name) {
+async function shot(name, settle = true) {
   if (!screenshotDir) return;
   await mkdir(screenshotDir, { recursive: true });
-  await wait(`scan settled before ${name} screenshot`, async () => {
-    const status = await api("status");
-    return (
-      !status.busy &&
-      (await execute(() => !document.querySelector(".sb-foot .spin")))
-    );
-  });
+  if (settle)
+    await wait(`scan settled before ${name} screenshot`, async () => {
+      const status = await api("status");
+      return (
+        !status.busy &&
+        (await execute(() => !document.querySelector(".sb-foot .spin")))
+      );
+    });
   await asyncExecute(() =>
     document.fonts.ready.then(
       () =>
@@ -301,20 +350,42 @@ async function showProject(project) {
   );
 }
 async function modularRegressions() {
-  const external = await mkdtemp(path.join(path.dirname(fixtureHome), "laci-modular-"));
+  const external = await mkdtemp(
+    path.join(path.dirname(fixtureHome), "laci-modular-"),
+  );
   const scanRoot = path.join(external, "projects");
   const archiveRoot = path.join(external, "archive");
   const source = path.join(scanRoot, `modular-${stamp}`);
   const backup = path.join(external, "backup.git");
   const original = await api("setup/info");
   const trashRoot = path.join(fixtureHome, ".local/share/Trash");
-  const historyDir = path.join(fixtureHome, ".claude/projects", source.replace(/[^A-Za-z0-9]/g, "-"));
+  const historyDir = path.join(
+    fixtureHome,
+    ".claude/projects",
+    source.replace(/[^A-Za-z0-9]/g, "-"),
+  );
   const historyFile = path.join(historyDir, "modular.jsonl");
-  const historyBytes = JSON.stringify({ type: "user", cwd: source, sessionId: "modular-history", timestamp: new Date().toISOString(), message: { content: "Keep external history after project Trash" } }) + "\n";
-  const git = (dir, args) => execFileSync("git", ["-C", dir, ...args], {
-    env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "Native Fixture", GIT_AUTHOR_EMAIL: "fixture@example.test", GIT_COMMITTER_NAME: "Native Fixture", GIT_COMMITTER_EMAIL: "fixture@example.test" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const historyBytes =
+    JSON.stringify({
+      type: "user",
+      cwd: source,
+      sessionId: "modular-history",
+      timestamp: new Date().toISOString(),
+      message: { content: "Keep external history after project Trash" },
+    }) + "\n";
+  const git = (dir, args) =>
+    execFileSync("git", ["-C", dir, ...args], {
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_AUTHOR_NAME: "Native Fixture",
+        GIT_AUTHOR_EMAIL: "fixture@example.test",
+        GIT_COMMITTER_NAME: "Native Fixture",
+        GIT_COMMITTER_EMAIL: "fixture@example.test",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
   let trashPath;
   try {
     await mkdir(source, { recursive: true });
@@ -322,102 +393,195 @@ async function modularRegressions() {
     await mkdir(backup);
     git(backup, ["init", "--bare", "--initial-branch=main"]);
     git(source, ["init", "--initial-branch=main"]);
-    await writeFile(path.join(source, "README.md"), "# Modular project\nBacked up on a disposable remote.\n");
+    await writeFile(
+      path.join(source, "README.md"),
+      "# Modular project\nBacked up on a disposable remote.\n",
+    );
     git(source, ["add", "README.md"]);
     git(source, ["commit", "-m", "initial"]);
     git(source, ["remote", "add", "origin", backup]);
     git(source, ["push", "-u", "origin", "main"]);
     await mkdir(historyDir, { recursive: true });
     await writeFile(historyFile, historyBytes);
-    await check("Settings select an external scan location and default archive folder", async () => {
-      await nav("Settings", "Settings");
-      await type('[aria-label="Another folder"]', scanRoot);
-      await click(".main button", "Add folder", true);
-      await type('[aria-label="Default archive folder"]', archiveRoot);
-      await click(".main button", "Save and rescan", true);
-      await wait("external root installed", async () => {
-        const current = await snapshot();
-        return !current.historyPending && current.nodes[source] && current.roots.includes(scanRoot);
-      });
-      const info = await api("setup/info");
-      assert.equal(info.archiveDir, archiveRoot);
-      assert.equal((await snapshot()).nodes[source].archivePlan.dest, path.join(archiveRoot, path.basename(source)));
-      await shot("modular-settings");
-    });
-    await check("Custom archive preview, apply and Undo agree outside Home", async () => {
-      const project = (await snapshot()).nodes[source];
-      await showProject(project);
-      await click(".insp .iacts button", "Archive", true);
-      const destination = path.join(archiveRoot, `${path.basename(source)}-chosen`);
-      await type('[aria-label="Archive destination"]', destination);
-      await wait("custom archive preview ready", () => execute(() => {
-        const button = [...document.querySelectorAll(".dialog .df button")].find((b) => b.textContent.trim() === "Archive");
-        return button && !button.disabled && document.querySelector(".dialog .ops")?.textContent.includes("-chosen");
-      }));
-      await shot("modular-archive");
-      await click(".dialog .df button", "Archive", true);
-      await wait("custom archive accepted", async () => {
-        const current = await snapshot();
-        return !current.historyPending && current.nodes[destination]?.archived && !current.nodes[source];
-      });
-      assert.ok((await readFile(path.join(destination, "README.md"), "utf8")).includes("Modular project"));
-      await click(".toast button", "Undo", true);
-      await wait("external archive undone", async () => {
-        const current = await snapshot();
-        return !current.historyPending && current.nodes[source] && !current.nodes[destination];
-      });
-      assert.equal(await readFile(historyFile, "utf8"), historyBytes);
-    });
-    await check("Trash rejects local work added after review, then preserves external history", async () => {
-      assert.equal(path.resolve(process.env.XDG_DATA_HOME ?? ""), path.join(fixtureHome, ".local/share"), "Native Trash QA must isolate XDG_DATA_HOME");
-      await showProject((await snapshot()).nodes[source]);
-      await click(".insp .iacts button", "Move to Trash", true);
-      await wait("live remote verified in dialog", () => execute(() => {
-        const button = [...document.querySelectorAll(".dialog .df button")].find((b) => b.textContent.trim() === "Move to Trash");
-        return button && !button.disabled;
-      }));
-      await appendFile(path.join(source, "README.md"), "Local work after the review\n");
-      await click(".dialog .df button", "Move to Trash", true);
-      await wait("fresh execution safety check rejected", () => textContains(".dialog [role=alert]", "local changes"));
-      await access(source);
-      await shot("modular-trash-blocked");
-      await click(".dialog .df button", "Cancel", true);
-      git(source, ["restore", "README.md"]);
-      await writeFile(path.join(source, ".git/info/exclude"), ".laci.md\nsecret.env\n");
-      await writeFile(path.join(source, "secret.env"), "Ignored bytes stay in Trash\n");
-      await click(".insp .iacts button", "Move to Trash", true);
-      await wait("fresh Trash plan ready", () => execute(() => {
-        const button = [...document.querySelectorAll(".dialog .df button")].find((b) => b.textContent.trim() === "Move to Trash");
-        return button && !button.disabled;
-      }));
-      await shot("modular-trash");
-      await click(".dialog .df button", "Move to Trash", true);
-      await wait("project removed from snapshot", async () => {
-        const current = await snapshot();
-        return !current.historyPending && !current.nodes[source];
-      });
-      trashPath = path.join(trashRoot, "files", path.basename(source));
-      await access(path.join(trashPath, ".git"));
-      assert.equal(await readFile(path.join(trashPath, "secret.env"), "utf8"), "Ignored bytes stay in Trash\n");
-      assert.equal(await readFile(historyFile, "utf8"), historyBytes);
-      const entry = (await api("log")).entries.find((entry) => entry.path === source && entry.title.includes("system Trash"));
-      assert.ok(entry && !entry.undo, "System Trash recovery must not advertise Log Undo");
-      // Restore only this disposable fixture, then remove its own Trash metadata.
-      await rename(trashPath, source);
-      trashPath = null;
-      await rm(path.join(trashRoot, "info", `${path.basename(source)}.trashinfo`), { force: true });
-    });
+    await check(
+      "Settings select an external scan location and default archive folder",
+      async () => {
+        await nav("Settings", "Settings");
+        await type('[aria-label="Another folder"]', scanRoot);
+        await click(".main button", "Add folder", true);
+        await type('[aria-label="Default archive folder"]', archiveRoot);
+        await click(".main button", "Save and rescan", true);
+        await wait("external root installed", async () => {
+          const current = await snapshot();
+          return (
+            !current.historyPending &&
+            current.nodes[source] &&
+            current.roots.includes(scanRoot)
+          );
+        });
+        const info = await api("setup/info");
+        assert.equal(info.archiveDir, archiveRoot);
+        assert.equal(
+          (await snapshot()).nodes[source].archivePlan.dest,
+          path.join(archiveRoot, path.basename(source)),
+        );
+        await shot("modular-settings");
+      },
+    );
+    await check(
+      "Custom archive preview, apply and Undo agree outside Home",
+      async () => {
+        const project = (await snapshot()).nodes[source];
+        await showProject(project);
+        await click(".insp .iacts button", "Archive", true);
+        const destination = path.join(
+          archiveRoot,
+          `${path.basename(source)}-chosen`,
+        );
+        await type('[aria-label="Archive destination"]', destination);
+        await wait("custom archive preview ready", () =>
+          execute(() => {
+            const button = [
+              ...document.querySelectorAll(".dialog .df button"),
+            ].find((b) => b.textContent.trim() === "Archive");
+            return (
+              button &&
+              !button.disabled &&
+              document
+                .querySelector(".dialog .ops")
+                ?.textContent.includes("-chosen")
+            );
+          }),
+        );
+        await shot("modular-archive");
+        await click(".dialog .df button", "Archive", true);
+        await wait("custom archive accepted", async () => {
+          const current = await snapshot();
+          return (
+            !current.historyPending &&
+            current.nodes[destination]?.archived &&
+            !current.nodes[source]
+          );
+        });
+        assert.ok(
+          (
+            await readFile(path.join(destination, "README.md"), "utf8")
+          ).includes("Modular project"),
+        );
+        await click(".toast button", "Undo", true);
+        await wait("external archive undone", async () => {
+          const current = await snapshot();
+          return (
+            !current.historyPending &&
+            current.nodes[source] &&
+            !current.nodes[destination]
+          );
+        });
+        assert.equal(await readFile(historyFile, "utf8"), historyBytes);
+      },
+    );
+    await check(
+      "Trash rejects local work added after review, then preserves external history",
+      async () => {
+        assert.equal(
+          path.resolve(process.env.XDG_DATA_HOME ?? ""),
+          path.join(fixtureHome, ".local/share"),
+          "Native Trash QA must isolate XDG_DATA_HOME",
+        );
+        await showProject((await snapshot()).nodes[source]);
+        await click(".insp .iacts button", "Move to Trash", true);
+        await wait("live remote verified in dialog", () =>
+          execute(() => {
+            const button = [
+              ...document.querySelectorAll(".dialog .df button"),
+            ].find((b) => b.textContent.trim() === "Move to Trash");
+            return button && !button.disabled;
+          }),
+        );
+        await appendFile(
+          path.join(source, "README.md"),
+          "Local work after the review\n",
+        );
+        await click(".dialog .df button", "Move to Trash", true);
+        await wait("fresh execution safety check rejected", () =>
+          textContains(".dialog [role=alert]", "local changes"),
+        );
+        await access(source);
+        await shot("modular-trash-blocked");
+        await click(".dialog .df button", "Cancel", true);
+        git(source, ["restore", "README.md"]);
+        await writeFile(
+          path.join(source, ".git/info/exclude"),
+          ".laci.md\nsecret.env\n",
+        );
+        await writeFile(
+          path.join(source, "secret.env"),
+          "Ignored bytes stay in Trash\n",
+        );
+        await click(".insp .iacts button", "Move to Trash", true);
+        await wait("fresh Trash plan ready", () =>
+          execute(() => {
+            const button = [
+              ...document.querySelectorAll(".dialog .df button"),
+            ].find((b) => b.textContent.trim() === "Move to Trash");
+            return button && !button.disabled;
+          }),
+        );
+        await shot("modular-trash");
+        await click(".dialog .df button", "Move to Trash", true);
+        await wait("project removed from snapshot", async () => {
+          const current = await snapshot();
+          return !current.historyPending && !current.nodes[source];
+        });
+        trashPath = path.join(trashRoot, "files", path.basename(source));
+        await access(path.join(trashPath, ".git"));
+        assert.equal(
+          await readFile(path.join(trashPath, "secret.env"), "utf8"),
+          "Ignored bytes stay in Trash\n",
+        );
+        assert.equal(await readFile(historyFile, "utf8"), historyBytes);
+        const entry = (await api("log")).entries.find(
+          (entry) =>
+            entry.path === source && entry.title.includes("system Trash"),
+        );
+        assert.ok(
+          entry && !entry.undo,
+          "System Trash recovery must not advertise Log Undo",
+        );
+        // Restore only this disposable fixture, then remove its own Trash metadata.
+        await rename(trashPath, source);
+        trashPath = null;
+        await rm(
+          path.join(trashRoot, "info", `${path.basename(source)}.trashinfo`),
+          { force: true },
+        );
+      },
+    );
   } finally {
     if (await execute(() => Boolean(document.querySelector(".dialog"))))
       await click(".dialog .df button", "Cancel", true).catch(() => {});
-    await wait("history settled for settings restore", async () => !(await api("status")).historyPending).catch(() => {});
-    await api("setup/save", { roots: original.roots, presets: original.presets, apps: original.apps, archiveDir: original.archiveDir ?? "" }).catch(() => {});
-    await wait("settings restored", async () => !(await api("status")).historyPending).catch(() => {});
+    await wait(
+      "history settled for settings restore",
+      async () => !(await api("status")).historyPending,
+    ).catch(() => {});
+    await saveSetup({
+      roots: original.roots,
+      presets: original.presets,
+      apps: original.apps,
+      archiveDir: original.archiveDir ?? "",
+    }).catch(() => {});
+    await wait(
+      "settings restored",
+      async () => !(await api("status")).historyPending,
+    ).catch(() => {});
     await rm(historyDir, { recursive: true, force: true });
     await rm(external, { recursive: true, force: true });
     if (trashPath) {
       await rm(trashPath, { recursive: true, force: true });
-      await rm(path.join(trashRoot, "info", `${path.basename(source)}.trashinfo`), { force: true });
+      await rm(
+        path.join(trashRoot, "info", `${path.basename(source)}.trashinfo`),
+        { force: true },
+      );
     }
   }
 }
@@ -493,19 +657,21 @@ async function closeExitedTerminalUI(id) {
   );
   await wait("exited state rendered on the selected terminal tab", () =>
     execute(() =>
-      Boolean(document.querySelector('.ttab.ended[aria-selected="true"]')),
+      Boolean(
+        document.querySelector(
+          '.ttab.ended[data-active] .ttab-select[aria-selected="true"]',
+        ),
+      ),
     ),
   );
   const count = await execute(() => document.querySelectorAll(".ttab").length);
-  await click('.ttab[aria-selected="true"]');
+  await click('.ttab-select[aria-selected="true"]');
   await wait("keyboard focus moved out of the exited xterm", () =>
-    focused('.ttab[aria-selected="true"]'),
+    focused('.ttab-select[aria-selected="true"]'),
   );
   await key("\uE004");
   assert.ok(
-    await focused(
-      '.ttab[aria-selected="true"] [role="button"][aria-label^="Close terminal "]',
-    ),
+    await focused('.ttab[data-active] button.x[aria-label^="Close terminal "]'),
     "Tab from the terminal tab must reach its close control",
   );
   await key("\uE007");
@@ -595,8 +761,8 @@ async function keyboardRegressions() {
           "Native typing after a shortcut must reach the draft input",
         );
       }
-      await key("\uE00C");
-      await wait("Escape closed the draft dialog", () =>
+      await discardDraft();
+      await wait("Explicit discard closed the draft dialog", () =>
         execute(() => !document.querySelector('.dialog[role="dialog"]')),
       );
       assert.equal(
@@ -637,11 +803,19 @@ async function keyboardRegressions() {
       assert.equal(terminal.cwd, project);
       await terminalFocused();
       await wait(
-        "Review changes command prefilled through the native PTY",
+        "Review changes command shown for confirmation through the native PTY",
         () =>
           textContains(".term-host:not([hidden]) .xterm", "git status --short"),
       );
-      await key("u", true);
+      await key("\uE007");
+      await keyboardText("printf 'LACI_ACTION_%s\\n' SHELL_READY");
+      await key("\uE007");
+      await wait("confirmed action returned to an interactive shell", () =>
+        textContains(
+          ".term-host:not([hidden]) .xterm",
+          "LACI_ACTION_SHELL_READY",
+        ),
+      );
       await keyboardText("exit");
       await key("\uE007");
       await closeExitedTerminalUI(terminal.id);
@@ -827,9 +1001,7 @@ async function keyboardRegressions() {
           (process) => process && !["Z", "X"].includes(process.state),
         ),
       );
-      await click(
-        '.ttab[aria-selected="true"] [role="button"][aria-label^="Close terminal "]',
-      );
+      await click('.ttab[data-active] button.x[aria-label^="Close terminal "]');
       await wait("live terminal close confirmation", () =>
         textContains(".dialog .dh h2", `Close terminal ${terminal.title}?`),
       );
@@ -863,9 +1035,7 @@ async function keyboardRegressions() {
         ),
         "Cancel must preserve the same shell and foreground job",
       );
-      await click(
-        '.ttab[aria-selected="true"] [role="button"][aria-label^="Close terminal "]',
-      );
+      await click('.ttab[data-active] button.x[aria-label^="Close terminal "]');
       await wait("live terminal confirmation reopened", () =>
         textContains(".dialog .dh h2", `Close terminal ${terminal.title}?`),
       );
@@ -885,9 +1055,7 @@ async function keyboardRegressions() {
         ),
         "Escape must preserve the same shell and foreground job",
       );
-      await click(
-        '.ttab[aria-selected="true"] [role="button"][aria-label^="Close terminal "]',
-      );
+      await click('.ttab[data-active] button.x[aria-label^="Close terminal "]');
       await wait("terminal close confirmation ready to commit", () =>
         textContains(".dialog .dh h2", `Close terminal ${terminal.title}?`),
       );
@@ -925,17 +1093,872 @@ async function keyboardRegressions() {
   );
 }
 
+async function installFakeAgents() {
+  const home = path.resolve(process.env.LACI_HOME ?? "");
+  assert.ok(
+    process.env.LACI_HOME &&
+      (home.startsWith("/tmp/") || home.startsWith("/var/tmp/")),
+    "Fake agents require an isolated temporary LACI_HOME",
+  );
+  assert.equal(
+    process.env.LACI_AGENT_CAPTURE,
+    path.join(home, "agent-capture.jsonl"),
+  );
+  assert.equal(
+    process.env.PATH,
+    `${path.join(home, "bin")}:/usr/bin:/bin`,
+    "Agent runner must exclude real provider executable directories",
+  );
+  assert.equal(process.env.LACI_TERMINAL, "kitty");
+  await mkdir(path.join(home, "bin"), { recursive: true });
+  await writeFile(process.env.LACI_AGENT_CAPTURE, "");
+  const fake = `#!/usr/bin/python3
+import json, os, signal, sys
+name = os.path.basename(sys.argv[0])
+record = {"program": name, "argv": sys.argv[1:], "cwd": os.getcwd(), "pid": os.getpid()}
+fd = os.open(os.environ["LACI_AGENT_CAPTURE"], os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+os.write(fd, (json.dumps(record) + "\\n").encode())
+os.close(fd)
+if name == "kitty":
+    argv = sys.argv[sys.argv.index("--") + 1:]
+    os.chdir(sys.argv[sys.argv.index("--directory") + 1])
+    os.execvp(argv[0], argv)
+if "--version" in sys.argv:
+    print("native-fixture 1.0")
+    sys.exit(0)
+if "models" in sys.argv or "app-server" in sys.argv:
+    sys.exit(9)
+print("LACI_FAKE_AGENT_READY", flush=True)
+while True:
+    signal.pause()
+`;
+  for (const name of ["codex", "claude", "agy", "kitty"]) {
+    const file = path.join(home, "bin", name);
+    await writeFile(file, fake);
+    await chmod(file, 0o700);
+  }
+}
+async function capturedAgents() {
+  return (await readFile(process.env.LACI_AGENT_CAPTURE, "utf8"))
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+async function agentRegressions() {
+  const original = await api("setup/info");
+  const selection = {
+    roots: original.roots,
+    presets: ["claude", "codex", "antigravity"],
+    apps: { ...original.apps, terminal: "kitty" },
+    archiveDir: original.archiveDir ?? "",
+    terminalTarget: "internal",
+  };
+  const projectRoot = path.join(fixtureHome, "project");
+  const source = path.join(projectRoot, `native agent source ${stamp}`);
+  const target = path.join(projectRoot, `native agent target ${stamp}`);
+  const ids = {
+    claude: "aaaaaaaa-1111-4111-8111-111111111111",
+    codex: "bbbbbbbb-2222-4222-8222-222222222222",
+    antigravity: "cccccccc-3333-4333-8333-333333333333",
+  };
+  const claudeDir = path.join(
+    fixtureHome,
+    ".claude/projects",
+    source.replace(/[^A-Za-z0-9]/g, "-"),
+  );
+  const codexFile = path.join(
+    fixtureHome,
+    ".codex/sessions",
+    `native-${stamp}.jsonl`,
+  );
+  const agyFile = path.join(
+    fixtureHome,
+    ".gemini/antigravity-cli/cache/last_conversations.json",
+  );
+  const oldAgy = await readFile(agyFile).catch((error) => {
+    if (error.code !== "ENOENT") throw error;
+    return null;
+  });
+  const recipeId = `agent-native-${stamp}`;
+  const createdName = `agent-retry-${stamp}`;
+  const createdPath = path.join(projectRoot, createdName);
+  try {
+    for (const dir of [
+      source,
+      target,
+      claudeDir,
+      path.dirname(codexFile),
+      path.dirname(agyFile),
+    ])
+      await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(source, "README.md"),
+      "# Native agent source\nSynthetic routing fixture.\n",
+    );
+    await writeFile(
+      path.join(target, "README.md"),
+      "# Native agent target\nExplicit launch destination.\n",
+    );
+    await writeFile(
+      path.join(claudeDir, `${ids.claude}.jsonl`),
+      JSON.stringify({
+        type: "user",
+        cwd: source,
+        sessionId: ids.claude,
+        timestamp: new Date().toISOString(),
+        message: { role: "user", content: "Native Claude fixture" },
+      }) + "\n",
+    );
+    await writeFile(
+      codexFile,
+      JSON.stringify({
+        type: "session_meta",
+        payload: { id: ids.codex, cwd: source },
+      }) +
+        "\n" +
+        JSON.stringify({
+          type: "event_msg",
+          payload: { type: "user_message", message: "Native Codex fixture" },
+        }) +
+        "\n",
+    );
+    await writeFile(
+      agyFile,
+      JSON.stringify({
+        ...(oldAgy ? JSON.parse(oldAgy.toString()) : {}),
+        [source]: ids.antigravity,
+      }),
+    );
+    await saveSetup(selection);
+    await api("rescan");
+    await wait("all fixture sessions normalized", async () => {
+      const snap = await snapshot();
+      return Object.entries(ids).every(([provider, id]) =>
+        snap.sessions.some(
+          (session) =>
+            session.provider === provider && session.sessionId === id,
+        ),
+      );
+    });
+    await check(
+      "Scan and agent form do not invoke conversations or model discovery",
+      async () => {
+        assert.deepEqual(await capturedAgents(), []);
+        await nav("Settings", "Settings");
+        await element('.main [aria-label="Another folder"]');
+        await click('.sb-top [aria-label="New project"]');
+        await click(".dialog .choice", "Launch an agent after creation");
+        await element('.dialog [aria-label="Agent model"]');
+        assert.deepEqual(await capturedAgents(), []);
+        await discardDraft();
+      },
+    );
+    await check(
+      "Native PTY and external terminal transports preserve provider, UUID, cwd and literal prompt argv",
+      async () => {
+        const prompt = `--literal-leading-dash\nquote ' \" ; $(touch should-not-exist) \`echo not-a-command\` & tail`;
+        for (const targetKind of ["internal", "external"]) {
+          for (const [provider, sessionId] of Object.entries(ids)) {
+            const bin = provider === "antigravity" ? "agy" : provider;
+            const args =
+              provider === "codex"
+                ? ["resume", sessionId, "-C", target, "--", prompt]
+                : provider === "claude"
+                  ? ["--resume", sessionId, "--", prompt]
+                  : [
+                      "--conversation",
+                      sessionId,
+                      `--prompt-interactive=${prompt}`,
+                    ];
+            const before = (await capturedAgents()).length;
+            const result = await api("agent/launch", {
+              provider,
+              sessionId,
+              projectPath: target,
+              prompt,
+              target: targetKind,
+            });
+            const record = await wait(
+              "fake provider received literal arguments",
+              async () =>
+                (await capturedAgents())
+                  .slice(before)
+                  .find((entry) => entry.program === bin),
+            );
+            assert.equal(record.cwd, target);
+            assert.deepEqual(record.argv, args);
+            const identity = await processIdentity(record.pid);
+            assert.ok(identity && !["Z", "X"].includes(identity.state));
+            fakeAgentProcesses.set(record.pid, identity);
+            if (targetKind === "internal") {
+              assert.equal(result.terminal.cwd, target);
+              keyboardTerminalIds.add(result.terminal.id);
+              await invoke("term_close", { id: result.terminal.id });
+              keyboardTerminalIds.delete(result.terminal.id);
+            } else {
+              const transport = (await capturedAgents())
+                .slice(before)
+                .find((entry) => entry.program === "kitty");
+              assert.deepEqual(transport.argv, [
+                "--directory",
+                target,
+                "--",
+                bin,
+                ...args,
+              ]);
+              if (sameLiveProcess(await processIdentity(record.pid), identity))
+                process.kill(record.pid, "SIGTERM");
+            }
+            await wait(
+              "owned fake provider stopped",
+              async () =>
+                !sameLiveProcess(await processIdentity(record.pid), identity),
+            );
+            fakeAgentProcesses.delete(record.pid);
+          }
+        }
+        await assert.rejects(access(path.join(target, "should-not-exist")));
+        const before = (await capturedAgents()).length;
+        await assert.rejects(
+          api("agent/launch", {
+            provider: "claude",
+            sessionId: ids.codex,
+            projectPath: target,
+            target: "internal",
+          }),
+        );
+        await assert.rejects(
+          api("agent/launch", {
+            provider: "codex",
+            projectPath: path.join(target, "missing"),
+            target: "internal",
+          }),
+        );
+        assert.equal((await capturedAgents()).length, before);
+      },
+    );
+    await check(
+      "Generator success survives missing agent CLI and retry does not recreate or recommit the project",
+      async () => {
+        await api("new/recipe", {
+          recipe: {
+            id: recipeId,
+            name: "Native successful generator",
+            program: "sh",
+            args: [
+              "-c",
+              "printf '# Native generated project\\n' > \"$1/README.md\"; printf 'generator completed\\n'",
+              "laci-native-fixture",
+              "{name}",
+            ],
+            download: false,
+          },
+        });
+        await click('.sb-top [aria-label="New project"]');
+        await type(".dialog input[pattern]", createdName);
+        await select('.dialog [aria-label="Project location"]', projectRoot);
+        await click(".dialog .choice", "Generator recipe");
+        await select('.dialog [aria-label="Generator recipe"]', recipeId);
+        await click(".dialog button", "Preview generator", true);
+        await wait("local generator preview", () =>
+          textContains(".dialog .generator-preview", "no download requirement"),
+        );
+        await click(".dialog .choice", "Launch an agent after creation");
+        await select('.dialog [aria-label="Agent"]', "antigravity");
+        const prompt = `Inspect this generated project\nKeep literal $HOME and 'quotes'.`;
+        await type(".dialog .agent-fields textarea", prompt);
+        await chmod(path.join(fixtureHome, "bin/agy"), 0o600);
+        const before = (await capturedAgents()).length;
+        await click(".dialog .df button", "Create project", true);
+        await wait("project kept after missing CLI", () =>
+          textContains(".dialog .df", "Project created. Agent launch failed:"),
+        );
+        assert.ok(await textContains(".dialog .df", "not installed"));
+        const beforeStat = await stat(createdPath, { bigint: true });
+        const gitHead = () =>
+          execFileSync("git", ["-C", createdPath, "rev-parse", "HEAD"], {
+            encoding: "utf8",
+          }).trim();
+        const head = gitHead();
+        assert.equal((await capturedAgents()).length, before);
+        const createCount = async () =>
+          (await api("log")).entries.filter(
+            (entry) =>
+              entry.path === createdPath &&
+              entry.title === `Created ${createdName}`,
+          ).length;
+        assert.equal(await createCount(), 1);
+        await shot("agent-launch-failed-project-kept");
+        await chmod(path.join(fixtureHome, "bin/agy"), 0o700);
+        const oldTerms = new Set(
+          (await invoke("term_list")).map((term) => term.id),
+        );
+        await click(".dialog .df button", "Retry agent launch", true);
+        const record = await wait("retry started only the agent", async () =>
+          (await capturedAgents())
+            .slice(before)
+            .find((entry) => entry.program === "agy"),
+        );
+        const identity = await processIdentity(record.pid);
+        assert.ok(identity && !["Z", "X"].includes(identity.state));
+        fakeAgentProcesses.set(record.pid, identity);
+        assert.deepEqual(record.argv, [`--prompt-interactive=${prompt}`]);
+        assert.equal(record.cwd, createdPath);
+        assert.equal(
+          (await stat(createdPath, { bigint: true })).ino,
+          beforeStat.ino,
+        );
+        assert.equal(gitHead(), head);
+        assert.equal(await createCount(), 1);
+        const terminal = await wait(
+          "retry PTY visible in native app",
+          async () =>
+            (await invoke("term_list")).find((term) => !oldTerms.has(term.id)),
+        );
+        keyboardTerminalIds.add(terminal.id);
+        await wait("fake provider output reaches visible xterm", () =>
+          textContains(".term .xterm", "LACI_FAKE_AGENT_READY"),
+        );
+        await shot("agent-launch-retry");
+        await invoke("term_close", { id: terminal.id });
+        keyboardTerminalIds.delete(terminal.id);
+        await wait(
+          "retry provider stopped",
+          async () =>
+            !sameLiveProcess(await processIdentity(record.pid), identity),
+        );
+        fakeAgentProcesses.delete(record.pid);
+      },
+    );
+  } finally {
+    await chmod(path.join(fixtureHome, "bin/agy"), 0o700);
+    if (await execute(() => Boolean(document.querySelector(".dialog"))))
+      await click(".dialog .df button", "Discard draft", true).catch(() => {});
+    await saveSetup({
+      roots: original.roots,
+      presets: original.presets,
+      apps: original.apps,
+      archiveDir: original.archiveDir ?? "",
+      terminalTarget: original.terminalTarget ?? "internal",
+    }).catch(() => {});
+    if (oldAgy) await writeFile(agyFile, oldAgy);
+    else await rm(agyFile, { force: true });
+    await rm(codexFile, { force: true });
+    await rm(claudeDir, { recursive: true, force: true });
+    for (const dir of [source, target])
+      await rm(dir, { recursive: true, force: true });
+    const configPath = path.join(fixtureHome, ".config/laci/config.json");
+    const cfg = JSON.parse(await readFile(configPath, "utf8"));
+    cfg.recipes = (cfg.recipes ?? []).filter(
+      (recipe) => recipe.id !== recipeId,
+    );
+    await writeFile(configPath, JSON.stringify(cfg, null, 2) + "\n");
+  }
+}
+
+async function patchRegressions() {
+  const original = await api("setup/info");
+  const selection = {
+    roots: original.roots,
+    presets: original.presets,
+    apps: original.apps,
+    archiveDir: original.archiveDir ?? "",
+    terminalTarget: original.terminalTarget ?? "internal",
+  };
+  const longRoot = path.join(
+    fixtureHome,
+    `select-${"long-folder-".repeat(16)}${stamp}`,
+  );
+  await mkdir(longRoot, { recursive: true });
+  try {
+    await saveSetup({ ...selection, roots: [...selection.roots, longRoot] });
+    await wait("long scan location available", async () =>
+      (await snapshot()).roots.includes(longRoot),
+    );
+    await check(
+      "Themed dropdown fits 1280x720, wraps long options and isolates keyboard shortcuts",
+      async () => {
+        await command("POST", "/window/rect", { width: 1280, height: 720 });
+        for (const appearance of ["light", "dark"]) {
+          await theme(appearance);
+          await click('.sb-top [aria-label="New project"]');
+          const draft = `select-draft-${stamp}`;
+          await type(".dialog input[pattern]", draft);
+          const trigger =
+            '.dialog [role="combobox"][aria-label="Project location"]';
+          await tabTo(trigger);
+          await key("\uE007");
+          await element("[data-laci-select-popup]");
+          await painted();
+          const beforeTerms = (await invoke("term_list"))
+            .map((term) => term.id)
+            .sort();
+          const geometry = await execute((longRoot) => {
+            const popup = document.querySelector("[data-laci-select-popup]");
+            const rect = popup.getBoundingClientRect();
+            const long = [...popup.querySelectorAll('[role="option"]')].find(
+              (option) => option.getAttribute("data-value") === longRoot,
+            );
+            const color = getComputedStyle(popup);
+            return {
+              left: rect.left,
+              top: rect.top,
+              right: rect.right,
+              bottom: rect.bottom,
+              width: rect.width,
+              height: rect.height,
+              viewport: [innerWidth, innerHeight],
+              background: color.backgroundColor,
+              text: color.color,
+              long: long && {
+                width: long.clientWidth,
+                scrollWidth: long.scrollWidth,
+                height: long.getBoundingClientRect().height,
+                lineHeight: parseFloat(getComputedStyle(long).lineHeight),
+              },
+              insideDialog: Boolean(popup.closest(".dialog")),
+              inScrollBody: Boolean(popup.closest(".db")),
+            };
+          }, longRoot);
+          assert.ok(
+            geometry.left >= 7 && geometry.right <= geometry.viewport[0] - 7,
+          );
+          assert.ok(
+            geometry.top >= 0 && geometry.bottom <= geometry.viewport[1],
+          );
+          assert.ok(geometry.height <= 281 && geometry.width > 80);
+          assert.equal(geometry.insideDialog, true);
+          assert.equal(
+            geometry.inScrollBody,
+            false,
+            "Popup must not be clipped by the form scroll body",
+          );
+          assert.ok(
+            geometry.long &&
+              geometry.long.scrollWidth <= geometry.long.width + 1,
+          );
+          assert.ok(
+            geometry.long.height > geometry.long.lineHeight * 1.5,
+            "Long path labels must wrap",
+          );
+          const brightness =
+            geometry.background
+              .match(/\d+/g)
+              .slice(0, 3)
+              .map(Number)
+              .reduce((sum, n) => sum + n, 0) / 3;
+          assert.ok(
+            appearance === "light" ? brightness > 200 : brightness < 80,
+            `${appearance} popup uses app colors: ${geometry.background}`,
+          );
+          await key("k", true);
+          await key("\uE034");
+          await painted();
+          assert.equal(
+            await execute(() => Boolean(document.querySelector("#pal-in"))),
+            false,
+          );
+          assert.deepEqual(
+            (await invoke("term_list")).map((term) => term.id).sort(),
+            beforeTerms,
+          );
+          await shot(`select-${appearance}-1280`);
+          await key("\uE00C");
+          await wait("first Escape closes only the dropdown", () =>
+            execute(() => !document.querySelector("[data-laci-select-popup]")),
+          );
+          assert.equal(
+            await execute(
+              () => document.querySelector(".dialog input[pattern]")?.value,
+            ),
+            draft,
+          );
+          assert.ok(
+            await focused(trigger),
+            "Dropdown Escape restores its trigger focus",
+          );
+          assert.equal(
+            await textContains(".dialog .df", "Keep editing"),
+            false,
+          );
+          await tabTo(
+            '.dialog [role="combobox"][aria-label="Remote repository"]',
+          );
+          await key("\uE007");
+          await keyboardText("Only");
+          await key("\uE007");
+          await wait("typeahead option selected", () =>
+            execute(() => !document.querySelector("[data-laci-select-popup]")),
+          );
+          await key("\uE00C");
+          await wait("second Escape retains the form draft", () =>
+            textContains(".dialog .df", "Keep editing"),
+          );
+          await click(".dialog .df button", "Keep editing", true);
+          assert.equal(
+            await execute(
+              () => document.querySelector(".dialog input[pattern]")?.value,
+            ),
+            draft,
+          );
+          await discardDraft();
+        }
+      },
+    );
+  } finally {
+    if (await execute(() => Boolean(document.querySelector(".dialog"))))
+      await click(".dialog .df button", "Discard draft", true).catch(() => {});
+    await command("POST", "/window/rect", { width: 1440, height: 900 });
+    await saveSetup(selection);
+    await rm(longRoot, { recursive: true, force: true });
+  }
+  await check(
+    "Settings allow zero roots and preserve that choice after a native page reload",
+    async () => {
+      try {
+        await nav("Settings", "Settings");
+        await element('.main [aria-label="Another folder"]');
+        const checked = await execute(() => [
+          ...document.querySelectorAll(
+            ".main .sset:first-of-type .opt input:checked",
+          ),
+        ]);
+        for (const input of checked)
+          await command("POST", `/element/${input[elementKey]}/click`, {});
+        await type('.main [aria-label="Default archive folder"]', "");
+        await click(".main .setup-foot button", "Save and rescan", true);
+        await wait("explicit empty selection reaches engine", async () => {
+          const current = await snapshot();
+          return (
+            current.configured &&
+            current.roots.length === 0 &&
+            Object.keys(current.nodes).length === 0
+          );
+        });
+        const saved = JSON.parse(
+          await readFile(
+            path.join(fixtureHome, ".config/laci/config.json"),
+            "utf8",
+          ),
+        );
+        assert.deepEqual(saved.roots, []);
+        frontendErrors.push(
+          ...(await execute(() => window.__LACI_SMOKE_ERRORS__ ?? [])),
+        );
+        await command("POST", "/refresh", {});
+        await wait("configured app restored with no roots", () =>
+          execute(
+            () =>
+              Boolean(document.querySelector(".main")) &&
+              !document.querySelector(".setup"),
+          ),
+        );
+        await installErrorCollection();
+        assert.deepEqual((await snapshot()).roots, []);
+        await nav("Settings", "Settings");
+        await element('.main [aria-label="Another folder"]');
+        assert.equal(
+          await execute(
+            () =>
+              document.querySelectorAll(
+                ".main .sset:first-of-type .opt input:checked",
+              ).length,
+          ),
+          0,
+        );
+        await shot("settings-no-roots");
+      } finally {
+        await saveSetup(selection);
+      }
+    },
+  );
+  await check(
+    "External roots use real breadcrumbs and Backspace, and disconnected folders stay marked unavailable",
+    async () => {
+      const external = await mkdtemp(
+        path.join(path.dirname(fixtureHome), "laci-native-drive-"),
+      );
+      const drive = path.join(external, "workspace");
+      const moved = path.join(external, "disconnected");
+      const folder = path.join(drive, "nested");
+      try {
+        await mkdir(folder, { recursive: true });
+        await writeFile(
+          path.join(folder, "README.md"),
+          "# External navigation fixture\n",
+        );
+        await saveSetup({ ...selection, roots: [...selection.roots, drive] });
+        await wait(
+          "external root scanned",
+          async () => (await snapshot()).nodes[folder],
+        );
+        await element(".tree-row .tl", drive);
+        assert.ok(
+          await execute((drive) => {
+            const button = [...document.querySelectorAll(".tree-row .tl")].find(
+              (item) => item.textContent.includes(drive),
+            );
+            return (
+              button.getBoundingClientRect().right <=
+              document.querySelector(".sb-scroll").getBoundingClientRect().right
+            );
+          }, drive),
+          "Long external paths must not push their click target outside the sidebar",
+        );
+        await click(".tree-row .tl", drive);
+        await wait("external root browser", () =>
+          execute(
+            (drive) =>
+              document
+                .querySelector(".main .head h1")
+                ?.getAttribute("title") === drive,
+            drive,
+          ),
+        );
+        await doubleClick(`.main .frow[data-id=${JSON.stringify(folder)}]`);
+        await wait("nested external browser", () =>
+          execute(
+            (folder) =>
+              document
+                .querySelector(".main .head h1")
+                ?.getAttribute("title") === folder,
+            folder,
+          ),
+        );
+        const crumbs = await execute(() =>
+          [...document.querySelectorAll(".main .head .crumb")].map((crumb) =>
+            crumb.textContent.trim(),
+          ),
+        );
+        assert.ok(crumbs[0].startsWith(drive));
+        assert.ok(crumbs.every((crumb) => !["Home", "~"].includes(crumb)));
+        await key("\uE003");
+        await wait("Backspace returns to selected external root", () =>
+          execute(
+            (drive) =>
+              document
+                .querySelector(".main .head h1")
+                ?.getAttribute("title") === drive,
+            drive,
+          ),
+        );
+        await shot("external-root-navigation");
+        await nav("Settings", "Settings");
+        await rename(drive, moved);
+        await api("rescan");
+        await wait("unavailable root stays in snapshot", async () => {
+          const snap = await snapshot();
+          return (
+            snap.roots.includes(drive) &&
+            snap.rootStatus.some(
+              (root) => root.path === drive && !root.available,
+            )
+          );
+        });
+        await nav("Today", "Today");
+        await nav("Settings", "Settings");
+        await wait("unavailable selected folder shown in Settings", () =>
+          execute(
+            (drive) =>
+              [...document.querySelectorAll(".main .sset .opt")].some(
+                (row) =>
+                  row.textContent.includes(drive) &&
+                  row.textContent.includes("Unavailable") &&
+                  row.querySelector("input")?.checked,
+              ),
+            drive,
+          ),
+        );
+        await shot("offline-selected-root");
+      } finally {
+        await saveSetup(selection);
+        await rm(external, { recursive: true, force: true });
+      }
+    },
+  );
+  await check(
+    "Generator progress stays responsive; cancel and failure preserve partial output",
+    async () => {
+      const recipeId = `native-smoke-${stamp}`;
+      const names = [`cancelled-${stamp}`, `failed-${stamp}`];
+      const projectRoot =
+        selection.roots[0] ?? path.join(fixtureHome, "project");
+      const configPath = path.join(fixtureHome, ".config/laci/config.json");
+      let generatorMayBeRunning = false;
+      try {
+        for (const [index, name] of names.entries()) {
+          const dest = path.join(projectRoot, name);
+          const marker = `LACI_GENERATOR_PROGRESS_${index}_${stamp}`;
+          const script = `mkdir -p -- "$1"; printf 'partial output\\n' > "$1/partial.txt"; printf '%s\\n' "$$" > "$1/generator.pid"; printf '%s\\n' '${marker}'; ${index ? "exit 7" : "exec sleep 120"}`;
+          await api("new/recipe", {
+            recipe: {
+              id: recipeId,
+              name: "Native smoke generator",
+              program: "sh",
+              args: ["-c", script, "laci-native-fixture", "{name}"],
+              download: false,
+            },
+          });
+          await click('.sb-top [aria-label="New project"]');
+          await type(".dialog input[pattern]", name);
+          await select(
+            '.dialog [role="combobox"][aria-label="Project location"]',
+            projectRoot,
+          );
+          await click(".dialog .choice", "Generator recipe");
+          await select(
+            '.dialog [role="combobox"][aria-label="Generator recipe"]',
+            recipeId,
+          );
+          await click(".dialog button", "Preview generator", true);
+          await wait("generator prerequisites previewed", () =>
+            textContains(
+              ".dialog .generator-preview",
+              "no download requirement",
+            ),
+          );
+          assert.ok(
+            await textContains(".dialog .generator-preview code", marker),
+          );
+          const beforeTerms = (await invoke("term_list"))
+            .map((term) => term.id)
+            .sort();
+          generatorMayBeRunning = !index;
+          await click(".dialog .df button", "Create project", true);
+          await wait("generator output rendered", () =>
+            textContains(".dialog .generator-progress pre", marker),
+          );
+          const pid = Number(
+            (await readFile(path.join(dest, "generator.pid"), "utf8")).trim(),
+          );
+          const originalProcess = await processIdentity(pid);
+          if (!index) {
+            const started = Date.now();
+            await snapshot();
+            assert.ok(
+              Date.now() - started < 3000,
+              "Long generator must not hold the app request lock",
+            );
+            assert.ok(
+              originalProcess && !["Z", "X"].includes(originalProcess.state),
+            );
+            await key("\uE00C");
+            assert.equal(
+              await textContains(".dialog .df", "Keep editing"),
+              false,
+            );
+            assert.ok(
+              sameLiveProcess(await processIdentity(pid), originalProcess),
+              "Escape must not cancel a running generator",
+            );
+            await execute(() =>
+              document
+                .querySelector(".generator-progress")
+                .scrollIntoView({ block: "end" }),
+            );
+            await shot("generator-progress", false);
+            await click(".dialog .df button", "Cancel generator", true);
+            await wait("generator cancellation rendered", () =>
+              textContains(".dialog .generator-progress", "Creation cancelled"),
+            );
+            await wait(
+              "owned generator process stopped",
+              async () =>
+                !sameLiveProcess(await processIdentity(pid), originalProcess),
+            );
+          } else {
+            await wait("generator failure rendered", () =>
+              textContains(".dialog .generator-progress", "Creation failed"),
+            );
+            assert.ok(await textContains(".dialog .df", "Generator exited"));
+          }
+          assert.equal(
+            await readFile(path.join(dest, "partial.txt"), "utf8"),
+            "partial output\n",
+          );
+          await assert.rejects(access(path.join(dest, ".laci.md")));
+          await assert.rejects(access(path.join(dest, ".git")));
+          assert.deepEqual(
+            (await invoke("term_list")).map((term) => term.id).sort(),
+            beforeTerms,
+          );
+          await execute(() =>
+            document
+              .querySelector(".generator-progress")
+              .scrollIntoView({ block: "end" }),
+          );
+          await shot(index ? "generator-failed" : "generator-cancelled");
+          await click(".dialog .df button", "Discard draft", true);
+          generatorMayBeRunning = false;
+        }
+      } finally {
+        if (generatorMayBeRunning) {
+          const cancel = await execute(
+            () =>
+              [...document.querySelectorAll(".dialog .df button")].find(
+                (button) => button.textContent.trim() === "Cancel generator",
+              ) ?? null,
+          ).catch(() => null);
+          if (cancel) {
+            await command(
+              "POST",
+              `/element/${cancel[elementKey]}/click`,
+              {},
+            ).catch(() => {});
+            generatorMayBeRunning = !(await wait(
+              "owned generator stopped during cleanup",
+              () =>
+                textContains(
+                  ".dialog .generator-progress",
+                  "Creation cancelled",
+                ),
+              5000,
+            ).catch(() => false));
+          }
+        }
+        if (
+          !generatorMayBeRunning &&
+          (await execute(() => Boolean(document.querySelector(".dialog"))))
+        )
+          await click(".dialog .df button", "Discard draft", true).catch(
+            () => {},
+          );
+        const cfg = JSON.parse(await readFile(configPath, "utf8"));
+        cfg.recipes = (cfg.recipes ?? []).filter(
+          (recipe) => recipe.id !== recipeId,
+        );
+        await writeFile(configPath, JSON.stringify(cfg, null, 2) + "\n");
+        // If the UI failed mid-job, closing the owned native session below cancels it; keep its output for diagnosis.
+        if (!generatorMayBeRunning)
+          for (const name of names)
+            await rm(path.join(projectRoot, name), {
+              recursive: true,
+              force: true,
+            });
+      }
+    },
+  );
+  await nav("Today", "Today");
+}
+
 async function watcherRegressions() {
   await check(
     "Linked worktree branch switches refresh the native inspector",
     async () => {
       const current = await snapshot();
       const main = Object.values(current.nodes).find(
-        (node) => node.git && !node.git.worktree && !node.archived &&
+        (node) =>
+          node.git &&
+          !node.git.worktree &&
+          !node.archived &&
           current.roots.some((root) => node.path.startsWith(root + "/")),
       );
       assert.ok(main, "Fixture needs a Git project below a scan root");
-      const linked = path.join(path.dirname(main.path), `native-worktree-${stamp}`);
+      const linked = path.join(
+        path.dirname(main.path),
+        `native-worktree-${stamp}`,
+      );
       const initial = `native-worktree-start-${stamp}`;
       const switched = `native-worktree-next-${stamp}`;
       const git = (args) => execFileSync("git", args, { stdio: "pipe" });
@@ -947,8 +1970,10 @@ async function watcherRegressions() {
         assert.ok(project?.git?.worktree, "Linked checkout must be detected");
         await showProject(project);
         git(["-C", linked, "switch", "-c", switched]);
-        await wait("linked Git watcher refreshed the branch", async () =>
-          (await snapshot()).nodes[linked]?.git?.branch === switched,
+        await wait(
+          "linked Git watcher refreshed the branch",
+          async () =>
+            (await snapshot()).nodes[linked]?.git?.branch === switched,
         );
         await wait("React inspector received linked worktree branch", () =>
           textContains(".insp .pval", switched),
@@ -1100,7 +2125,10 @@ async function tidyRegressions() {
             item.action?.type === "quarantine" &&
             item.action.moves.some((move) => move.from === store),
         );
-        assert.ok(proposal, "Missing fixture should have a quarantine proposal");
+        assert.ok(
+          proposal,
+          "Missing fixture should have a quarantine proposal",
+        );
         const destination = path.join(
           fixtureHome,
           ".local/share/laci/orphans",
@@ -1114,16 +2142,23 @@ async function tidyRegressions() {
         await nav("Tidy up", "Tidy up");
         const row = `.prop-row[data-id=${JSON.stringify(proposal.id)}]`;
         await click(`${row} .item`);
-        await element(`${row} .row-acts button`, "Apply");
-        // Two clicks in one browser task exercise the guard before React rerenders.
-        await execute(
-          (selector) => {
-            const button = document.querySelector(selector);
-            button.click();
-            button.click();
-          },
-          `${row} .row-acts button`,
+        await click(`${row} .row-acts button`, "Review history…");
+        await element(".dialog .df button", "Quarantine history", true);
+        assert.equal(
+          await execute(
+            () =>
+              document.querySelector('.dialog input[name="recovery"]:checked')
+                ?.value,
+          ),
+          "quarantine",
         );
+        assert.ok(await textContains(".dialog .history-paths", store));
+        // Two clicks in one browser task exercise the guard before React rerenders.
+        await execute((selector) => {
+          const button = document.querySelector(selector);
+          button.click();
+          button.click();
+        }, ".dialog .df button.primary");
         journal = await wait("one committed quarantine journal", async () => {
           const log = await api("log");
           assert.ok(count(log) <= previous + 1, "Apply must not submit twice");
@@ -1138,7 +2173,7 @@ async function tidyRegressions() {
           execute(() => {
             const toast = document.querySelector(".toast");
             return (
-              toast?.textContent.includes("Changes applied") &&
+              toast?.textContent.includes("History quarantined") &&
               !toast.inert &&
               !document.querySelector(".busy")
             );
@@ -1159,8 +2194,9 @@ async function tidyRegressions() {
           (await stat(movedFile, { bigint: true })).mtimeNs,
           modified,
         );
-        await wait("history refreshed before Undo", async () =>
-          !(await api("status")).historyPending,
+        await wait(
+          "history refreshed before Undo",
+          async () => !(await api("status")).historyPending,
         );
         assert.equal(count(await api("log")), previous + 1);
         const appliedJournal = journal;
@@ -1180,8 +2216,9 @@ async function tidyRegressions() {
           }
         });
         journal = undefined;
-        await wait("Undo history refreshed", async () =>
-          !(await api("status")).historyPending,
+        await wait(
+          "Undo history refreshed",
+          async () => !(await api("status")).historyPending,
         );
         assert.deepEqual(await readFile(file), bytes);
         assert.equal((await stat(file, { bigint: true })).mtimeNs, modified);
@@ -1193,8 +2230,9 @@ async function tidyRegressions() {
         );
       } finally {
         if (journal) {
-          await wait("history ready for fixture recovery", async () =>
-            !(await api("status")).historyPending,
+          await wait(
+            "history ready for fixture recovery",
+            async () => !(await api("status")).historyPending,
           ).catch(() => {});
           await api("undo", { id: journal }).catch(() => {});
         }
@@ -1205,6 +2243,7 @@ async function tidyRegressions() {
 }
 
 try {
+  if (agentOnly) await installFakeAgents();
   await access(binary);
   await wait(
     "tauri-driver ready",
@@ -1267,7 +2306,25 @@ try {
         await wait("onboarding choices loaded", () =>
           textContains(".setup .sset", "Where do you keep projects?"),
         );
-        await tabTo('.setup input[type="checkbox"]');
+        assert.deepEqual(
+          current.roots,
+          [],
+          "Fresh setup must not choose roots",
+        );
+        assert.deepEqual(
+          current.connectors,
+          [],
+          "Fresh setup must not activate connectors",
+        );
+        assert.equal(
+          await execute(
+            () =>
+              document.querySelectorAll(".setup .sset:first-of-type .opt")
+                .length,
+          ),
+          0,
+        );
+        await tabTo('.setup input[aria-label="Another folder"]');
         await key("k", true);
         await wait("onboarding palette keyboard focus", () =>
           focused("#pal-in"),
@@ -1295,7 +2352,7 @@ try {
           ),
           wizardDraft,
         );
-        await key("\uE00C");
+        await discardDraft();
         await wait("onboarding draft cancelled", () =>
           execute(() => !document.querySelector('.dialog[role="dialog"]')),
         );
@@ -1318,6 +2375,11 @@ try {
           "Opening and cancelling a draft must not configure the wizard",
         );
         await shot("first-run");
+        await type(
+          '.setup [aria-label="Another folder"]',
+          path.join(fixtureHome, "project"),
+        );
+        await click(".setup button", "Add folder", true);
         const rootInputs = await execute(() =>
           [...document.querySelectorAll(".setup .sset:first-of-type .opt")].map(
             (label) => ({
@@ -1370,20 +2432,13 @@ try {
           "terminal",
         ].entries()) {
           const index = offset + 1;
-          const selector = `.setup .apps .fld:nth-child(${index}) select`;
-          const choices = await execute(
-            (selector) => ({
-              value: document.querySelector(selector).value,
-              options: [...document.querySelector(selector).options].map(
-                (option) => option.value,
-              ),
-            }),
-            selector,
-          );
+          const selector = `.setup .apps .fld:nth-child(${index}) [role="combobox"]`;
+          const choices = await selectOptions(selector);
           const choice =
-            choices.options.find((value) => value !== choices.value) ??
-            choices.value;
+            choices.find((option) => !option.selected && !option.disabled)
+              ?.value ?? choices.find((option) => option.selected)?.value;
           assert.ok(choice);
+          await key("\uE00C");
           await select(selector, choice);
           selectedApps[kind] = choice;
         }
@@ -1435,7 +2490,7 @@ try {
           ...current.suggestions.map((c) => c.id),
         ]),
       ];
-      await api("setup/save", {
+      await saveSetup({
         roots: [path.join(fixtureHome, "project")],
         presets,
         apps: { editor: "code", files: "dolphin", terminal: "kitty" },
@@ -1449,7 +2504,13 @@ try {
       execute(() => Boolean(document.querySelector(".main"))),
     );
 
-    if (!watcherOnly && !keyboardOnly && !modularOnly) {
+    if (
+      !watcherOnly &&
+      !keyboardOnly &&
+      !modularOnly &&
+      !patchOnly &&
+      !agentOnly
+    ) {
       await check(
         "Startup sidebar follows the completed native scan",
         async () => {
@@ -1486,10 +2547,48 @@ try {
       );
     }
 
-    if (modularOnly) {
+    if (agentOnly) {
+      await agentRegressions();
+      assert.deepEqual(
+        await execute(() => window.__LACI_SMOKE_ERRORS__ ?? []),
+        [],
+      );
+      console.log(
+        JSON.stringify(
+          { passed: true, binary, fixtureHome, mode: "agent", checks: results },
+          null,
+          2,
+        ),
+      );
+    } else if (patchOnly) {
+      await patchRegressions();
+      assert.deepEqual(
+        [
+          ...frontendErrors,
+          ...(await execute(() => window.__LACI_SMOKE_ERRORS__ ?? [])),
+        ],
+        [],
+      );
+      console.log(
+        JSON.stringify(
+          { passed: true, binary, fixtureHome, mode: "patch", checks: results },
+          null,
+          2,
+        ),
+      );
+    } else if (modularOnly) {
       await modularRegressions();
-      assert.deepEqual(await execute(() => window.__LACI_SMOKE_ERRORS__ ?? []), []);
-      console.log(JSON.stringify({ passed: true, binary, fixtureHome, checks: results }, null, 2));
+      assert.deepEqual(
+        await execute(() => window.__LACI_SMOKE_ERRORS__ ?? []),
+        [],
+      );
+      console.log(
+        JSON.stringify(
+          { passed: true, binary, fixtureHome, checks: results },
+          null,
+          2,
+        ),
+      );
     } else if (watcherOnly) {
       await tidyRegressions();
       await watcherRegressions();
@@ -1540,6 +2639,7 @@ try {
       assert.ok(reference, "Fixture needs at least one project with a README");
 
       await keyboardRegressions();
+      await patchRegressions();
 
       await check("Six views and both themes", async () => {
         await nav("Today", "Today");
@@ -1654,13 +2754,17 @@ try {
       await check("New project dialog creates a real project", async () => {
         await click('.sb-top [aria-label="New project"]');
         await type(".dialog input[pattern]", projectName);
-        await select(".dialog .row2 select", path.join(fixtureHome, "project"));
+        await select(
+          '.dialog [role="combobox"][aria-label="Project location"]',
+          path.join(fixtureHome, "project"),
+        );
         await shot("new-project");
         await click(".dialog .df button", "Create project", true);
         await wait(
           "new project on disk and snapshot",
           async () => (await snapshot()).nodes[newPath],
         );
+        await click(".dialog .df button", "Open project", true);
         await wait("new project inspector", () =>
           textContains(".insp .ititle h2", projectName),
         );
@@ -1673,13 +2777,13 @@ try {
       });
 
       await check("Metadata, tasks and notes saved through React", async () => {
-        await select('.insp select[aria-label="Status"]', "paused");
+        await select('.insp [role="combobox"][aria-label="Status"]', "paused");
         await wait(
           "status persisted",
           async () =>
             (await snapshot()).nodes[newPath]?.meta.status === "paused",
         );
-        await select('.insp select[aria-label="Priority"]', "high");
+        await select('.insp [role="combobox"][aria-label="Priority"]', "high");
         await wait(
           "priority persisted",
           async () =>
@@ -1880,16 +2984,15 @@ try {
             (connector) => connector.name === name && !connector.builtin,
           ),
         );
-        const remove = await wait("custom connector removal enabled in React", () =>
-          execute(
-            (name) => {
+        const remove = await wait(
+          "custom connector removal enabled in React",
+          () =>
+            execute((name) => {
               const button = [...document.querySelectorAll(".stat")]
                 .find((card) => card.querySelector(".k")?.textContent === name)
                 ?.querySelector("button");
               return button && !button.disabled ? button : null;
-            },
-            name,
-          ),
+            }, name),
         );
         assert.ok(remove);
         await command("POST", `/element/${remove[elementKey]}/click`, {});
@@ -1969,7 +3072,7 @@ try {
           await wait("terminal output replayed after reload", () =>
             textContains(".term .xterm", terminalText),
           );
-          await click('.ttab[aria-selected="true"] .x');
+          await click(".ttab[data-active] button.x");
           await wait("terminal close confirmation after replay", () =>
             textContains(".dialog .dh h2", `Close terminal ${terminal.title}?`),
           );
@@ -2069,6 +3172,15 @@ try {
   process.exitCode = 1;
 } finally {
   if (watchedFile) await rm(watchedFile, { force: true }).catch(() => {});
+  for (const [pid, identity] of fakeAgentProcesses) {
+    if (sameLiveProcess(await processIdentity(pid), identity)) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    }
+  }
   if (session) {
     await command("DELETE", "/actions").catch(() => {});
     for (const id of keyboardTerminalIds) {

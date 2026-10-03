@@ -9,14 +9,29 @@ import type {
   RefreshStatus,
   Snapshot,
   Tab,
+  TerminalTarget,
   View,
 } from "./types";
 export type Theme = "system" | "light" | "dark";
 export type SortKey = "name" | "last" | "size" | "ai";
 export type Modal =
   | { kind: "shortcuts" | "connector" | "new" }
-  | { kind: "archive" | "delete"; id: string }
+  | { kind: "archive" | "delete" | "orphan"; id: string }
   | { kind: "terminal-close"; id: string }
+  | {
+      kind: "agent";
+      projectPath: string;
+      provider?: string;
+      sessionId?: string;
+      prompt?: string;
+    }
+  | {
+      kind: "session";
+      provider: string;
+      sessionId: string;
+      file: string;
+      projectPath?: string;
+    }
   | null;
 interface Toast {
   title: string;
@@ -42,6 +57,7 @@ interface State {
   fileSelected: string | null;
   theme: Theme;
   apps: Apps;
+  terminalTarget: TerminalTarget;
   skipSetup: boolean;
   modal: Modal;
   palette: boolean;
@@ -97,6 +113,7 @@ export const useApp = create<State>((set, get) => ({
   fileSelected: null,
   theme: (document.documentElement.dataset.theme as Theme) || "system",
   apps: { editor: "code", files: "dolphin", terminal: "kitty" },
+  terminalTarget: "internal",
   skipSetup: false,
   modal: null,
   palette: false,
@@ -125,9 +142,11 @@ export const useApp = create<State>((set, get) => ({
         snapshot.nodes[s.pendingSelection];
       return {
         snapshot: historyPending ? { ...snapshot, proposals: [] } : snapshot,
+        terminalTarget: snapshot.terminalTarget ?? "internal",
         revision,
         historyPending,
-        setupPending: s.setupPending && (historyPending || !snapshot.configured),
+        setupPending:
+          s.setupPending && (historyPending || !snapshot.configured),
         error: keepError ? s.error : null,
         errorRevision: keepError ? s.errorRevision : null,
         cwd: s.cwd || snapshot.roots[0] || snapshot.home,
@@ -281,7 +300,9 @@ export function acknowledge(change: Change) {
       revision,
       historyPending,
       snapshot:
-        historyPending && s.snapshot ? { ...s.snapshot, proposals: [] } : s.snapshot,
+        historyPending && s.snapshot
+          ? { ...s.snapshot, proposals: [] }
+          : s.snapshot,
     };
   });
   if (change.snapshot) useApp.getState().load(change.snapshot);
@@ -303,7 +324,9 @@ export function refreshStatus(status: RefreshStatus) {
       busy: status.busy,
       historyPending,
       snapshot:
-        historyPending && s.snapshot ? { ...s.snapshot, proposals: [] } : s.snapshot,
+        historyPending && s.snapshot
+          ? { ...s.snapshot, proposals: [] }
+          : s.snapshot,
     };
   });
 }
@@ -342,10 +365,16 @@ export function changed(change: Change, title: string, message = "") {
     ...(change.warnings ?? []),
     ...(refreshWarning ? [refreshWarning] : []),
   ];
-  toast(title, warnings.join(". ") || message, {
-    undo: change.journal?.id,
-    error: Boolean(warnings.length),
-  });
+  toast(
+    title,
+    [warnings.join(". ") || message, change.journal?.recovery]
+      .filter(Boolean)
+      .join(" "),
+    {
+      undo: change.journal?.canUndo === false ? undefined : change.journal?.id,
+      error: Boolean(warnings.length),
+    },
+  );
 }
 const listingPending = new Set<string>();
 const listingAgain = new Set<string>();
@@ -418,17 +447,21 @@ export function urlOpen(url: string) {
 }
 export function rescan() {
   const revision = useApp.getState().revision;
-  return run(async () => {
-    const snapshot = await api<Snapshot>("rescan");
-    useApp.getState().load(snapshot);
-    if (!useApp.getState().toast?.undo)
-      toast(
-        "Scan finished",
-        `${Object.values(snapshot.nodes).filter((n) => n.kind === "project").length} projects`,
-      );
-  }, "Scanning your projects…", {
-    onError: (error) => refreshError(error, revision),
-  });
+  return run(
+    async () => {
+      const snapshot = await api<Snapshot>("rescan");
+      useApp.getState().load(snapshot);
+      if (!useApp.getState().toast?.undo)
+        toast(
+          "Scan finished",
+          `${Object.values(snapshot.nodes).filter((n) => n.kind === "project").length} projects`,
+        );
+    },
+    "Scanning your projects…",
+    {
+      onError: (error) => refreshError(error, revision),
+    },
+  );
 }
 export function backup() {
   void run(async () => {

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { run, useApp } from "./store";
 import type { TerminalInfo } from "./types";
+import { parentOf } from "./helpers";
 interface TerminalState {
   tabs: TerminalInfo[];
   active: string | null;
@@ -36,21 +37,18 @@ export async function openTerminal(
   });
 }
 export async function closeTerminal(id: string) {
-  return run(
-    async () => {
-      await invoke("term_close", { id });
-      useTerms.setState((s) => {
-        const tabs = s.tabs.filter((t) => t.id !== id);
-        return {
-          tabs,
-          active: s.active === id ? (tabs.at(-1)?.id ?? null) : s.active,
-          shown: tabs.length ? s.shown : false,
-        };
-      });
-      return true;
-    },
-    "Closing terminal…",
-  );
+  return run(async () => {
+    await invoke("term_close", { id });
+    useTerms.setState((s) => {
+      const tabs = s.tabs.filter((t) => t.id !== id);
+      return {
+        tabs,
+        active: s.active === id ? (tabs.at(-1)?.id ?? null) : s.active,
+        shown: tabs.length ? s.shown : false,
+      };
+    });
+    return true;
+  }, "Closing terminal…");
 }
 export function requestTerminalClose(id: string) {
   const terminal = useTerms.getState().tabs.find((tab) => tab.id === id);
@@ -61,9 +59,12 @@ export function requestTerminalClose(id: string) {
 }
 export function toggleTerminal() {
   const terms = useTerms.getState();
+  const state = useApp.getState();
   if (!terms.tabs.length)
     void openTerminal(
-      useApp.getState().selected || useApp.getState().cwd || null,
+      state.fileSelected
+        ? parentOf(state.fileSelected)
+        : state.selected || state.cwd || null,
     );
   else useTerms.setState({ shown: !terms.shown });
 }

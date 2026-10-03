@@ -1,11 +1,23 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import { api, errorText } from "./api";
 import { useApp, changed, run, selectWhenReady } from "./store";
-import { parentOf, plural, tilde, within } from "./helpers";
+import { plural, tilde } from "./helpers";
 import { Icon, Ops, restoreFocus, SeverityGlyph } from "./common";
 import { closeTerminal, useTerms } from "./terminal-api";
-import type { ArchivePlan, Change, DeletePlan, Link, NewInfo } from "./types";
+import { AgentDialog, SessionDialog } from "./session-ui";
+import { Select, SelectPortal, selectIsOpen } from "./select";
+import type { ArchivePlan, Change, DeletePlan, Link } from "./types";
+const NewProject = lazy(() =>
+  import("./new-project").then((module) => ({ default: module.NewProject })),
+);
 function close() {
   useApp.setState({ modal: null });
 }
@@ -14,15 +26,24 @@ function dialogControls(host: HTMLElement | null) {
     host?.querySelectorAll<HTMLElement>(
       'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]',
     ) ?? [],
-  ).filter((element) => element.offsetParent !== null);
+  ).filter(
+    (element) =>
+      element.offsetParent !== null &&
+      !element.matches(
+        '[type="hidden"], [tabindex="-1"], [aria-hidden="true"]',
+      ) &&
+      !element.closest('[hidden], [inert], [aria-hidden="true"]'),
+  );
 }
-function DialogFrame({
+export function DialogFrame({
   title,
   description,
   children,
   footer,
   form,
   onSubmit,
+  preserveDraft = form,
+  dismissible = true,
 }: {
   title: string;
   description: ReactNode;
@@ -30,8 +51,13 @@ function DialogFrame({
   footer: ReactNode;
   form?: boolean;
   onSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
+  preserveDraft?: boolean;
+  dismissible?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [portal, setPortal] = useState<HTMLDivElement | null>(null);
+  const [discard, setDiscard] = useState(false);
+  const draftFocus = useRef<HTMLElement | null>(null);
   const previous = useRef(
     document.activeElement instanceof HTMLElement
       ? document.activeElement
@@ -41,17 +67,37 @@ function DialogFrame({
     const items = dialogControls(ref.current);
     const first =
       items.find(
-        (element) =>
-          !element.matches("input[type=checkbox],input[type=radio]"),
+        (element) => !element.matches("input[type=checkbox],input[type=radio]"),
       ) ?? items[0];
     (first ?? ref.current?.querySelector<HTMLElement>(".dialog"))?.focus();
   }, [title, form]);
+  useLayoutEffect(() => {
+    if (discard)
+      ref.current?.querySelector<HTMLElement>("[data-keep-draft]")?.focus();
+  }, [discard]);
+  useEffect(() => {
+    const before = previous.current;
+    return () => restoreFocus(before);
+  }, []);
   useEffect(() => {
     const host = ref.current;
-    const before = previous.current;
     const key = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.key !== "Tab" || useApp.getState().palette)
+      if (e.defaultPrevented || selectIsOpen() || useApp.getState().palette)
         return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!useApp.getState().working && dismissible) {
+          if (preserveDraft) {
+            if (!discard && document.activeElement instanceof HTMLElement)
+              draftFocus.current = document.activeElement;
+            if (discard) restoreFocus(draftFocus.current);
+            setDiscard(!discard);
+          } else close();
+        }
+        return;
+      }
+      if (e.key !== "Tab") return;
       const items = dialogControls(host);
       if (!items.length) {
         e.preventDefault();
@@ -74,24 +120,64 @@ function DialogFrame({
     document.addEventListener("keydown", key);
     return () => {
       document.removeEventListener("keydown", key);
-      restoreFocus(before);
     };
-  }, []);
+  }, [preserveDraft, discard, dismissible]);
   const body = (
     <>
       <div className="dh">
         <h2 id="dialog-title">{title}</h2>
         <p className="desc">{description}</p>
       </div>
-      <div className="db">{children}</div>
-      <div className="df">{footer}</div>
+      <SelectPortal.Provider value={portal}>
+        <div className="db">{children}</div>
+        <div className="df">
+          {discard ? (
+            <>
+              <p role="status">Keep editing or discard this draft?</p>
+              <button
+                type="button"
+                className="btn primary"
+                data-keep-draft=""
+                onClick={() => {
+                  setDiscard(false);
+                  restoreFocus(draftFocus.current);
+                }}
+              >
+                Keep editing
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={!dismissible}
+                onClick={close}
+              >
+                Discard draft
+              </button>
+            </>
+          ) : (
+            footer
+          )}
+        </div>
+        <div ref={setPortal} className="select-portal" />
+      </SelectPortal.Provider>
     </>
   );
   return (
     <div
       className="scrim"
       onClick={(e) => {
-        if (e.target === e.currentTarget && !useApp.getState().working) close();
+        if (
+          e.target === e.currentTarget &&
+          !useApp.getState().working &&
+          dismissible &&
+          !selectIsOpen()
+        ) {
+          if (preserveDraft) {
+            if (document.activeElement instanceof HTMLElement)
+              draftFocus.current = document.activeElement;
+            setDiscard(true);
+          } else close();
+        }
       }}
       ref={ref}
     >
@@ -129,12 +215,149 @@ export function Dialogs() {
   ) : modal?.kind === "delete" ? (
     <DeleteProject key={modal.id} id={modal.id} />
   ) : modal?.kind === "new" ? (
-    <NewProject />
+    <Suspense
+      fallback={
+        <DialogFrame
+          title="New project"
+          description="Loading the form…"
+          footer={
+            <button className="btn" onClick={close}>
+              Cancel
+            </button>
+          }
+        >
+          <p role="status">Loading…</p>
+        </DialogFrame>
+      }
+    >
+      <NewProject />
+    </Suspense>
   ) : modal?.kind === "connector" ? (
     <ConnectorDialog />
   ) : modal?.kind === "terminal-close" ? (
     <TerminalClose id={modal.id} />
+  ) : modal?.kind === "orphan" ? (
+    <OrphanHistory key={modal.id} id={modal.id} />
+  ) : modal?.kind === "agent" ? (
+    <AgentDialog
+      key={`${modal.provider}:${modal.sessionId}:${modal.projectPath}`}
+      request={modal}
+    />
+  ) : modal?.kind === "session" ? (
+    <SessionDialog
+      key={`${modal.provider}:${modal.sessionId}`}
+      request={modal}
+    />
   ) : null;
+}
+function OrphanHistory({ id }: { id: string }) {
+  const s = useApp();
+  const [proposal] = useState(() =>
+    s.snapshot?.proposals.find((item) => item.id === id),
+  );
+  const [recovery, setRecovery] = useState("quarantine");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  if (!proposal) return null;
+  const paths =
+    proposal.action?.type === "quarantine"
+      ? proposal.action.moves.map((move) => move.from)
+      : [];
+  async function apply() {
+    await run(
+      async () => {
+        setSaving(true);
+        setError("");
+        try {
+          const result = await api<Change>("apply", { id, recovery });
+          changed(
+            result,
+            recovery === "trash"
+              ? "Moved history to Trash"
+              : "History quarantined",
+          );
+          close();
+        } finally {
+          setSaving(false);
+        }
+      },
+      recovery === "trash"
+        ? "Moving history to Trash…"
+        : "Quarantining history…",
+      {
+        history: true,
+        onError: (error) => setError(errorText(error)),
+      },
+    );
+  }
+  return (
+    <DialogFrame
+      title="Review orphan history"
+      description="Only the listed agent history moves. Project contents stay where they are. Laci checks the source and project location again before continuing."
+      footer={
+        <>
+          <p className={error ? "err" : ""} role={error ? "alert" : undefined}>
+            {error ||
+              (recovery === "trash"
+                ? "Restore history through system Trash. Laci Undo will not be available."
+                : "Laci Undo restores quarantined history to its original location.")}
+          </p>
+          <button className="btn" disabled={saving} onClick={close}>
+            Cancel
+          </button>
+          <button
+            className="btn primary"
+            disabled={saving || s.historyPending || !paths.length}
+            onClick={() => void apply()}
+          >
+            {saving
+              ? "Moving…"
+              : recovery === "trash"
+                ? "Move history to Trash"
+                : "Quarantine history"}
+          </button>
+        </>
+      }
+    >
+      <p>{proposal.why}</p>
+      <ul className="history-paths">
+        {paths.map((path) => (
+          <li className="mono" key={path}>
+            {path}
+          </li>
+        ))}
+      </ul>
+      <div className="choices" role="radiogroup" aria-label="History recovery">
+        {[
+          [
+            "quarantine",
+            "Quarantine",
+            "Keep a Laci journal for exact restoration.",
+          ],
+          [
+            "trash",
+            "System Trash",
+            "Restore manually through your system Trash.",
+          ],
+        ].map(([value, label, detail]) => (
+          <label className="choice" key={value}>
+            <input
+              type="radio"
+              name="recovery"
+              value={value}
+              checked={recovery === value}
+              disabled={saving}
+              onChange={() => setRecovery(value)}
+            />
+            <div>
+              <b>{label}</b>
+              <p>{detail}</p>
+            </div>
+          </label>
+        ))}
+      </div>
+    </DialogFrame>
+  );
 }
 function TerminalClose({ id }: { id: string }) {
   const terminal = useTerms((s) => s.tabs.find((tab) => tab.id === id));
@@ -142,7 +365,8 @@ function TerminalClose({ id }: { id: string }) {
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     const modal = useApp.getState().modal;
-    if (!present && modal?.kind === "terminal-close" && modal.id === id) close();
+    if (!present && modal?.kind === "terminal-close" && modal.id === id)
+      close();
   }, [present, id]);
   if (!terminal) return null;
   async function confirm() {
@@ -245,21 +469,24 @@ function Archive({ id }: { id: string }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const current = review?.destination === destination ? review : null;
-  const plan = current?.plan;
+  const plan = current?.plan && !current.plan.error ? current.plan : undefined;
   useEffect(() => {
     let live = true;
     const timer = window.setTimeout(() => {
       let path = destination.trim();
       if (path === "~" || path.startsWith("~/")) path = home + path.slice(1);
-      if (!path.startsWith("/")) {
+      if (path && !path.startsWith("/")) {
         setReview({
           destination,
           error: "Use a full destination path like ~/archive/my-project",
         });
         return;
       }
-      void api<ArchivePlan>("archive/plan", { id, destination: path }).then(
-        (plan) => live && setReview({ destination, plan }),
+      void api<ArchivePlan>("archive/plan", {
+        id,
+        ...(path ? { destination: path } : {}),
+      }).then(
+        (plan) => live && setReview({ destination, plan, error: plan.error }),
         (error) => live && setReview({ destination, error: errorText(error) }),
       );
     }, 200);
@@ -271,26 +498,30 @@ function Archive({ id }: { id: string }) {
   if (!n) return null;
   async function archive() {
     if (!plan) return;
-    await run(async () => {
-      setSaving(true);
-      setError("");
-      const modal = useApp.getState().modal;
-      try {
-        const change = await api<Change>("archive", {
-          id,
-          destination: plan.dest,
-          trashHeavy: heavy,
-        });
-        if (useApp.getState().modal === modal) close();
-        changed(change, `Archived ${n.name}`);
-        selectWhenReady(plan.dest);
-      } finally {
-        setSaving(false);
-      }
-    }, `Archiving ${n.name}…`, {
-      history: true,
-      onError: (error) => setError(errorText(error)),
-    });
+    await run(
+      async () => {
+        setSaving(true);
+        setError("");
+        const modal = useApp.getState().modal;
+        try {
+          const change = await api<Change>("archive", {
+            id,
+            destination: plan.dest,
+            trashHeavy: heavy,
+          });
+          if (useApp.getState().modal === modal) close();
+          changed(change, `Archived ${n.name}`);
+          selectWhenReady(plan.dest);
+        } finally {
+          setSaving(false);
+        }
+      },
+      `Archiving ${n.name}…`,
+      {
+        history: true,
+        onError: (error) => setError(errorText(error)),
+      },
+    );
   }
   return (
     <DialogFrame
@@ -340,9 +571,17 @@ function Archive({ id }: { id: string }) {
           }}
           autoComplete="off"
           aria-label="Archive destination"
+          placeholder={
+            n.archivePlan?.error
+              ? "Choose another destination…"
+              : "Default archive destination"
+          }
         />
         <small>The full project folder path, including its name.</small>
       </label>
+      {n.archivePlan?.error ? (
+        <p className="err">Default destination: {n.archivePlan.error}</p>
+      ) : null}
       {!current ? <p role="status">Checking destination…</p> : null}
       {plan?.checks.length ? (
         <div className="warnbox">
@@ -395,35 +634,39 @@ function DeleteProject({ id }: { id: string }) {
   if (!n) return null;
   async function remove() {
     if (!plan?.allowed) return;
-    await run(async () => {
-      setSaving(true);
-      setError("");
-      const modal = useApp.getState().modal;
-      try {
-        const change = await api<Change>("delete", { id, confirm: true });
-        if (useApp.getState().modal === modal) close();
-        changed(change, `Moved ${n.name} to Trash`);
-        if (useApp.getState().selected === id)
-          useApp.setState({ selected: null, pendingSelection: null });
-      } finally {
-        setSaving(false);
-      }
-    }, `Moving ${n.name} to Trash…`, {
-      history: true,
-      onError: (error) => {
-        setPlan(null);
-        setError(errorText(error));
+    await run(
+      async () => {
+        setSaving(true);
+        setError("");
+        const modal = useApp.getState().modal;
+        try {
+          const change = await api<Change>("delete", { id, confirm: true });
+          if (useApp.getState().modal === modal) close();
+          changed(change, `Moved ${n.name} to Trash`);
+          if (useApp.getState().selected === id)
+            useApp.setState({ selected: null, pendingSelection: null });
+        } finally {
+          setSaving(false);
+        }
       },
-    });
+      `Moving ${n.name} to Trash…`,
+      {
+        history: true,
+        onError: (error) => {
+          setPlan(null);
+          setError(errorText(error));
+        },
+      },
+    );
   }
   return (
     <DialogFrame
       title={`Move ${n.name} to Trash?`}
       description={
         <>
-          Moves <span className="mono">{tilde(n.path, s.snapshot!.home)}</span> to
-          the system Trash after checking its Git backup. Agent history stored
-          outside this project stays where it is.
+          Moves <span className="mono">{tilde(n.path, s.snapshot!.home)}</span>{" "}
+          to the system Trash after checking its Git backup. Agent history
+          stored outside this project stays where it is.
         </>
       }
       footer={
@@ -433,7 +676,9 @@ function DeleteProject({ id }: { id: string }) {
               {error}
             </p>
           ) : (
-            <p>Restore the folder from your system Trash if you need it back.</p>
+            <p>
+              Restore the folder from your system Trash if you need it back.
+            </p>
           )}
           <button className="btn" disabled={saving} onClick={close}>
             Cancel
@@ -483,253 +728,6 @@ function DeleteProject({ id }: { id: string }) {
     </DialogFrame>
   );
 }
-function NewProject() {
-  const s = useApp();
-  const snapshot = s.snapshot!;
-  const initialParent =
-    s.view === "folder" &&
-    [snapshot.home, ...snapshot.roots].some((root) => within(s.cwd, root))
-      ? snapshot.nodes[s.cwd]?.kind === "project"
-        ? parentOf(s.cwd)
-        : s.cwd
-      : (snapshot.roots[0] ?? snapshot.home);
-  const [info, setInfo] = useState<NewInfo | null>(null);
-  const [draft, setDraft] = useState({
-    name: "",
-    parent: initialParent,
-    summary: "",
-    from: "empty",
-    template: "",
-    url: "",
-    remote: "none",
-  });
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    let live = true;
-    void api<NewInfo>("new/info").then(
-      (info) => {
-        if (live) {
-          setInfo(info);
-          setDraft((d) => ({
-            ...d,
-            template: d.template || info.templates[0] || "",
-          }));
-        }
-      },
-      (error) => live && setError(errorText(error)),
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
-  function update(key: keyof typeof draft, value: string) {
-    setDraft((d) => ({ ...d, [key]: value }));
-  }
-  const parents = [
-    ...new Set([
-      draft.parent,
-      ...snapshot.roots,
-      ...Object.values(snapshot.nodes)
-        .filter((n) => n.kind === "folder" && !n.archived)
-        .map((n) => n.path),
-    ]),
-  ];
-  async function submit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    await run(async () => {
-      setSaving(true);
-      setError("");
-      const modal = useApp.getState().modal;
-      try {
-        const result = await api<Change>("new", draft);
-        changed(result, `Created ${draft.name}`, tilde(result.path, snapshot.home));
-        s.cd(draft.parent);
-        if (result.path) selectWhenReady(result.path);
-        if (useApp.getState().modal === modal) close();
-      } finally {
-        setSaving(false);
-      }
-    }, draft.from === "clone" ? "Cloning…" : "Creating the project…", {
-      history: true,
-      onError: (error) => setError(errorText(error)),
-    });
-  }
-  return (
-    <DialogFrame
-      title="New project"
-      description="Makes the folder, starts git with a first commit, and sets it up in laci."
-      form
-      onSubmit={(e) => void submit(e)}
-      footer={
-        <>
-          {error ? (
-            <p className="err" role="alert">
-              {error}
-            </p>
-          ) : (
-            <p className="mono">
-              {tilde(`${draft.parent}/${draft.name || "name"}`, snapshot.home)}
-            </p>
-          )}
-          <button
-            type="button"
-            className="btn"
-            disabled={saving}
-            onClick={close}
-          >
-            Cancel
-          </button>
-          <button className="btn primary" disabled={saving || s.historyPending}>
-            {saving ? "Creating…" : "Create project"}
-          </button>
-        </>
-      }
-    >
-      <div className="row2">
-        <label className="fld">
-          <span>Name</span>
-          <input
-            className="inp mono"
-            value={draft.name}
-            onChange={(e) => update("name", e.target.value)}
-            placeholder="my-app"
-            autoComplete="off"
-            required
-            pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"
-            maxLength={100}
-          />
-        </label>
-        <label className="fld">
-          <span>In</span>
-          <select
-            className="inp mono"
-            value={draft.parent}
-            onChange={(e) => update("parent", e.target.value)}
-          >
-            {parents.map((path) => (
-              <option key={path} value={path}>
-                {tilde(path, snapshot.home)}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <label className="fld">
-        <span>
-          What is it?{" "}
-          <span className="faint" style={{ fontWeight: 400 }}>
-            Optional
-          </span>
-        </span>
-        <input
-          className="inp"
-          value={draft.summary}
-          onChange={(e) => update("summary", e.target.value)}
-          placeholder="Landing page for the coffee shop"
-          maxLength={300}
-          autoComplete="off"
-        />
-        <small>Goes into the README and the project's summary.</small>
-      </label>
-      <div className="fld">
-        <span>Start from</span>
-        <div className="choices">
-          {[
-            ["empty", "Empty folder", "A README and nothing else."],
-            [
-              "template",
-              "A template",
-              info?.templates.length
-                ? `Copies a folder from ${info.templatesDir}`
-                : `None yet. Put starter folders in ${info?.templatesDir ?? "~/.config/laci/templates"} to use them here.`,
-            ],
-            ["clone", "Clone a repo", "From GitHub, GitLab or any git URL."],
-          ].map(([value, title, description]) => (
-            <label className="choice" key={value}>
-              <input
-                type="radio"
-                name="from"
-                value={value}
-                checked={draft.from === value}
-                disabled={value === "template" && !info?.templates.length}
-                onChange={() => update("from", value)}
-              />
-              <div>
-                <b>{title}</b>
-                <p>{description}</p>
-              </div>
-            </label>
-          ))}
-        </div>
-      </div>
-      {draft.from === "template" && info?.templates.length ? (
-        <label className="fld">
-          <span>Template</span>
-          <select
-            className="inp"
-            value={draft.template}
-            onChange={(e) => update("template", e.target.value)}
-          >
-            {info.templates.map((name) => (
-              <option key={name}>{name}</option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-      {draft.from === "clone" ? (
-        <label className="fld">
-          <span>Repo URL</span>
-          <input
-            className="inp mono"
-            value={draft.url}
-            onChange={(e) => update("url", e.target.value)}
-            placeholder="https://github.com/owner/repo"
-            autoComplete="off"
-            required
-          />
-        </label>
-      ) : (
-        <label className="fld">
-          <span>Push to</span>
-          <select
-            className="inp"
-            value={draft.remote}
-            onChange={(e) => update("remote", e.target.value)}
-          >
-            {[
-              ["none", "Only this PC for now"],
-              ["github", "New private repo on GitHub"],
-              ["gitlab", "New private repo on GitLab"],
-              ["both", "GitHub and GitLab (one push updates both)"],
-            ].map(([value, label]) => (
-              <option
-                key={value}
-                value={value}
-                disabled={
-                  value !== "none" &&
-                  (!info ||
-                    (value === "both"
-                      ? !(info.hosts.github && info.hosts.gitlab)
-                      : !info.hosts[value as "github" | "gitlab"]))
-                }
-              >
-                {label}
-              </option>
-            ))}
-          </select>
-          <small>
-            {!info
-              ? "Checking gh and glab…"
-              : info.hosts.github || info.hosts.gitlab
-                ? `Uses your ${[info.hosts.github && "gh", info.hosts.gitlab && "glab"].filter(Boolean).join(" and ")} login.`
-                : "Log in with gh or glab to create repos from here."}
-          </small>
-        </label>
-      )}
-    </DialogFrame>
-  );
-}
 const KINDS: Record<Link["kind"], [string, string]> = {
   cwd: [
     "Log files that record the folder",
@@ -755,23 +753,30 @@ function ConnectorDialog() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   async function add(body: Record<string, unknown>) {
-    await run(async () => {
-      setSaving(true);
-      setError("");
-      const modal = useApp.getState().modal;
-      const name = typeof body.name === "string" ? body.name :
-        s.snapshot?.suggestions.find((c) => c.id === body.preset)?.name ?? "connector";
-      try {
-        const change = await api<Change>("connector/add", body);
-        changed(change, `Added ${name}`);
-        if (useApp.getState().modal === modal) close();
-      } finally {
-        setSaving(false);
-      }
-    }, "Adding connector…", {
-      history: true,
-      onError: (error) => setError(errorText(error)),
-    });
+    await run(
+      async () => {
+        setSaving(true);
+        setError("");
+        const modal = useApp.getState().modal;
+        const name =
+          typeof body.name === "string"
+            ? body.name
+            : (s.snapshot?.suggestions.find((c) => c.id === body.preset)
+                ?.name ?? "connector");
+        try {
+          const change = await api<Change>("connector/add", body);
+          changed(change, `Added ${name}`);
+          if (useApp.getState().modal === modal) close();
+        } finally {
+          setSaving(false);
+        }
+      },
+      "Adding connector…",
+      {
+        history: true,
+        onError: (error) => setError(errorText(error)),
+      },
+    );
   }
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -956,12 +961,18 @@ function ConnectorDialog() {
             </label>
             <label className="fld">
               <span>How the folders are named</span>
-              <select className="inp" name="naming">
-                <option value="dashes">
-                  Path with dashes: -home-me-project-app
-                </option>
-                <option value="sha256">SHA-256 hash of the path</option>
-              </select>
+              <Select
+                label="How the folders are named"
+                name="naming"
+                defaultValue="dashes"
+                options={[
+                  {
+                    value: "dashes",
+                    label: "Path with dashes: -home-me-project-app",
+                  },
+                  { value: "sha256", label: "SHA-256 hash of the path" },
+                ]}
+              />
             </label>
           </>
         ) : kind === "inside" ? (

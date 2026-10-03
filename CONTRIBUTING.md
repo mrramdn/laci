@@ -82,3 +82,15 @@ Run `node scripts/package-smoke.mjs` after building. It extracts all three archi
 Linux bundles depend on the build host's system libraries. CI builds on Ubuntu 24.04; use the oldest Linux distribution you support when building packages for distribution.
 
 Use Conventional Commits and keep changes focused. Commit only source, documentation and intentional assets; leave local prompts, agent configuration and handoff notes out of Git.
+
+## Patch regressions
+
+Use `CARGO_TARGET_DIR` to reuse a build cache outside the checkout; the package checker honors it too. Run `cargo test --workspace --features custom-protocol`, strict Clippy, UI lint/typecheck/build and `node scripts/ui-state-smoke.mjs` before native checks.
+
+`crates/laci-core/tests/roots_orphans.rs` exercises unavailable roots, stale proposals, reconnection, open writers, Quarantine restoration and Trash recovery using isolated data. `tests/creation.rs` exercises template safety, generator completion/failure and process-group cancellation. Agent/launch tests use synthetic transcripts and argv capture, so they do not spend provider tokens. MCP smoke keeps the original 15 tools and checks that changed orphan history invalidates a preview.
+
+For native QA, use a fresh demo home, a separate D-Bus session and test executables on PATH for provider launches. `LACI_HOME` isolates Laci data but does not isolate provider authentication or change shell HOME: never use real agent conversations as a transport test. Set a disposable `SHELL` wrapper with a neutral prompt for documentation captures. Check light Laci with a dark GTK theme, dark Laci, small windows, long dropdown options, keyboard/typeahead, one-layer Escape, Ctrl+K/F4 isolation, terminal cwd and external target arguments.
+
+`LACI_PATCH_ONLY=1` runs the small-window dropdown, root-selection and generator regressions. `LACI_AGENT_ONLY=1` captures provider arguments through real native terminals with fake executables. Before starting the driver for that mode, set `PATH="$LACI_HOME/bin:/usr/bin:/bin"`, `LACI_AGENT_CAPTURE="$LACI_HOME/agent-capture.jsonl"` and `LACI_TERMINAL=kitty`; run `tauri-driver` by its absolute path. The harness populates the fixture's `bin` directory before opening the app. This keeps installed providers out of the transport check.
+
+Verify generator progress and cancellation with a saved fixture recipe. Failed output must remain, and an agent-launch failure after creation must expose a retry that does not recreate the folder or remote. Verify empty-root settings across reload, offline-root indications, and Archive with an invalid default and a valid alternative. Keep screenshots synthetic and inspect staged paths before committing.

@@ -47,3 +47,13 @@ Core mutation execution returns the committed result and its refresh scope. Desk
 The desktop creates one local window and uses Tauri IPC with a local-content policy. Markdown is sanitized. Local README images are scoped to scanned project directories. Commands selected by the interface are allowlisted; script/session arguments must exist in the snapshot and are shell quoted.
 
 `laci mcp` serves the 14 compatible v1 tool names plus `delete_project` over stdio without starting GTK or a window. Read calls reuse a recent snapshot. Move/archive/Trash/Tidy/create calls return a preview until `confirm: true` is supplied. Confirmed destructive operations refresh the scan and use the same engine as the desktop.
+
+## Session launch and creation
+
+Sessions normalize provider, UUID, title provenance, cwd, parent, source kind, update time and resume capability separately from the store/file identity. Codex metadata uses session/turn cwd, not tool-call paths. Title-index changes invalidate the title cache. Antigravity's shared last-conversation index is read-only and excluded from relocation and cleanup plans.
+
+The launch resolver accepts a provider, optional session ID, project path, prompt, model, effort and terminal target. IPC resolves session membership from the snapshot and verifies an active connector. Internal PTYs receive executable/argv/cwd directly; external terminals use the same resolved arguments with quoted transport boundaries. Explicit model discovery is cached and does not start a conversation. Unsupported overrides fail without silently selecting another model or provider.
+
+Desktop creation jobs run outside the snapshot mutex. They serialize filesystem creation through the existing process lock, bound output in memory, and fence mutations and stale snapshots from start through completion, failure or cancellation. Generator cancellation signals only its owned process group and reaps it before shutdown. Failed scaffolds stay on disk. Metadata, Git initialization and optional agent launch follow successful generation. Retrying a failed agent launch never repeats creation or remote operations.
+
+Fresh configuration has no roots or connectors. Explicit empty roots survive save and Undo. Root identity records distinguish missing project paths from unavailable/replaced selected roots. Orphan proposals capture source fingerprints; applying one rechecks the proposal, confirmed project absence, protected paths, symlinks and active writers under the mutation lock. Quarantine remains the compatible default; Trash requires an explicit recovery choice and does not advertise Laci Undo.

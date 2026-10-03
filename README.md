@@ -78,7 +78,7 @@ laci finds cleanups and shows exactly which files each one touches before anythi
 - **Finish half-done moves**: session folders that were renamed while the logs inside still record the old path.
 - **Free space** from `node_modules` and build output in dormant or archived projects.
 - **Duplicates**: the same repo cloned in two places.
-- **Quarantine** sessions whose folder no longer exists.
+- **Quarantine** sessions whose folder is confirmed missing, or explicitly move the selected history to **system Trash**. Offline, unscanned and ambiguous locations block cleanup. Laci rechecks sources, reconnection and running writers when you apply it.
 - **Archive** projects nobody has touched in a while.
 
 ![Tidy up: suggestions grouped by kind, each listing the files it will change](docs/screenshots/tidy.png)
@@ -105,17 +105,23 @@ Undoing a deleted to-do requires its `.laci.md` to remain unchanged after deleti
 
 ### Agent history and connectors
 
-A connector tells laci where an AI tool keeps its history, so it shows on the right project and travels with it. Claude Code, Codex, Gemini CLI, Claude plans, Serena and Aider are built in; laci suggests the ones it finds on your machine. Any other tool can be added with a short form, no code: its logs record the folder, it keeps one folder per project, it keeps history inside the project, or its files mention project paths.
+A connector tells laci where an AI tool keeps its history, so it shows on the right project and travels with it. Claude Code, Codex and Antigravity are offered as built-ins, enabled only when you select them. Previously configured integrations and custom stores remain readable; adding a built-in does not duplicate an existing store. Any other tool can be added with a short form, no code: its logs record the folder, it keeps one folder per project, it keeps history inside the project, or its files mention project paths.
+
+Codex titles use its title index, then a bounded first user message, then a short session ID. Child sessions appear under their parent. Home sessions stay global and can be inspected and resumed without a matched project. Antigravity uses `agy` and its last-conversation index; it does not expose full titles or resumability for history-only records. Laci does not edit provider title/model settings.
 
 ![Agent history: connected tools, sessions per project, and history whose folder is gone](docs/screenshots/agents.png)
 
 ### New project
 
-<kbd>+</kbd> in the sidebar makes a project folder: empty, from a template in `~/.config/laci/templates`, or cloned from a URL. laci starts git with a first commit, writes a `.laci.md`, and can create a private repo on GitHub, GitLab or both (with `gh` and `glab`), set up so one `git push` updates both.
+<kbd>+</kbd> in the sidebar creates an empty project, copies a local template, clones a URL, or runs a generator recipe. Templates can live in `~/.config/laci/templates` or a folder you reference in the form. Vite is the initial generator preset; you can save custom recipes as a program and argument list.
+
+Preview a generator before starting. The preview shows its command, runtime and download requirement. Generation runs in the background with bounded output, a cancellation control and a 15-minute timeout. A failure keeps the partial folder for inspection. Laci writes project metadata and initializes Git after successful scaffolding. Remote creation remains optional. The form also lets you include only the new folder in scan locations.
+
+Agent launch is an optional continuation for any source. Choose a connected provider, prompt, terminal target and supported model/effort overrides. Default omits override flags and uses provider settings. Load models on demand; unavailable discovery keeps Default usable. If launching fails, retry it without creating or pushing the project again.
 
 ### Built-in terminal
 
-Press <kbd>F4</kbd> for a terminal panel with real shells, one tab per project, each opened in the project's folder. *Resume session* runs `claude --resume <id>` there, and script buttons run `pnpm dev` and the like. Fix buttons type the command but wait for you to press Enter. Tabs survive a window reload.
+Press <kbd>F4</kbd> for a terminal panel with real shells, one tab per project, each opened in the project's folder. *Resume session* uses the selected provider and session ID with an explicit project directory. Script buttons run `pnpm dev` and the like. Fix buttons show a command and wait for Enter. The inspector's Terminal control opens a shell in the selected folder (or a file's containing folder); its compact target menu overrides the Settings default for that launch. Tabs survive a window reload.
 
 Hiding the panel keeps its sessions running. Closing a live tab asks for confirmation because it ends the shell and any running commands, and discards its output. Tabs whose shells have exited close directly.
 
@@ -154,7 +160,7 @@ pnpm build
 
 The packages appear in `target/release/bundle/`. Run `target/release/laci`, or install that binary and its launcher with `sh scripts/install-desktop.sh`.
 
-The first launch asks which folders hold your projects, which AI tools you use, and which editor, file manager and terminal to open things with. You can change these in Settings. Your existing v1 config is read directly; no import is needed. Journals, backups, activity and `.laci.md` keep their v1 formats.
+A fresh install starts with no selected folders or connectors, and does not discover repositories under Home automatically. An empty scan selection is valid. Settings can suggest folders on request; unavailable drives remain listed. The first launch asks which folders hold your projects, which AI tools you use, and which editor, file manager and terminal to open things with. You can change these in Settings. Your existing v1 config is read directly; no import is needed. Journals, backups, activity and `.laci.md` keep their v1 formats.
 
 The app opens with its cached scan while checking for changes. Fonts are bundled locally. The desktop, CLI and MCP server share the Rust engine; installed builds run without Node or Electron.
 
@@ -171,7 +177,7 @@ The app opens with its cached scan while checking for changes. Fonts are bundled
 | <kbd>Backspace</kbd> | Go up one folder |
 | <kbd>Esc</kbd> | Close the details panel, a menu or a dialog |
 
-Escape closes one active layer at a time. While a dialog is open, Tab stays inside it, and the palette and terminal shortcuts are inactive. F4 also works while typing in the terminal; it stays blocked while the command palette is open.
+Escape closes one active layer at a time. A dropdown closes first; a form asks whether to keep editing or discard its draft. While a dialog is open, Tab stays inside it, and the palette and terminal shortcuts are inactive. F4 also works while typing in the terminal; it stays blocked while the command palette is open.
 
 In the details panel, click **Status**, **Priority** or **Deadline** to change them. They are saved to the project's [`.laci.md`](#the-lacimd-file). **Editor** and the file manager button open the apps you picked in Settings. The theme switch (system, light, dark) is at the bottom of the sidebar.
 
@@ -275,7 +281,7 @@ laci adds `.laci.md` to the repo's `.git/info/exclude` (not `.gitignore`), so it
 | New project | Makes the folder; creates a remote repo only if you pick one |
 
 - **Undo.** Every move and rewrite is written to `~/.local/share/laci/journal/` *before* it happens. Rewritten files are kept in `~/.local/share/laci/backup/`. Undo restores them byte for byte. If a step fails midway, laci rolls back what it already did.
-- **Archive and trash recovery.** Undoing an archive restores the saved `.laci.md` in full and can replace edits made while archived. Recover trashed dependencies from the system trash; journal Undo does not restore them.
+- **Archive and trash recovery.** Undoing an archive restores the saved `.laci.md` in full and can replace edits made while archived. Recover trashed dependencies or orphan history from system Trash; journal Undo does not restore them. Pure Trash actions have no Laci Undo. Mixed actions explain which moves or edits Undo can restore.
 - **Log.** Every change is also listed in `~/.local/share/laci/activity.jsonl`, which the Log page reads. Undo from the Log goes through the same checks as the app, and stays inside home or explicitly selected workspace folders.
 - **Busy folders are refused.** If a running process (a `claude` session, a dev server) has its working directory inside a folder, laci won't move it.
 - **One change at a time.** A lock file keeps the app and agents from changing files at once.
@@ -287,7 +293,10 @@ Settings are saved in `~/.config/laci/config.json` (or under `$XDG_CONFIG_HOME`)
 
 | Key | |
 | --- | --- |
-| `roots` | Selected project folders, including mounted drives |
+| `roots` | Selected project folders, including mounted drives; `[]` leaves this selection empty (a configured archive is scanned separately) |
+| `terminalTarget` | `internal` (default) or `external` for shell and agent launches |
+| `templatePaths` | Local template folders referenced from New project |
+| `recipes` | User-saved generator programs, argument arrays and prerequisite/download declarations |
 | `archiveDir` | Default archive folder; empty or absent uses the nearest `_archive/` folder |
 | `presets` | Built-in connectors you added |
 | `custom` | Connectors you described yourself |
@@ -341,10 +350,9 @@ LACI_HOME=/tmp/laci-demo pnpm dev
 
 ## Roadmap
 
-- Manage agent sessions from laci
+- Broader live agent orchestration
 - File operations in the browser: copy, rename, individual-file delete, preview
 - Search across agent sessions ("when did I talk about Midtrans?")
-- Summaries written by an agent for projects without a README
 - Windows
 
 ## FAQ
@@ -362,7 +370,7 @@ laci reads every agent log once to see which folder each belongs to. After that 
 Normally no. laci watches for changes and updates by itself. A full scan is there in case something looks off.
 
 **Does it send my code anywhere?**
-No. Everything stays on your machine.
+Scanning stays local. If you launch an agent, clone a repository, create a remote or run a generator that downloads packages, that tool uses its own network connection and settings.
 
 ## License
 

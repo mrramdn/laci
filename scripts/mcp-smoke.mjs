@@ -107,7 +107,7 @@ try {
   client.notify('notifications/initialized');
   const catalog = await client.request('tools/list');
   assert.deepEqual(catalog.tools.map(tool => tool.name).sort(), [
-    'add_next_step', 'apply_suggestion', 'archive_project', 'complete_task', 'create_project', 'list_projects',
+    'add_next_step', 'apply_suggestion', 'archive_project', 'complete_task', 'create_project', 'delete_project', 'list_projects',
     'move_project', 'needs_attention', 'project_details', 'recent_changes', 'set_project_fields', 'tidy_suggestions',
     'undo_change', 'write_notes',
   ]);
@@ -190,6 +190,22 @@ try {
   assert.equal((await client.call('project_details', { project })).agentItems.find(item => item.connector === 'codex').cwd, project);
   checks++;
 
+  const deletionPlan = await client.call('delete_project', { project });
+  assert.equal(deletionPlan.plan.allowed, false);
+  assert.equal(await exists(project), true);
+  await client.rejects('delete_project', { project, confirm: true }, /standalone Git/i);
+  checks++;
+
+  const customArchive = path.join(home, 'project', '_archive', 'custom-alpha');
+  const customPlan = await client.call('archive_project', { project, destination: customArchive });
+  assert.equal(customPlan.destination, customArchive);
+  assert.equal(await exists(project), true);
+  const customApplied = await client.call('archive_project', { project, destination: customArchive, confirm: true });
+  assert.equal(await exists(customArchive), true);
+  await client.call('undo_change', { id: customApplied.journal.id });
+  assert.deepEqual(await readFile(path.join(project, '.laci.md')), beforeSidecar);
+  checks++;
+
   const archivePlan = await client.call('archive_project', { project });
   assert.equal(archivePlan.destination, path.join(home, 'project', '_archive', 'alpha'));
   assert.equal(await exists(project), true);
@@ -223,7 +239,7 @@ try {
   assert.equal((await client.call('project_details', { project })).meta.status, 'paused', 'A bad field must not partially apply preceding valid fields');
   await client.rejects('write_notes', { project, notes: 'no', mode: 'overwrite' }, /Invalid mode|enum/i);
   await client.rejects('move_project', { project, destination: '~/project/nope', confirm: 'yes' }, /Invalid confirm|boolean/i);
-  await client.rejects('move_project', { project, destination: '/tmp/laci-outside-home' }, /inside your home/i);
+  await client.rejects('move_project', { project, destination: '/tmp/laci-outside-home' }, /inside home|selected workspace/i);
   await client.rejects('create_project', { parent: '~/project', name: '../escape', confirm: true }, /Name:/i);
   await client.rejects('add_next_step', { project, text: 'x'.repeat(301) }, /length|maxLength|300/i);
   await client.rejects('complete_task', { project, text: 'does-not-match' }, /No checkbox matches/i);
@@ -240,7 +256,7 @@ try {
   const [code, signal] = await exit;
   clearTimeout(timer);
   assert.equal(code, 0, `MCP must exit cleanly after stdin closes (${signal || code}): ${stderr}`);
-  console.log(`MCP smoke passed: 14 tools, ${checks} checks, isolated plan/confirm, history move/undo, and validation.`);
+  console.log(`MCP smoke passed: 15 tools, ${checks} checks, isolated plan/confirm, history move/undo, and validation.`);
 } finally {
   if (child && child.exitCode === null && child.signalCode === null) {
     child.kill('SIGTERM');

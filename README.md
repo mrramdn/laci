@@ -11,7 +11,7 @@ laci shows every folder like a file manager, and for each project it adds its gi
   <img alt="The Today view: work that could be lost, projects to pick up again, and open to-dos" src="docs/screenshots/today-light.png">
 </picture>
 
-> Status: v2 development, Linux only. Rust + Tauri 2, with a React interface. See the [changelog](CHANGELOG.md).
+> Status: 2.0.0-rc.1, Linux x86-64 release candidate. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
 
 ## Contents
 
@@ -83,11 +83,17 @@ laci finds cleanups and shows exactly which files each one touches before anythi
 
 ![Tidy up: suggestions grouped by kind, each listing the files it will change](docs/screenshots/tidy.png)
 
+Apply finishes when the filesystem change is saved; the view refreshes in the background. While history is being refreshed, further history-changing actions wait and old Tidy suggestions are cleared. Navigation and project metadata edits remain available. If the refresh fails, laci reports that the change was saved and asks you to scan again; it retains the Undo action.
+
 ### Archive and move, with the history attached
 
-Archiving moves a project into the nearest `_archive/` folder. laci also moves its agent history (Claude's session folder, and whatever else your connectors keep), rewrites the folder paths in the logs, and marks the project archived. Everything goes into an undo journal first.
+Choose a default archive folder in Settings, including a folder on a mounted drive. Leave it empty to use the nearest `_archive/` folder. The Archive dialog lets you choose a different final project path and previews that exact destination. Custom destinations outside the scan roots stay discoverable; their scan-root addition is included in the move journal. laci also moves its agent history (Claude's session folder, and whatever else your connectors keep), rewrites the folder paths in the logs, and marks the project archived. Everything goes into an undo journal first.
 
 ![The archive dialog: warnings first, then every change it will make](docs/screenshots/archive.png)
+
+**Move to Trash** is available on individual projects and beside dormant-project Archive suggestions in Tidy. It requires a clean Git project with no untracked files, stashes, submodules or linked worktrees, and no process using the folder. Laci contacts the preferred remote (`origin` first) and requires HEAD and local branches, tags and other non-remote refs to match a currently advertised branch or tag tip. It repeats local checks after the remote answers and before moving the folder. Unreachable remotes and unverified refs block removal; an older branch tip can be blocked even if its commits are on the remote. Local backup paths must be outside the project; file URLs are refused.
+
+The whole folder, including ignored files, moves to system Trash. Ignored files are not backed up by Git. Restore the project through your file manager; there is no Log Undo for this action. Agent history stored outside the project stays intact and can appear detached until the folder is restored. If the filesystem does not support system Trash, removal fails and the folder remains in place; choose Archive instead.
 
 ### Log
 
@@ -204,10 +210,10 @@ Then ask your agent things like *"which projects could lose work?"*, *"archive d
 | `tidy_suggestions` | The Tidy up list |
 | `set_project_fields` | Status, priority, deadline |
 | `add_next_step`, `complete_task`, `write_notes` | Edit to-dos and notes |
-| `move_project`, `archive_project`, `apply_suggestion`, `create_project` | Changes on disk. Two calls: the first returns the plan, the second (with `confirm: true`) runs it |
+| `move_project`, `archive_project`, `delete_project`, `apply_suggestion`, `create_project` | Changes on disk. Two calls: the first returns the plan, the second (with `confirm: true`) runs it |
 | `recent_changes`, `undo_change` | The Log, and undo |
 
-Moves and new projects must stay inside your home folder, and only one laci process (the app or an agent) changes files at a time.
+Moves and new projects must stay inside home or a scan/archive folder explicitly selected in Settings, and only one laci process (the app or an agent) changes files at a time.
 
 ## How it works
 
@@ -230,7 +236,7 @@ flowchart LR
 - **Reading each project.** It reads the git state (commits, remote, branch, uncommitted, unpushed, stashes and weekly activity), the README (title, summary, links), the stack from package files, and to-dos from `.laci.md`, `HANDOFF*.md`, `TODO*.md`, `NOTES*.md` and `tasks/todo.md`.
 - **Linking agent history.** Each connector says how its tool links history to a folder. Claude Code names its session folders after the path with every non-alphanumeric character turned into `-`, so the name can't be decoded back; laci walks the real filesystem to find the folder a name belongs to. Codex logs are linked by the `cwd` inside them, Gemini CLI by a hash of the path, and Claude plans by the paths they mention. What laci learns from each log is cached, and a growing log is read from where the last read stopped.
 - **Staying current.** After a scan, laci watches the folders where projects live, the files and git state of each project, the agent log folders and the folders open in the app. It then re-reads only what changed: one project, the agent logs, or (when folders appear or disappear) a full scan.
-- **Status.** Status is set automatically from the last activity (commit, file change or agent session): *active* within 14 days, *idle* within 60, *dormant* after that, and *archived* inside an `_archive` folder. Set it by hand to override. Editing `.laci.md` doesn't count as activity.
+- **Status.** Status is set automatically from the last activity (commit, file change or agent session): *active* within 14 days, *idle* within 60, *dormant* after that, and *archived* inside an archive folder or after an explicit archive action. Set it by hand to override. Editing `.laci.md` doesn't count as activity.
 - **Former locations.** When a session folder resolves to a real folder but its sessions *started* somewhere that no longer exists, that old path is a former location. This is how laci spots half-done moves and renames, such as a repo renamed from `shop-old` to `shop`.
 
 ## The `.laci.md` file
@@ -270,18 +276,19 @@ laci adds `.laci.md` to the repo's `.git/info/exclude` (not `.gitignore`), so it
 
 - **Undo.** Every move and rewrite is written to `~/.local/share/laci/journal/` *before* it happens. Rewritten files are kept in `~/.local/share/laci/backup/`. Undo restores them byte for byte. If a step fails midway, laci rolls back what it already did.
 - **Archive and trash recovery.** Undoing an archive restores the saved `.laci.md` in full and can replace edits made while archived. Recover trashed dependencies from the system trash; journal Undo does not restore them.
-- **Log.** Every change is also listed in `~/.local/share/laci/activity.jsonl`, which the Log page reads. Undo from the Log goes through the same checks as the app, and never reaches outside your home folder.
+- **Log.** Every change is also listed in `~/.local/share/laci/activity.jsonl`, which the Log page reads. Undo from the Log goes through the same checks as the app, and stays inside home or explicitly selected workspace folders.
 - **Busy folders are refused.** If a running process (a `claude` session, a dev server) has a folder open, laci won't move it.
 - **One change at a time.** A lock file keeps the app and agents from changing files at once.
 - **Local only.** The React interface uses Tauri IPC, with no local HTTP server. Fonts are bundled. Rendered Markdown is sanitized, and only scanned project folders can serve local README images. There is no telemetry.
 
 ## Configuration
 
-Settings are saved in `~/.config/laci/config.json` (or under `$XDG_CONFIG_HOME`). Paths are stored as `~/…`.
+Settings are saved in `~/.config/laci/config.json` (or under `$XDG_CONFIG_HOME`). Home paths use `~/…`; selected folders on other disks use absolute paths. Add the mounted folder path in Settings to scan that disk. Project operations stay inside home or explicitly selected scan/archive folders and reject symlink escapes.
 
 | Key | |
 | --- | --- |
-| `roots` | Folders laci looks for projects in |
+| `roots` | Selected project folders, including mounted drives |
+| `archiveDir` | Default archive folder; empty or absent uses the nearest `_archive/` folder |
 | `presets` | Built-in connectors you added |
 | `custom` | Connectors you described yourself |
 | `apps` | `terminal`, `editor` and `files`: the programs laci opens things with |
@@ -335,7 +342,7 @@ LACI_HOME=/tmp/laci-demo pnpm dev
 ## Roadmap
 
 - Manage agent sessions from laci
-- File operations in the browser: copy, rename, delete, preview
+- File operations in the browser: copy, rename, individual-file delete, preview
 - Search across agent sessions ("when did I talk about Midtrans?")
 - Summaries written by an agent for projects without a README
 - Windows

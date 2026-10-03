@@ -41,7 +41,11 @@ The smoke harness drives WebKitWebDriver through `tauri-driver` on port 4444. In
 
 For focused keyboard regression checks, use a fresh demo home and run `LACI_HOME=/tmp/laci-demo LACI_KEYBOARD_ONLY=1 node scripts/desktop-smoke.mjs target/debug/laci`. The full harness includes the same checks: real keyboard shortcuts in dialogs and xterm, Enter on row buttons, connector focus and Tab containment, and terminal close confirmation. The terminal check starts a disposable shell and `sleep` process; Cancel and Escape must preserve both process identities, and confirmation must stop both. It also checks that a shell exiting with code zero closes without a prompt.
 
-Use a disposable demo home when testing move, archive, undo or new-project flows. `LACI_HOME` isolates laci's files without changing the caller's `HOME`. Never replace the real home folder while running package managers or Rust tools.
+Use a disposable demo home when testing move, archive, Trash, undo or new-project flows. For native Trash checks, create the fixture on the same filesystem as the caller's real home and set `XDG_DATA_HOME` to that demo home’s `.local/share` so system Trash stays isolated. `LACI_HOME` isolates laci's files without changing the caller's `HOME`. Never replace the real home folder while running package managers or Rust tools.
+
+The watcher and full suites include Tidy orphan quarantine, a double Apply click, and Undo with exact session bytes and modification time preserved. Rust regressions hold a background scan open while committing a mutation, reject stale scan results, coalesce repeated agent events, and retain the history guard after a failed refresh. This covers the long Applying changes wait and scan churn without relying on timing thresholds from a small demo.
+
+Run `node scripts/ui-state-smoke.mjs` for reordered refresh/status/mutation replies and duplicate-submit regression coverage. The full desktop suite also checks external scan roots, Settings archive defaults, edited archive destinations with Undo, and Trash rejection when local work appears after preview. `LACI_MODULAR_ONLY=1` runs those modular-action checks alone. Git remotes in these tests are disposable local bare repositories, not live GitHub proof.
 
 ## Demo scan benchmarks
 
@@ -72,6 +76,8 @@ Cold runs clear laci's caches, without flushing the operating system's page cach
 ## Packages
 
 `pnpm build` bundles AppImage, Debian and RPM packages in `target/release/bundle/`. Inspect and run the packages before distributing them. Building packages does not publish a release. The CI workflow validates source and uploads local build artifacts.
+
+Run `node scripts/package-smoke.mjs` after building. It extracts all three archives, checks version, embedded UI assets, build identity, launcher and icons, then exercises isolated CLI and MCP operations. Pass an output directory as the first argument to retain extracted packages for native testing. Extraction and execution do not verify package-manager installation. Local packages depend on the build host's libraries; use the Ubuntu CI artifacts for the distribution baseline.
 
 Linux bundles depend on the build host's system libraries. CI builds on Ubuntu 24.04; use the oldest Linux distribution you support when building packages for distribution.
 

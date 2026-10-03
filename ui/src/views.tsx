@@ -22,7 +22,6 @@ import {
   changed,
   toggleExpanded,
   refreshLog,
-  toast,
 } from "./store";
 import {
   agentCount,
@@ -141,14 +140,21 @@ export function Sidebar() {
         <button
           className="sb-item"
           onClick={rescan}
-          title={`laci watches your folders and updates by itself. Last full scan ${new Date(snapshot.scannedAt).toLocaleTimeString("en-GB")}. Click to scan everything again.`}
+          title={s.error ||
+            `laci watches your folders and updates by itself. Last full scan ${new Date(snapshot.scannedAt).toLocaleTimeString("en-GB")}. Click to scan everything again.`}
         >
-          {s.busy ? (
+          {!s.error && (s.busy || s.historyPending) ? (
             <span className="spin sm" />
           ) : (
             <span className="live-dot" />
           )}
-          <span>{s.busy ? "Updating…" : "Up to date"}</span>
+          <span>
+            {s.error
+              ? "Scan failed"
+              : s.busy || s.historyPending
+                ? "Updating…"
+                : "Up to date"}
+          </span>
         </button>
         <div className="sb-row">
           <button
@@ -1078,8 +1084,8 @@ export function Tidy() {
         </span>
         <span className="grow" />
         <span className="muted" style={{ fontSize: 12 }}>
-          Every change is listed before anything moves, and can be undone from
-          the Log
+          Review changes before applying. Undo journaled changes in Log; restore
+          deleted projects from Trash.
         </span>
       </div>
       <div className="filterbar">
@@ -1133,6 +1139,7 @@ export function Tidy() {
                 .map((p) => (
                   <div
                     className="prop-row"
+                    data-id={p.id}
                     key={p.id}
                     data-open={!!s.expanded[p.id]}
                   >
@@ -1168,7 +1175,14 @@ export function Tidy() {
                           {p.action ? (
                             <button
                               className="btn sm primary"
-                              onClick={() =>
+                              disabled={s.historyPending}
+                              onClick={() => {
+                                if (p.action?.type === "archive") {
+                                  useApp.setState({
+                                    modal: { kind: "archive", id: p.action.nodeId },
+                                  });
+                                  return;
+                                }
                                 void run(
                                   async () =>
                                     changed(
@@ -1176,10 +1190,13 @@ export function Tidy() {
                                       "Changes applied",
                                     ),
                                   "Applying changes…",
-                                )
-                              }
+                                  { history: true },
+                                );
+                              }}
                             >
-                              Apply {plural(p.ops.length, "change")}
+                              {p.action.type === "archive"
+                                ? "Archive…"
+                                : `Apply ${plural(p.ops.length, "change")}`}
                             </button>
                           ) : (
                             <span className="muted" style={{ fontSize: 12 }}>
@@ -1187,6 +1204,19 @@ export function Tidy() {
                               decide which one to keep.
                             </span>
                           )}
+                          {p.action?.type === "archive" && p.nodeId ? (
+                            <button
+                              className="btn sm"
+                              disabled={s.historyPending}
+                              onClick={() =>
+                                useApp.setState({
+                                  modal: { kind: "delete", id: p.nodeId! },
+                                })
+                              }
+                            >
+                              Move to Trash…
+                            </button>
+                          ) : null}
                           {p.nodeId && snapshot.nodes[p.nodeId] ? (
                             <>
                               <span className="grow" />
@@ -1209,7 +1239,9 @@ export function Tidy() {
           (key) =>
             counts[key] && (s.tidyFilter === "all" || s.tidyFilter === key),
         ) ? (
-          <div className="empty">Nothing to tidy here.</div>
+          <div className="empty">
+            {s.historyPending ? "Updating…" : "Nothing to tidy here."}
+          </div>
         ) : null}
       </div>
     </>
@@ -1280,21 +1312,10 @@ export function AgentsView() {
   ];
   const addPreset = (id: string) =>
     void run(async () => {
-      s.load(await api<Snapshot>("connector/add", { preset: id }));
-      toastAdded(id);
-    }, "Adding connector…");
-  const toastAdded = (id: string) => {
-    const c = useApp.getState().snapshot?.connectors.find((c) => c.id === id);
-    if (c) {
-      toast(
-        `Added ${c.name}`,
-        c.present
-          ? `${bytes(c.bytes)} of history in ${c.where}`
-          : `Nothing at ${c.where} yet. It shows up once the tool writes there.`,
-      );
-      void refreshLog();
-    }
-  };
+      const change = await api<Change>("connector/add", { preset: id });
+      const name = snapshot.suggestions.find((c) => c.id === id)?.name ?? "connector";
+      changed(change, `Added ${name}`);
+    }, "Adding connector…", { history: true });
   const globalDirs = snapshot.global.claude.flatMap((id) =>
     snapshot.claude[id] ? [snapshot.claude[id]] : [],
   );
@@ -1331,7 +1352,11 @@ export function AgentsView() {
                   projects and moves with them.
                 </p>
               </div>
-              <button className="btn sm" onClick={() => addPreset(x.id)}>
+              <button
+                className="btn sm"
+                disabled={s.historyPending}
+                onClick={() => addPreset(x.id)}
+              >
                 Add {x.name}
               </button>
             </div>
@@ -1361,17 +1386,15 @@ export function AgentsView() {
                   <span className="grow" />
                   <button
                     className="btn sm ghost"
+                    disabled={s.historyPending}
                     onClick={() =>
                       void run(async () => {
-                        s.load(
-                          await api<Snapshot>("connector/remove", { id: c.id }),
-                        );
-                        toast(
+                        changed(
+                          await api<Change>("connector/remove", { id: c.id }),
                           `Removed ${c.name}`,
                           "Its files stay where they are, but laci no longer shows them or moves them with projects.",
                         );
-                        void refreshLog();
-                      })
+                      }, "Removing connector…", { history: true })
                     }
                   >
                     Remove
@@ -1381,6 +1404,7 @@ export function AgentsView() {
             ))}
             <button
               className="stat add"
+              disabled={s.historyPending}
               onClick={() => useApp.setState({ modal: { kind: "connector" } })}
             >
               <Icon name="plus" />
@@ -1398,6 +1422,7 @@ export function AgentsView() {
             </p>
             <button
               className="btn primary"
+              disabled={s.historyPending}
               onClick={() => useApp.setState({ modal: { kind: "connector" } })}
             >
               <Icon name="plus" className="sm" />
@@ -1713,6 +1738,7 @@ export function LogView() {
                         {entry.canUndo ? (
                           <button
                             className="btn sm act"
+                            disabled={s.historyPending}
                             onClick={(e) => {
                               e.stopPropagation();
                               void run(async () => {
@@ -1722,8 +1748,7 @@ export function LogView() {
                                   }),
                                   "Undone",
                                 );
-                                await refreshLog();
-                              }, "Undoing…");
+                              }, "Undoing…", { history: true });
                             }}
                           >
                             <Icon name="undo" className="sm" />

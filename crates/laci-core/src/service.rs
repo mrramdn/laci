@@ -2,7 +2,7 @@
 use crate::{Result, activity, agents, config, create, env::Env, files, ops, paths, readers, scan, sidecar};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     fs,
     path::Path,
     process::{Command, Stdio},
@@ -17,6 +17,96 @@ pub fn array(value: &Value) -> Vec<Value> {
 }
 pub fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+/// Work needed after a committed action. Full scans subsume the narrower refreshes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Refresh {
+    pub full: bool,
+    pub agents: bool,
+    pub projects: BTreeSet<String>,
+    pub watches: bool,
+}
+impl Refresh {
+    pub fn full() -> Self {
+        Self { full: true, watches: true, ..Self::default() }
+    }
+    pub fn agents() -> Self {
+        Self { agents: true, ..Self::default() }
+    }
+    pub fn needed(&self) -> bool {
+        self.full || self.agents || !self.projects.is_empty() || self.watches
+    }
+    pub fn merge(&mut self, other: Self) {
+        self.full |= other.full;
+        self.agents |= other.agents;
+        self.watches |= other.watches;
+        self.projects.extend(other.projects);
+        if self.full {
+            self.agents = false;
+            self.projects.clear();
+        }
+    }
+    /// Returns the refreshed snapshot and whether discovery changed its project graph.
+    pub fn read(&self, env: &Env, current: Option<Value>) -> Result<(Value, bool)> {
+        let Some(mut snapshot) = current.filter(|_| !self.full) else {
+            return scan::scan(env).map(|s| (s, true));
+        };
+        let mut topology = false;
+        if self.agents {
+            topology = scan::refresh_agents(env, &mut snapshot)?;
+        }
+        if !topology {
+            for id in &self.projects {
+                if snapshot["nodes"].get(id).is_some() {
+                    scan::refresh(env, &mut snapshot, id)?;
+                }
+            }
+        }
+        Ok((snapshot, topology))
+    }
+}
+
+#[derive(Debug)]
+pub struct RequestOutcome {
+    pub value: Value,
+    pub refresh: Refresh,
+}
+
+pub fn mutates(name: &str) -> bool {
+    matches!(
+        name,
+        "meta"
+            | "todo"
+            | "notes"
+            | "archive"
+            | "delete"
+            | "move"
+            | "apply"
+            | "undo"
+            | "log/undo"
+            | "theme"
+            | "setup/save"
+            | "new"
+            | "connector/add"
+            | "connector/remove"
+    )
+}
+
+pub fn changes_history(name: &str) -> bool {
+    matches!(
+        name,
+        "archive"
+            | "delete"
+            | "move"
+            | "apply"
+            | "undo"
+            | "log/undo"
+            | "setup/save"
+            | "new"
+            | "connector/add"
+            | "connector/remove"
+    )
 }
 
 pub struct Service {
@@ -37,8 +127,7 @@ impl Service {
     }
     pub fn rescan(&mut self) -> Result<Value> {
         let snap = scan::scan(&self.env)?;
-        let cached = json!({"home":self.env.home,"config":config::load(&self.env),"snapshot":snap});
-        let _ = files::replace(&self.env.cache_dir.join("snapshot-v2.json"), cached.to_string().as_bytes());
+        self.cache_snapshot(&snap);
         self.current = Some(snap.clone());
         self.debug(&format!(
             "scanned {} projects in {} ms",
@@ -46,6 +135,10 @@ impl Service {
             snap["tookMs"]
         ));
         Ok(snap)
+    }
+    pub fn cache_snapshot(&self, snapshot: &Value) {
+        let cached = json!({"home":self.env.home,"config":config::load(&self.env),"snapshot":snapshot});
+        let _ = files::replace(&self.env.cache_dir.join("snapshot-v2.json"), cached.to_string().as_bytes());
     }
     pub fn debug(&self, message: &str) {
         use std::io::Write;
@@ -69,7 +162,7 @@ impl Service {
         if let Ok(node) = self.node(id) {
             return Ok(node);
         }
-        let path = paths::home_path(id, &self.env)?;
+        let path = paths::workspace_path(id, &self.env)?;
         if !path.is_dir() {
             return Err("That folder is gone".into());
         }
@@ -77,13 +170,13 @@ impl Service {
     }
     fn refreshed(&mut self, id: &str) -> Result<Value> {
         self.snapshot()?;
-        scan::refresh(&self.env, self.current.as_mut().ok_or("No scan yet")?, id)
+        scan::refresh_tasks(&self.env, self.current.as_mut().ok_or("No scan yet")?, id)
     }
     fn editable(&mut self, id: &str) -> Result<(Value, std::path::PathBuf)> {
         let node = self.node(id)?;
-        let dir = paths::home_path(string(&node, "path"), &self.env)?;
+        let dir = paths::workspace_path(string(&node, "path"), &self.env)?;
         if let Some(exclude) = sidecar::exclude_file(&dir) {
-            paths::home_path(&exclude.to_string_lossy(), &self.env)?;
+            paths::workspace_path(&exclude.to_string_lossy(), &self.env)?;
             sidecar::plain_path(&exclude)?;
         }
         Ok((node, dir))
@@ -115,7 +208,7 @@ impl Service {
     fn journaled(&mut self, journal: Value, path: Option<&str>, by: &str) -> Result<Value> {
         let entry = json!({"by":by,"title":journal["title"],"path":path,"journal":journal["id"],"undo":{"type":"journal","id":journal["id"]}});
         activity::record(&self.env, entry);
-        Ok(json!({"journal":journal,"snapshot":self.rescan()?}))
+        Ok(json!({"journal":journal}))
     }
     pub fn apps(&self) -> Value {
         let c = config::load(&self.env);
@@ -138,6 +231,57 @@ impl Service {
         self.request_as(name, b, "app")
     }
     pub fn request_as(&mut self, name: &str, b: &Value, by: &str) -> Result<Value> {
+        let mut outcome = self.execute(name, b, by)?;
+        if outcome.refresh.needed() {
+            match outcome.refresh.read(&self.env, self.current.clone()) {
+                Ok((snapshot, _)) => {
+                    self.cache_snapshot(&snapshot);
+                    self.current = Some(snapshot.clone());
+                    if matches!(name, "setup/save" | "connector/add" | "connector/remove") {
+                        return Ok(snapshot);
+                    }
+                    outcome.value["snapshot"] = snapshot;
+                }
+                Err(error) => {
+                    // The disk transaction already succeeded; callers must not retry it as a failed action.
+                    self.debug(&format!("{name} saved; refresh failed: {error}"));
+                    let mut warnings = array(&outcome.value["warnings"]);
+                    warnings.push(json!(format!("Changes saved, but the view could not refresh: {error}")));
+                    outcome.value["warnings"] = json!(warnings);
+                }
+            }
+        }
+        Ok(outcome.value)
+    }
+    /// Executes the action without waiting for a scan. Desktop refreshes run outside its service lock.
+    pub fn execute(&mut self, name: &str, b: &Value, by: &str) -> Result<RequestOutcome> {
+        let apply_kind = if name == "apply" {
+            self.snapshot()?["proposals"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|p| p["id"] == b["id"])
+                .map(|p| string(&p["action"], "type").to_owned())
+        } else {
+            None
+        };
+        let value = self.execute_action(name, b, by)?;
+        let refresh = match name {
+            "archive" | "delete" | "move" | "undo" | "log/undo" | "setup/save" | "new" => Refresh::full(),
+            "connector/add" | "connector/remove" => Refresh { watches: true, ..Refresh::agents() },
+            "apply" if matches!(apply_kind.as_deref(), Some("archive" | "trash")) => Refresh::full(),
+            "apply" => Refresh { watches: true, ..Refresh::agents() },
+            _ => Refresh::default(),
+        };
+        if changes_history(name)
+            && let Some(snapshot) = self.current.as_mut()
+        {
+            // Grouped proposals can share history files; none remain valid until history is linked again.
+            snapshot["proposals"] = json!([]);
+        }
+        Ok(RequestOutcome { value, refresh })
+    }
+    fn execute_action(&mut self, name: &str, b: &Value, by: &str) -> Result<Value> {
         let id = string(b, "id");
         match name {
             "snapshot" => self.snapshot(),
@@ -172,7 +316,7 @@ impl Service {
                     if file != ".laci.md" && !array(&node["taskFiles"]).iter().any(|f| f["file"] == file) {
                         return Err("Unknown task file".into());
                     }
-                    let checked = paths::home_path(&task_path.to_string_lossy(), &self.env)?;
+                    let checked = paths::workspace_path(&task_path.to_string_lossy(), &self.env)?;
                     if !checked.starts_with(&dir) {
                         return Err("Task file must stay inside the project".into());
                     }
@@ -263,9 +407,35 @@ impl Service {
                 }
                 self.refreshed(id)
             }
+            "archive/plan" => {
+                let snap = self.snapshot()?;
+                scan::archive_plan(&self.env, &snap, id, b["destination"].as_str())
+            }
+            "delete/plan" => {
+                let node = self.node(id)?;
+                crate::deletion::plan(&self.env, &node)
+            }
+            "delete" => {
+                if b["confirm"] != true {
+                    return Err("Review the removal plan and confirm before moving to Trash".into());
+                }
+                let node = self.node(id)?;
+                crate::deletion::trash(&self.env, &node)?;
+                activity::record(
+                    &self.env,
+                    json!({"by":by,"title":format!("Moved {} to system Trash",string(&node,"name")),"path":node["path"],"detail":"Restore through your file manager. External agent history was preserved."}),
+                );
+                Ok(json!({}))
+            }
             "archive" => {
                 let snap = self.snapshot()?;
-                let j = ops::archive_project(&self.env, &snap, id, b["trashHeavy"].as_bool().unwrap_or(false))?;
+                let j = ops::archive_project_to(
+                    &self.env,
+                    &snap,
+                    id,
+                    b["destination"].as_str(),
+                    b["trashHeavy"].as_bool().unwrap_or(false),
+                )?;
                 self.journaled(j, Some(id), by)
             }
             "move" => {
@@ -290,14 +460,14 @@ impl Service {
                     &self.env,
                     json!({"by":by,"title":format!("Undid: {}",string(&j,"title")),"undoes":entry.map(|e|e["id"].clone()).unwrap_or_else(||json!(format!("j:{}",string(&j,"id"))))}),
                 );
-                Ok(json!({"journal":j,"snapshot":self.rescan()?}))
+                Ok(json!({"journal":j}))
             }
             "log" => Ok(
                 json!({"entries":activity::read_log(&self.env,300),"file":paths::tilde(&self.env.data_dir.join("laci.log"),&self.env.home)}),
             ),
             "log/undo" => {
                 activity::undo_activity(&self.env, id, by)?;
-                Ok(json!({"snapshot":self.rescan()?}))
+                Ok(json!({}))
             }
             "log/open" => {
                 detach(
@@ -334,6 +504,8 @@ impl Service {
             "setup/save" => {
                 let roots = config::validate_roots(&self.env, &b["roots"])?;
                 let apps = config::validate_apps(&b["apps"])?;
+                let archive_dir =
+                    b.get("archiveDir").map(|v| config::validate_archive_dir(&self.env, v)).transpose()?;
                 let presets = array(&b["presets"]);
                 let catalog = agents::catalog(&self.env);
                 if presets.iter().any(|p| !catalog.iter().any(|c| &c["id"] == p)) {
@@ -341,10 +513,13 @@ impl Service {
                 }
                 ops::with_lock(&self.env, || {
                     let mut c = config::load(&self.env);
-                    let before = json!({"type":"config","roots":c["roots"],"presets":c["presets"],"apps":c["apps"]});
+                    let before = json!({"type":"config","roots":c["roots"],"presets":c["presets"],"apps":c["apps"],"archiveDir":c["archiveDir"]});
                     c["roots"] = roots;
                     c["presets"] = json!(presets);
                     c["apps"] = apps;
+                    if let Some(archive_dir) = archive_dir {
+                        c["archiveDir"] = archive_dir;
+                    }
                     config::save(&self.env, &c)?;
                     activity::record(
                         &self.env,
@@ -352,7 +527,7 @@ impl Service {
                     );
                     Ok(())
                 })?;
-                self.rescan()
+                Ok(json!({}))
             }
             "new/info" => Ok(
                 json!({"templates":create::templates(&self.env),"templatesDir":paths::tilde(&self.env.config_dir.join("templates"),&self.env.home),"hosts":create::hosts()}),
@@ -363,8 +538,6 @@ impl Service {
                     &self.env,
                     json!({"by":by,"title":format!("Created {}",string(b,"name")),"path":r["path"],"detail":r["warnings"]}),
                 );
-                let mut r = r;
-                r["snapshot"] = self.rescan()?;
                 Ok(r)
             }
             "connector/add" | "connector/remove" => {
@@ -438,21 +611,21 @@ impl Service {
                     );
                     Ok(())
                 })?;
-                self.rescan()
+                Ok(json!({}))
             }
             "ls" => {
                 let raw = b["path"].as_str().unwrap_or(self.env.home.to_str().unwrap_or(""));
-                let path = paths::home_path(raw, &self.env)?;
+                let path = paths::workspace_path(raw, &self.env)?;
                 if !path.is_dir() {
                     return Err("That folder doesn't exist anymore".into());
                 }
                 let entries:Vec<_>=files::entries(&path).into_iter().take(5000).map(|e|{let meta=fs::symlink_metadata(e.path()).ok();let link=meta.as_ref().is_some_and(|m|m.is_symlink());
-                    let allowed=paths::home_path(&e.path().to_string_lossy(),&self.env).is_ok();let dir=allowed&&e.path().is_dir();
+                    let allowed=paths::workspace_path(&e.path().to_string_lossy(),&self.env).is_ok();let dir=allowed&&e.path().is_dir();
                     json!({"name":e.file_name().to_string_lossy(),"path":e.path(),"dir":dir,"link":link,"size":meta.map(|m|m.len()),"at":files::modified(&e.path()),"git":dir&&e.path().join(".git").exists()})}).collect();
                 Ok(json!({"path":path,"entries":entries}))
             }
             "ls/newest" => {
-                let path = paths::home_path(string(b, "path"), &self.env)?;
+                let path = paths::workspace_path(string(b, "path"), &self.env)?;
                 let mut out = json!({});
                 for e in files::entries(&path).into_iter().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).take(500)
                 {
@@ -514,7 +687,7 @@ impl Service {
             if picked.is_empty() { array(&snap["roots"]) } else { picked }
         };
         Ok(
-            json!({"configured":c["roots"].is_array(),"roots":roots,"candidates":candidates,"presets":array(&snap["connectors"]).iter().filter(|c|c["builtin"]==true).map(|c|c["id"].clone()).collect::<Vec<_>>(),"custom":array(&c["custom"]).len(),"apps":self.apps(),"installed":installed_apps()}),
+            json!({"configured":c["roots"].is_array(),"roots":roots,"archiveDir":c["archiveDir"].as_str().filter(|s| !s.is_empty()).map(|s| paths::expand(s, &self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"candidates":candidates,"presets":array(&snap["connectors"]).iter().filter(|c|c["builtin"]==true).map(|c|c["id"].clone()).collect::<Vec<_>>(),"custom":array(&c["custom"]).len(),"apps":self.apps(),"installed":installed_apps()}),
         )
     }
     pub fn action(&mut self, node: &Value, what: &str, arg: &str) -> Result<(Option<String>, bool, String)> {
@@ -582,14 +755,14 @@ impl Service {
         let what = string(b, "what");
         let apps = self.apps();
         if what == "default" {
-            let path = paths::home_path(id, &self.env)?;
+            let path = paths::workspace_path(id, &self.env)?;
             if !path.exists() {
                 return Err("That file is gone".into());
             }
             detach("xdg-open", &[path.to_string_lossy().into_owned()], path.parent().unwrap_or(&self.env.home))?;
         } else {
             let node = self.place(id)?;
-            let cwd = paths::home_path(string(&node, "path"), &self.env)?;
+            let cwd = paths::workspace_path(string(&node, "path"), &self.env)?;
             if what == "editor" || what == "files" {
                 detach(string(&apps, what), &[cwd.to_string_lossy().into_owned()], &cwd)?;
             } else {

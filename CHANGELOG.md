@@ -4,15 +4,23 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.0.0-rc.1]
+
+Release candidate for Linux x86-64. The distribution build targets Ubuntu 24.04; the license remains undecided.
+
 ### Changed
 
 - Desktop runtime migrated to Rust and Tauri 2. React preserves the current interface, with local fonts and direct IPC.
-- The desktop, CLI and 14 stdio MCP tools share one Rust engine. Installed builds no longer need Electron or Node.
+- The desktop, CLI and 15 stdio MCP tools share one Rust engine. Installed builds no longer need Electron or Node.
 - Existing config, `.laci.md`, activity logs, move journals and backups are read directly. Move journals can be undone by either v1 or v2.
+- Desktop actions acknowledge committed filesystem changes before refreshing the view. One background worker batches refresh requests and refuses results overtaken by a newer edit.
+- Agent-log changes refresh history without rereading every project's git state, README and size when the detected project graph is unchanged. Watch directories are enumerated when their topology changes.
 
 ### Added
 
 - Linux AppImage, Debian and RPM packaging, native window checks and a CI build workflow.
+- Independent scan locations on mounted drives, a default archive folder in Settings, and per-project archive destination previews.
+- Project removal to system Trash from the inspector, Tidy and the `delete_project` MCP tool. Live remote refs and fresh local Git/process checks gate removal; external agent history stays intact.
 - Cross-process regression checks for metadata/task/notes undo, linked paths, destination collisions and rollback.
 
 ### Fixed
@@ -20,6 +28,10 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 - Dialogs retain drafts and keyboard focus when application shortcuts are pressed; Escape dismisses one layer, and custom connector forms focus their first field.
 - Enter activates a focused row action without also activating its parent row.
 - Closing a live terminal asks for confirmation with Cancel focused. Cancel and Escape keep its processes running; exited terminals close directly.
+- Fixed scanner/config/markdown regexes compile once, avoiding repeated Unicode regex work during refreshes. Streaming status updates no longer starve useful newer snapshots.
+- Tidy's Applying changes overlay no longer waits for a full post-action scan. Duplicate submissions are blocked, and stale history actions wait for a successful refresh.
+- A refresh failure after a committed action appears as a warning and keeps Undo available. An older dialog's completion cannot close a newer dialog.
+- Undo refreshes the Log once; metadata and task changes avoid an unrelated full project scan.
 
 ## [1.0.0] - 2026-09-30
 

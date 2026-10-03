@@ -190,6 +190,13 @@ export interface ArchivePlan {
   ops: Op[];
 }
 
+export interface DeletePlan {
+  allowed: boolean;
+  checks: Issue[];
+  ops: Op[];
+  path: string;
+}
+
 /** What the server runs when a proposal is applied. Recomputed from the scan, never sent by the client. */
 export type Action =
   | {
@@ -226,6 +233,8 @@ export interface Proposal {
 }
 
 export interface Node {
+  revision?: number;
+  historyPending?: boolean;
   id: string;
   kind: "project" | "folder";
   type?: "code" | "docs";
@@ -260,6 +269,8 @@ export interface Node {
 }
 
 export interface Snapshot {
+  revision?: number;
+  historyPending?: boolean;
   scannedAt: string;
   home: string;
   host: string;
@@ -292,6 +303,7 @@ export interface Apps {
 export interface SetupInfo {
   configured: boolean;
   roots: string[];
+  archiveDir?: string;
   candidates: { path: string; repos: number }[];
   presets: string[];
   custom: number;
@@ -341,11 +353,18 @@ export interface ActivityLog {
   error?: string;
 }
 export interface Change {
+  revision?: number;
+  historyPending?: boolean;
   snapshot?: Snapshot;
   node?: Node;
   journal?: { id: string; title: string };
   path?: string;
   warnings?: string[];
+}
+export interface RefreshStatus {
+  busy: boolean;
+  revision?: number;
+  historyPending?: boolean;
 }
 export interface NewInfo {
   templates: string[];

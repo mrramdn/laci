@@ -211,6 +211,13 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
                     }
                 }
                 c["apps"] = config::validate_apps(&undo["apps"])?;
+                if let Some(archive_dir) = undo.get("archiveDir") {
+                    if archive_dir.is_null() {
+                        c.as_object_mut().unwrap().remove("archiveDir");
+                    } else {
+                        c["archiveDir"] = config::validate_archive_dir(env, archive_dir)?;
+                    }
+                }
             } else if let Some(remove) = undo["remove"].as_str() {
                 if let Some(p) = c["presets"].as_array_mut() {
                     p.retain(|x| x != remove);
@@ -238,13 +245,13 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
             config::save(env, &c)?;
             out["refresh"] = json!("all");
         } else {
-            let dir = paths::home_path(a["path"].as_str().ok_or("Missing project")?, env)?;
+            let dir = paths::workspace_path(a["path"].as_str().ok_or("Missing project")?, env)?;
             sidecar::plain_path(&dir)?;
             if !dir.is_dir() {
                 return Err(format!("{} is gone. It may have been moved since.", paths::tilde(&dir, &env.home)));
             }
             if let Some(exclude) = sidecar::exclude_file(&dir) {
-                paths::home_path(&exclude.to_string_lossy(), env)?;
+                paths::workspace_path(&exclude.to_string_lossy(), env)?;
                 sidecar::plain_path(&exclude)?;
             }
             match kind {
@@ -259,7 +266,7 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
                     if !file.starts_with(&dir) {
                         return Err("Unknown task file".into());
                     }
-                    paths::home_path(&file.to_string_lossy(), env)?;
+                    paths::workspace_path(&file.to_string_lossy(), env)?;
                     let task = recorded_checkbox(&file, undo)?;
                     sidecar::toggle_check(
                         &file,

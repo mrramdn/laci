@@ -6,6 +6,7 @@ import type {
   Change,
   Listing,
   Node,
+  RefreshStatus,
   Snapshot,
   Tab,
   View,
@@ -14,7 +15,7 @@ export type Theme = "system" | "light" | "dark";
 export type SortKey = "name" | "last" | "size" | "ai";
 export type Modal =
   | { kind: "shortcuts" | "connector" | "new" }
-  | { kind: "archive"; id: string }
+  | { kind: "archive" | "delete"; id: string }
   | { kind: "terminal-close"; id: string }
   | null;
 interface Toast {
@@ -26,7 +27,13 @@ interface Toast {
 interface State {
   snapshot: Snapshot | null;
   error: string | null;
+  errorRevision: number | null;
   busy: boolean;
+  revision: number;
+  statusRevision: number;
+  historyPending: boolean;
+  pendingSelection: string | null;
+  setupPending: boolean;
   working: string;
   view: View;
   cwd: string;
@@ -75,7 +82,13 @@ export function savePref(key: string, value: unknown) {
 export const useApp = create<State>((set, get) => ({
   snapshot: null,
   error: null,
+  errorRevision: null,
   busy: false,
+  revision: 0,
+  statusRevision: 0,
+  historyPending: false,
+  pendingSelection: null,
+  setupPending: false,
   working: "",
   view: "today",
   cwd: "",
@@ -101,21 +114,43 @@ export const useApp = create<State>((set, get) => ({
   activity: null,
   toast: null,
   load: (snapshot, live = false) =>
-    set((s) => ({
-      snapshot,
-      error: null,
-      cwd: s.cwd || snapshot.roots[0] || snapshot.home,
-      selected: s.selected && snapshot.nodes[s.selected] ? s.selected : null,
-      tree: s.tree.size ? s.tree : new Set(snapshot.roots.slice(0, 1)),
-      listings: live ? s.listings : {},
-    })),
+    set((s) => {
+      const revision = snapshot.revision ?? 0;
+      if (revision < s.revision) return {};
+      const historyPending = snapshot.historyPending ?? false;
+      const keepError = historyPending && s.errorRevision === revision;
+      const ready =
+        !historyPending &&
+        s.pendingSelection &&
+        snapshot.nodes[s.pendingSelection];
+      return {
+        snapshot: historyPending ? { ...snapshot, proposals: [] } : snapshot,
+        revision,
+        historyPending,
+        setupPending: s.setupPending && (historyPending || !snapshot.configured),
+        error: keepError ? s.error : null,
+        errorRevision: keepError ? s.errorRevision : null,
+        cwd: s.cwd || snapshot.roots[0] || snapshot.home,
+        selected: ready
+          ? s.pendingSelection
+          : s.selected && snapshot.nodes[s.selected]
+            ? s.selected
+            : null,
+        pendingSelection: ready ? null : s.pendingSelection,
+        tree: s.tree.size ? s.tree : new Set(snapshot.roots.slice(0, 1)),
+        listings: live ? s.listings : {},
+      };
+    }),
   patch: (node) =>
     set((s) =>
-      s.snapshot
+      s.snapshot && (node.revision ?? s.revision) >= s.revision
         ? {
+            revision: node.revision ?? s.revision,
+            historyPending: s.historyPending || Boolean(node.historyPending),
             snapshot: {
               ...s.snapshot,
               nodes: { ...s.snapshot.nodes, [node.id]: node },
+              ...(node.historyPending ? { proposals: [] } : {}),
             },
           }
         : {},
@@ -133,6 +168,7 @@ export const useApp = create<State>((set, get) => ({
       p = p.slice(0, p.lastIndexOf("/")) || "/";
     }
     set({
+      pendingSelection: null,
       view: "folder",
       cwd: path,
       fileSelected: null,
@@ -142,49 +178,174 @@ export const useApp = create<State>((set, get) => ({
     });
   },
   select: (id, tab) =>
-    set({ selected: id, fileSelected: null, ...(tab ? { tab } : {}) }),
-  navigate: (view) => set({ view, display: false }),
+    set({
+      selected: id,
+      pendingSelection: null,
+      fileSelected: null,
+      ...(tab ? { tab } : {}),
+    }),
+  navigate: (view) => set({ view, display: false, pendingSelection: null }),
 }));
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
+function dismissToastLater() {
+  clearTimeout(toastTimer);
+  const state = useApp.getState();
+  if (state.toast?.undo && state.historyPending) return;
+  toastTimer = setTimeout(
+    () => useApp.setState({ toast: null }),
+    state.toast?.undo ? 14000 : 7000,
+  );
+}
+useApp.subscribe((state, previous) => {
+  if (previous.historyPending && !state.historyPending && state.toast?.undo)
+    dismissToastLater();
+});
 export function toast(
   title: string,
   message = "",
   options: { undo?: string; error?: boolean } = {},
 ) {
-  clearTimeout(toastTimer);
   useApp.setState({ toast: { title, message, ...options } });
-  toastTimer = setTimeout(
-    () => useApp.setState({ toast: null }),
-    options.undo ? 14000 : 7000,
-  );
+  dismissToastLater();
 }
 export async function run<T>(
   task: () => Promise<T>,
   working = "",
+  options: { history?: boolean; onError?: (error: unknown) => void } = {},
 ): Promise<T | undefined> {
-  if (working) useApp.setState({ working });
+  // Acquire before awaiting or rendering, so repeated clicks cannot queue mutations.
+  if (
+    working &&
+    (operation || (options.history && useApp.getState().historyPending))
+  )
+    return undefined;
+  const owner = working ? Symbol() : undefined;
+  if (owner) {
+    operation = owner;
+    useApp.setState({ working });
+  }
   try {
     return await task();
   } catch (error) {
-    toast("Couldn’t finish", errorText(error), { error: true });
+    if (options.onError) options.onError(error);
+    else toast("Couldn’t finish", errorText(error), { error: true });
     return undefined;
   } finally {
-    if (working && useApp.getState().working === working)
+    if (owner && operation === owner) {
+      operation = undefined;
       useApp.setState({ working: "" });
+    }
   }
 }
-export async function refreshLog() {
-  try {
-    useApp.setState({ activity: await api<ActivityLog>("log") });
-  } catch (error) {
-    useApp.setState({ activity: { entries: [], error: errorText(error) } });
+let operation: symbol | undefined;
+let logPending: Promise<void> | undefined;
+let logAgain = false;
+export function refreshLog() {
+  if (logPending) {
+    logAgain = true;
+    return logPending;
   }
+  logPending = (async () => {
+    do {
+      logAgain = false;
+      try {
+        useApp.setState({ activity: await api<ActivityLog>("log") });
+      } catch (error) {
+        useApp.setState((s) => ({
+          activity: {
+            ...s.activity,
+            entries: s.activity?.entries ?? [],
+            error: errorText(error),
+          },
+        }));
+      }
+    } while (logAgain);
+  })().finally(() => {
+    logPending = undefined;
+  });
+  return logPending;
 }
-export function changed(change: Change, title: string) {
+export function acknowledge(change: Change) {
+  const current = useApp.getState();
+  if ((change.revision ?? current.revision) < current.revision) return;
+  useApp.setState((s) => {
+    const revision = change.revision ?? s.revision;
+    if (revision < s.revision) return {};
+    const alreadyLoaded =
+      s.snapshot?.revision !== undefined &&
+      s.snapshot.revision >= revision &&
+      !s.snapshot.historyPending;
+    const historyPending =
+      s.historyPending || Boolean(change.historyPending && !alreadyLoaded);
+    return {
+      revision,
+      historyPending,
+      snapshot:
+        historyPending && s.snapshot ? { ...s.snapshot, proposals: [] } : s.snapshot,
+    };
+  });
   if (change.snapshot) useApp.getState().load(change.snapshot);
-  if (change.node) useApp.getState().patch(change.node);
-  void refreshLog();
-  toast(title, "", { undo: change.journal?.id });
+  if (change.node)
+    useApp.getState().patch({
+      ...change.node,
+      revision: change.node.revision ?? change.revision,
+    });
+}
+export function refreshStatus(status: RefreshStatus) {
+  useApp.setState((s) => {
+    const revision = status.revision ?? s.revision;
+    if (revision < Math.max(s.revision, s.statusRevision)) return {};
+    const historyPending = s.historyPending || Boolean(status.historyPending);
+    return {
+      // A scan notice can overtake useful data; only mutation fences invalidate it.
+      revision: status.historyPending ? revision : s.revision,
+      statusRevision: revision,
+      busy: status.busy,
+      historyPending,
+      snapshot:
+        historyPending && s.snapshot ? { ...s.snapshot, proposals: [] } : s.snapshot,
+    };
+  });
+}
+export function refreshError(error: unknown, revision?: number) {
+  const state = useApp.getState();
+  const failedRevision = revision ?? state.revision;
+  if (failedRevision < state.revision) return;
+  const message = errorText(error);
+  useApp.setState({
+    error: message,
+    errorRevision: failedRevision,
+    revision: failedRevision,
+    busy: false,
+  });
+  if (state.snapshot) {
+    const previous = state.toast;
+    toast(previous?.undo ? previous.title : "Couldn’t refresh", message, {
+      undo: previous?.undo,
+      error: true,
+    });
+  }
+}
+export function selectWhenReady(path: string) {
+  const state = useApp.getState();
+  if (!state.historyPending && state.snapshot?.nodes[path]) state.select(path);
+  else useApp.setState({ pendingSelection: path });
+}
+export function changed(change: Change, title: string, message = "") {
+  acknowledge(change);
+  const state = useApp.getState();
+  const refreshWarning =
+    state.errorRevision === (change.revision ?? state.revision)
+      ? state.error
+      : null;
+  const warnings = [
+    ...(change.warnings ?? []),
+    ...(refreshWarning ? [refreshWarning] : []),
+  ];
+  toast(title, warnings.join(". ") || message, {
+    undo: change.journal?.id,
+    error: Boolean(warnings.length),
+  });
 }
 const listingPending = new Set<string>();
 const listingAgain = new Set<string>();
@@ -259,10 +420,11 @@ export function rescan() {
   void run(async () => {
     const snapshot = await api<Snapshot>("rescan");
     useApp.getState().load(snapshot);
-    toast(
-      "Scan finished",
-      `${Object.values(snapshot.nodes).filter((n) => n.kind === "project").length} projects`,
-    );
+    if (!useApp.getState().toast?.undo)
+      toast(
+        "Scan finished",
+        `${Object.values(snapshot.nodes).filter((n) => n.kind === "project").length} projects`,
+      );
   }, "Scanning your projects…");
 }
 export function backup() {

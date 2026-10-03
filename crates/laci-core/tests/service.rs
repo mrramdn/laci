@@ -601,3 +601,27 @@ fn deleting_and_undoing_the_only_checkbox_preserves_file_boundaries() {
         assert_eq!(fs::read_to_string(file).unwrap(), source);
     }
 }
+
+#[test]
+fn quarantine_execution_acknowledges_the_journal_before_refresh_and_keeps_undo_compatible() {
+    let (_temp, env, project) = fixture();
+    let history =
+        env.home.join(".claude/projects").join(laci_core::paths::enc(&env.home.join("gone").to_string_lossy()));
+    write(&history.join("session.jsonl"), &format!("{}\n", json!({"cwd":env.home.join("gone")})));
+    config::save(&env, &json!({"roots":["~/project"],"presets":["claude"],"custom":[],"apps":{}})).unwrap();
+    let mut service = loaded(&env, &project);
+    let snapshot = service.snapshot().unwrap();
+    let proposal =
+        snapshot["proposals"].as_array().unwrap().iter().find(|p| p["action"]["type"] == "quarantine").unwrap();
+    let outcome = service.execute("apply", &json!({"id":proposal["id"]}), "app").unwrap();
+    assert_eq!(outcome.value["journal"]["state"], "applied");
+    assert!(outcome.value.get("snapshot").is_none());
+    assert!(outcome.refresh.agents && !outcome.refresh.full);
+    assert!(!history.exists());
+    assert_eq!(service.current.as_ref().unwrap()["scannedAt"], snapshot["scannedAt"]);
+    assert!(service.current.as_ref().unwrap()["proposals"].as_array().unwrap().is_empty());
+    let restored = service.request_as("undo", &json!({"id":outcome.value["journal"]["id"]}), "agent").unwrap();
+    assert!(restored["snapshot"].is_object());
+    assert_eq!(restored["journal"]["state"], "undone");
+    assert!(history.join("session.jsonl").exists());
+}

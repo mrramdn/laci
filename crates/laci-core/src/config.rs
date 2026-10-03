@@ -1,5 +1,17 @@
 use crate::{Result, env::Env, files, paths};
 use serde_json::{Value, json};
+use std::sync::LazyLock;
+
+static APP_NAME: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^[\w.+-]{1,40}$").expect("app name pattern"));
+static EXTENSION: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^\.[A-Za-z0-9]{1,10}$").expect("extension pattern"));
+static JSON_FIELD: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^[A-Za-z_][\w.-]{0,40}$").expect("JSON field pattern"));
+static CONNECTOR_SLUG: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"[^a-z0-9]+").expect("connector slug pattern"));
+static CONNECTOR_ID: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^custom-[a-z0-9][a-z0-9-]*$").expect("connector ID pattern"));
 
 pub fn load(env: &Env) -> Value {
     let mut c = files::text(&env.config_dir.join("config.json"))
@@ -38,7 +50,7 @@ pub fn validate_roots(env: &Env, roots: &Value) -> Result<Value> {
     }
     let mut roots: Vec<std::path::PathBuf> = Vec::new();
     for value in array {
-        let p = paths::home_path(value.as_str().ok_or("Invalid folder")?, env)?;
+        let p = paths::selected_directory(value.as_str().ok_or("Invalid folder")?, env)?;
         if !p.is_dir() {
             return Err(format!("{} doesn't exist", paths::tilde(&p, &env.home)));
         }
@@ -53,12 +65,20 @@ pub fn validate_roots(env: &Env, roots: &Value) -> Result<Value> {
         .collect();
     Ok(Value::Array(minimal))
 }
+pub fn validate_archive_dir(env: &Env, value: &Value) -> Result<Value> {
+    let raw = value.as_str().ok_or("Pick an archive folder")?.trim();
+    if raw.is_empty() {
+        return Ok(json!(""));
+    }
+    let path = paths::selected_directory(raw, env)?;
+    Ok(json!(paths::tilde(&path, &env.home)))
+}
+
 pub fn validate_apps(apps: &Value) -> Result<Value> {
     let mut out = json!({});
-    let name = regex::Regex::new(r"^[\w.+-]{1,40}$").map_err(|e| e.to_string())?;
     for key in ["terminal", "editor", "files"] {
         if let Some(s) = apps[key].as_str().filter(|s| !s.is_empty()) {
-            if !name.is_match(s) {
+            if !APP_NAME.is_match(s) {
                 return Err(format!("{key}: use a program name"));
             }
             out[key] = json!(s);
@@ -87,14 +107,14 @@ pub fn validate_connector(env: &Env, raw: &Value) -> Result<Value> {
         }
         if kind == "cwd" || kind == "mentions" {
             let ext = link["ext"].as_str().unwrap_or(if kind == "cwd" { ".jsonl" } else { ".md" }).trim();
-            if !regex::Regex::new(r"^\.[A-Za-z0-9]{1,10}$").map_err(|e| e.to_string())?.is_match(ext) {
+            if !EXTENSION.is_match(ext) {
                 return Err("File type: use .jsonl or .md".into());
             }
             link["ext"] = json!(ext);
         }
         if kind == "cwd" {
             let field = link["field"].as_str().unwrap_or("cwd").trim();
-            if !regex::Regex::new(r"^[A-Za-z_][\w.-]{0,40}$").map_err(|e| e.to_string())?.is_match(field) {
+            if !JSON_FIELD.is_match(field) {
                 return Err("Invalid JSON field".into());
             }
             link["field"] = json!(field);
@@ -102,16 +122,12 @@ pub fn validate_connector(env: &Env, raw: &Value) -> Result<Value> {
     } else {
         return Err("Pick how the history links to a project".into());
     }
-    let slug = regex::Regex::new(r"[^a-z0-9]+")
-        .map_err(|e| e.to_string())?
-        .replace_all(&name.to_lowercase(), "-")
-        .trim_matches('-')
-        .to_owned();
+    let slug = CONNECTOR_SLUG.replace_all(&name.to_lowercase(), "-").trim_matches('-').to_owned();
     let id = raw["id"]
         .as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| format!("custom-{}", if slug.is_empty() { "tool" } else { &slug }));
-    if !regex::Regex::new(r"^custom-[a-z0-9][a-z0-9-]*$").map_err(|e| e.to_string())?.is_match(&id) {
+    if !CONNECTOR_ID.is_match(&id) {
         return Err("Invalid connector id".into());
     }
     Ok(json!({"id":id,"name":name,"link":link}))

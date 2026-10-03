@@ -1,11 +1,13 @@
 import { lazy, Suspense, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { api, errorText } from "./api";
+import { api } from "./api";
 import {
   useApp,
   changed,
   readListing,
   refreshLog,
+  refreshStatus,
+  refreshError,
   run,
   savePref,
 } from "./store";
@@ -16,11 +18,12 @@ import { Inspector } from "./inspector";
 import { Dialogs } from "./dialogs";
 import { Palette } from "./palette";
 import { restoreTerminals, toggleTerminal, useTerms } from "./terminal-api";
-import type { Apps, Change, Snapshot } from "./types";
+import type { Apps, Change, RefreshStatus, Snapshot } from "./types";
 const TerminalPanel = lazy(() => import("./TerminalPanel"));
 type LaciEvent =
   | { type: "snapshot" }
-  | { type: "status"; busy: boolean }
+  | ({ type: "status" } & RefreshStatus)
+  | { type: "refresh-error"; error: string; revision?: number }
   | { type: "ls"; path: string }
   | { type: "log" };
 export default function App() {
@@ -40,54 +43,60 @@ export default function App() {
         return;
       }
       fetching = true;
+      let requestedRevision = useApp.getState().revision;
       try {
         do {
           pending = false;
+          requestedRevision = useApp.getState().revision;
           const snapshot = await api<Snapshot>("snapshot");
           if (live) useApp.getState().load(snapshot, true);
         } while (pending && live);
       } catch (error) {
-        if (live) useApp.setState({ error: errorText(error) });
+        if (live) refreshError(error, requestedRevision);
       } finally {
         fetching = false;
       }
     }
-    void listen<LaciEvent>("laci", (event) => {
-      if (!live) return;
-      const payload = event.payload;
-      if (payload.type === "snapshot") {
-        receivedSnapshot = true;
-        void update();
-      } else if (payload.type === "status") {
-        receivedStatus = true;
-        useApp.setState({ busy: payload.busy });
-      } else if (
-        payload.type === "ls" &&
-        useApp.getState().listings[payload.path]
-      )
-        void readListing(payload.path, true, true);
-      else if (payload.type === "log") void refreshLog();
-    }).then((stop) => {
-      if (live) unlisten = stop;
-      else stop();
-    });
-    void Promise.all([
-      api<Snapshot>("snapshot"),
-      api<{ busy: boolean }>("status"),
-      api<Apps>("apps"),
-    ]).then(
-      ([snapshot, status, apps]) => {
-        if (live) {
-          if (!receivedSnapshot || !useApp.getState().snapshot)
-            useApp.getState().load(snapshot);
-          useApp.setState((state) => ({
-            busy: receivedStatus ? state.busy : status.busy,
-            apps,
-          }));
+    async function start() {
+      try {
+        const stop = await listen<LaciEvent>("laci", (event) => {
+          if (!live) return;
+          const payload = event.payload;
+          if (payload.type === "snapshot") {
+            receivedSnapshot = true;
+            void update();
+          } else if (payload.type === "status") {
+            receivedStatus = true;
+            refreshStatus(payload);
+          } else if (payload.type === "refresh-error")
+            refreshError(payload.error, payload.revision);
+          else if (
+            payload.type === "ls" &&
+            useApp.getState().listings[payload.path]
+          )
+            void readListing(payload.path, true, true);
+          else if (payload.type === "log") void refreshLog();
+        });
+        if (!live) {
+          stop();
+          return;
         }
-      },
-      (error) => live && useApp.setState({ error: errorText(error) }),
-    );
+        unlisten = stop;
+        const [snapshot, status, apps] = await Promise.all([
+          api<Snapshot>("snapshot"),
+          api<RefreshStatus>("status"),
+          api<Apps>("apps"),
+        ]);
+        if (!live) return;
+        if (!receivedSnapshot || !useApp.getState().snapshot)
+          useApp.getState().load(snapshot);
+        if (!receivedStatus) refreshStatus(status);
+        useApp.setState({ apps });
+      } catch (error) {
+        if (live) refreshError(error);
+      }
+    }
+    void start();
     const interval = setInterval(() => {
       if (live)
         useApp.setState((st) => ({
@@ -128,7 +137,7 @@ export default function App() {
         else if (state.modal) useApp.setState({ modal: null });
         else if (state.display) useApp.setState({ display: false });
         else if (target.closest(".xterm")) return;
-        else useApp.setState({ selected: null });
+        else useApp.setState({ selected: null, pendingSelection: null });
         event.preventDefault();
         return;
       }
@@ -214,7 +223,7 @@ export default function App() {
   const n = s.selected ? s.snapshot.nodes[s.selected] : null;
   return (
     <>
-      {!s.snapshot.configured && !s.skipSetup ? (
+      {(!s.snapshot.configured || s.setupPending) && !s.skipSetup ? (
         <Settings first />
       ) : (
         <div
@@ -263,6 +272,7 @@ export default function App() {
           {s.toast.undo ? (
             <button
               className="btn sm"
+              disabled={s.historyPending}
               onClick={() =>
                 void run(
                   async () =>
@@ -271,6 +281,7 @@ export default function App() {
                       "Undone. Everything is back where it was.",
                     ),
                   "Undoing…",
+                  { history: true },
                 )
               }
             >

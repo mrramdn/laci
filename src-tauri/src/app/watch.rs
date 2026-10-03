@@ -1,7 +1,7 @@
 use laci_core::{
     env::Env,
     files,
-    service::{array, string},
+    service::{Refresh, array, string},
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::Value;
@@ -12,29 +12,90 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub fn batch(receiver: &mpsc::Receiver<Vec<PathBuf>>, first: Vec<PathBuf>, window: Duration) -> Vec<PathBuf> {
+#[derive(Clone, Debug, Default)]
+pub struct Changes {
+    pub paths: BTreeSet<PathBuf>,
+    pub structural: bool,
+}
+impl Changes {
+    fn merge(&mut self, other: Self) {
+        self.paths.extend(other.paths);
+        self.structural |= other.structural;
+    }
+}
+
+pub fn batch(receiver: &mpsc::Receiver<Changes>, mut first: Changes, window: Duration) -> Changes {
     let deadline = Instant::now() + window;
-    let mut changed: BTreeSet<_> = first.into_iter().collect();
     while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
         match receiver.recv_timeout(remaining) {
-            Ok(paths) => changed.extend(paths),
+            Ok(paths) => first.merge(paths),
             Err(_) => break,
         }
     }
-    changed.into_iter().collect()
+    first
+}
+
+/// Session content changes do not invalidate unrelated project metadata.
+pub fn refresh_for(env: &Env, snapshot: &Value, changes: &Changes) -> Refresh {
+    let mut refresh = Refresh::default();
+    for path in &changes.paths {
+        if path.starts_with(&env.data_dir) {
+            continue;
+        }
+        if path.starts_with(&env.config_dir) {
+            refresh.merge(Refresh::full());
+            continue;
+        }
+        if array(&snapshot["connectors"]).iter().any(|connector| {
+            connector["link"]["dir"]
+                .as_str()
+                .is_some_and(|dir| path.starts_with(dir) || std::path::Path::new(dir).starts_with(path))
+        }) {
+            refresh.merge(Refresh { watches: changes.structural, ..Refresh::agents() });
+            continue;
+        }
+        let owner = snapshot["nodes"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(_, n)| n)
+            .filter(|node| node["kind"] == "project" && path.starts_with(string(node, "path")))
+            .max_by_key(|node| string(node, "path").len());
+        if let Some(node) = owner {
+            if changes.structural
+                && (path == std::path::Path::new(string(node, "path"))
+                    || path == &std::path::Path::new(string(node, "path")).join(".git"))
+            {
+                refresh.merge(Refresh::full());
+            } else {
+                refresh.projects.insert(string(node, "id").to_owned());
+                refresh.watches |= changes.structural;
+            }
+        } else if array(&snapshot["roots"]).iter().filter_map(Value::as_str).any(|root| path.starts_with(root)) {
+            refresh.merge(Refresh::full());
+        }
+    }
+    refresh
 }
 
 pub struct Watches {
     inner: Mutex<(RecommendedWatcher, BTreeSet<PathBuf>)>,
 }
 impl Watches {
-    pub fn new(sender: mpsc::Sender<Vec<PathBuf>>) -> Result<Self, String> {
+    pub fn new(sender: mpsc::Sender<Changes>) -> Result<Self, String> {
         let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
             if let Ok(event) = result {
                 if matches!(event.kind, notify::EventKind::Access(_)) {
                     return;
                 }
-                let paths: Vec<_> = event
+                let structural = matches!(
+                    event.kind,
+                    notify::EventKind::Create(_)
+                        | notify::EventKind::Remove(_)
+                        | notify::EventKind::Modify(notify::event::ModifyKind::Name(_))
+                        | notify::EventKind::Any
+                );
+                let paths: BTreeSet<_> = event
                     .paths
                     .into_iter()
                     .filter(|p| {
@@ -48,14 +109,14 @@ impl Watches {
                     })
                     .collect();
                 if !paths.is_empty() {
-                    let _ = sender.send(paths);
+                    let _ = sender.send(Changes { paths, structural });
                 }
             }
         })
         .map_err(|e| e.to_string())?;
         Ok(Self { inner: Mutex::new((watcher, BTreeSet::new())) })
     }
-    pub fn sync(&self, env: &Env, snapshot: &Value, listings: &BTreeSet<PathBuf>) {
+    pub fn desired(env: &Env, snapshot: &Value, listings: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
         let mut want = listings.clone();
         want.insert(env.config_dir.clone());
         want.insert(env.data_dir.clone());
@@ -98,7 +159,9 @@ impl Watches {
                 }
             }
         }
-        want = want.into_iter().filter(|p| p.is_dir()).take(12_000).collect();
+        want.into_iter().filter(|p| p.is_dir()).take(12_000).collect()
+    }
+    pub fn install(&self, want: BTreeSet<PathBuf>) {
         if let Ok(mut inner) = self.inner.lock() {
             let (watcher, current) = &mut *inner;
             for old in current.difference(&want) {
@@ -138,19 +201,47 @@ mod tests {
         let producer = thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(2);
             while !producer_stop.load(Ordering::Relaxed) && Instant::now() < deadline {
-                if sender.send(vec![streamed.clone()]).is_err() {
+                if sender.send(Changes { paths: BTreeSet::from([streamed.clone()]), structural: false }).is_err() {
                     break;
                 }
                 thread::sleep(Duration::from_millis(5));
             }
         });
         let started = Instant::now();
-        let changed = batch(&receiver, vec![repeated.clone()], Duration::from_millis(80));
+        let changed = batch(
+            &receiver,
+            Changes { paths: BTreeSet::from([repeated.clone()]), structural: false },
+            Duration::from_millis(80),
+        );
         let elapsed = started.elapsed();
         stop.store(true, Ordering::Relaxed);
         producer.join().unwrap();
         assert!(elapsed < Duration::from_secs(1), "continuous writes postponed the batch: {elapsed:?}");
-        assert_eq!(changed, vec![repeated]);
+        assert_eq!(changed.paths, BTreeSet::from([repeated]));
+        assert!(!changed.structural);
+    }
+
+    #[test]
+    fn appended_sessions_request_only_history_and_structural_events_keep_watch_updates() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let store = home.path().join(".claude/projects");
+        let project = home.path().join("projects/app");
+        let snapshot = json!({"connectors":[{"link":{"dir":store}}],
+        "roots":[home.path().join("projects")],"nodes":{
+            "app":{"id":"app","kind":"project","path":project}
+        }});
+        let changes = Changes { paths: BTreeSet::from([store.join("example/session.jsonl")]), structural: false };
+        assert_eq!(refresh_for(&env, &snapshot, &changes), Refresh::agents());
+        let changes = Changes { structural: true, ..changes };
+        let refresh = refresh_for(&env, &snapshot, &changes);
+        assert!(refresh.agents && refresh.watches && !refresh.full);
+        let config = Changes { paths: BTreeSet::from([env.config_dir.join("config.json")]), structural: false };
+        assert!(refresh_for(&env, &snapshot, &config).full);
+        let metadata = Changes { paths: BTreeSet::from([project.join("README.md")]), structural: false };
+        let refresh = refresh_for(&env, &snapshot, &metadata);
+        assert_eq!(refresh.projects, BTreeSet::from(["app".to_owned()]));
+        assert!(!refresh.full && !refresh.agents && !refresh.watches);
     }
 
     #[test]
@@ -166,14 +257,14 @@ mod tests {
         });
         let (sender, receiver) = mpsc::channel();
         let watcher = Watches::new(sender).unwrap();
-        watcher.sync(&env, &snapshot, &BTreeSet::new());
+        watcher.install(Watches::desired(&env, &snapshot, &BTreeSet::new()));
         let branch = heads.join("topic");
         fs::write(&branch, "0123456789012345678901234567890123456789\n").unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             let remaining = deadline.checked_duration_since(Instant::now()).expect("no archived Git event");
             let paths = receiver.recv_timeout(remaining).expect("no archived Git event");
-            if paths.contains(&branch) {
+            if paths.paths.contains(&branch) {
                 break;
             }
         }

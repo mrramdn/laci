@@ -1,6 +1,6 @@
 {
   "name": "laci",
-  "version": "2.0.0-dev",
+  "version": "2.0.0-rc.1",
   "private": true,
   "description": "A file manager that knows which folders are projects, and keeps their agent history attached when they move.",
   "type": "module",
@@ -12,7 +12,7 @@
     "ls": "cargo run -q -p laci -- ls",
     "doctor": "cargo run -q -p laci -- doctor",
     "json": "cargo run -q -p laci -- json",
-    "test": "pnpm -C ui build && cargo test --workspace --features custom-protocol && cargo build -p laci --features custom-protocol && node scripts/mcp-smoke.mjs",
+    "test": "pnpm -C ui build && node scripts/ui-state-smoke.mjs && cargo test --workspace --features custom-protocol && cargo build -p laci --features custom-protocol && node scripts/mcp-smoke.mjs",
     "typecheck": "pnpm -C ui typecheck && cargo check --workspace",
     "mcp": "cargo run -q -p laci -- mcp",
     "dev": "tauri dev",

@@ -79,7 +79,7 @@ export function Inspector({ node: n }: { node: Node }) {
           className="icon-btn"
           title="Close (Esc)"
           aria-label="Close details"
-          onClick={() => useApp.setState({ selected: null })}
+          onClick={() => useApp.setState({ selected: null, pendingSelection: null })}
         >
           <Icon name="x" />
         </button>
@@ -137,12 +137,25 @@ export function Inspector({ node: n }: { node: Node }) {
               <button
                 className="btn ghost sm"
                 title="Archive project"
+                disabled={s.historyPending}
                 onClick={() =>
                   useApp.setState({ modal: { kind: "archive", id: n.id } })
                 }
               >
                 <Icon name="archive" className="sm" />
                 Archive
+              </button>
+            ) : null}
+            {isProject ? (
+              <button
+                className="btn ghost sm"
+                disabled={s.historyPending}
+                onClick={() =>
+                  useApp.setState({ modal: { kind: "delete", id: n.id } })
+                }
+              >
+                <Icon name="delete" className="sm" />
+                Move to Trash
               </button>
             ) : null}
           </div>

@@ -16,8 +16,11 @@ import {
   access,
   appendFile,
   mkdir,
+  mkdtemp,
+  rename,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -39,6 +42,7 @@ const screenshotDir =
 const onboardingOnly = process.env.LACI_ONBOARDING_ONLY === "1";
 const watcherOnly = process.env.LACI_WATCHER_ONLY === "1";
 const keyboardOnly = process.env.LACI_KEYBOARD_ONLY === "1";
+const modularOnly = process.env.LACI_MODULAR_ONLY === "1";
 const elementKey = "element-6066-11e4-a52e-4f735466cecf";
 const stamp = Date.now().toString(36);
 const projectName = `desktop-smoke-${stamp}`;
@@ -294,6 +298,128 @@ async function showProject(project) {
     textContains(".insp .ititle h2", project.name),
   );
 }
+async function modularRegressions() {
+  const external = await mkdtemp(path.join(path.dirname(fixtureHome), "laci-modular-"));
+  const scanRoot = path.join(external, "projects");
+  const archiveRoot = path.join(external, "archive");
+  const source = path.join(scanRoot, `modular-${stamp}`);
+  const backup = path.join(external, "backup.git");
+  const original = await api("setup/info");
+  const trashRoot = path.join(fixtureHome, ".local/share/Trash");
+  const historyDir = path.join(fixtureHome, ".claude/projects", source.replace(/[^A-Za-z0-9]/g, "-"));
+  const historyFile = path.join(historyDir, "modular.jsonl");
+  const historyBytes = JSON.stringify({ type: "user", cwd: source, sessionId: "modular-history", timestamp: new Date().toISOString(), message: { content: "Keep external history after project Trash" } }) + "\n";
+  const git = (dir, args) => execFileSync("git", ["-C", dir, ...args], {
+    env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "Native Fixture", GIT_AUTHOR_EMAIL: "fixture@example.test", GIT_COMMITTER_NAME: "Native Fixture", GIT_COMMITTER_EMAIL: "fixture@example.test" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let trashPath;
+  try {
+    await mkdir(source, { recursive: true });
+    await mkdir(archiveRoot);
+    await mkdir(backup);
+    git(backup, ["init", "--bare", "--initial-branch=main"]);
+    git(source, ["init", "--initial-branch=main"]);
+    await writeFile(path.join(source, "README.md"), "# Modular project\nBacked up on a disposable remote.\n");
+    git(source, ["add", "README.md"]);
+    git(source, ["commit", "-m", "initial"]);
+    git(source, ["remote", "add", "origin", backup]);
+    git(source, ["push", "-u", "origin", "main"]);
+    await mkdir(historyDir, { recursive: true });
+    await writeFile(historyFile, historyBytes);
+    await check("Settings select an external scan location and default archive folder", async () => {
+      await nav("Settings", "Settings");
+      await type('[aria-label="Another folder"]', scanRoot);
+      await click(".main button", "Add folder", true);
+      await type('[aria-label="Default archive folder"]', archiveRoot);
+      await click(".main button", "Save and rescan", true);
+      await wait("external root installed", async () => {
+        const current = await snapshot();
+        return !current.historyPending && current.nodes[source] && current.roots.includes(scanRoot);
+      });
+      const info = await api("setup/info");
+      assert.equal(info.archiveDir, archiveRoot);
+      assert.equal((await snapshot()).nodes[source].archivePlan.dest, path.join(archiveRoot, path.basename(source)));
+      await shot("modular-settings");
+    });
+    await check("Custom archive preview, apply and Undo agree outside Home", async () => {
+      const project = (await snapshot()).nodes[source];
+      await showProject(project);
+      await click(".insp .iacts button", "Archive", true);
+      const destination = path.join(archiveRoot, `${path.basename(source)}-chosen`);
+      await type('[aria-label="Archive destination"]', destination);
+      await wait("custom archive preview ready", () => execute(() => {
+        const button = [...document.querySelectorAll(".dialog .df button")].find((b) => b.textContent.trim() === "Archive");
+        return button && !button.disabled && document.querySelector(".dialog .ops")?.textContent.includes("-chosen");
+      }));
+      await shot("modular-archive");
+      await click(".dialog .df button", "Archive", true);
+      await wait("custom archive accepted", async () => {
+        const current = await snapshot();
+        return !current.historyPending && current.nodes[destination]?.archived && !current.nodes[source];
+      });
+      assert.ok((await readFile(path.join(destination, "README.md"), "utf8")).includes("Modular project"));
+      await click(".toast button", "Undo", true);
+      await wait("external archive undone", async () => {
+        const current = await snapshot();
+        return !current.historyPending && current.nodes[source] && !current.nodes[destination];
+      });
+      assert.equal(await readFile(historyFile, "utf8"), historyBytes);
+    });
+    await check("Trash rejects local work added after review, then preserves external history", async () => {
+      assert.equal(path.resolve(process.env.XDG_DATA_HOME ?? ""), path.join(fixtureHome, ".local/share"), "Native Trash QA must isolate XDG_DATA_HOME");
+      await showProject((await snapshot()).nodes[source]);
+      await click(".insp .iacts button", "Move to Trash", true);
+      await wait("live remote verified in dialog", () => execute(() => {
+        const button = [...document.querySelectorAll(".dialog .df button")].find((b) => b.textContent.trim() === "Move to Trash");
+        return button && !button.disabled;
+      }));
+      await appendFile(path.join(source, "README.md"), "Local work after the review\n");
+      await click(".dialog .df button", "Move to Trash", true);
+      await wait("fresh execution safety check rejected", () => textContains(".dialog [role=alert]", "local changes"));
+      await access(source);
+      await shot("modular-trash-blocked");
+      await click(".dialog .df button", "Cancel", true);
+      git(source, ["restore", "README.md"]);
+      await writeFile(path.join(source, ".git/info/exclude"), ".laci.md\nsecret.env\n");
+      await writeFile(path.join(source, "secret.env"), "Ignored bytes stay in Trash\n");
+      await click(".insp .iacts button", "Move to Trash", true);
+      await wait("fresh Trash plan ready", () => execute(() => {
+        const button = [...document.querySelectorAll(".dialog .df button")].find((b) => b.textContent.trim() === "Move to Trash");
+        return button && !button.disabled;
+      }));
+      await shot("modular-trash");
+      await click(".dialog .df button", "Move to Trash", true);
+      await wait("project removed from snapshot", async () => {
+        const current = await snapshot();
+        return !current.historyPending && !current.nodes[source];
+      });
+      trashPath = path.join(trashRoot, "files", path.basename(source));
+      await access(path.join(trashPath, ".git"));
+      assert.equal(await readFile(path.join(trashPath, "secret.env"), "utf8"), "Ignored bytes stay in Trash\n");
+      assert.equal(await readFile(historyFile, "utf8"), historyBytes);
+      const entry = (await api("log")).entries.find((entry) => entry.path === source && entry.title.includes("system Trash"));
+      assert.ok(entry && !entry.undo, "System Trash recovery must not advertise Log Undo");
+      // Restore only this disposable fixture, then remove its own Trash metadata.
+      await rename(trashPath, source);
+      trashPath = null;
+      await rm(path.join(trashRoot, "info", `${path.basename(source)}.trashinfo`), { force: true });
+    });
+  } finally {
+    if (await execute(() => Boolean(document.querySelector(".dialog"))))
+      await click(".dialog .df button", "Cancel", true).catch(() => {});
+    await wait("history settled for settings restore", async () => !(await api("status")).historyPending).catch(() => {});
+    await api("setup/save", { roots: original.roots, presets: original.presets, apps: original.apps, archiveDir: original.archiveDir ?? "" }).catch(() => {});
+    await wait("settings restored", async () => !(await api("status")).historyPending).catch(() => {});
+    await rm(historyDir, { recursive: true, force: true });
+    await rm(external, { recursive: true, force: true });
+    if (trashPath) {
+      await rm(trashPath, { recursive: true, force: true });
+      await rm(path.join(trashRoot, "info", `${path.basename(source)}.trashinfo`), { force: true });
+    }
+  }
+}
+
 async function theme(value) {
   await click(`.seg button[aria-label="${value} theme"]`);
   await wait(`${value} theme applied`, () =>
@@ -901,6 +1027,141 @@ async function watcherRegressions() {
   );
 }
 
+async function tidyRegressions() {
+  await check(
+    "Tidy quarantine applies once and Undo preserves session bytes and time",
+    async () => {
+      const missing = path.join(fixtureHome, "project", `missing-${stamp}`);
+      const store = path.join(
+        fixtureHome,
+        ".claude/projects",
+        missing.replace(/[^A-Za-z0-9]/g, "-"),
+      );
+      const file = path.join(store, `${stamp}.jsonl`);
+      await mkdir(store, { recursive: true });
+      await writeFile(
+        file,
+        JSON.stringify({
+          type: "user",
+          cwd: missing,
+          sessionId: stamp,
+          timestamp: new Date().toISOString(),
+        }) + "\n",
+      );
+      const bytes = await readFile(file);
+      const modified = (await stat(file, { bigint: true })).mtimeNs;
+      let journal;
+      try {
+        await api("rescan");
+        const proposal = (await snapshot()).proposals.find(
+          (item) =>
+            item.action?.type === "quarantine" &&
+            item.action.moves.some((move) => move.from === store),
+        );
+        assert.ok(proposal, "Missing fixture should have a quarantine proposal");
+        const destination = path.join(
+          fixtureHome,
+          ".local/share/laci/orphans",
+          proposal.action.moves.find((move) => move.from === store).to,
+        );
+        const count = (log) =>
+          log.entries.filter((entry) => entry.title === proposal.title).length;
+        const before = await api("log");
+        const previous = count(before);
+        const beforeIds = new Set(before.entries.map((entry) => entry.id));
+        await nav("Tidy up", "Tidy up");
+        const row = `.prop-row[data-id=${JSON.stringify(proposal.id)}]`;
+        await click(`${row} .item`);
+        await element(`${row} .row-acts button`, "Apply");
+        // Two clicks in one browser task exercise the guard before React rerenders.
+        await execute(
+          (selector) => {
+            const button = document.querySelector(selector);
+            button.click();
+            button.click();
+          },
+          `${row} .row-acts button`,
+        );
+        journal = await wait("one committed quarantine journal", async () => {
+          const log = await api("log");
+          assert.ok(count(log) <= previous + 1, "Apply must not submit twice");
+          return log.entries.find(
+            (entry) =>
+              !beforeIds.has(entry.id) &&
+              entry.title === proposal.title &&
+              entry.journal,
+          )?.journal;
+        });
+        await wait("quarantine overlay resolved", () =>
+          execute(() => {
+            const toast = document.querySelector(".toast");
+            return (
+              toast?.textContent.includes("Changes applied") &&
+              !toast.inert &&
+              !document.querySelector(".busy")
+            );
+          }),
+        );
+        assert.equal(
+          await execute(
+            (selector) => Boolean(document.querySelector(selector)),
+            row,
+          ),
+          false,
+          "Applied history proposal must not remain usable",
+        );
+        await shot("tidy-applied");
+        const movedFile = path.join(destination, `${stamp}.jsonl`);
+        assert.deepEqual(await readFile(movedFile), bytes);
+        assert.equal(
+          (await stat(movedFile, { bigint: true })).mtimeNs,
+          modified,
+        );
+        await wait("history refreshed before Undo", async () =>
+          !(await api("status")).historyPending,
+        );
+        assert.equal(count(await api("log")), previous + 1);
+        const appliedJournal = journal;
+        await wait("quarantine Undo enabled in React", () =>
+          execute(() => {
+            const button = document.querySelector(".toast button");
+            return button && !button.disabled;
+          }),
+        );
+        await click(".toast button", "Undo", true);
+        await wait("quarantined session restored", async () => {
+          try {
+            await access(file);
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        journal = undefined;
+        await wait("Undo history refreshed", async () =>
+          !(await api("status")).historyPending,
+        );
+        assert.deepEqual(await readFile(file), bytes);
+        assert.equal((await stat(file, { bigint: true })).mtimeNs, modified);
+        assert.equal(
+          (await api("log")).entries.find(
+            (entry) => entry.journal === appliedJournal,
+          ).state,
+          "undone",
+        );
+      } finally {
+        if (journal) {
+          await wait("history ready for fixture recovery", async () =>
+            !(await api("status")).historyPending,
+          ).catch(() => {});
+          await api("undo", { id: journal }).catch(() => {});
+        }
+        await rm(store, { recursive: true, force: true });
+      }
+    },
+  );
+}
+
 try {
   await access(binary);
   await wait(
@@ -1132,17 +1393,21 @@ try {
           ...current.suggestions.map((c) => c.id),
         ]),
       ];
-      current = await api("setup/save", {
+      await api("setup/save", {
         roots: [path.join(fixtureHome, "project")],
         presets,
         apps: { editor: "code", files: "dolphin", terminal: "kitty" },
+      });
+      current = await wait("setup history accepted", async () => {
+        const latest = await snapshot();
+        return latest.configured && !latest.historyPending && latest;
       });
     }
     await wait("React app mounted", () =>
       execute(() => Boolean(document.querySelector(".main"))),
     );
 
-    if (!watcherOnly && !keyboardOnly) {
+    if (!watcherOnly && !keyboardOnly && !modularOnly) {
       await check(
         "Startup sidebar follows the completed native scan",
         async () => {
@@ -1179,7 +1444,12 @@ try {
       );
     }
 
-    if (watcherOnly) {
+    if (modularOnly) {
+      await modularRegressions();
+      assert.deepEqual(await execute(() => window.__LACI_SMOKE_ERRORS__ ?? []), []);
+      console.log(JSON.stringify({ passed: true, binary, fixtureHome, checks: results }, null, 2));
+    } else if (watcherOnly) {
+      await tidyRegressions();
       await watcherRegressions();
       assert.deepEqual(
         await execute(() => window.__LACI_SMOKE_ERRORS__ ?? []),
@@ -1568,12 +1838,16 @@ try {
             (connector) => connector.name === name && !connector.builtin,
           ),
         );
-        const remove = await execute(
-          (name) =>
-            [...document.querySelectorAll(".stat")]
-              .find((card) => card.querySelector(".k")?.textContent === name)
-              ?.querySelector("button") ?? null,
-          name,
+        const remove = await wait("custom connector removal enabled in React", () =>
+          execute(
+            (name) => {
+              const button = [...document.querySelectorAll(".stat")]
+                .find((card) => card.querySelector(".k")?.textContent === name)
+                ?.querySelector("button");
+              return button && !button.disabled ? button : null;
+            },
+            name,
+          ),
         );
         assert.ok(remove);
         await command("POST", `/element/${remove[elementKey]}/click`, {});
@@ -1714,7 +1988,9 @@ try {
         },
       );
 
+      await tidyRegressions();
       await watcherRegressions();
+      await modularRegressions();
 
       await check("No unhandled frontend errors", async () => {
         const errors = await execute(() => window.__LACI_SMOKE_ERRORS__ ?? []);

@@ -3,6 +3,7 @@ pub mod activity;
 pub mod agents;
 pub mod config;
 pub mod create;
+pub mod deletion;
 pub mod env;
 pub mod files;
 pub mod ops;

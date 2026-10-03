@@ -1,6 +1,7 @@
 //! Journaled disk changes. The journal and PID lock remain readable by Laci v1.
 use crate::{Result, env::Env, files, paths, process, sidecar};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
@@ -18,15 +19,36 @@ fn exists(p: &Path) -> bool {
     fs::symlink_metadata(p).is_ok()
 }
 fn path(env: &Env, raw: &str) -> Result<PathBuf> {
-    let p = paths::home_path(raw, env)?;
+    let p = paths::workspace_path(raw, env)?;
     sidecar::plain_path(&p)?;
     Ok(p)
 }
 fn value_path(env: &Env, v: &Value) -> Result<PathBuf> {
     path(env, v.as_str().ok_or("Missing file path")?)
 }
+fn journal_path(env: &Env, entry: &Value, key: &str) -> Result<PathBuf> {
+    if key == "path" && entry["kind"] == "file" && entry["scope"] == "config" {
+        let file = paths::config_file(env)?;
+        if entry[key].as_str() != file.to_str() {
+            return Err("Invalid configuration journal path".into());
+        }
+        return Ok(file);
+    }
+    let checked = value_path(env, &entry[key]);
+    if checked.is_err()
+        && key == "from"
+        && entry["kind"] == "move"
+        && let (Some(device), Some(inode)) = (entry["parentDevice"].as_u64(), entry["parentInode"].as_u64())
+    {
+        return paths::restore_workspace_root(entry[key].as_str().ok_or("Missing source path")?, env, device, inode);
+    }
+    checked
+}
+
 fn data(env: &Env, name: &str) -> Result<PathBuf> {
-    path(env, &env.data_dir.join(name).to_string_lossy())
+    let path = paths::home_path(&env.data_dir.join(name).to_string_lossy(), env)?;
+    sidecar::plain_path(&path)?;
+    Ok(path)
 }
 fn id() -> String {
     format!(
@@ -269,8 +291,19 @@ impl<'a> Tx<'a> {
         if src.is_dir() {
             guard(&[src.to_owned()])?;
         }
+        let mut entry = json!({"kind":"move","from":src,"to":dest});
+        if !src.starts_with(&self.env.home) && paths::workspace_roots(self.env).iter().any(|root| root == src) {
+            use std::os::unix::fs::MetadataExt;
+            let parent = src.parent().ok_or("Missing workspace parent")?;
+            let meta = fs::metadata(parent).map_err(|e| e.to_string())?;
+            if fs::metadata(src).map_err(|e| e.to_string())?.dev() != meta.dev() {
+                return Err("Can't move the mounted workspace root itself; select a project inside it".into());
+            }
+            entry["parentDevice"] = json!(meta.dev());
+            entry["parentInode"] = json!(meta.ino());
+        }
         self.mkdirs(dest.parent().ok_or("Missing parent")?)?;
-        self.log(json!({"kind":"move","from":src,"to":dest}))?;
+        self.log(entry)?;
         rename(src, dest)
     }
     fn merge(&mut self, src: &Path, dest: &Path) -> Result<()> {
@@ -359,6 +392,37 @@ impl<'a> Tx<'a> {
         }
         sidecar::set_meta(dir, "status", status)
     }
+    fn remember_archive(&mut self, dest: &Path) -> Result<()> {
+        let mut cfg = crate::config::load(self.env);
+        let roots: Vec<_> = if let Some(roots) = cfg["roots"].as_array() {
+            roots.iter().filter_map(Value::as_str).map(|raw| paths::expand(raw, &self.env.home)).collect()
+        } else {
+            crate::scan::default_roots(self.env)
+        };
+        let archived = cfg["archiveDir"]
+            .as_str()
+            .filter(|raw| !raw.is_empty())
+            .is_some_and(|raw| dest.starts_with(paths::expand(raw, &self.env.home)));
+        if archived || roots.iter().any(|root| dest.starts_with(root)) {
+            return Ok(());
+        }
+        let file = paths::config_file(self.env)?;
+        cfg["roots"] = json!(
+            roots
+                .iter()
+                .map(|root| paths::tilde(root, &self.env.home))
+                .chain(std::iter::once(paths::tilde(dest, &self.env.home)))
+                .collect::<Vec<_>>()
+        );
+        let existed = exists(&file);
+        let backup = if existed { Some(self.backup(&file)?) } else { None };
+        self.log(json!({"kind":"file","scope":"config","path":file,"existed":existed,"backup":backup}))?;
+        crate::config::save(self.env, &cfg)?;
+        let after = fs::read(&file).map_err(|e| e.to_string())?;
+        self.journal["entries"].as_array_mut().unwrap().last_mut().unwrap()["afterHash"] =
+            json!(format!("{:x}", Sha256::digest(after)));
+        self.save()
+    }
     fn trash(&mut self, path: &Path) -> Result<()> {
         sidecar::plain_path(path)?;
         if !exists(path) {
@@ -396,7 +460,7 @@ fn validate_entries(env: &Env, entries: &[Value]) -> Result<()> {
     for e in entries {
         for key in ["from", "to", "path", "backup"] {
             if e[key].is_string() {
-                value_path(env, &e[key])?;
+                journal_path(env, e, key)?;
             }
         }
         let required: &[&str] = match e["kind"].as_str() {
@@ -408,17 +472,27 @@ fn validate_entries(env: &Env, entries: &[Value]) -> Result<()> {
             _ => return Err("Unknown or incomplete journal entry".into()),
         };
         for key in required {
-            value_path(env, &e[*key])?;
+            journal_path(env, e, key)?;
         }
     }
     Ok(())
 }
 fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
     validate_entries(env, entries)?;
+    // Settings saved after a one-off archive must not be replaced by its older backup.
+    for entry in entries {
+        if let Some(expected) = entry["afterHash"].as_str() {
+            let file = journal_path(env, entry, "path")?;
+            let bytes = fs::read(&file).map_err(|e| e.to_string())?;
+            if format!("{:x}", Sha256::digest(bytes)) != expected {
+                return Err("Settings changed after this archive. Restore those settings before undoing it.".into());
+            }
+        }
+    }
     // Refuse collisions before changing any content during undo.
     for e in entries.iter().filter(|e| e["kind"] == "move") {
-        let from = value_path(env, &e["from"])?;
-        let to = value_path(env, &e["to"])?;
+        let from = journal_path(env, e, "from")?;
+        let to = journal_path(env, e, "to")?;
         if exists(&from) && exists(&to) {
             return Err(format!("{} already exists; undo would overwrite it", from.display()));
         }
@@ -426,8 +500,8 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
     for e in entries.iter().rev() {
         match e["kind"].as_str().unwrap_or("") {
             "move" => {
-                let from = value_path(env, &e["from"])?;
-                let to = value_path(env, &e["to"])?;
+                let from = journal_path(env, e, "from")?;
+                let to = journal_path(env, e, "to")?;
                 if exists(&to) {
                     if exists(&from) {
                         return Err(format!("{} already exists; undo would overwrite it", from.display()));
@@ -437,16 +511,16 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
                 }
             }
             "rewrite" => {
-                let backup = value_path(env, &e["backup"])?;
-                let dest = value_path(env, &e["path"])?;
+                let backup = journal_path(env, e, "backup")?;
+                let dest = journal_path(env, e, "path")?;
                 if exists(&backup) {
                     restore(&backup, &dest)?;
                 }
             }
             "file" => {
-                let dest = value_path(env, &e["path"])?;
+                let dest = journal_path(env, e, "path")?;
                 if e["existed"].as_bool() == Some(true) {
-                    restore(&value_path(env, &e["backup"])?, &dest)?;
+                    restore(&journal_path(env, e, "backup")?, &dest)?;
                 } else if exists(&dest) {
                     if !dest.is_file() {
                         return Err("Refusing to remove a folder in file undo".into());
@@ -455,11 +529,11 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
                 }
             }
             "mkdir" => {
-                let dest = value_path(env, &e["path"])?;
+                let dest = journal_path(env, e, "path")?;
                 let _ = fs::remove_dir(dest);
             }
             "rmdir" => {
-                fs::create_dir_all(value_path(env, &e["path"])?).map_err(|e| e.to_string())?;
+                fs::create_dir_all(journal_path(env, e, "path")?).map_err(|e| e.to_string())?;
             }
             "trash" => {} // The system trash owns recovery, as in v1.
             _ => return Err("Unknown journal entry".into()),
@@ -635,6 +709,9 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
         }
         if let Some(status) = opts["status"].as_str().filter(|s| !s.is_empty()) {
             tx.sidecar_status(&dest, status)?;
+            if status == "archived" {
+                tx.remember_archive(&dest)?;
+            }
         }
         if opts["trashHeavy"].as_bool() == Some(true) {
             for part in node["size"]["parts"].as_array().into_iter().flatten() {
@@ -651,30 +728,23 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
     })
 }
 pub fn archive_project(env: &Env, snap: &Value, id: &str, trash_heavy: bool) -> Result<Value> {
+    archive_project_to(env, snap, id, None, trash_heavy)
+}
+
+pub fn archive_project_to(
+    env: &Env,
+    snap: &Value,
+    id: &str,
+    destination: Option<&str>,
+    trash_heavy: bool,
+) -> Result<Value> {
+    let plan = crate::scan::archive_plan(env, snap, id, destination)?;
     let node = &snap["nodes"][id];
-    let src = value_path(env, &node["path"])?;
-    let root = snap["roots"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|r| r.as_str())
-        .filter_map(|r| path(env, r).ok())
-        .find(|r| src.starts_with(r))
-        .unwrap_or_else(|| src.parent().unwrap_or(&env.home).to_owned());
-    let mut parent = src.parent().ok_or("Invalid project")?;
-    let dest;
-    loop {
-        if parent.join("_archive").is_dir() || parent == root || !parent.starts_with(&root) {
-            dest = parent.join("_archive").join(src.strip_prefix(parent).map_err(|e| e.to_string())?);
-            break;
-        }
-        parent = parent.parent().ok_or("Invalid archive root")?;
-    }
     move_project(
         env,
         snap,
         id,
-        &dest.to_string_lossy(),
+        plan["dest"].as_str().ok_or("Missing archive destination")?,
         &json!({"status":"archived","trashHeavy":trash_heavy,"title":format!("Archive {}",node["name"].as_str().unwrap_or("project"))}),
     )
 }

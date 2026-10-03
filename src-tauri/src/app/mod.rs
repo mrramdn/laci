@@ -1,31 +1,28 @@
+mod state;
 mod terminal;
 mod watch;
 use laci_core::{
     Result, config,
     env::Env,
-    paths, scan,
-    service::{Service, array, string},
+    paths,
+    service::{Refresh, Service, mutates, string},
 };
 use serde_json::{Value, json};
+use state::{Engine, RefreshQueue, Work};
 use std::{
     collections::BTreeSet,
     path::PathBuf,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
+    sync::{Arc, Mutex, mpsc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, ipc::Channel};
 use terminal::{Info, Output, Terminals};
-use watch::Watches;
+use watch::{Changes, Watches};
 
 struct AppState {
-    engine: Mutex<Service>,
-    latest: Mutex<Option<Value>>,
-    busy: AtomicBool,
+    engine: Mutex<Engine>,
+    queue: Arc<RefreshQueue>,
     handle: tauri::AppHandle,
     terminals: Terminals,
     watches: Option<Watches>,
@@ -36,160 +33,159 @@ impl AppState {
     fn notice(&self, v: Value) {
         let _ = self.handle.emit("laci", v);
     }
-    fn sync(&self, service: &Service) {
-        if let Some(snapshot) = &service.current {
+    fn status(&self) -> Value {
+        let engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
+        json!({"type":"status","busy":self.queue.busy(),"revision":engine.revision,"historyPending":engine.history_pending})
+    }
+    fn snapshot(&self) -> Result<Value> {
+        if let Some(snapshot) = self.engine.lock().map_err(|e| e.to_string())?.snapshot() {
+            return Ok(snapshot);
+        }
+        self.rescan()
+    }
+    fn rescan(&self) -> Result<Value> {
+        let ticket = self.queue.request(Refresh::full());
+        self.notice(self.status());
+        self.queue.wait(ticket)?;
+        self.engine.lock().map_err(|e| e.to_string())?.snapshot().ok_or("No scan is available".into())
+    }
+    fn refresh(&self, work: Work) {
+        let started = Instant::now();
+        let prepared = self.engine.lock().unwrap_or_else(|e| e.into_inner()).prepare(work.refresh.clone());
+        self.notice(self.status());
+        let config_before = config::load(&prepared.env);
+        let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prepared.read()))
+            .unwrap_or_else(|_| Err("The refresh was interrupted. Try Scan again.".into()));
+        let (snapshot, topology) = match read {
+            Ok(result) => result,
+            Err(error) => {
+                if self.engine.lock().is_ok_and(|e| e.revision != prepared.revision) {
+                    self.queue.retry(work, prepared.refresh);
+                    return;
+                }
+                if let Ok(engine) = self.engine.lock() {
+                    engine.service.debug(&format!("refresh failed: {error}"));
+                }
+                self.queue.finish(work, Some(error.clone()));
+                self.notice(json!({"type":"refresh-error","error":error,"revision":prepared.revision}));
+                self.notice(self.status());
+                return;
+            }
+        };
+        let read_ms = started.elapsed().as_millis();
+        let watches_started = Instant::now();
+        let desired = if topology || prepared.refresh.watches {
+            let listings = self.listings.lock().map(|l| l.clone()).unwrap_or_default();
+            self.watches.as_ref().map(|_| Watches::desired(&prepared.env, &snapshot, &listings))
+        } else {
+            None
+        };
+        let watches_ms = watches_started.elapsed().as_millis();
+        let config_started = Instant::now();
+        if config::load(&prepared.env) != config_before {
+            self.queue.retry(work, Refresh::full());
+            return;
+        }
+        let config_ms = config_started.elapsed().as_millis();
+        let revision = {
+            let mut engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
+            if !engine.install(&prepared, snapshot.clone()) {
+                self.queue.retry(work, prepared.refresh);
+                return;
+            }
+            let cache_started = Instant::now();
+            engine.service.cache_snapshot(&snapshot);
+            let cache_ms = cache_started.elapsed().as_millis();
+            engine.service.debug(&format!(
+                "refresh full={} agents={} projects={} read={read_ms}ms watches={watches_ms}ms config={config_ms}ms cache={cache_ms}ms",
+                prepared.refresh.full || topology,
+                prepared.refresh.agents,
+                prepared.refresh.projects.len()
+            ));
+            engine.revision
+        };
+        self.notice(json!({"type":"snapshot"}));
+        if topology {
             for node in snapshot["nodes"].as_object().into_iter().flatten().map(|(_, n)| n) {
                 if node["kind"] == "project" {
                     let _ = self.handle.asset_protocol_scope().allow_directory(string(node, "path"), true);
                 }
             }
         }
-        if let Some(watch) = &self.watches
-            && let Some(s) = &service.current
-        {
-            let listings = self.listings.lock().map(|l| l.clone()).unwrap_or_default();
-            watch.sync(&service.env, s, &listings);
+        if let (Some(watch), Some(desired)) = (&self.watches, desired) {
+            // Watch enumeration and OS registration never hold the service lock.
+            if self.engine.lock().is_ok_and(|e| e.revision == revision) {
+                watch.install(desired);
+            }
+            if self.engine.lock().is_ok_and(|e| e.revision != revision) {
+                self.queue.request(Refresh { watches: true, ..Refresh::default() });
+            }
         }
-    }
-    fn rescan(&self) -> Result<Value> {
-        self.busy.store(true, Ordering::Relaxed);
-        self.notice(json!({"type":"status","busy":true}));
-        let result = (|| {
-            let mut service = self.engine.lock().map_err(|e| e.to_string())?;
-            let snapshot = service.rescan()?;
-            *self.latest.lock().map_err(|e| e.to_string())? = Some(snapshot.clone());
-            self.sync(&service);
-            Ok(snapshot)
-        })();
-        self.busy.store(false, Ordering::Relaxed);
-        self.notice(json!({"type":"status","busy":false}));
-        if result.is_ok() {
-            self.notice(json!({"type":"snapshot"}));
-        }
-        result
+        self.queue.finish(work, None);
+        self.notice(self.status());
     }
     fn request(&self, name: &str, body: &Value) -> Result<Value> {
-        if name == "snapshot" {
-            if let Some(s) = self.latest.lock().map_err(|e| e.to_string())?.clone() {
-                return Ok(s);
+        match name {
+            "snapshot" => return self.snapshot(),
+            "status" => return Ok(self.status()),
+            "rescan" => return self.rescan(),
+            "delete/plan" => {
+                let (env, node) = {
+                    let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
+                    (engine.service.env.clone(), engine.service.node(string(body, "id"))?)
+                };
+                // Remote verification can take time; browsing and watcher updates stay responsive.
+                return laci_core::deletion::plan(&env, &node);
             }
-            return self.rescan();
+            _ => {}
         }
-        if name == "status" {
-            return Ok(json!({"busy":self.busy.load(Ordering::Relaxed)}));
+        let started = Instant::now();
+        let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
+        let waited = started.elapsed().as_millis();
+        let result = engine.execute(name, body);
+        if let Err(error) = &result {
+            engine.service.debug(&format!("{name}: {error}"));
         }
-        if name == "rescan" {
-            return self.rescan();
+        let outcome = result?;
+        let env = engine.service.env.clone();
+        if mutates(name) {
+            engine.service.debug(&format!(
+                "{name} committed wait={waited}ms action={}ms",
+                started.elapsed().as_millis().saturating_sub(waited)
+            ));
         }
-        let mut service = self.engine.lock().map_err(|e| e.to_string())?;
-        let reply = service.request(name, body);
-        if let Err(e) = &reply {
-            service.debug(&format!("{name}: {e}"));
-        }
-        if reply.is_ok() {
-            *self.latest.lock().map_err(|e| e.to_string())? = service.current.clone();
-            if name == "ls" {
-                let path = paths::home_path(string(body, "path"), &service.env)?;
-                self.listings.lock().map_err(|e| e.to_string())?.insert(path);
-                self.sync(&service);
-            }
-            if !matches!(
-                name,
-                "ls" | "ls/newest"
-                    | "apps"
-                    | "setup/info"
-                    | "new/info"
-                    | "log"
-                    | "log/open"
-                    | "open"
-                    | "open/url"
-                    | "theme"
-            ) {
-                self.sync(&service);
-                self.notice(json!({"type":"snapshot"}));
-                self.notice(json!({"type":"log"}));
+        drop(engine);
+        self.queue.request(outcome.refresh);
+        if name == "ls" {
+            let path = paths::workspace_path(string(body, "path"), &env)?;
+            if self.listings.lock().map_err(|e| e.to_string())?.insert(path) {
+                self.queue.request(Refresh { watches: true, ..Refresh::default() });
             }
         }
-        reply
+        if mutates(name) {
+            self.notice(json!({"type":"snapshot"}));
+            self.notice(json!({"type":"log"}));
+            self.notice(self.status());
+        }
+        Ok(outcome.value)
     }
-    fn changed(&self, changed: Vec<PathBuf>) {
-        let cached = self.latest.lock().ok().and_then(|s| s.clone());
-        let Some(snapshot) = cached else {
-            let _ = self.rescan();
+    fn changed(&self, changed: Changes) {
+        let (env, snapshot) = {
+            let engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
+            (engine.service.env.clone(), engine.service.current.clone())
+        };
+        let Some(snapshot) = snapshot else {
+            self.queue.request(Refresh::full());
             return;
         };
-        let mut projects = BTreeSet::new();
-        let mut all = false;
-        let mut log = false;
-        let config = self.engine.lock().ok().map(|s| s.env.clone());
-        let Some(env) = config else {
-            return;
-        };
-        if std::env::var_os("LACI_DEBUG").is_some()
-            && let Ok(service) = self.engine.lock()
-        {
-            service.debug(&format!("watch: {} changed paths", changed.len()));
-        }
-        for path in &changed {
-            if path == &env.data_dir.join("activity.jsonl") {
-                log = true;
-                continue;
-            }
-            if path.starts_with(&env.data_dir) {
-                continue;
-            }
-            if path.starts_with(&env.config_dir) {
-                all = true;
-                continue;
-            }
-            if array(&snapshot["connectors"]).iter().any(|c| {
-                c["link"]["dir"]
-                    .as_str()
-                    .is_some_and(|d| path.starts_with(d) || std::path::Path::new(d).starts_with(path))
-            }) {
-                all = true;
-                continue;
-            }
-            let owner = snapshot["nodes"]
-                .as_object()
-                .into_iter()
-                .flatten()
-                .map(|(_, n)| n)
-                .filter(|n| n["kind"] == "project" && path.starts_with(string(n, "path")))
-                .max_by_key(|n| string(n, "path").len());
-            if let Some(n) = owner {
-                projects.insert(string(n, "id").to_owned());
-            } else if array(&snapshot["roots"]).iter().filter_map(Value::as_str).any(|r| path.starts_with(r)) {
-                all = true;
-            }
-        }
-        if all {
-            let _ = self.rescan();
-        } else if !projects.is_empty() {
-            let updated = (|| -> Result<()> {
-                let mut service = self.engine.lock().map_err(|e| e.to_string())?;
-                let env = service.env.clone();
-                if let Some(snapshot) = service.current.as_mut() {
-                    for id in projects {
-                        scan::refresh(&env, snapshot, &id)?;
-                    }
-                }
-                *self.latest.lock().map_err(|e| e.to_string())? = service.current.clone();
-                self.sync(&service);
-                Ok(())
-            })();
-            if updated.is_err() {
-                let _ = self.rescan();
-            } else {
-                self.notice(json!({"type":"snapshot"}));
-            }
-        }
-        if log {
+        let refresh = watch::refresh_for(&env, &snapshot, &changed);
+        self.queue.request(refresh);
+        if changed.paths.contains(&env.data_dir.join("activity.jsonl")) {
             self.notice(json!({"type":"log"}));
         }
         let listings = self.listings.lock().map(|l| l.clone()).unwrap_or_default();
         for listing in listings {
-            if changed.iter().any(|p| p.starts_with(&listing)) {
+            if changed.paths.iter().any(|p| p.starts_with(&listing)) {
                 self.notice(json!({"type":"ls","path":listing}));
             }
         }
@@ -211,12 +207,13 @@ async fn term_open(
 ) -> Result<Info> {
     let state = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || {
-        let mut service = state.engine.lock().map_err(|e| e.to_string())?;
+        let mut engine = state.engine.lock().map_err(|e| e.to_string())?;
+        let service = &mut engine.service;
         let (cwd, title, command, run) = if let Some(id) = id {
             let what = what.as_deref().unwrap_or("shell");
             let node = if what == "shell" { service.place(&id)? } else { service.node(&id)? };
             let (cmd, run, title) = service.action(&node, what, arg.as_deref().unwrap_or(""))?;
-            (paths::home_path(string(&node, "path"), &service.env)?, title, cmd, run)
+            (paths::workspace_path(string(&node, "path"), &service.env)?, title, cmd, run)
         } else {
             (service.env.home.clone(), "~".into(), None, false)
         };
@@ -259,10 +256,10 @@ pub fn run(env: Env) -> Result<()> {
             let (sender, receiver) = mpsc::channel();
             let watches = Watches::new(sender).ok();
             let service = Service::new(env);
-            let latest = service.current.clone();
+            let queue = Arc::new(RefreshQueue::default());
             let state = Arc::new(AppState {
-                engine: Mutex::new(service), latest: Mutex::new(latest),
-                busy: AtomicBool::new(false), handle: app.handle().clone(),
+                engine: Mutex::new(Engine::new(service)), queue: Arc::clone(&queue),
+                handle: app.handle().clone(),
                 terminals: Terminals::default(), watches,
                 listings: Mutex::new(BTreeSet::new()),
             });
@@ -287,7 +284,15 @@ pub fn run(env: Env) -> Result<()> {
                     state.changed(changed);
                 }
             });
-            thread::spawn(move || { let _ = state.rescan(); });
+            let weak = Arc::downgrade(&state);
+            thread::spawn(move || {
+                loop {
+                    let work = queue.take();
+                    let Some(state) = weak.upgrade() else { break; };
+                    state.refresh(work);
+                }
+            });
+            state.queue.request(Refresh::full());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

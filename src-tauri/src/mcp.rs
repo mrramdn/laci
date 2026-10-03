@@ -172,7 +172,7 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
         }
         "create_project" => {
             if args["confirm"] != true {
-                let parent = paths::home_path(string(args, "parent"), &service.env)?;
+                let parent = paths::workspace_path(string(args, "parent"), &service.env)?;
                 return Ok(
                     json!({"plan":format!("Create {} in {}",string(args,"name"),parent.display()),"request":args,"hint":"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}),
                 );
@@ -198,6 +198,17 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             }
             service.request_as("apply", &json!({"id":id}), "agent")
         }
+        "delete_project" => {
+            service.rescan()?;
+            let node = project(service, string(args, "project"))?;
+            let body = json!({"id":node["id"],"confirm":args["confirm"]});
+            if args["confirm"] != true {
+                return Ok(
+                    json!({"plan":service.request("delete/plan", &body)?,"hint":"Nothing has changed yet. Show the checks and Trash plan to the user before calling with confirm: true."}),
+                );
+            }
+            service.request_as("delete", &body, "agent")
+        }
         "move_project" | "archive_project" => {
             service.rescan()?;
             let n = project(service, string(args, "project"))?;
@@ -206,11 +217,17 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                 if n["kind"] != "project" || n["archived"] == true || n["archivePlan"].is_null() {
                     return Err("This folder cannot be archived".into());
                 }
-                string(&n["archivePlan"], "dest").to_owned()
+                args["destination"].as_str().unwrap_or(string(&n["archivePlan"], "dest")).to_owned()
             } else {
-                paths::home_path(string(args, "destination"), &service.env)?.to_string_lossy().into_owned()
+                paths::workspace_path(string(args, "destination"), &service.env)?.to_string_lossy().into_owned()
             };
             if args["confirm"] != true {
+                if name == "archive_project" {
+                    let plan = service.request("archive/plan", &json!({"id":id,"destination":destination}))?;
+                    return Ok(
+                        json!({"plan":plan["ops"],"destination":plan["dest"],"checks":plan["checks"],"hint":"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}),
+                    );
+                }
                 let s = service.snapshot()?;
                 return Ok(
                     json!({"plan":scan::move_ops(&service.env,Path::new(id),Path::new(&destination),&s),"destination":destination,"checks":n["issues"],"hint":"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}),
@@ -364,7 +381,13 @@ fn tools() -> Vec<Tool> {
         (
             "archive_project",
             "Archive a project with its agent history; requires confirm after preview",
-            json!({"project":project,"trash_heavy":boolean,"confirm":boolean}),
+            json!({"project":project,"destination":text,"trash_heavy":boolean,"confirm":boolean}),
+            vec!["project"],
+        ),
+        (
+            "delete_project",
+            "Move a project to system Trash only after live remote Git verification; requires confirm after preview",
+            json!({"project":project,"confirm":boolean}),
             vec!["project"],
         ),
         (
@@ -394,9 +417,10 @@ fn tools() -> Vec<Tool> {
                     ToolAnnotations::new()
                         .read_only(readonly)
                         .destructive(
-                            ["move_project", "archive_project", "apply_suggestion", "undo_change"].contains(&name),
+                            ["move_project", "archive_project", "delete_project", "apply_suggestion", "undo_change"]
+                                .contains(&name),
                         )
-                        .open_world(name == "create_project"),
+                        .open_world(matches!(name, "create_project" | "delete_project")),
                 )
         })
         .collect()

@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api, errorText } from "./api";
-import { useApp, changed, toast } from "./store";
+import { useApp, changed, run, selectWhenReady } from "./store";
 import { parentOf, plural, tilde, within } from "./helpers";
 import { Icon, Ops, restoreFocus, SeverityGlyph } from "./common";
 import { closeTerminal, useTerms } from "./terminal-api";
-import type { Change, Link, NewInfo, Snapshot } from "./types";
+import type { ArchivePlan, Change, DeletePlan, Link, NewInfo } from "./types";
 function close() {
   useApp.setState({ modal: null });
 }
@@ -91,7 +91,7 @@ function DialogFrame({
     <div
       className="scrim"
       onClick={(e) => {
-        if (e.target === e.currentTarget) close();
+        if (e.target === e.currentTarget && !useApp.getState().working) close();
       }}
       ref={ref}
     >
@@ -125,7 +125,9 @@ export function Dialogs() {
   return modal?.kind === "shortcuts" ? (
     <Shortcuts />
   ) : modal?.kind === "archive" ? (
-    <Archive id={modal.id} />
+    <Archive key={modal.id} id={modal.id} />
+  ) : modal?.kind === "delete" ? (
+    <DeleteProject key={modal.id} id={modal.id} />
   ) : modal?.kind === "new" ? (
     <NewProject />
   ) : modal?.kind === "connector" ? (
@@ -232,42 +234,78 @@ function Shortcuts() {
 function Archive({ id }: { id: string }) {
   const s = useApp();
   const n = s.snapshot!.nodes[id];
-  const plan = n?.archivePlan;
+  const home = s.snapshot!.home;
+  const [destination, setDestination] = useState(n?.archivePlan?.dest ?? "");
+  const [review, setReview] = useState<{
+    destination: string;
+    plan?: ArchivePlan;
+    error?: string;
+  } | null>(null);
   const [heavy, setHeavy] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  if (!n || !plan) return null;
+  const current = review?.destination === destination ? review : null;
+  const plan = current?.plan;
+  useEffect(() => {
+    let live = true;
+    const timer = window.setTimeout(() => {
+      let path = destination.trim();
+      if (path === "~" || path.startsWith("~/")) path = home + path.slice(1);
+      if (!path.startsWith("/")) {
+        setReview({
+          destination,
+          error: "Use a full destination path like ~/archive/my-project",
+        });
+        return;
+      }
+      void api<ArchivePlan>("archive/plan", { id, destination: path }).then(
+        (plan) => live && setReview({ destination, plan }),
+        (error) => live && setReview({ destination, error: errorText(error) }),
+      );
+    }, 200);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [id, destination, home]);
+  if (!n) return null;
   async function archive() {
-    setSaving(true);
-    useApp.setState({ working: `Archiving ${n.name}…` });
-    try {
-      const change = await api<Change>("archive", { id, trashHeavy: heavy });
-      close();
-      changed(change, `Archived ${n.name}`);
-      if (change.snapshot?.nodes[plan!.dest]) s.select(plan!.dest);
-    } catch (error) {
-      setError(errorText(error));
-    } finally {
-      setSaving(false);
-      useApp.setState({ working: "" });
-    }
+    if (!plan) return;
+    await run(async () => {
+      setSaving(true);
+      setError("");
+      const modal = useApp.getState().modal;
+      try {
+        const change = await api<Change>("archive", {
+          id,
+          destination: plan.dest,
+          trashHeavy: heavy,
+        });
+        if (useApp.getState().modal === modal) close();
+        changed(change, `Archived ${n.name}`);
+        selectWhenReady(plan.dest);
+      } finally {
+        setSaving(false);
+      }
+    }, `Archiving ${n.name}…`, {
+      history: true,
+      onError: (error) => setError(errorText(error)),
+    });
   }
   return (
     <DialogFrame
       title={`Archive ${n.name}?`}
       description={
         <>
-          Moves it to{" "}
-          <span className="mono">{tilde(plan.dest, s.snapshot!.home)}</span> and
-          takes its agent history along, so sessions and memory still open from
-          the new place.
+          Moves the project and takes its agent history along, so sessions and
+          memory still open from the new place.
         </>
       }
       footer={
         <>
-          {error ? (
+          {error || current?.error ? (
             <p className="err" role="alert">
-              {error}
+              {error || current?.error}
             </p>
           ) : (
             <p>
@@ -281,15 +319,32 @@ function Archive({ id }: { id: string }) {
           </button>
           <button
             className="btn primary"
-            disabled={saving}
+            disabled={saving || s.historyPending || !plan}
             onClick={() => void archive()}
           >
-            Archive
+            {saving ? "Archiving…" : "Archive"}
           </button>
         </>
       }
     >
-      {plan.checks.length ? (
+      <label className="fld">
+        <span>Destination</span>
+        <input
+          className="inp mono"
+          value={destination}
+          disabled={saving}
+          onChange={(e) => {
+            setDestination(e.target.value);
+            setHeavy(false);
+            setError("");
+          }}
+          autoComplete="off"
+          aria-label="Archive destination"
+        />
+        <small>The full project folder path, including its name.</small>
+      </label>
+      {!current ? <p role="status">Checking destination…</p> : null}
+      {plan?.checks.length ? (
         <div className="warnbox">
           {plan.checks.map((check, i) => (
             <div className="issue" key={i}>
@@ -311,8 +366,120 @@ function Archive({ id }: { id: string }) {
           ))}
         </div>
       ) : null}
-      <div className="sec-t">{plural(plan.ops.length, "change")}</div>
-      <Ops ops={plan.ops} optional onHeavy={setHeavy} />
+      {plan ? (
+        <>
+          <div className="sec-t">{plural(plan.ops.length, "change")}</div>
+          <Ops key={plan.dest} ops={plan.ops} optional onHeavy={setHeavy} />
+        </>
+      ) : null}
+    </DialogFrame>
+  );
+}
+function DeleteProject({ id }: { id: string }) {
+  const s = useApp();
+  const n = s.snapshot!.nodes[id];
+  const [plan, setPlan] = useState<DeletePlan | null>(null);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let live = true;
+    void api<DeletePlan>("delete/plan", { id }).then(
+      (plan) => live && setPlan(plan),
+      (error) => live && setError(errorText(error)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [id, attempt]);
+  if (!n) return null;
+  async function remove() {
+    if (!plan?.allowed) return;
+    await run(async () => {
+      setSaving(true);
+      setError("");
+      const modal = useApp.getState().modal;
+      try {
+        const change = await api<Change>("delete", { id, confirm: true });
+        if (useApp.getState().modal === modal) close();
+        changed(change, `Moved ${n.name} to Trash`);
+        if (useApp.getState().selected === id)
+          useApp.setState({ selected: null, pendingSelection: null });
+      } finally {
+        setSaving(false);
+      }
+    }, `Moving ${n.name} to Trash…`, {
+      history: true,
+      onError: (error) => {
+        setPlan(null);
+        setError(errorText(error));
+      },
+    });
+  }
+  return (
+    <DialogFrame
+      title={`Move ${n.name} to Trash?`}
+      description={
+        <>
+          Moves <span className="mono">{tilde(n.path, s.snapshot!.home)}</span> to
+          the system Trash after checking its Git backup. Agent history stored
+          outside this project stays where it is.
+        </>
+      }
+      footer={
+        <>
+          {error ? (
+            <p className="err" role="alert">
+              {error}
+            </p>
+          ) : (
+            <p>Restore the folder from your system Trash if you need it back.</p>
+          )}
+          <button className="btn" disabled={saving} onClick={close}>
+            Cancel
+          </button>
+          <button
+            className="btn primary"
+            disabled={
+              saving || s.historyPending || !plan?.allowed || Boolean(error)
+            }
+            onClick={() => void remove()}
+          >
+            {saving ? "Moving…" : "Move to Trash"}
+          </button>
+        </>
+      }
+    >
+      {!plan && !error ? (
+        <p role="status">Checking Git and remote backup…</p>
+      ) : null}
+      {plan?.checks.length ? (
+        <div className="warnbox">
+          {plan.checks.map((check, i) => (
+            <div className="issue" key={i}>
+              <SeverityGlyph severity={check.severity} />
+              <div className="txt">
+                <p>{check.title}</p>
+                {check.detail ? <p className="d">{check.detail}</p> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {plan ? <Ops ops={plan.ops} /> : null}
+      {error || (plan && !plan.allowed) ? (
+        <button
+          className="btn sm"
+          disabled={saving || s.historyPending}
+          onClick={() => {
+            setPlan(null);
+            setError("");
+            setAttempt((value) => value + 1);
+          }}
+        >
+          Check again
+        </button>
+      ) : null}
     </DialogFrame>
   );
 }
@@ -320,7 +487,8 @@ function NewProject() {
   const s = useApp();
   const snapshot = s.snapshot!;
   const initialParent =
-    s.view === "folder" && within(s.cwd, snapshot.home)
+    s.view === "folder" &&
+    [snapshot.home, ...snapshot.roots].some((root) => within(s.cwd, root))
       ? snapshot.nodes[s.cwd]?.kind === "project"
         ? parentOf(s.cwd)
         : s.cwd
@@ -369,31 +537,23 @@ function NewProject() {
   ];
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setSaving(true);
-    setError("");
-    useApp.setState({
-      working: draft.from === "clone" ? "Cloning…" : "Creating the project…",
+    await run(async () => {
+      setSaving(true);
+      setError("");
+      const modal = useApp.getState().modal;
+      try {
+        const result = await api<Change>("new", draft);
+        changed(result, `Created ${draft.name}`, tilde(result.path, snapshot.home));
+        s.cd(draft.parent);
+        if (result.path) selectWhenReady(result.path);
+        if (useApp.getState().modal === modal) close();
+      } finally {
+        setSaving(false);
+      }
+    }, draft.from === "clone" ? "Cloning…" : "Creating the project…", {
+      history: true,
+      onError: (error) => setError(errorText(error)),
     });
-    try {
-      const result = await api<Change>("new", draft);
-      if (result.snapshot) s.load(result.snapshot);
-      s.cd(draft.parent);
-      if (result.path && result.snapshot?.nodes[result.path])
-        s.select(result.path);
-      close();
-      toast(
-        `Created ${draft.name}`,
-        result.warnings?.length
-          ? result.warnings.join(". ")
-          : tilde(result.path, snapshot.home),
-        { error: !!result.warnings?.length },
-      );
-    } catch (error) {
-      setError(errorText(error));
-    } finally {
-      setSaving(false);
-      useApp.setState({ working: "" });
-    }
   }
   return (
     <DialogFrame
@@ -420,7 +580,7 @@ function NewProject() {
           >
             Cancel
           </button>
-          <button className="btn primary" disabled={saving}>
+          <button className="btn primary" disabled={saving || s.historyPending}>
             {saving ? "Creating…" : "Create project"}
           </button>
         </>
@@ -595,20 +755,23 @@ function ConnectorDialog() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   async function add(body: Record<string, unknown>) {
-    setSaving(true);
-    setError("");
-    try {
-      const snapshot = await api<Snapshot>("connector/add", body);
-      s.load(snapshot);
-      close();
-      toast(
-        `Added ${typeof body.name === "string" ? body.name : (snapshot.connectors.find((c) => c.id === body.preset)?.name ?? "connector")}`,
-      );
-    } catch (error) {
-      setError(errorText(error));
-    } finally {
-      setSaving(false);
-    }
+    await run(async () => {
+      setSaving(true);
+      setError("");
+      const modal = useApp.getState().modal;
+      const name = typeof body.name === "string" ? body.name :
+        s.snapshot?.suggestions.find((c) => c.id === body.preset)?.name ?? "connector";
+      try {
+        const change = await api<Change>("connector/add", body);
+        changed(change, `Added ${name}`);
+        if (useApp.getState().modal === modal) close();
+      } finally {
+        setSaving(false);
+      }
+    }, "Adding connector…", {
+      history: true,
+      onError: (error) => setError(errorText(error)),
+    });
   }
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -654,7 +817,7 @@ function ConnectorDialog() {
             <button
               className="pick"
               key={suggestion.id}
-              disabled={saving}
+              disabled={saving || s.historyPending}
               onClick={() => void add({ preset: suggestion.id })}
             >
               <Icon name="bot" />
@@ -709,7 +872,7 @@ function ConnectorDialog() {
           >
             Back
           </button>
-          <button className="btn primary" disabled={saving}>
+          <button className="btn primary" disabled={saving || s.historyPending}>
             Add connector
           </button>
         </>

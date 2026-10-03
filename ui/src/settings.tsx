@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, errorText } from "./api";
-import { APP_NAMES, cap, plural, tilde, within } from "./helpers";
+import { APP_NAMES, cap, plural, tilde } from "./helpers";
 import { Icon } from "./common";
-import { useApp, toast } from "./store";
-import type { Apps, SetupInfo, Snapshot } from "./types";
+import { useApp, changed, rescan, run } from "./store";
+import type { Apps, Change, SetupInfo } from "./types";
 export function Settings({ first = false }: { first?: boolean }) {
   const s = useApp();
   const snapshot = s.snapshot!;
@@ -13,8 +13,10 @@ export function Settings({ first = false }: { first?: boolean }) {
   const [extra, setExtra] = useState<string[]>([]);
   const [apps, setApps] = useState<Apps>(s.apps);
   const [folder, setFolder] = useState("");
+  const [archiveDir, setArchiveDir] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const retryScan = first && s.setupPending && Boolean(s.error);
   useEffect(() => {
     let live = true;
     void api<SetupInfo>("setup/info").then(
@@ -22,6 +24,7 @@ export function Settings({ first = false }: { first?: boolean }) {
         if (!live) return;
         setInfo(info);
         setRoots(new Set(info.roots));
+        setArchiveDir(info.archiveDir ?? "");
         setPresets(new Set(info.presets));
         setApps(info.apps);
         setExtra(
@@ -64,29 +67,38 @@ export function Settings({ first = false }: { first?: boolean }) {
     setter(next);
   }
   async function save() {
-    setSaving(true);
-    setError("");
-    useApp.setState({
-      working: first ? "Scanning your projects…" : "Saving and scanning…",
-    });
-    try {
-      const result = await api<Snapshot>("setup/save", {
-        roots: [...roots],
-        presets: [...presets],
-        apps,
-      });
-      s.load(result);
-      useApp.setState({ apps, view: first ? "today" : s.view });
-      toast(
-        first ? "All set" : "Settings saved",
-        `${plural(Object.values(result.nodes).filter((n) => n.kind === "project").length, "project")} in ${result.roots.map((path) => tilde(path, result.home)).join(", ")}`,
+    let archivePath = archiveDir.trim();
+    if (archivePath === "~" || archivePath.startsWith("~/"))
+      archivePath = snapshot.home + archivePath.slice(1);
+    if (archivePath && !archivePath.startsWith("/")) {
+      setError(
+        "Use a full archive folder path like ~/archive or /mnt/backup/archive",
       );
-    } catch (error) {
-      setError(errorText(error));
-    } finally {
-      setSaving(false);
-      useApp.setState({ working: "" });
+      return;
     }
+    await run(async () => {
+      setSaving(true);
+      setError("");
+      if (first) useApp.setState({ setupPending: true });
+      try {
+        const result = await api<Change>("setup/save", {
+          roots: [...roots],
+          archiveDir: archivePath,
+          presets: [...presets],
+          apps,
+        });
+        changed(result, first ? "All set" : "Settings saved");
+        useApp.setState({ apps, ...(first ? { view: "today" as const } : {}) });
+      } catch (error) {
+        if (first) useApp.setState({ setupPending: false });
+        throw error;
+      } finally {
+        setSaving(false);
+      }
+    }, first ? "Scanning your projects…" : "Saving and scanning…", {
+      history: true,
+      onError: (error) => setError(errorText(error)),
+    });
   }
   const content = (
     <div className={`setup-in ${first ? "" : "in-app"}`}>
@@ -117,8 +129,8 @@ export function Settings({ first = false }: { first?: boolean }) {
               <span className="num">1</span>Where do you keep projects?
             </h2>
             <p>
-              laci looks for projects in these folders. You can still browse
-              everything else from Home.
+              laci looks for projects in these folders, including mounted drives.
+              You can still browse everything else from Home.
             </p>
             {candidates.map((c) => (
               <label className="opt" key={c.path}>
@@ -150,10 +162,6 @@ export function Settings({ first = false }: { first?: boolean }) {
                   setError("Use a full path like ~/work");
                   return;
                 }
-                if (!within(path, snapshot.home)) {
-                  setError("Pick a folder inside your home folder");
-                  return;
-                }
                 if (!candidates.some((c) => c.path === path))
                   setExtra([...extra, path]);
                 setRoots(new Set([...roots, path]));
@@ -165,12 +173,28 @@ export function Settings({ first = false }: { first?: boolean }) {
                 className="inp mono"
                 value={folder}
                 onChange={(e) => setFolder(e.target.value)}
-                placeholder="~/somewhere/else"
+                placeholder="~/work or /mnt/projects"
                 autoComplete="off"
                 aria-label="Another folder"
               />
               <button className="btn">Add folder</button>
             </form>
+            <label className="fld">
+              <span>Default archive folder</span>
+              <input
+                className="inp mono"
+                value={archiveDir}
+                onChange={(e) => setArchiveDir(e.target.value)}
+                placeholder="Nearest _archive folder"
+                autoComplete="off"
+                aria-label="Default archive folder"
+              />
+              <small>
+                Leave empty to use the nearest _archive folder. A custom folder
+                can be on another drive; each project gets its own subfolder.
+                You can choose a different destination when archiving.
+              </small>
+            </label>
           </section>
           <section className="sset">
             <h2>
@@ -236,9 +260,9 @@ export function Settings({ first = false }: { first?: boolean }) {
         </>
       )}
       <div className="setup-foot">
-        {error ? (
+        {error || (first && s.error) ? (
           <p className="err" role="alert">
-            {error}
+            {error || s.error}
           </p>
         ) : (
           <p>
@@ -257,10 +281,18 @@ export function Settings({ first = false }: { first?: boolean }) {
         ) : null}
         <button
           className="btn primary"
-          disabled={!info || saving}
-          onClick={() => void save()}
+          disabled={!info || saving || (!retryScan && (s.historyPending || s.setupPending))}
+          onClick={() => retryScan ? rescan() : void save()}
         >
-          {saving ? "Saving…" : first ? "Start using laci" : "Save and rescan"}
+          {saving
+            ? "Saving…"
+            : retryScan
+              ? "Try again"
+              : s.setupPending
+                ? "Scanning your projects…"
+                : first
+                  ? "Start using laci"
+                  : "Save and rescan"}
         </button>
       </div>
     </div>

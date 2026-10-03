@@ -70,11 +70,11 @@ pub fn safe(env: &Env, path: &Path) -> bool {
 }
 
 /// Resolve lossy Claude names by walking existing folders, never decoding punctuation blindly.
-/// Only folders under this installation's home are eligible, including an in-home symlink.
+/// Project folders must remain within home or an explicitly selected workspace root.
 pub fn resolve_encoded(env: &Env, name: &str) -> Option<PathBuf> {
     fn visit(env: &Env, dir: &Path, rest: &str, depth: usize) -> Option<PathBuf> {
         if rest.is_empty() {
-            return safe(env, dir).then(|| dir.to_owned());
+            return paths::workspace_path(&dir.to_string_lossy(), env).is_ok().then(|| dir.to_owned());
         }
         if depth > 64 {
             return None;
@@ -85,7 +85,7 @@ pub fn resolve_encoded(env: &Env, name: &str) -> Option<PathBuf> {
                 continue;
             }
             let path = entry.path();
-            if !path.is_dir() || !safe(env, &path) {
+            if !path.is_dir() || paths::workspace_path(&path.to_string_lossy(), env).is_err() {
                 continue;
             }
             if let Some(found) = visit(env, &path, &rest[piece.len()..], depth + 1) {
@@ -94,12 +94,19 @@ pub fn resolve_encoded(env: &Env, name: &str) -> Option<PathBuf> {
         }
         None
     }
-    let prefix = paths::enc(&env.home.to_string_lossy());
-    let rest = name.strip_prefix(&prefix)?;
-    if !rest.is_empty() && !rest.starts_with('-') {
-        return None;
+    let mut roots = vec![env.home.clone()];
+    roots.extend(paths::workspace_roots(env));
+    for root in roots {
+        let prefix = paths::enc(&root.to_string_lossy());
+        let Some(rest) = name.strip_prefix(&prefix) else { continue };
+        if !rest.is_empty() && !rest.starts_with('-') {
+            continue;
+        }
+        if let Some(found) = visit(env, &root, rest, 0) {
+            return Some(found);
+        }
     }
-    visit(env, &env.home, rest, 0)
+    None
 }
 
 #[derive(Default)]
@@ -302,7 +309,7 @@ fn claude_dirs(env: &Env, cache: &mut Cache) -> BTreeMap<String, Value> {
 pub fn read_inside(env: &Env, c: &Value, project: &Path) -> Option<Value> {
     let relative = c["link"]["path"].as_str()?;
     let path = project.join(relative);
-    if !safe(env, &path) {
+    if paths::workspace_path(&path.to_string_lossy(), env).is_err() {
         return None;
     }
     let project_actual = project.canonicalize().ok()?;
@@ -395,7 +402,8 @@ pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
         }
     }
     for item in out.items.values() {
-        if let Some(p) = item["cwd"].as_str().filter(|p| safe(env, Path::new(p)) && Path::new(p).is_dir()) {
+        if let Some(p) = item["cwd"].as_str().filter(|p| paths::workspace_path(p, env).is_ok() && Path::new(p).is_dir())
+        {
             out.paths.insert(PathBuf::from(p));
         }
     }

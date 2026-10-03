@@ -29,7 +29,7 @@ fn create_unlocked(env: &Env, r: &Value) -> Result<Value> {
     if !regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$").unwrap().is_match(name) {
         return Err("Name: letters, numbers, dots, dashes or underscores, no spaces".into());
     }
-    let parent = paths::home_path(r["parent"].as_str().ok_or("Pick a location")?, env)?;
+    let parent = paths::workspace_path(r["parent"].as_str().ok_or("Pick a location")?, env)?;
     sidecar::plain_path(&parent)?;
     if !parent.is_dir() {
         return Err("Location doesn't exist".into());

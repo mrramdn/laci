@@ -1,0 +1,69 @@
+name: Check and package
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.98'
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev patchelf git libglib2.0-bin xdg-utils webkit2gtk-driver xvfb rpm libarchive-tools
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C ui typecheck
+      - run: pnpm -C ui lint
+      - run: node scripts/ui-state-smoke.mjs
+      - run: cargo fmt --all -- --check
+      - run: pnpm -C ui build
+      - run: cargo clippy --workspace --all-targets --features custom-protocol -- -D warnings
+      - run: cargo test --workspace --features custom-protocol
+      - run: cargo build -p laci --features custom-protocol
+      - run: node scripts/mcp-smoke.mjs target/debug/laci
+      - name: Native window smoke check
+        run: |
+          cargo install tauri-driver --locked
+          # GIO compares the source filesystem with the real HOME when choosing Trash.
+          laci_fixture_dir="$(mktemp -d "$HOME/laci-desktop-qa.XXXXXX")"
+          trap 'rm -rf "$laci_fixture_dir"' EXIT
+          export LACI_HOME="$laci_fixture_dir/home"
+          node scripts/demo.ts "$LACI_HOME"
+          for laci_suite in onboarding watcher full; do
+            xvfb-run -a dbus-run-session -- bash scripts/native-smoke.sh target/debug/laci "$laci_suite"
+          done
+      - run: pnpm build
+      - name: Validate production packages
+        run: node scripts/package-smoke.mjs /tmp/laci-package-proof
+      - name: Native production package regression
+        run: |
+          laci_fixture_dir="$(mktemp -d "$HOME/laci-packaged-qa.XXXXXX")"
+          trap 'rm -rf "$laci_fixture_dir"' EXIT
+          export LACI_HOME="$laci_fixture_dir/home"
+          node scripts/demo.ts "$LACI_HOME"
+          for laci_suite in onboarding watcher modular; do
+            xvfb-run -a dbus-run-session -- bash scripts/native-smoke.sh /tmp/laci-package-proof/appimage/squashfs-root/AppRun "$laci_suite"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: laci-linux
+          path: |
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/deb/*.deb
+            target/release/bundle/rpm/*.rpm
+          if-no-files-found: error

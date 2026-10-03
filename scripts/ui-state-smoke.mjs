@@ -149,3 +149,135 @@ test("mutation ownership rejects a repeated click while read-only tasks still ru
   await first;
   assert.equal(useApp.getState().working, "");
 });
+
+test("system Trash never offers Laci Undo and mixed recovery explains its limits", () => {
+  const { useApp, changed } = store();
+  useApp.getState().load(snapshot(1));
+  changed(
+    {
+      journal: {
+        id: "trash",
+        canUndo: false,
+        recovery: "Restore through system Trash.",
+      },
+    },
+    "Moved history",
+  );
+  assert.equal(useApp.getState().toast.undo, undefined);
+  assert.match(useApp.getState().toast.message, /system Trash/);
+  changed(
+    {
+      journal: {
+        id: "mixed",
+        canUndo: true,
+        recovery:
+          "Undo restores moves; restore deleted files through system Trash.",
+      },
+    },
+    "Archived project",
+  );
+  assert.equal(useApp.getState().toast.undo, "mixed");
+  assert.match(
+    useApp.getState().toast.message,
+    /deleted files through system Trash/,
+  );
+});
+
+const helperSource = readFileSync(
+  new URL("../ui/src/helpers.ts", import.meta.url),
+  "utf8",
+);
+const helperCompiled = ts.transpileModule(helperSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+}).outputText;
+const helpers = {};
+new Function("exports", helperCompiled)(helpers);
+function session(provider, id, cwd, parentId) {
+  return {
+    provider,
+    sessionId: id,
+    cwd,
+    parentId,
+    title: id,
+    updatedAt: "2026-10-04",
+    file: `/logs/${provider}-${id}`,
+    resumeCapability: "supported",
+    sourceKind: "cli",
+    titleSource: "index",
+  };
+}
+
+test("session trees keep provider identities separate and retain malformed parent chains", () => {
+  const groups = helpers.groupSessions([
+    session("codex", "child", "/work", "same"),
+    session("claude", "same", "/work"),
+    session("codex", "same", "/work"),
+    session("codex", "missing-parent", "/work", "absent"),
+    session("codex", "cycle-a", "/work", "cycle-b"),
+    session("codex", "cycle-b", "/work", "cycle-a"),
+  ]);
+  assert.equal(groups.length, 5);
+  assert.equal(
+    groups.find((group) => group.session.provider === "claude").children.length,
+    0,
+  );
+  assert.deepEqual(
+    groups
+      .find(
+        (group) =>
+          group.session.provider === "codex" &&
+          group.session.sessionId === "same",
+      )
+      .children.map((group) => group.session.sessionId),
+    ["child"],
+  );
+  assert(groups.some((group) => group.session.sessionId === "missing-parent"));
+  assert(groups.some((group) => group.session.sessionId === "cycle-a"));
+});
+
+test("metadata cwd maps sessions to the nearest project without double counting logs or moving Home sessions", () => {
+  const parent = {
+    id: "/work",
+    path: "/work",
+    agents: { claude: [], items: [] },
+  };
+  const project = {
+    id: "/work/app",
+    path: "/work/app",
+    agents: { claude: [], items: ["normalized", "custom"] },
+  };
+  const home = {
+    id: "/home/test",
+    path: "/home/test",
+    agents: { claude: [], items: [] },
+  };
+  const data = {
+    home: home.path,
+    nodes: { [parent.id]: parent, [project.id]: project, [home.id]: home },
+    claude: {},
+    sessions: [
+      session("codex", "normalized", "/work/app/src"),
+      session("claude", "home", home.path),
+      session("codex", "external", "/mnt/other"),
+    ],
+    items: {
+      normalized: { file: "/logs/codex-normalized", connector: "codex" },
+      custom: { file: "/logs/custom", connector: "custom" },
+    },
+    connectors: [
+      { id: "codex", link: { kind: "cwd" } },
+      { id: "custom", link: { kind: "cwd" } },
+    ],
+  };
+  assert.equal(helpers.sessionsOf(parent, data).length, 0);
+  assert.equal(helpers.sessionsOf(project, data)[0].sessionId, "normalized");
+  assert.equal(helpers.agentCount(project, data), 2);
+  assert.deepEqual(
+    helpers.globalSessions(data).map((session) => session.sessionId),
+    ["home", "external"],
+  );
+  assert.equal(helpers.sessionsOf(home, data).length, 0);
+});

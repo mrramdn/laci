@@ -78,7 +78,7 @@ laci finds cleanups and shows exactly which files each one touches before anythi
 - **Finish half-done moves**: session folders that were renamed while the logs inside still record the old path.
 - **Free space** from `node_modules` and build output in dormant or archived projects.
 - **Duplicates**: the same repo cloned in two places.
-- **Quarantine** sessions whose folder is confirmed missing, or explicitly move the selected history to **system Trash**. Offline, unscanned and ambiguous locations block cleanup. Laci rechecks sources, reconnection and running writers when you apply it.
+- **Quarantine** sessions whose recorded owning folders are all confirmed missing, or explicitly move the selected history to **system Trash**. Shared history with a live owner, incomplete or unreadable logs, offline drives and ambiguous locations block cleanup. Laci rechecks sources, reconnection and running writers when you apply it.
 - **Archive** projects nobody has touched in a while.
 
 ![Tidy up: suggestions grouped by kind, each listing the files it will change](docs/screenshots/tidy.png)
@@ -88,6 +88,8 @@ Apply finishes when the filesystem change is saved; the view refreshes in the ba
 ### Archive and move, with the history attached
 
 Choose a default archive folder in Settings, including a folder on a mounted drive. Leave it empty to use the nearest `_archive/` folder. The Archive dialog lets you choose a different final project path and previews that exact destination. Custom destinations outside the scan roots stay discoverable; their scan-root addition is included in the move journal. laci also moves its agent history (Claude's session folder, and whatever else your connectors keep), rewrites the folder paths in the logs, and marks the project archived. Everything goes into an undo journal first.
+
+If a selected destination folder or drive has been replaced, archiving stops. Choose a valid alternative, or clear the location in Settings, save, then select it again to accept its new identity.
 
 ![The archive dialog: warnings first, then every change it will make](docs/screenshots/archive.png)
 
@@ -118,6 +120,8 @@ Codex titles use its title index, then a bounded first user message, then a shor
 Preview a generator before starting. The preview shows its command, runtime and download requirement. Generation runs in the background with bounded output, a cancellation control and a 15-minute timeout. A failure keeps the partial folder for inspection. Laci writes project metadata and initializes Git after successful scaffolding. Remote creation remains optional. The form also lets you include only the new folder in scan locations.
 
 Agent launch is an optional continuation for any source. Choose a connected provider, prompt, terminal target and supported model/effort overrides. Default omits override flags and uses provider settings. Load models on demand; unavailable discovery keeps Default usable. If launching fails, retry it without creating or pushing the project again.
+
+Reloading the window restores creation progress and Cancel. A pending agent launch resumes once after creation finishes. This recovery lasts while Laci is running; closing the app does not save the request or prompt to disk.
 
 ### Built-in terminal
 
@@ -240,7 +244,7 @@ flowchart LR
 
 - **Finding projects.** laci walks the folders you picked (Settings). A folder is a *project* if it has `.git` or a build file (`package.json`, `go.mod`, `Cargo.toml`, `pyproject.toml`, `composer.json`, `pubspec.yaml` and more). A folder that only holds notes, or one an agent worked in, is a *docs project*. A folder of projects is a *group*. These are fixed rules, not guesses by an AI.
 - **Reading each project.** It reads the git state (commits, remote, branch, uncommitted, unpushed, stashes and weekly activity), the README (title, summary, links), the stack from package files, and to-dos from `.laci.md`, `HANDOFF*.md`, `TODO*.md`, `NOTES*.md` and `tasks/todo.md`.
-- **Linking agent history.** Each connector says how its tool links history to a folder. Claude Code names its session folders after the path with every non-alphanumeric character turned into `-`, so the name can't be decoded back; laci walks the real filesystem to find the folder a name belongs to. Codex logs are linked by the `cwd` inside them, Gemini CLI by a hash of the path, and Claude plans by the paths they mention. What laci learns from each log is cached, and a growing log is read from where the last read stopped.
+- **Linking agent history.** Each connector says how its tool links history to a folder. Claude Code names its session folders after the path with every non-alphanumeric character turned into `-`, so the name can't be decoded back; laci walks the real filesystem to find the folder a name belongs to. Codex logs are linked by the `cwd` inside them, Gemini CLI by a hash of the path, and Claude plans by the paths they mention. Parsed facts are cached; transcript reads are bounded, with the head used to establish cleanup ownership and a recent window used for current session metadata.
 - **Staying current.** After a scan, laci watches the folders where projects live, the files and git state of each project, the agent log folders and the folders open in the app. It then re-reads only what changed: one project, the agent logs, or (when folders appear or disappear) a full scan.
 - **Status.** Status is set automatically from the last activity (commit, file change or agent session): *active* within 14 days, *idle* within 60, *dormant* after that, and *archived* inside an archive folder or after an explicit archive action. Set it by hand to override. Editing `.laci.md` doesn't count as activity.
 - **Former locations.** When a session folder resolves to a real folder but its sessions *started* somewhere that no longer exists, that old path is a former location. This is how laci spots half-done moves and renames, such as a repo renamed from `shop-old` to `shop`.

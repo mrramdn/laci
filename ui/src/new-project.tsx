@@ -5,13 +5,14 @@ import {
   AgentFields,
   agentDraft,
   agentProviders,
-  launchAgent,
+  type AgentDraft,
   validateAgentDraft,
 } from "./agent-launch";
 import { Select } from "./select";
 import { useApp, changed, selectWhenReady } from "./store";
 import { parentOf, tilde, within } from "./helpers";
-import type { Change, NewInfo } from "./types";
+import type { Change, NewInfo, TerminalInfo } from "./types";
+import { useTerms } from "./terminal-api";
 
 interface Recipe {
   id: string;
@@ -31,59 +32,84 @@ interface Preview {
   download: boolean;
   missing: string[];
 }
-interface Job {
+interface CreationDraft {
+  name: string;
+  parent: string;
+  summary: string;
+  from: string;
+  template: string;
+  url: string;
+  remote: string;
+  recipe: string;
+  generatorTemplate: string;
+  scanProject: boolean;
+}
+export interface CreationJob {
   id: string;
   status: "running" | "completed" | "failed" | "cancelled";
   output: string;
+  request: CreationDraft & { agent: AgentDraft | null };
+  continuation: {
+    status: "pending" | "running" | "completed" | "failed";
+    attempt: number;
+    result?: { terminal?: TerminalInfo };
+    error?: string;
+  } | null;
   result?: Change;
   error?: string;
 }
-export function NewProject() {
+function openCreated(draft: CreationDraft, result: Change) {
+  useApp
+    .getState()
+    .cd(draft.scanProject ? draft.parent : (result.path ?? draft.parent));
+  if (result.path && draft.scanProject) selectWhenReady(result.path);
+  useApp.setState({ modal: null });
+}
+export function NewProject({ restored }: { restored?: CreationJob }) {
   const s = useApp();
   const snapshot = s.snapshot!;
   const [info, setInfo] = useState<Info | null>(null);
-  const [draft, setDraft] = useState({
-    name: "",
-    parent:
-      s.view === "folder" &&
-      [snapshot.home, ...snapshot.roots].some((root) => within(s.cwd, root))
-        ? snapshot.nodes[s.cwd]?.kind === "project"
-          ? parentOf(s.cwd)
-          : s.cwd
-        : (snapshot.roots[0] ?? snapshot.home),
-    summary: "",
-    from: "empty",
-    template: "",
-    url: "",
-    remote: "none",
-    recipe: "vite",
-    generatorTemplate: "react-ts",
-    scanProject: true,
-  });
+  const [draft, setDraft] = useState<CreationDraft>(
+    restored?.request ?? {
+      name: "",
+      parent:
+        s.view === "folder" &&
+        [snapshot.home, ...snapshot.roots].some((root) => within(s.cwd, root))
+          ? snapshot.nodes[s.cwd]?.kind === "project"
+            ? parentOf(s.cwd)
+            : s.cwd
+          : (snapshot.roots[0] ?? snapshot.home),
+      summary: "",
+      from: "empty",
+      template: "",
+      url: "",
+      remote: "none",
+      recipe: "vite",
+      generatorTemplate: "react-ts",
+      scanProject: true,
+    },
+  );
   const [templatePath, setTemplatePath] = useState("");
   const [recipeText, setRecipeText] = useState("");
   const [showRecipe, setShowRecipe] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
-  const [launchAfter, setLaunchAfter] = useState(false);
-  const [agent, setAgent] = useState(() =>
-    agentDraft(agentProviders(snapshot.connectors)[0]?.value, s.terminalTarget),
+  const [launchAfter, setLaunchAfter] = useState(!!restored?.request.agent);
+  const [agent, setAgent] = useState(
+    () =>
+      restored?.request.agent ??
+      agentDraft(
+        agentProviders(snapshot.connectors)[0]?.value,
+        s.terminalTarget,
+      ),
   );
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [job, setJob] = useState<Job | null>(null);
+  const [saving, setSaving] = useState(!!restored);
+  const [job, setJob] = useState<CreationJob | null>(restored ?? null);
+  const [pollVersion, setPollVersion] = useState(0);
   const jobId = job?.id;
-  const jobStatus = job?.status;
   const [created, setCreated] = useState<Change | null>(null);
   const pending = useRef(false);
   const handledJob = useRef<string | null>(null);
-  const submitted = useRef({
-    agent,
-    launchAfter,
-    parent: draft.parent,
-    name: draft.name,
-    scanProject: draft.scanProject,
-    modal: s.modal,
-  });
   useEffect(() => {
     let live = true;
     void api<Info>("new/info").then(
@@ -99,48 +125,64 @@ export function NewProject() {
     };
   }, []);
   useEffect(() => {
-    if (!jobId || jobStatus !== "running") return;
+    if (!jobId) return;
     let live = true;
     let timer: ReturnType<typeof setTimeout>;
+    const modal = useApp.getState().modal;
     const poll = async () => {
       try {
-        const next = await api<Job>("new/status", { id: jobId });
+        let next = await api<CreationJob>("new/status", { id: jobId });
         if (!live) return;
         setJob(next);
-        if (next.status === "running")
+        if (next.status === "running") {
           timer = setTimeout(() => void poll(), 300);
-        else if (next.status === "completed" && next.result) {
-          if (handledJob.current === next.id) return;
-          handledJob.current = next.id;
-          setCreated(next.result);
-          const saved = submitted.current;
-          changed(
-            next.result,
-            `Created ${saved.name}`,
-            tilde(next.result.path, snapshot.home),
-          );
-          if (saved.launchAfter && next.result.path) {
-            try {
-              await launchAgent(saved.agent, next.result.path);
-              if (useApp.getState().modal === saved.modal) {
-                useApp.getState().cd(saved.scanProject ? saved.parent : next.result.path);
-                if (saved.scanProject) selectWhenReady(next.result.path);
-                useApp.setState({ modal: null });
-              }
-            } catch (error) {
-              if (useApp.getState().modal === saved.modal)
-                setError(
-                  `Project created. Agent launch failed: ${errorText(error)}`,
-                );
-            }
+          return;
+        }
+        if (next.status === "completed" && next.result) {
+          const result = next.result;
+          setCreated(result);
+          if (handledJob.current !== next.id) {
+            handledJob.current = next.id;
+            changed(
+              result,
+              `Created ${next.request.name}`,
+              tilde(result.path, snapshot.home),
+            );
           }
-          pending.current = false;
-          if (useApp.getState().modal === saved.modal) setSaving(false);
+          if (next.continuation?.status === "pending") {
+            next = await api<CreationJob>("new/continue", { id: next.id });
+            if (!live) return;
+            setJob(next);
+          }
+          if (next.continuation?.status === "running") {
+            timer = setTimeout(() => void poll(), 300);
+            return;
+          }
+          if (next.continuation?.status === "completed") {
+            const terminal = next.continuation.result?.terminal;
+            if (terminal)
+              useTerms.setState((current) => ({
+                tabs: current.tabs.some((tab) => tab.id === terminal.id)
+                  ? current.tabs
+                  : [...current.tabs, terminal],
+                active: terminal.id,
+                shown: true,
+              }));
+            await api("new/ack", { id: next.id });
+            if (!live || useApp.getState().modal !== modal) return;
+            openCreated(next.request, result);
+            return;
+          }
+          setError(
+            next.continuation?.status === "failed"
+              ? `Project created. Agent launch failed: ${next.continuation.error}`
+              : "",
+          );
         } else {
           setError(next.error ?? "Creation stopped");
-          pending.current = false;
-          setSaving(false);
         }
+        pending.current = false;
+        setSaving(false);
       } catch (error) {
         if (live) {
           setError(errorText(error));
@@ -153,11 +195,34 @@ export function NewProject() {
       live = false;
       clearTimeout(timer);
     };
-  }, [jobId, jobStatus, snapshot.home]);
-  function finish(result: Change) {
-    s.cd(draft.scanProject ? draft.parent : result.path ?? draft.parent);
-    if (result.path && draft.scanProject) selectWhenReady(result.path);
-    useApp.setState({ modal: null });
+  }, [jobId, pollVersion, snapshot.home]);
+  async function dismiss(open = false) {
+    await action(async () => {
+      if (job) await api("new/ack", { id: job.id });
+      if (open && created) openCreated(job?.request ?? draft, created);
+      else useApp.setState({ modal: null });
+    });
+  }
+  async function retryAgent() {
+    if (pending.current || !job?.continuation) return;
+    pending.current = true;
+    setSaving(true);
+    setError("");
+    try {
+      validateAgentDraft(agent);
+      setJob(
+        await api<CreationJob>("new/continue", {
+          id: job.id,
+          retryAttempt: job.continuation.attempt,
+          agent,
+        }),
+      );
+      setPollVersion((version) => version + 1);
+    } catch (error) {
+      pending.current = false;
+      setSaving(false);
+      setError(errorText(error));
+    }
   }
   function update(key: keyof typeof draft, value: string) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -206,19 +271,17 @@ export function NewProject() {
         return;
       }
     }
-    submitted.current = {
-      agent: { ...agent },
-      launchAfter,
-      parent: draft.parent,
-      name: draft.name,
-      scanProject: draft.scanProject,
-      modal: s.modal,
-    };
     pending.current = true;
     setSaving(true);
     setError("");
     try {
-      setJob(await api<Job>("new/start", draft));
+      if (job) await api("new/ack", { id: job.id });
+      setJob(
+        await api<CreationJob>("new/start", {
+          ...draft,
+          agent: launchAfter ? agent : null,
+        }),
+      );
     } catch (error) {
       pending.current = false;
       setError(errorText(error));
@@ -242,6 +305,7 @@ export function NewProject() {
       form
       preserveDraft
       dismissible={!saving}
+      onDismiss={() => void dismiss()}
       onSubmit={(event) => void submit(event)}
       footer={
         <>
@@ -259,17 +323,12 @@ export function NewProject() {
           </p>
           {created ? (
             <>
-              {launchAfter ? (
+              {job?.continuation?.status === "failed" ? (
                 <button
                   type="button"
                   className="btn"
                   disabled={saving}
-                  onClick={() =>
-                    void action(async () => {
-                      await launchAgent(agent, created.path!);
-                      finish(created);
-                    })
-                  }
+                  onClick={() => void retryAgent()}
                 >
                   Retry agent launch
                 </button>
@@ -278,7 +337,7 @@ export function NewProject() {
                 type="button"
                 className="btn primary"
                 disabled={saving}
-                onClick={() => finish(created)}
+                onClick={() => void dismiss(true)}
               >
                 Open project
               </button>
@@ -302,7 +361,7 @@ export function NewProject() {
                   type="button"
                   className="btn"
                   disabled={saving}
-                  onClick={() => useApp.setState({ modal: null })}
+                  onClick={() => void dismiss()}
                 >
                   Discard draft
                 </button>

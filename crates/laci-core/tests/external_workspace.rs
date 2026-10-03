@@ -1,5 +1,5 @@
 //! Explicit workspace selection must not grant access to adjacent disk paths or symlink targets.
-use laci_core::{activity, config, env::Env, paths, service::Service};
+use laci_core::{activity, config, env::Env, ops, paths, service::Service};
 use serde_json::json;
 use std::{fs, path::Path};
 
@@ -191,6 +191,141 @@ fn exact_root_fixture() -> (tempfile::TempDir, Env, std::path::PathBuf, std::pat
     fs::create_dir_all(&archive).unwrap();
     config::save(&env, &json!({"roots":[source],"archiveDir":archive,"presets":[]})).unwrap();
     (temp, env, source, archive)
+}
+
+#[test]
+fn replaced_standalone_archive_identity_blocks_preview_and_execution() {
+    let (_temp, env, source, archive) = exact_root_fixture();
+    let mut service = Service::new(env.clone());
+    service.request("setup/save", &json!({"roots":[source],"archiveDir":archive,"presets":[]})).unwrap();
+    let cfg = config::load(&env);
+    assert_eq!(cfg["roots"], json!([source]));
+    assert!(cfg["rootIdentities"][archive.to_str().unwrap()].is_object());
+    let original_config = fs::read(env.config_dir.join("config.json")).unwrap();
+    fs::rename(&archive, archive.with_extension("original")).unwrap();
+    write(&archive.join("keep.txt"), "replacement contents");
+
+    let statuses = laci_core::scan::root_status(&env, &cfg);
+    assert_eq!(statuses.iter().find(|status| status["path"] == json!(archive)).unwrap()["available"], false);
+    for body in [json!({"id":source}), json!({"id":source,"destination":archive.join("demo")})] {
+        for action in ["archive/plan", "archive"] {
+            assert!(service.request(action, &body).unwrap_err().contains("select it again"));
+        }
+    }
+    assert_eq!(fs::read_to_string(source.join("package.json")).unwrap(), "{}");
+    assert_eq!(fs::read_to_string(archive.join("keep.txt")).unwrap(), "replacement contents");
+    assert!(!archive.join("demo").exists());
+    assert_eq!(fs::read(env.config_dir.join("config.json")).unwrap(), original_config);
+    assert!(ops::journals(&env, 10).is_empty());
+}
+
+#[test]
+fn archive_rechecks_a_replaced_destination_after_preview_and_inside_the_transaction() {
+    let (_temp, env, source, archive) = exact_root_fixture();
+    let mut service = Service::new(env.clone());
+    service.request("setup/save", &json!({"roots":[source],"archiveDir":archive,"presets":[]})).unwrap();
+    let preview = service.request("archive/plan", &json!({"id":source})).unwrap();
+    let snapshot = service.snapshot().unwrap();
+    fs::rename(&archive, archive.with_extension("original")).unwrap();
+    fs::create_dir(&archive).unwrap();
+    assert!(
+        service
+            .request("archive", &json!({"id":source,"destination":preview["dest"]}))
+            .unwrap_err()
+            .contains("select it again")
+    );
+    // Exercise the locked mutation independently of archive_plan's validation.
+    let error = ops::move_project(
+        &env,
+        &snapshot,
+        source.to_str().unwrap(),
+        preview["dest"].as_str().unwrap(),
+        &json!({"status":"archived"}),
+    )
+    .unwrap_err();
+    assert!(error.contains("select it again"));
+    let journals = ops::journals(&env, 10);
+    assert_eq!(journals.len(), 1);
+    assert_eq!(journals[0]["state"], "undone");
+    assert_eq!(journals[0]["entries"], json!([]));
+    assert!(source.join("package.json").is_file());
+    assert!(!source.join(".laci.md").exists());
+    assert!(fs::read_dir(&archive).unwrap().next().is_none());
+}
+
+#[test]
+fn valid_alternative_and_explicit_archive_reselection_authorize_archiving() {
+    let (temp, env, source, archive) = exact_root_fixture();
+    let alternative = temp.path().join("other-disk");
+    fs::create_dir(&alternative).unwrap();
+    let mut service = Service::new(env.clone());
+    let settings = json!({"roots":[source,alternative],"archiveDir":archive,"presets":[]});
+    service.request("setup/save", &settings).unwrap();
+    let identity = config::load(&env)["rootIdentities"][archive.to_str().unwrap()].clone();
+    fs::rename(&archive, archive.with_extension("original")).unwrap();
+    fs::create_dir(&archive).unwrap();
+    service.request("setup/save", &settings).unwrap();
+    assert_eq!(config::load(&env)["rootIdentities"][archive.to_str().unwrap()], identity);
+    assert!(service.request("archive/plan", &json!({"id":source})).is_err());
+
+    for destination in [alternative.join("demo"), env.home.join("cold/demo")] {
+        let plan = service.request("archive/plan", &json!({"id":source,"destination":destination})).unwrap();
+        assert_eq!(plan["dest"], json!(destination));
+        let changed = service.request("archive", &json!({"id":source,"destination":destination})).unwrap();
+        assert!(destination.join("package.json").is_file());
+        assert!(!source.exists());
+        service.request("undo", &json!({"id":changed["journal"]["id"]})).unwrap();
+        assert!(source.join("package.json").is_file());
+        assert!(!destination.exists());
+    }
+
+    service.request("setup/save", &json!({"roots":[source,alternative],"archiveDir":"","presets":[]})).unwrap();
+    assert!(config::load(&env)["rootIdentities"].get(archive.to_str().unwrap()).is_none());
+    service.request("setup/save", &settings).unwrap();
+    assert_ne!(config::load(&env)["rootIdentities"][archive.to_str().unwrap()], identity);
+    let changed = service.request("archive", &json!({"id":source})).unwrap();
+    assert!(archive.join("demo/package.json").is_file());
+    service.request("undo", &json!({"id":changed["journal"]["id"]})).unwrap();
+    assert!(source.join("package.json").is_file());
+}
+
+#[test]
+fn nested_archive_selection_checks_its_identity_even_when_scan_roots_are_deduplicated() {
+    let (temp, env, source, _) = exact_root_fixture();
+    let root = temp.path().join("saved-disk");
+    let archive = root.join("archive");
+    fs::create_dir_all(&archive).unwrap();
+    let mut service = Service::new(env.clone());
+    service.request("setup/save", &json!({"roots":[source,root],"archiveDir":archive,"presets":[]})).unwrap();
+    fs::rename(&archive, archive.with_extension("original")).unwrap();
+    fs::create_dir(&archive).unwrap();
+    let statuses = laci_core::scan::root_status(&env, &config::load(&env));
+    assert!(statuses.iter().all(|status| status["available"] == true));
+    assert!(!statuses.iter().any(|status| status["path"] == json!(archive)));
+    for action in ["archive/plan", "archive"] {
+        assert!(service.request(action, &json!({"id":source})).unwrap_err().contains("select it again"));
+    }
+    let destination = root.join("alternative/demo");
+    let changed = service.request("archive", &json!({"id":source,"destination":destination})).unwrap();
+    assert!(destination.join("package.json").is_file());
+    service.request("undo", &json!({"id":changed["journal"]["id"]})).unwrap();
+    assert!(source.join("package.json").is_file());
+}
+
+#[test]
+fn archive_destination_requires_the_recorded_filesystem_device() {
+    let (_temp, env, source, archive) = exact_root_fixture();
+    let mut service = Service::new(env.clone());
+    service.request("setup/save", &json!({"roots":[source],"archiveDir":archive,"presets":[]})).unwrap();
+    let mut cfg = config::load(&env);
+    let device = &mut cfg["rootIdentities"][archive.to_str().unwrap()]["device"];
+    *device = json!(device.as_u64().unwrap().wrapping_add(1));
+    config::save(&env, &cfg).unwrap();
+    for action in ["archive/plan", "archive"] {
+        assert!(service.request(action, &json!({"id":source})).unwrap_err().contains("select it again"));
+    }
+    assert!(source.join("package.json").is_file());
+    assert!(fs::read_dir(&archive).unwrap().next().is_none());
 }
 
 #[test]

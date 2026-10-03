@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::{BufRead, BufReader, Read, Seek, SeekFrom},
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
@@ -152,7 +152,7 @@ struct Cache {
 
 impl Cache {
     fn load(env: &Env) -> Self {
-        let values = files::read_limit(&env.cache_dir.join("v3-agent-facts.json"), 32 * 1024 * 1024)
+        let values = files::read_limit(&env.cache_dir.join("v4-agent-facts.json"), 32 * 1024 * 1024)
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         Self { values, seen: BTreeSet::new() }
@@ -203,7 +203,7 @@ impl Cache {
     fn save(mut self, env: &Env) {
         self.values.retain(|k, _| self.seen.contains(k));
         if let Ok(text) = serde_json::to_vec(&self.values) {
-            let _ = files::replace(&env.cache_dir.join("v3-agent-facts.json"), &text);
+            let _ = files::replace(&env.cache_dir.join("v4-agent-facts.json"), &text);
         }
     }
 }
@@ -223,26 +223,16 @@ fn log_facts(path: &Path, field: &str, claude: bool) -> Value {
     let mut branch = None;
     let title_re = field_regex("aiTitle");
     let branch_re = field_regex("gitBranch");
-    let Ok(file) = fs::File::open(path) else {
-        return json!({"cwds":{}});
-    };
-    // Read a line at a time: session logs may be hundreds of megabytes.
-    let mut reader = BufReader::new(file);
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) | Err(_) => break,
-            Ok(_) => (),
-        }
-        // A complete final JSON record is valid without a trailing newline; an unfinished
-        // writer's record is retried after its metadata changes.
-        if !line.ends_with('\n') && serde_json::from_str::<Value>(&line).is_err() {
-            break;
-        }
+    let mut valid_locations = true;
+    let complete = records(path, |value| {
+        let line = value.to_string();
         for c in field.captures_iter(&line) {
-            let Some(value) = decoded(&c[1]) else { continue };
+            let Some(value) = decoded(&c[1]) else {
+                valid_locations = false;
+                continue;
+            };
             if !Path::new(&value).is_absolute() {
+                valid_locations = false;
                 continue;
             }
             let value = paths::normalize(Path::new(&value)).to_string_lossy().into_owned();
@@ -261,38 +251,65 @@ fn log_facts(path: &Path, field: &str, claude: bool) -> Value {
                 branch = decoded(&c[1]);
             }
         }
-    }
+    });
     let lines = first.as_ref().map_or(0, |cwd| {
         cwds.iter().filter(|(p, _)| paths::within(Path::new(p), Path::new(cwd))).map(|(_, n)| n).sum()
     });
-    json!({"cwd":first,"cwds":cwds,"lines":lines,"title":title,"branch":branch})
+    json!({"cwd":first,"cwds":cwds,"lines":lines,"title":title,"branch":branch,"ownershipComplete":complete && valid_locations})
 }
 
 const METADATA_BYTES: u64 = 8 * 1024 * 1024;
-fn records(path: &Path, read: impl FnMut(Value)) {
-    records_from(path, false, read);
+const METADATA_RECORDS: usize = 20_000;
+fn records(path: &Path, read: impl FnMut(Value)) -> bool {
+    records_from(path, false, read)
 }
-fn records_from(path: &Path, tail: bool, mut read: impl FnMut(Value)) {
-    let Ok(mut file) = fs::File::open(path) else { return };
-    let skip = if tail { file.metadata().map_or(0, |m| m.len().saturating_sub(METADATA_BYTES)) } else { 0 };
-    if skip > 0 && file.seek(SeekFrom::Start(skip)).is_err() {
-        return;
+// Completeness is required for cleanup. A tail window is only display metadata.
+fn records_from(path: &Path, tail: bool, mut read: impl FnMut(Value)) -> bool {
+    let Ok(mut file) = fs::File::open(path) else { return false };
+    let Ok(before) = file.metadata() else { return false };
+    let skip = if tail { before.len().saturating_sub(METADATA_BYTES) } else { 0 };
+    if file.seek(SeekFrom::Start(skip)).is_err() {
+        return false;
     }
-    let mut reader = BufReader::new(file.take(METADATA_BYTES));
+    let mut bytes = Vec::new();
+    if (&mut file).take(METADATA_BYTES).read_to_end(&mut bytes).is_err() {
+        return false;
+    }
+    let mut complete = skip == 0 && bytes.len() as u64 == before.len();
+    let mut data = bytes.as_slice();
     if skip > 0 {
-        let mut incomplete = String::new();
-        let _ = reader.read_line(&mut incomplete);
+        // The window can begin inside a JSON string. Never interpret that fragment.
+        data = data.iter().position(|b| *b == b'\n').map_or(&[], |end| &data[end + 1..]);
     }
-    let mut line = String::new();
-    for _ in 0..if tail { 128_000 } else { 20_000 } {
-        line.clear();
-        if !matches!(reader.read_line(&mut line), Ok(n) if n > 0) {
-            break;
+    let lines: Vec<_> = if tail {
+        let mut recent: Vec<_> = data.rsplit(|b| *b == b'\n').take(128_000).collect();
+        recent.reverse();
+        recent
+    } else {
+        data.split(|b| *b == b'\n').take(METADATA_RECORDS).collect()
+    };
+    let mut consumed = 0usize;
+    for line in lines {
+        consumed += line.len() + 1;
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
         }
-        if let Ok(value) = serde_json::from_str::<Value>(&line) {
-            read(value);
+        match serde_json::from_slice::<Value>(line) {
+            Ok(value) if value.is_object() => read(value),
+            _ => complete = false,
         }
     }
+    complete &= consumed >= data.len();
+    // A writer changing the file during this read cannot supply complete ownership proof.
+    complete &= file.metadata().is_ok_and(|after| {
+        use std::os::unix::fs::MetadataExt;
+        after.len() == before.len()
+            && after.mtime() == before.mtime()
+            && after.mtime_nsec() == before.mtime_nsec()
+            && after.ctime() == before.ctime()
+            && after.ctime_nsec() == before.ctime_nsec()
+    });
+    complete
 }
 fn concise(text: &str) -> Option<String> {
     let text = text.trim();
@@ -329,7 +346,8 @@ fn message_text(content: &Value) -> Option<String> {
 fn session_facts(path: &Path, provider: &str) -> Value {
     let mut facts = json!({"cwds":{},"lines":0});
     let mut first_message = None;
-    records(path, |v| {
+    let mut valid_locations = true;
+    let mut read = |v: Value, head: bool| {
         let meta = if provider == "codex" {
             if matches!(v["type"].as_str(), Some("session_meta" | "turn_context")) {
                 Some(&v["payload"])
@@ -346,26 +364,43 @@ fn session_facts(path: &Path, provider: &str) -> Value {
                 let cwd = paths::normalize(Path::new(cwd)).to_string_lossy().into_owned();
                 // Session and turn metadata are authoritative; tool arguments are never searched.
                 facts["cwd"] = json!(cwd);
-                let n = facts["cwds"][&cwd].as_u64().unwrap_or(0) + 1;
-                facts["cwds"][&cwd] = json!(n);
-                facts["lines"] = json!(facts["lines"].as_u64().unwrap_or(0) + 1);
+                if head {
+                    let n = facts["cwds"][&cwd].as_u64().unwrap_or(0) + 1;
+                    facts["cwds"][&cwd] = json!(n);
+                    facts["lines"] = json!(facts["lines"].as_u64().unwrap_or(0) + 1);
+                }
+            } else if !meta["cwd"].is_null() {
+                valid_locations = false;
             }
             if provider == "codex" && v["type"] == "session_meta" {
-                facts["sessionId"] = meta["id"].clone();
-                facts["sourceKind"] = if meta["source"].is_string() {
-                    meta["source"].clone()
+                if let Some(id) = meta["id"].as_str().filter(|id| !id.is_empty()) {
+                    if facts["sessionId"].is_null() {
+                        facts["sessionId"] = json!(id);
+                    } else if facts["sessionId"] != id {
+                        valid_locations = false;
+                    }
+                }
+                if let Some(source) = meta["source"].as_str().filter(|source| !source.is_empty()) {
+                    facts["sourceKind"] = json!(source);
                 } else if meta["source"]["subagent"].is_object() {
-                    json!("subagent")
-                } else {
-                    json!("cli")
-                };
-                facts["parentId"] = meta["source"]["subagent"]["thread_spawn"]["parent_thread_id"].clone();
-                if facts["parentId"].is_null() {
-                    facts["parentId"] = meta["source"]["subagent"]["parent_thread_id"].clone();
+                    facts["sourceKind"] = json!("subagent");
+                }
+                if let Some(parent) = meta["parent_thread_id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .or_else(|| meta["source"]["subagent"]["thread_spawn"]["parent_thread_id"].as_str())
+                    .or_else(|| meta["source"]["subagent"]["parent_thread_id"].as_str())
+                    .filter(|id| !id.is_empty())
+                {
+                    facts["parentId"] = json!(parent);
                 }
             } else if provider == "claude" {
-                if let Some(id) = v["sessionId"].as_str() {
-                    facts["sessionId"] = json!(id);
+                if let Some(id) = v["sessionId"].as_str().filter(|id| !id.is_empty()) {
+                    if facts["sessionId"].is_null() {
+                        facts["sessionId"] = json!(id);
+                    } else if facts["sessionId"] != id {
+                        valid_locations = false;
+                    }
                 }
                 if let Some(branch) = v["gitBranch"].as_str() {
                     facts["branch"] = json!(branch);
@@ -384,7 +419,7 @@ fn session_facts(path: &Path, provider: &str) -> Value {
                 }
             }
         }
-        if first_message.is_none() {
+        if head && first_message.is_none() {
             if provider == "codex" {
                 if v["type"] == "event_msg" && v["payload"]["type"] == "user_message" {
                     first_message = v["payload"]["message"].as_str().and_then(concise);
@@ -398,7 +433,12 @@ fn session_facts(path: &Path, provider: &str) -> Value {
                 first_message = message_text(&v["message"]["content"]);
             }
         }
-    });
+    };
+    let complete = records(path, |v| read(v, true));
+    if !complete {
+        records_from(path, true, |v| read(v, false));
+    }
+    facts["ownershipComplete"] = json!(complete && valid_locations);
     if facts["title"].is_null()
         && let Some(title) = first_message
     {
@@ -463,8 +503,28 @@ fn claude_dirs(env: &Env, cache: &mut Cache) -> BTreeMap<String, Value> {
 
         let mut sessions = Vec::new();
         let mut counts: BTreeMap<String, u64> = BTreeMap::new();
-        for f in files::walk(&dir, true).filter(|f| f.file_type().is_file()) {
-            bytes += f.metadata().map_or(0, |m| m.len());
+        let mut complete = true;
+        for (index, entry) in walkdir::WalkDir::new(&dir).follow_links(false).into_iter().enumerate() {
+            if index >= 20_000 {
+                complete = false;
+                break;
+            }
+            let Ok(f) = entry else {
+                complete = false;
+                continue;
+            };
+            if f.file_type().is_dir() {
+                continue;
+            }
+            if !f.file_type().is_file() {
+                complete = false;
+                continue;
+            }
+            let Ok(meta) = f.metadata() else {
+                complete = false;
+                continue;
+            };
+            bytes += meta.len();
             let relative = f.path().strip_prefix(&dir).unwrap_or(f.path());
             if relative.components().any(|c| c.as_os_str() == "memory")
                 || f.path().extension().is_none_or(|e| e != "jsonl")
@@ -473,6 +533,8 @@ fn claude_dirs(env: &Env, cache: &mut Cache) -> BTreeMap<String, Value> {
             }
 
             let facts = cache.facts("claude", f.path(), || session_facts(f.path(), "claude"));
+            complete &=
+                facts["ownershipComplete"] == true && facts["cwds"].as_object().is_some_and(|cwds| !cwds.is_empty());
             for (cwd, n) in facts["cwds"].as_object().into_iter().flatten() {
                 *counts.entry(cwd.clone()).or_default() += n.as_u64().unwrap_or(0);
             }
@@ -503,7 +565,7 @@ fn claude_dirs(env: &Env, cache: &mut Cache) -> BTreeMap<String, Value> {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         let gone: Vec<_> = counts.keys().filter(|p| !Path::new(p).exists()).cloned().collect();
-        let mut c = json!({"name":name,"dir":dir,"sessions":sessions,"subagentLogs":sessions.iter().filter(|s| s["sourceKind"] == "subagent").count(),"memory":memory,"bytes":bytes,"cwds":counts,"gone":gone});
+        let mut c = json!({"name":name,"dir":dir,"sessions":sessions,"subagentLogs":sessions.iter().filter(|s| s["sourceKind"] == "subagent").count(),"memory":memory,"bytes":bytes,"cwds":counts,"gone":gone,"ownershipComplete":complete});
         if let Some(path) = resolve_encoded(env, &name) {
             c["path"] = json!(path);
         }
@@ -597,7 +659,7 @@ pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
                         if provider == "codex" { session_facts(&file, "codex") } else { log_facts(&file, field, false) }
                     });
                     let key = format!("{id}:{}", file.strip_prefix(&dir).unwrap_or(&file).display());
-                    let mut item = json!({"id":key,"connector":id,"file":file,"at":files::modified(&file),"bytes":fs::metadata(&file).map_or(0,|m|m.len()),"lines":facts["lines"]});
+                    let mut item = json!({"id":key,"connector":id,"file":file,"at":files::modified(&file),"bytes":fs::metadata(&file).map_or(0,|m|m.len()),"lines":facts["lines"],"cwds":facts["cwds"],"ownershipComplete":facts["ownershipComplete"]});
                     if let Some(cwd) = facts["cwd"].as_str() {
                         item["cwd"] = json!(cwd);
                     }
@@ -642,8 +704,7 @@ pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
                         .max()
                         .unwrap_or_else(|| files::modified(&file));
                     let key = format!("{id}:{name}");
-                    let mut item =
-                        json!({"id":key,"connector":id,"file":file,"at":newest,"bytes":files::size(&file),"lines":0});
+                    let mut item = json!({"id":key,"connector":id,"file":file,"at":newest,"bytes":files::size(&file),"lines":0,"ownershipComplete":false});
                     if link["naming"] == "dashes"
                         && let Some(cwd) = resolve_encoded(env, &name)
                     {
@@ -743,6 +804,93 @@ mod tests {
         assert_eq!(s["cwd"], json!(env.home));
         assert_eq!(s["title"], "Fix the actual bug with care");
         assert_eq!(s["resumeCapability"], "supported");
+    }
+    #[test]
+    fn codex_top_level_and_nested_parents_survive_late_metadata() {
+        let home = tempfile::tempdir().unwrap();
+        let log = home.path().join("session.jsonl");
+        for source in [
+            json!({"source":{"subagent":{"other":"review"}},"parent_thread_id":ID}),
+            json!({"source":{"subagent":{"thread_spawn":{"parent_thread_id":ID}}}}),
+            json!({"source":{"subagent":{"parent_thread_id":ID}}}),
+        ] {
+            let mut payload = source;
+            payload["id"] = json!(CHILD);
+            payload["cwd"] = json!("/projects/old");
+            let mut text = format!("{}\n", json!({"type":"session_meta","payload":payload}));
+            text.push_str(&"{}\n".repeat(METADATA_RECORDS));
+            text.push_str(&format!("{}\n", json!({"type":"session_meta","payload":{"cwd":"/projects/latest"}})));
+            fs::write(&log, text).unwrap();
+            let facts = session_facts(&log, "codex");
+            assert_eq!(facts["cwd"], "/projects/latest");
+            assert_eq!(facts["parentId"], ID);
+            assert_eq!(facts["sessionId"], CHILD);
+            assert_eq!(facts["sourceKind"], "subagent");
+            assert_eq!(facts["ownershipComplete"], false);
+        }
+    }
+    #[test]
+    fn recent_metadata_beyond_byte_and_record_bounds_updates_display_only() {
+        let home = tempfile::tempdir().unwrap();
+        let log = home.path().join("session.jsonl");
+        for provider in ["codex", "claude"] {
+            for boundary in ["bytes", "records"] {
+                let head = if provider == "codex" {
+                    vec![
+                        json!({"type":"session_meta","payload":{"id":ID,"cwd":"/projects/old","source":"cli"}}),
+                        json!({"type":"event_msg","payload":{"type":"user_message","message":"Original user request"}}),
+                    ]
+                } else {
+                    vec![
+                        json!({"type":"user","sessionId":ID,"cwd":"/projects/old","message":{"role":"user","content":"Original user request"}}),
+                    ]
+                };
+                let mut text = head.iter().map(|v| format!("{v}\n")).collect::<String>();
+                if boundary == "bytes" {
+                    text.push_str(&format!("{}\n", json!({"padding":"x".repeat(1024 * 1024)})).repeat(9));
+                } else {
+                    text.push_str(&"{}\n".repeat(METADATA_RECORDS));
+                }
+                let tail = if provider == "codex" {
+                    json!({"type":"turn_context","payload":{"cwd":"/projects/latest"}})
+                } else {
+                    json!({"type":"custom-title","customTitle":"Renamed late","cwd":"/projects/latest"})
+                };
+                text.push_str(&format!("{tail}\n"));
+                fs::write(&log, text).unwrap();
+                let facts = session_facts(&log, provider);
+                assert_eq!(facts["cwd"], "/projects/latest", "{provider}/{boundary}");
+                assert_eq!(facts["sessionId"], ID);
+                assert_eq!(facts["ownershipComplete"], false);
+                assert_eq!(facts["cwds"], json!({"/projects/old":1}));
+                assert_eq!(facts["title"], if provider == "claude" { "Renamed late" } else { "Original user request" });
+            }
+        }
+    }
+    #[test]
+    fn previous_cache_schema_cannot_hide_shared_ownership() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let log = env.home.join(".codex/sessions/session.jsonl");
+        put(
+            &log,
+            &[
+                json!({"type":"session_meta","payload":{"id":ID,"cwd":"/projects/live"}}),
+                json!({"type":"turn_context","payload":{"cwd":"/projects/gone"}}),
+            ],
+        );
+        let mut old = Cache::load(&env);
+        old.facts(
+            "cwd:codex:cwd",
+            &log,
+            || json!({"cwd":"/projects/gone","cwds":{"/projects/gone":1},"ownershipComplete":true}),
+        );
+        old.save(&env);
+        fs::rename(env.cache_dir.join("v4-agent-facts.json"), env.cache_dir.join("v3-agent-facts.json")).unwrap();
+        let history = read_all(&env, &connectors(&env, &json!({"presets":["codex"]})));
+        let item = history.items.values().next().unwrap();
+        assert_eq!(item["cwds"], json!({"/projects/live":1,"/projects/gone":1}));
+        assert_eq!(item["ownershipComplete"], true);
     }
     #[test]
     fn title_index_rename_invalidates_without_touching_log_and_uses_latest_title_record() {

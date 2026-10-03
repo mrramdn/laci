@@ -14,6 +14,10 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ### Fixed
 
+- Orphan cleanup requires complete ownership evidence and confirms every recorded project is missing. Shared, bounded, unreadable or unfinished histories remain protected.
+- Recent Codex cwd and Claude title metadata refresh beyond the transcript head window. Codex child sessions recognize top-level and nested parent IDs.
+- Archive preview and execution reject a replaced selected destination folder; a valid alternative or explicit Settings reselection remains available.
+- New-project progress, cancellation and optional agent continuation recover after a WebView reload. Repeated continuation requests launch once; an explicit failed-launch retry keeps the created project.
 - Token-styled dropdowns follow the app theme, retain keyboard/typeahead behavior and close before their enclosing dialog. Forms keep drafts until submission or explicit discard.
 - One sidebar search entrypoint, a Terminal control beside Copy path, visible sort direction, external-root breadcrumbs and keyboard navigation.
 - Archive remains accessible when its default destination is invalid, with a field for another destination.

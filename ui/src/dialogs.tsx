@@ -44,6 +44,7 @@ export function DialogFrame({
   onSubmit,
   preserveDraft = form,
   dismissible = true,
+  onDismiss = close,
 }: {
   title: string;
   description: ReactNode;
@@ -53,6 +54,7 @@ export function DialogFrame({
   onSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
   preserveDraft?: boolean;
   dismissible?: boolean;
+  onDismiss?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [portal, setPortal] = useState<HTMLDivElement | null>(null);
@@ -93,7 +95,7 @@ export function DialogFrame({
               draftFocus.current = document.activeElement;
             if (discard) restoreFocus(draftFocus.current);
             setDiscard(!discard);
-          } else close();
+          } else onDismiss();
         }
         return;
       }
@@ -121,7 +123,7 @@ export function DialogFrame({
     return () => {
       document.removeEventListener("keydown", key);
     };
-  }, [preserveDraft, discard, dismissible]);
+  }, [preserveDraft, discard, dismissible, onDismiss]);
   const body = (
     <>
       <div className="dh">
@@ -149,7 +151,7 @@ export function DialogFrame({
                 type="button"
                 className="btn"
                 disabled={!dismissible}
-                onClick={close}
+                onClick={onDismiss}
               >
                 Discard draft
               </button>
@@ -176,7 +178,7 @@ export function DialogFrame({
             if (document.activeElement instanceof HTMLElement)
               draftFocus.current = document.activeElement;
             setDiscard(true);
-          } else close();
+          } else onDismiss();
         }
       }}
       ref={ref}
@@ -220,8 +222,9 @@ export function Dialogs() {
         <DialogFrame
           title="New project"
           description="Loading the form…"
+          dismissible={!modal.job}
           footer={
-            <button className="btn" onClick={close}>
+            <button className="btn" disabled={!!modal.job} onClick={close}>
               Cancel
             </button>
           }
@@ -230,7 +233,7 @@ export function Dialogs() {
         </DialogFrame>
       }
     >
-      <NewProject />
+      <NewProject key={modal.job?.id ?? "draft"} restored={modal.job} />
     </Suspense>
   ) : modal?.kind === "connector" ? (
     <ConnectorDialog />

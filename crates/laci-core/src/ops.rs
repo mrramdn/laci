@@ -685,6 +685,9 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
     });
     transact(env, &title, |tx| {
         guard(std::slice::from_ref(&src))?;
+        if opts["status"] == "archived" {
+            crate::scan::check_archive_destination(env, &dest)?;
+        }
         tx.move_to(&src, &dest)?;
         if let Some(claude) = snap["claude"].as_object() {
             for c in claude.values() {

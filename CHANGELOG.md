@@ -12,7 +12,7 @@ Release candidate for Linux x86-64. The distribution build targets Ubuntu 24.04;
 
 - Desktop runtime migrated to Rust and Tauri 2. React preserves the current interface, with local fonts and direct IPC.
 - The desktop, CLI and 15 stdio MCP tools share one Rust engine. Installed builds no longer need Electron or Node.
-- Existing config, `.laci.md`, activity logs, move journals and backups are read directly. Move journals can be undone by either v1 or v2.
+- Existing config, `.laci.md`, activity logs, move journals and backups are read directly. Legacy home-folder move journals can be undone by either v1 or v2; external workspace and config-guarded moves require v2.
 - Desktop actions acknowledge committed filesystem changes before refreshing the view. One background worker batches refresh requests and refuses results overtaken by a newer edit.
 - Agent-log changes refresh history without rereading every project's git state, README and size when the detected project graph is unchanged. Watch directories are enumerated when their topology changes.
 

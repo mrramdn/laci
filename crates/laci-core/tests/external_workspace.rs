@@ -157,7 +157,7 @@ fn external_project_history_and_notes_survive_archive_and_undo() {
     let claude = env.home.join(".claude/projects").join(paths::enc(source.to_str().unwrap())).join("session.jsonl");
     let codex = env.home.join(".codex/sessions/session.jsonl");
     write(&claude, &format!("{}\n", json!({"cwd":source,"type":"ai-title","aiTitle":"External project"})));
-    write(&codex, &format!("{}\n", json!({"payload":{"cwd":source}})));
+    write(&codex, &format!("{}\n", json!({"type":"session_meta","payload":{"cwd":source}})));
     config::save(&env, &json!({"roots":[root],"archiveDir":archive,"presets":["claude","codex","aider"]})).unwrap();
     let mut service = Service::new(env.clone());
     let id = source.to_str().unwrap();

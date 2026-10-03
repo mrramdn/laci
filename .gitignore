@@ -5,3 +5,9 @@ target/
 ui/dist/
 ui/*.tsbuildinfo
 src-tauri/gen/
+
+/screenshots/
+/demo-home/
+.env
+.env.*
+!.env.example

@@ -88,6 +88,8 @@ pub fn mutates(name: &str) -> bool {
             | "theme"
             | "setup/save"
             | "new"
+            | "new/template"
+            | "new/recipe"
             | "connector/add"
             | "connector/remove"
     )
@@ -206,7 +208,13 @@ impl Service {
         sidecar::checkbox_occurrence(path, text, occurrence, known.len())
     }
     fn journaled(&mut self, journal: Value, path: Option<&str>, by: &str) -> Result<Value> {
-        let entry = json!({"by":by,"title":journal["title"],"path":path,"journal":journal["id"],"undo":{"type":"journal","id":journal["id"]}});
+        let mut entry = json!({"by":by,"title":journal["title"],"path":path,"journal":journal["id"]});
+        if ops::can_undo(&journal) {
+            entry["undo"] = json!({"type":"journal","id":journal["id"]});
+        }
+        if let Some(detail) = ops::recovery(&journal) {
+            entry["detail"] = json!(detail);
+        }
         activity::record(&self.env, entry);
         Ok(json!({"journal":journal}))
     }
@@ -450,7 +458,7 @@ impl Service {
                 if p["action"].is_null() {
                     return Err("Nothing to apply here; open the folders and decide".into());
                 }
-                let j = ops::apply_action(&self.env, &snap, string(&p, "title"), &p["action"])?;
+                let j = ops::apply_proposal(&self.env, &snap, &p, b["recovery"].as_str().unwrap_or("quarantine"))?;
                 self.journaled(j, p["nodeId"].as_str(), by)
             }
             "undo" => {
@@ -501,20 +509,34 @@ impl Service {
                 Ok(json!({"theme":theme}))
             }
             "setup/info" => self.setup_info(),
+            "setup/discover" => self.discover_roots(),
             "setup/save" => {
                 let roots = config::validate_roots(&self.env, &b["roots"])?;
+                if b.get("terminalTarget").is_some()
+                    && !matches!(b["terminalTarget"].as_str(), Some("internal" | "external"))
+                {
+                    return Err("Unknown terminal target".into());
+                }
                 let apps = config::validate_apps(&b["apps"])?;
                 let archive_dir =
                     b.get("archiveDir").map(|v| config::validate_archive_dir(&self.env, v)).transpose()?;
                 let presets = array(&b["presets"]);
                 let catalog = agents::catalog(&self.env);
-                if presets.iter().any(|p| !catalog.iter().any(|c| &c["id"] == p)) {
+                let existing = config::load(&self.env);
+                if presets
+                    .iter()
+                    .any(|p| !catalog.iter().any(|c| &c["id"] == p) && !array(&existing["presets"]).contains(p))
+                {
                     return Err("Unknown connector".into());
                 }
                 ops::with_lock(&self.env, || {
                     let mut c = config::load(&self.env);
-                    let before = json!({"type":"config","roots":c["roots"],"presets":c["presets"],"apps":c["apps"],"archiveDir":c["archiveDir"]});
+                    let before = json!({"type":"config","roots":c["roots"],"presets":c["presets"],"apps":c["apps"],"archiveDir":c["archiveDir"],"rootIdentities":c["rootIdentities"],"terminalTarget":c["terminalTarget"]});
+                    c["rootIdentities"] = config::root_identities(&self.env, &roots, &c["rootIdentities"]);
                     c["roots"] = roots;
+                    if let Some(target) = b.get("terminalTarget") {
+                        c["terminalTarget"] = target.clone();
+                    }
                     c["presets"] = json!(presets);
                     c["apps"] = apps;
                     if let Some(archive_dir) = archive_dir {
@@ -530,8 +552,11 @@ impl Service {
                 Ok(json!({}))
             }
             "new/info" => Ok(
-                json!({"templates":create::templates(&self.env),"templatesDir":paths::tilde(&self.env.config_dir.join("templates"),&self.env.home),"hosts":create::hosts()}),
+                json!({"templates":create::templates(&self.env),"templatesDir":paths::tilde(&self.env.config_dir.join("templates"),&self.env.home),"hosts":create::hosts(),"recipes":create::generator::recipes(&self.env)}),
             ),
+            "new/template" => create::add_template(&self.env, string(b, "path")),
+            "new/recipe" => create::generator::save(&self.env, &b["recipe"]),
+            "new/preview" => Ok(create::generator::plan(&self.env, b)?.preview()),
             "new" => {
                 let r = create::create_project(&self.env, b)?;
                 activity::record(
@@ -653,42 +678,77 @@ impl Service {
     }
     pub fn setup_info(&mut self) -> Result<Value> {
         let c = config::load(&self.env);
-        let snap = self.snapshot()?;
+        let roots: Vec<_> = array(&c["roots"])
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|s| json!(paths::expand(s, &self.env.home)))
+            .collect();
+        Ok(
+            json!({"configured":c["roots"].is_array(),"roots":roots,"rootStatus":scan::root_status(&self.env,&c),"archiveDir":c["archiveDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"candidates":[],"presets":array(&c["presets"]),"custom":array(&c["custom"]).len(),"apps":self.apps(),"terminalTarget":c["terminalTarget"].as_str().unwrap_or("internal"),"installed":installed_apps()}),
+        )
+    }
+    /// Optional shallow discovery. Opening Settings never walks Home or selects suggestions.
+    fn discover_roots(&self) -> Result<Value> {
         let mut candidates = Vec::new();
-        for entry in files::entries(&self.env.home)
-            .into_iter()
+        let mut inspected = 0usize;
+        let started = Instant::now();
+        for entry in fs::read_dir(&self.env.home)
+            .map_err(|e| e.to_string())?
+            .take(2000)
+            .filter_map(std::result::Result::ok)
             .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && !e.file_name().to_string_lossy().starts_with('.'))
+            .take(100)
         {
-            let repos = walkdir::WalkDir::new(entry.path())
-                .max_depth(4)
-                .follow_links(false)
-                .into_iter()
-                .filter_entry(|e| {
+            let mut repos = 0usize;
+            for entry in
+                walkdir::WalkDir::new(entry.path()).max_depth(3).follow_links(false).into_iter().filter_entry(|e| {
                     e.depth() == 0
                         || (!e.file_name().to_string_lossy().starts_with('.')
                             && !files::HEAVY.contains(&e.file_name().to_string_lossy().as_ref()))
                 })
-                .take(4000)
-                .filter_map(std::result::Result::ok)
-                .filter(|e| e.file_type().is_dir() && e.path().join(".git").exists())
-                .count();
+            {
+                if inspected >= 4000 || started.elapsed() > Duration::from_secs(2) {
+                    break;
+                }
+                inspected += 1;
+                if entry.is_ok_and(|e| e.file_type().is_dir() && e.path().join(".git").is_dir()) {
+                    repos += 1;
+                }
+            }
             candidates.push(json!({"path":entry.path(),"repos":repos}));
+            if inspected >= 4000 || started.elapsed() > Duration::from_secs(2) {
+                break;
+            }
         }
         candidates.sort_by_key(|c| std::cmp::Reverse(c["repos"].as_u64().unwrap_or(0)));
-        let roots = if c["roots"].is_array() {
-            array(&c["roots"])
-                .iter()
-                .filter_map(Value::as_str)
-                .map(|s| json!(paths::expand(s, &self.env.home)))
-                .collect()
+        Ok(json!({"candidates":candidates,"limited":inspected>=4000 || started.elapsed()>Duration::from_secs(2)}))
+    }
+    pub fn agent_context(&mut self, body: &Value) -> Result<(crate::launch::LaunchRequest, Option<Value>)> {
+        let mut body = body.clone();
+        if body.get("target").is_none() {
+            body["target"] = config::load(&self.env)["terminalTarget"].clone();
+        }
+        let request = crate::launch::LaunchRequest::from_value(&body)?;
+        let snapshot = self.snapshot()?;
+        let connected = agents::connectors(&self.env, &config::load(&self.env));
+        if !connected.iter().any(|c| c["provider"] == request.provider && c["capabilities"]["launch"] == true) {
+            return Err("Add this agent connector before launching it".into());
+        }
+        let session = if let Some(id) = &request.session_id {
+            Some(
+                array(&snapshot["sessions"])
+                    .into_iter()
+                    .find(|s| {
+                        s["provider"] == request.provider
+                            && s["sessionId"] == *id
+                            && connected.iter().any(|c| c["id"] == s["connector"])
+                    })
+                    .ok_or("That session is no longer available; refresh history")?,
+            )
         } else {
-            let picked: Vec<_> =
-                candidates.iter().filter(|c| c["repos"].as_u64().unwrap_or(0) > 0).map(|c| c["path"].clone()).collect();
-            if picked.is_empty() { array(&snap["roots"]) } else { picked }
+            None
         };
-        Ok(
-            json!({"configured":c["roots"].is_array(),"roots":roots,"archiveDir":c["archiveDir"].as_str().filter(|s| !s.is_empty()).map(|s| paths::expand(s, &self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"candidates":candidates,"presets":array(&snap["connectors"]).iter().filter(|c|c["builtin"]==true).map(|c|c["id"].clone()).collect::<Vec<_>>(),"custom":array(&c["custom"]).len(),"apps":self.apps(),"installed":installed_apps()}),
-        )
+        Ok((request, session))
     }
     pub fn action(&mut self, node: &Value, what: &str, arg: &str) -> Result<(Option<String>, bool, String)> {
         let title = string(node, "name").to_owned();
@@ -696,14 +756,23 @@ impl Service {
             "shell" | "terminal" => Ok((None, false, title)),
             "resume" => {
                 let snap = self.snapshot()?;
-                let known = array(&node["agents"]["claude"])
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .any(|k| array(&snap["claude"][k]["sessions"]).iter().any(|s| s["id"] == arg));
-                if !known {
-                    return Err("Unknown session".into());
+                let sessions: Vec<_> = array(&snap["sessions"])
+                    .into_iter()
+                    .filter(|s| s["sessionId"] == arg && s["cwd"] == node["path"])
+                    .collect();
+                if sessions.len() != 1 {
+                    return Err("Unknown or ambiguous session".into());
                 }
-                Ok((Some(format!("claude --resume {}", shell_quote(arg))), true, format!("{title} · claude")))
+                let (request, session) = self.agent_context(
+                    &json!({"provider":sessions[0]["provider"],"sessionId":arg,"projectPath":node["path"]}),
+                )?;
+                let command = crate::launch::resolve(&self.env, &request, session.as_ref())?;
+                let argv = std::iter::once(&command.executable)
+                    .chain(command.args.iter())
+                    .map(|v| shell_quote(v))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                Ok((Some(argv), true, command.title))
             }
             "script" => {
                 if !array(&node["stack"]["scripts"]).iter().any(|s| s["name"] == arg) {
@@ -737,16 +806,31 @@ impl Service {
                 };
                 Ok((Some(command), false, title))
             }
-            "summary" => Ok((
-                Some(format!(
-                    "claude {}",
-                    shell_quote(
-                        "Read this project's README, package files and recent commits. Save a two-sentence project summary under ## Summary in .laci.md. Change nothing else."
-                    )
-                )),
-                true,
-                format!("{title} · summary"),
-            )),
+            "summary" => {
+                let providers: BTreeSet<_> = agents::connectors(&self.env, &config::load(&self.env))
+                    .iter()
+                    .filter(|c| c["capabilities"]["launch"] == true)
+                    .filter_map(|c| c["provider"].as_str().map(str::to_owned))
+                    .collect();
+                let provider = if arg.is_empty() && providers.len() == 1 {
+                    providers.iter().next().unwrap().as_str()
+                } else if providers.contains(arg) {
+                    arg
+                } else {
+                    return Err("Choose a connected agent to write the summary".into());
+                };
+                let (request, session) = self.agent_context(&json!({
+                    "provider":provider,"projectPath":node["path"],
+                    "prompt":"Read this project's README, package files and recent commits. Save a two-sentence project summary under ## Summary in .laci.md. Change nothing else."
+                }))?;
+                let command = crate::launch::resolve(&self.env, &request, session.as_ref())?;
+                let argv = std::iter::once(&command.executable)
+                    .chain(command.args.iter())
+                    .map(|v| shell_quote(v))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                Ok((Some(argv), true, format!("{title} · summary")))
+            }
             _ => Err("Unknown action".into()),
         }
     }

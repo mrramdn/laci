@@ -221,7 +221,7 @@ pub fn git_info(dir: &Path) -> Option<Value> {
         "lastCommitAt":utc(last.next().unwrap_or("")),"lastSubject":last.next().unwrap_or(""),"branch":git(dir,&["branch","--show-current"]),
         "remotes":remotes,"upstream":upstream,"dirty":status.lines().filter(|l|!l.starts_with("##")&&!l.is_empty()).count(),
         "ahead":number("ahead"),"behind":number("behind"),"stashes":git(dir,&["stash","list"]).lines().count(),"weekly":weekly,
-        "authors":git(dir,&["shortlog","-sne","HEAD"]).lines().count(),"aiTrailers":git(dir,&["log","-E","-i","--grep=co-authored-by:.*(claude|codex|copilot|cursor|gemini)","--format=%h"]).lines().count(),
+        "authors":git(dir,&["shortlog","-sne","HEAD"]).lines().count(),
         "worktree":dir.join(".git").is_file()}),
     )
 }

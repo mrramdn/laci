@@ -397,7 +397,7 @@ impl<'a> Tx<'a> {
         let roots: Vec<_> = if let Some(roots) = cfg["roots"].as_array() {
             roots.iter().filter_map(Value::as_str).map(|raw| paths::expand(raw, &self.env.home)).collect()
         } else {
-            crate::scan::default_roots(self.env)
+            Vec::new()
         };
         let archived = cfg["archiveDir"]
             .as_str()
@@ -440,11 +440,26 @@ fn transact(env: &Env, title: &str, work: impl FnOnce(&mut Tx<'_>) -> Result<()>
             tx.journal["state"] = json!("applied");
             tx.save()
         }) {
-            Ok(()) => Ok(tx.journal),
+            Ok(()) => {
+                tx.journal["canUndo"] = json!(can_undo(&tx.journal));
+                if let Some(detail) = recovery(&tx.journal) {
+                    tx.journal["recovery"] = json!(detail);
+                }
+                Ok(tx.journal)
+            }
             Err(error) => {
                 tx.journal["error"] = json!(error);
                 match undo_entries(env, tx.journal["entries"].as_array().unwrap()) {
-                    Ok(()) => tx.journal["state"] = json!("undone"),
+                    Ok(()) => {
+                        if recovery(&tx.journal).is_some() {
+                            tx.journal["state"] = json!("failed");
+                            tx.journal["error"] = json!(format!(
+                                "{error} · Reversible changes were rolled back. Check system Trash for any files already moved there."
+                            ));
+                        } else {
+                            tx.journal["state"] = json!("undone");
+                        }
+                    }
                     Err(rollback) => {
                         tx.journal["state"] = json!("failed");
                         tx.journal["error"] = json!(format!("{error} · rollback failed: {rollback}"));
@@ -554,6 +569,25 @@ fn read_journal(path: &Path) -> Result<Value> {
     let file = File::open(path).map_err(|e| e.to_string())?;
     serde_json::from_reader(std::io::BufReader::new(file)).map_err(|e| e.to_string())
 }
+pub fn can_undo(journal: &Value) -> bool {
+    journal["entries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|e| matches!(e["kind"].as_str(), Some("move" | "rewrite" | "file" | "rmdir")))
+}
+
+pub fn recovery(journal: &Value) -> Option<&'static str> {
+    let trashed = journal["entries"].as_array().into_iter().flatten().any(|e| e["kind"] == "trash");
+    trashed.then(|| {
+        if can_undo(journal) {
+            "Laci Undo restores moves and edits only. Restore trashed files separately through system Trash."
+        } else {
+            "Restore these files through system Trash; Laci Undo is unavailable."
+        }
+    })
+}
+
 pub fn journals(env: &Env, limit: usize) -> Vec<Value> {
     let Ok(dir) = data(env, "journal") else {
         return vec![];
@@ -577,6 +611,9 @@ pub(crate) fn undo_unlocked(env: &Env, id: &str) -> Result<Value> {
     let mut journal = read_journal(&file)?;
     if journal["state"] != "applied" {
         return Err(format!("This change is {}, nothing to undo", journal["state"].as_str().unwrap_or("invalid")));
+    }
+    if !can_undo(&journal) {
+        return Err("Restore these files through system Trash; there is no Laci Undo".into());
     }
     let entries = journal["entries"].as_array().ok_or("Invalid journal")?;
     validate_entries(env, entries)?;
@@ -679,7 +716,7 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
         let connectors = snap["connectors"].as_array().cloned().unwrap_or_default();
         let mut moved = std::collections::HashSet::new();
         if let Some(items) = snap["items"].as_object() {
-            for item in items.values() {
+            for item in items.values().filter(|item| item["cleanupCapability"] != "unsupported") {
                 let Some(cwd) = item["cwd"].as_str().map(Path::new).filter(|p| p.starts_with(&src)) else {
                     continue;
                 };
@@ -751,11 +788,50 @@ pub fn archive_project_to(
         &json!({"status":"archived","trashHeavy":trash_heavy,"title":format!("Archive {}",node["name"].as_str().unwrap_or("project"))}),
     )
 }
+pub fn apply_proposal(env: &Env, snap: &Value, proposal: &Value, recovery: &str) -> Result<Value> {
+    if !["quarantine", "trash"].contains(&recovery) {
+        return Err("Unknown history recovery method".into());
+    }
+    apply_action_checked(
+        env,
+        snap,
+        proposal["title"].as_str().unwrap_or("Clean up history"),
+        &proposal["action"],
+        Some((proposal, recovery)),
+    )
+}
+
 pub fn apply_action(env: &Env, snap: &Value, title: &str, a: &Value) -> Result<Value> {
+    apply_action_checked(env, snap, title, a, None)
+}
+
+fn apply_action_checked(
+    env: &Env,
+    snap: &Value,
+    title: &str,
+    a: &Value,
+    reviewed: Option<(&Value, &str)>,
+) -> Result<Value> {
     if a["type"] == "archive" {
         return archive_project(env, snap, a["nodeId"].as_str().ok_or("Missing project")?, false);
     }
     transact(env, title, |tx| {
+        let mut checked = a.clone();
+        if let Some((proposal, recovery)) = reviewed.filter(|(p, _)| p["category"] == "orphan") {
+            let fresh = crate::scan::scan(env)?;
+            let current = fresh["proposals"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|p| p["id"] == proposal["id"])
+                .ok_or("This history no longer matches the reviewed proposal. Rescan first.")?;
+            crate::orphan::revalidate(env, proposal, current)?;
+            checked = current["action"].clone();
+            if recovery == "trash" {
+                checked = json!({"type":"trash","paths":checked["moves"].as_array().ok_or("Missing checked paths")?.iter().map(|m|m["from"].clone()).collect::<Vec<_>>()});
+            }
+        }
+        let a = &checked;
         match a["type"].as_str().unwrap_or("") {
             "reconnect-claude" => {
                 let from = value_path(env, &a["dir"])?;

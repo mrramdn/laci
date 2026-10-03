@@ -137,12 +137,22 @@ pub fn read_log(env: &Env, limit: usize) -> Vec<Value> {
             }
             a["state"] = json!(state);
             a["superseded"] = json!(superseded);
-            a["canUndo"] = json!(a["undo"].is_object() && a["undoes"].is_null() && state == "applied" && !superseded);
+            a["canUndo"] = json!(
+                a["undo"].is_object()
+                    && journal.is_none_or(ops::can_undo)
+                    && a["undoes"].is_null()
+                    && state == "applied"
+                    && !superseded
+            );
             if let Some(j) = journal {
                 if j["error"].is_string() {
                     a["error"] = j["error"].clone();
                 }
                 a["steps"] = steps(env, j);
+                if let Some(detail) = ops::recovery(j) {
+                    a["recovery"] = json!(detail);
+                    a["detail"] = json!(detail);
+                }
             }
             a
         })
@@ -204,18 +214,27 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
                         c.as_object_mut().unwrap().remove(field);
                     } else {
                         c[field] = if field == "roots" {
-                            config::validate_roots(env, &undo[field])?
+                            config::restore_roots(env, &undo[field])?
                         } else {
                             undo[field].clone()
                         };
                     }
                 }
                 c["apps"] = config::validate_apps(&undo["apps"])?;
+                for key in ["rootIdentities", "terminalTarget"] {
+                    if let Some(value) = undo.get(key) {
+                        c[key] = value.clone();
+                    }
+                }
                 if let Some(archive_dir) = undo.get("archiveDir") {
                     if archive_dir.is_null() {
                         c.as_object_mut().unwrap().remove("archiveDir");
                     } else {
-                        c["archiveDir"] = config::validate_archive_dir(env, archive_dir)?;
+                        c["archiveDir"] = if archive_dir.as_str() == Some("") {
+                            json!("")
+                        } else {
+                            config::restore_roots(env, &json!([archive_dir]))?[0].clone()
+                        };
                     }
                 }
             } else if let Some(remove) = undo["remove"].as_str() {

@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
@@ -13,44 +13,71 @@ use crate::{env::Env, files, paths};
 
 pub fn catalog(env: &Env) -> Vec<Value> {
     vec![
-        json!({"id":"claude","name":"Claude Code","about":"Sessions and memory, one folder per project","builtin":true,"link":{"kind":"named","dir":env.home.join(".claude/projects"),"naming":"dashes"}}),
-        json!({"id":"codex","name":"Codex","about":"Sessions filed by date; each log records its folder","builtin":true,"link":{"kind":"cwd","dir":env.home.join(".codex/sessions"),"ext":".jsonl","field":"cwd"}}),
-        json!({"id":"gemini","name":"Gemini CLI","about":"Chats and checkpoints, one folder per project","builtin":true,"link":{"kind":"named","dir":env.home.join(".gemini/tmp"),"naming":"sha256"}}),
-        json!({"id":"claude-plans","name":"Claude plans","about":"Plan files, linked by the paths they mention","builtin":true,"link":{"kind":"mentions","dir":env.home.join(".claude/plans"),"ext":".md"}}),
-        json!({"id":"serena","name":"Serena","about":"Memories kept inside the project","builtin":true,"link":{"kind":"inside","path":".serena/memories"}}),
-        json!({"id":"aider","name":"Aider","about":"Chat history kept inside the project","builtin":true,"link":{"kind":"inside","path":".aider.chat.history.md"}}),
+        json!({"id":"claude","provider":"claude","name":"Claude Code","about":"Sessions, titles, resume and project memory","builtin":true,"capabilities":{"launch":true,"resume":true,"titles":true,"modelDiscovery":"aliases"},"link":{"kind":"named","dir":env.home.join(".claude/projects"),"naming":"dashes"}}),
+        json!({"id":"codex","provider":"codex","name":"Codex","about":"Sessions, titles and provider-aware resume","builtin":true,"capabilities":{"launch":true,"resume":true,"titles":true,"modelDiscovery":"on-demand"},"link":{"kind":"cwd","dir":env.home.join(".codex/sessions"),"ext":".jsonl","field":"cwd"}}),
+        json!({"id":"antigravity","provider":"antigravity","name":"Antigravity","about":"CLI history and last conversations; full conversation titles are unavailable","builtin":true,"capabilities":{"launch":true,"resume":true,"titles":false,"modelDiscovery":"on-demand"},"link":{"kind":"cwd","dir":env.home.join(".gemini/antigravity-cli"),"ext":".jsonl","field":"workspace"}}),
     ]
 }
-
-pub fn connectors(env: &Env, cfg: &Value) -> Vec<Value> {
-    let mut out = Vec::new();
-    for c in catalog(env) {
-        let enabled = cfg["presets"].as_array().map(|ids| ids.contains(&c["id"])).unwrap_or_else(|| {
-            c["link"]["dir"]
-                .as_str()
-                .is_some_and(|p| safe(env, Path::new(p)) && !files::entries(Path::new(p)).is_empty())
-        });
-        if enabled {
-            out.push(c);
+fn legacy_catalog(env: &Env) -> Vec<Value> {
+    vec![
+        json!({"id":"gemini","name":"Gemini CLI","link":{"kind":"named","dir":env.home.join(".gemini/tmp"),"naming":"sha256"}}),
+        json!({"id":"claude-plans","name":"Claude plans","link":{"kind":"mentions","dir":env.home.join(".claude/plans"),"ext":".md"}}),
+        json!({"id":"serena","name":"Serena","link":{"kind":"inside","path":".serena/memories"}}),
+        json!({"id":"aider","name":"Aider","link":{"kind":"inside","path":".aider.chat.history.md"}}),
+    ]
+}
+fn same_store(a: &Value, b: &Value) -> bool {
+    match (a["link"]["dir"].as_str(), b["link"]["dir"].as_str()) {
+        (Some(a), Some(b)) => {
+            let a = Path::new(a);
+            let b = Path::new(b);
+            a.canonicalize().unwrap_or_else(|_| paths::normalize(a))
+                == b.canonicalize().unwrap_or_else(|_| paths::normalize(b))
         }
+        _ => a["link"] == b["link"],
     }
+}
+pub fn connectors(env: &Env, cfg: &Value) -> Vec<Value> {
+    let builtins = catalog(env);
+    let mut out = Vec::new();
+    // Explicit custom configuration wins when a newly offered builtin uses the same store.
     for custom in cfg["custom"].as_array().into_iter().flatten() {
         let Ok(mut c) = crate::config::validate_connector(env, custom) else { continue };
         c["builtin"] = json!(false);
-        c["about"] = json!(match c["link"]["kind"].as_str().unwrap_or("") {
-            "cwd" => "Log files that record their folder",
-            "named" => "One folder per project",
-            "inside" => "Kept inside the project",
-            _ => "Files that mention project paths",
-        });
+        c["about"] = json!("User-configured history store");
         if let Some(p) = c["link"]["dir"].as_str() {
             c["link"]["dir"] = json!(paths::expand(p, &env.home));
         }
-        if !out.iter().any(|existing| existing["id"] == c["id"]) {
+        if let Some(builtin) = builtins.iter().find(|b| same_store(b, &c)) {
+            c["provider"] = builtin["provider"].clone();
+            c["capabilities"] = builtin["capabilities"].clone();
+        }
+        if !out.iter().any(|existing: &Value| existing["id"] == c["id"] || same_store(existing, &c)) {
+            out.push(c);
+        }
+    }
+    for mut c in builtins.into_iter().chain(legacy_catalog(env)) {
+        if !cfg["presets"].as_array().is_some_and(|ids| ids.contains(&c["id"])) {
+            continue;
+        }
+        if c["builtin"] != true {
+            c["builtin"] = json!(false);
+            c["legacy"] = json!(true);
+            c["about"] = json!("Previously configured history connector");
+        }
+        if !out.iter().any(|existing| existing["id"] == c["id"] || same_store(existing, &c)) {
             out.push(c);
         }
     }
     out
+}
+/// Metadata alongside a provider store needs watches as well as the logs themselves.
+pub fn metadata_paths(env: &Env, connector: &Value) -> Vec<PathBuf> {
+    match connector["provider"].as_str().or_else(|| connector["id"].as_str()) {
+        Some("codex") => vec![env.home.join(".codex/session_index.jsonl")],
+        Some("antigravity") => vec![env.home.join(".gemini/antigravity-cli/cache/last_conversations.json")],
+        _ => vec![],
+    }
 }
 
 pub fn store_name(link: &Value, path: &str) -> String {
@@ -111,6 +138,7 @@ pub fn resolve_encoded(env: &Env, name: &str) -> Option<PathBuf> {
 
 #[derive(Default)]
 pub struct AgentData {
+    pub sessions: Vec<Value>,
     pub claude: BTreeMap<String, Value>,
     pub items: BTreeMap<String, Value>,
     pub mentions: BTreeMap<String, String>,
@@ -124,7 +152,7 @@ struct Cache {
 
 impl Cache {
     fn load(env: &Env) -> Self {
-        let values = files::text(&env.cache_dir.join("v2-agent-facts.json"))
+        let values = files::read_limit(&env.cache_dir.join("v3-agent-facts.json"), 32 * 1024 * 1024)
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         Self { values, seen: BTreeSet::new() }
@@ -166,13 +194,16 @@ impl Cache {
             return previous["facts"].clone();
         }
         let facts = read();
+        if self.values.len() >= 20_000 {
+            self.values.clear();
+        }
         self.values.insert(key, json!({"size":size,"modified":modified,"changed":changed,"facts":facts}));
         facts
     }
     fn save(mut self, env: &Env) {
         self.values.retain(|k, _| self.seen.contains(k));
         if let Ok(text) = serde_json::to_vec(&self.values) {
-            let _ = files::replace(&env.cache_dir.join("v2-agent-facts.json"), &text);
+            let _ = files::replace(&env.cache_dir.join("v3-agent-facts.json"), &text);
         }
     }
 }
@@ -237,6 +268,170 @@ fn log_facts(path: &Path, field: &str, claude: bool) -> Value {
     json!({"cwd":first,"cwds":cwds,"lines":lines,"title":title,"branch":branch})
 }
 
+const METADATA_BYTES: u64 = 8 * 1024 * 1024;
+fn records(path: &Path, read: impl FnMut(Value)) {
+    records_from(path, false, read);
+}
+fn records_from(path: &Path, tail: bool, mut read: impl FnMut(Value)) {
+    let Ok(mut file) = fs::File::open(path) else { return };
+    let skip = if tail { file.metadata().map_or(0, |m| m.len().saturating_sub(METADATA_BYTES)) } else { 0 };
+    if skip > 0 && file.seek(SeekFrom::Start(skip)).is_err() {
+        return;
+    }
+    let mut reader = BufReader::new(file.take(METADATA_BYTES));
+    if skip > 0 {
+        let mut incomplete = String::new();
+        let _ = reader.read_line(&mut incomplete);
+    }
+    let mut line = String::new();
+    for _ in 0..if tail { 128_000 } else { 20_000 } {
+        line.clear();
+        if !matches!(reader.read_line(&mut line), Ok(n) if n > 0) {
+            break;
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(&line) {
+            read(value);
+        }
+    }
+}
+fn concise(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty()
+        || [
+            "# AGENTS.md",
+            "<environment_context>",
+            "<INSTRUCTIONS>",
+            "<system",
+            "<developer",
+            "<local-command",
+            "<command-name>",
+            "This session is being continued",
+            "[Request interrupted",
+            "<codex_delegation>",
+        ]
+        .iter()
+        .any(|prefix| text.starts_with(prefix))
+    {
+        return None;
+    }
+    Some(text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(120).collect())
+}
+fn message_text(content: &Value) -> Option<String> {
+    if let Some(text) = content.as_str() {
+        return concise(text);
+    }
+    content
+        .as_array()?
+        .iter()
+        .filter(|v| matches!(v["type"].as_str(), Some("text" | "input_text")))
+        .find_map(|v| v["text"].as_str().and_then(concise))
+}
+fn session_facts(path: &Path, provider: &str) -> Value {
+    let mut facts = json!({"cwds":{},"lines":0});
+    let mut first_message = None;
+    records(path, |v| {
+        let meta = if provider == "codex" {
+            if matches!(v["type"].as_str(), Some("session_meta" | "turn_context")) {
+                Some(&v["payload"])
+            } else if v["type"].is_null() {
+                Some(&v)
+            } else {
+                None
+            }
+        } else {
+            Some(&v)
+        };
+        if let Some(meta) = meta {
+            if let Some(cwd) = meta["cwd"].as_str().filter(|s| Path::new(s).is_absolute()) {
+                let cwd = paths::normalize(Path::new(cwd)).to_string_lossy().into_owned();
+                // Session and turn metadata are authoritative; tool arguments are never searched.
+                facts["cwd"] = json!(cwd);
+                let n = facts["cwds"][&cwd].as_u64().unwrap_or(0) + 1;
+                facts["cwds"][&cwd] = json!(n);
+                facts["lines"] = json!(facts["lines"].as_u64().unwrap_or(0) + 1);
+            }
+            if provider == "codex" && v["type"] == "session_meta" {
+                facts["sessionId"] = meta["id"].clone();
+                facts["sourceKind"] = if meta["source"].is_string() {
+                    meta["source"].clone()
+                } else if meta["source"]["subagent"].is_object() {
+                    json!("subagent")
+                } else {
+                    json!("cli")
+                };
+                facts["parentId"] = meta["source"]["subagent"]["thread_spawn"]["parent_thread_id"].clone();
+                if facts["parentId"].is_null() {
+                    facts["parentId"] = meta["source"]["subagent"]["parent_thread_id"].clone();
+                }
+            } else if provider == "claude" {
+                if let Some(id) = v["sessionId"].as_str() {
+                    facts["sessionId"] = json!(id);
+                }
+                if let Some(branch) = v["gitBranch"].as_str() {
+                    facts["branch"] = json!(branch);
+                }
+                for key in ["aiTitle", "customTitle"] {
+                    if let Some(title) = v[key].as_str().and_then(concise) {
+                        facts["title"] = json!(title);
+                        facts["titleSource"] = json!("provider");
+                    }
+                }
+                if v["type"] == "summary"
+                    && let Some(title) = v["summary"].as_str().and_then(concise)
+                {
+                    facts["title"] = json!(title);
+                    facts["titleSource"] = json!("provider");
+                }
+            }
+        }
+        if first_message.is_none() {
+            if provider == "codex" {
+                if v["type"] == "event_msg" && v["payload"]["type"] == "user_message" {
+                    first_message = v["payload"]["message"].as_str().and_then(concise);
+                } else if v["type"] == "response_item"
+                    && v["payload"]["type"] == "message"
+                    && v["payload"]["role"] == "user"
+                {
+                    first_message = message_text(&v["payload"]["content"]);
+                }
+            } else if v["type"] == "user" && v["isMeta"] != true && v["message"]["role"] == "user" {
+                first_message = message_text(&v["message"]["content"]);
+            }
+        }
+    });
+    if facts["title"].is_null()
+        && let Some(title) = first_message
+    {
+        facts["title"] = json!(title);
+        facts["titleSource"] = json!("first-message");
+    }
+    facts
+}
+fn normalized_session(provider: &str, file: &Path, facts: &Value, fallback_id: Option<&str>) -> Value {
+    let id = facts["sessionId"].as_str().or(fallback_id).unwrap_or("");
+    let title = facts["title"].as_str().map(str::to_owned).unwrap_or_else(|| {
+        if id.is_empty() {
+            "Untitled session".into()
+        } else {
+            format!("Untitled · {}", id.chars().take(8).collect::<String>())
+        }
+    });
+    let resumable = crate::launch::session_id_valid(id);
+    json!({"provider":provider,"sessionId":id,"title":title,"titleSource":facts["titleSource"].as_str().unwrap_or("fallback"),"cwd":facts["cwd"],"parentId":facts["parentId"],"sourceKind":facts["sourceKind"].as_str().unwrap_or("cli"),"updatedAt":files::modified(file),"resumeCapability":if resumable {"supported"}else{"history-only"},"file":file})
+}
+fn title_index(path: &Path) -> Value {
+    let mut titles = json!({});
+    records_from(path, true, |v| {
+        if let (Some(id), Some(title)) = (v["id"].as_str(), v["thread_name"].as_str().and_then(concise)) {
+            let updated = v["updated_at"].as_str().unwrap_or("");
+            if titles[id]["updated"].as_str().is_none_or(|old| old <= updated) {
+                titles[id] = json!({"title":title,"updated":updated});
+            }
+        }
+    });
+    titles
+}
+
 fn regular_files(env: &Env, dir: &Path, ext: &str) -> Vec<PathBuf> {
     if !safe(env, dir) {
         return Vec::new();
@@ -245,6 +440,7 @@ fn regular_files(env: &Env, dir: &Path, ext: &str) -> Vec<PathBuf> {
         .filter(|entry| entry.file_type().is_file() && entry.path().to_string_lossy().ends_with(ext))
         .map(|entry| entry.into_path())
         .filter(|path| safe(env, path))
+        .take(20_000)
         .collect()
 }
 
@@ -264,7 +460,7 @@ fn claude_dirs(env: &Env, cache: &mut Cache) -> BTreeMap<String, Value> {
             continue;
         }
         let mut bytes = 0u64;
-        let mut logs = 0usize;
+
         let mut sessions = Vec::new();
         let mut counts: BTreeMap<String, u64> = BTreeMap::new();
         for f in files::walk(&dir, true).filter(|f| f.file_type().is_file()) {
@@ -275,13 +471,23 @@ fn claude_dirs(env: &Env, cache: &mut Cache) -> BTreeMap<String, Value> {
             {
                 continue;
             }
-            logs += 1;
-            let facts = cache.facts("claude", f.path(), || log_facts(f.path(), "cwd", true));
+
+            let facts = cache.facts("claude", f.path(), || session_facts(f.path(), "claude"));
             for (cwd, n) in facts["cwds"].as_object().into_iter().flatten() {
                 *counts.entry(cwd.clone()).or_default() += n.as_u64().unwrap_or(0);
             }
-            if f.path().parent() == Some(dir.as_path()) {
-                let mut session = json!({"id":f.path().file_stem().unwrap_or_default().to_string_lossy(),"at":files::modified(f.path()),"bytes":f.metadata().map_or(0,|m|m.len())});
+            {
+                let stem = f.path().file_stem().unwrap_or_default().to_string_lossy();
+                let mut session = normalized_session("claude", f.path(), &facts, Some(&stem));
+                session["id"] = json!(stem);
+                if f.path().parent() != Some(dir.as_path()) {
+                    session["parentId"] = facts["sessionId"].clone();
+                    session["sessionId"] = json!(stem);
+                    session["sourceKind"] = json!("subagent");
+                    session["resumeCapability"] = json!("history-only");
+                }
+                session["at"] = json!(files::modified(f.path()));
+                session["bytes"] = json!(f.metadata().map_or(0, |m| m.len()));
                 for key in ["cwd", "title", "branch"] {
                     if let Some(v) = facts[key].as_str().filter(|v| !v.is_empty()) {
                         session[key] = json!(v);
@@ -297,7 +503,7 @@ fn claude_dirs(env: &Env, cache: &mut Cache) -> BTreeMap<String, Value> {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         let gone: Vec<_> = counts.keys().filter(|p| !Path::new(p).exists()).cloned().collect();
-        let mut c = json!({"name":name,"dir":dir,"sessions":sessions,"subagentLogs":logs.saturating_sub(sessions.len()),"memory":memory,"bytes":bytes,"cwds":counts,"gone":gone});
+        let mut c = json!({"name":name,"dir":dir,"sessions":sessions,"subagentLogs":sessions.iter().filter(|s| s["sourceKind"] == "subagent").count(),"memory":memory,"bytes":bytes,"cwds":counts,"gone":gone});
         if let Some(path) = resolve_encoded(env, &name) {
             c["path"] = json!(path);
         }
@@ -324,14 +530,49 @@ pub fn read_inside(env: &Env, c: &Value, project: &Path) -> Option<Value> {
     Some(item)
 }
 
+fn read_antigravity(env: &Env, dir: &Path, connector: &str, cache: &mut Cache, out: &mut AgentData) {
+    let file = dir.join("cache/last_conversations.json");
+    if !safe(env, &file) {
+        return;
+    }
+    let last = cache.facts("antigravity-last", &file, || {
+        files::read_limit(&file, 512 * 1024)
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .unwrap_or_else(|| json!({}))
+    });
+    for (cwd, value) in last.as_object().into_iter().flatten() {
+        // This index is only the last conversation per cwd, not a full history database.
+        let Some(id) = value.as_str().or_else(|| value["conversation_id"].as_str()) else { continue };
+        if !Path::new(cwd).is_absolute() || !crate::launch::session_id_valid(id) {
+            continue;
+        }
+        let key = format!("{connector}:conversation:{id}");
+        let mut session = normalized_session(
+            "antigravity",
+            &file,
+            &json!({"sessionId":id,"cwd":cwd,"sourceKind":"last-conversation"}),
+            None,
+        );
+        session["id"] = json!(key);
+        session["connector"] = json!(connector);
+        session["at"] = session["updatedAt"].clone();
+        session["bytes"] = json!(0);
+        session["lines"] = json!(0);
+        // Shared index records are never standalone cleanup targets.
+        session["cleanupCapability"] = json!("unsupported");
+        out.items.insert(key, session);
+    }
+}
+
 pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
     let mut cache = Cache::load(env);
     let mut out = AgentData::default();
-    if on.iter().any(|c| c["id"] == "claude") {
+    if on.iter().any(|c| c["provider"] == "claude" || c["id"] == "claude") {
         out.claude = claude_dirs(env, &mut cache);
     }
-    for c in on.iter().filter(|c| c["id"] != "claude") {
+    for c in on.iter().filter(|c| c["id"] != "claude" && c["provider"] != "claude") {
         let Some(id) = c["id"].as_str() else { continue };
+        let provider = c["provider"].as_str().unwrap_or(id);
         let link = &c["link"];
         let Some(raw) = link["dir"].as_str() else { continue };
         let dir = paths::expand(raw, &env.home);
@@ -341,14 +582,45 @@ pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
         match link["kind"].as_str().unwrap_or("") {
             "cwd" => {
                 let field = link["field"].as_str().unwrap_or("cwd");
+                let titles = if provider == "codex" {
+                    let index = env.home.join(".codex/session_index.jsonl");
+                    if safe(env, &index) {
+                        cache.facts("codex-titles", &index, || title_index(&index))
+                    } else {
+                        json!({})
+                    }
+                } else {
+                    json!({})
+                };
                 for file in regular_files(env, &dir, link["ext"].as_str().unwrap_or(".jsonl")) {
-                    let facts = cache.facts(&format!("cwd:{id}:{field}"), &file, || log_facts(&file, field, false));
+                    let facts = cache.facts(&format!("cwd:{id}:{field}"), &file, || {
+                        if provider == "codex" { session_facts(&file, "codex") } else { log_facts(&file, field, false) }
+                    });
                     let key = format!("{id}:{}", file.strip_prefix(&dir).unwrap_or(&file).display());
                     let mut item = json!({"id":key,"connector":id,"file":file,"at":files::modified(&file),"bytes":fs::metadata(&file).map_or(0,|m|m.len()),"lines":facts["lines"]});
                     if let Some(cwd) = facts["cwd"].as_str() {
                         item["cwd"] = json!(cwd);
                     }
+                    if provider == "codex" {
+                        let mut session = normalized_session("codex", &file, &facts, None);
+                        if let Some(title) = session["sessionId"].as_str().and_then(|id| titles[id]["title"].as_str()) {
+                            session["title"] = json!(title);
+                            session["titleSource"] = json!("index");
+                        }
+                        for (key, value) in session.as_object().into_iter().flatten() {
+                            item[key] = value.clone();
+                        }
+                    } else if provider == "antigravity" {
+                        item["provider"] = json!(provider);
+                        item["sourceKind"] = json!("history");
+                        item["resumeCapability"] = json!("history-only");
+                        item["cleanupCapability"] = json!("unsupported");
+                        item["title"] = json!("Antigravity CLI history");
+                    }
                     out.items.insert(key, item);
+                }
+                if provider == "antigravity" {
+                    read_antigravity(env, &dir, id, &mut cache, &mut out);
                 }
             }
             "named" => {
@@ -397,16 +669,29 @@ pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
         }
     }
     for c in out.claude.values() {
+        for session in c["sessions"].as_array().into_iter().flatten() {
+            let mut session = session.clone();
+            session["connector"] = on
+                .iter()
+                .find(|c| c["provider"] == "claude" || c["id"] == "claude")
+                .map(|c| c["id"].clone())
+                .unwrap_or_else(|| json!("claude"));
+            out.sessions.push(session);
+        }
         if let Some(p) = c["path"].as_str() {
             out.paths.insert(PathBuf::from(p));
         }
     }
     for item in out.items.values() {
+        if item["sessionId"].is_string() {
+            out.sessions.push(item.clone());
+        }
         if let Some(p) = item["cwd"].as_str().filter(|p| paths::workspace_path(p, env).is_ok() && Path::new(p).is_dir())
         {
             out.paths.insert(PathBuf::from(p));
         }
     }
+    out.sessions.sort_by(|a, b| b["updatedAt"].as_str().cmp(&a["updatedAt"].as_str()));
     cache.save(env);
     out
 }
@@ -414,6 +699,117 @@ pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const ID: &str = "12345678-1234-1234-1234-123456789abc";
+    const CHILD: &str = "12345678-1234-1234-1234-123456789def";
+    fn put(path: &Path, values: &[Value]) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, values.iter().map(|v| format!("{v}\n")).collect::<String>()).unwrap();
+    }
+    #[test]
+    fn connectors_are_opt_in_and_custom_store_identity_wins_without_losing_legacy() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        fs::create_dir_all(env.home.join(".codex/sessions")).unwrap();
+        assert!(connectors(&env, &json!({})).is_empty());
+        let cfg = json!({"presets":["antigravity","gemini","aider"],"custom":[{"id":"custom-agy","name":"My history","link":{"dir":"~/.gemini/antigravity-cli","kind":"cwd","field":"workspace","ext":".jsonl"}}]});
+        let on = connectors(&env, &cfg);
+        assert_eq!(on.len(), 3);
+        assert_eq!(on[0]["id"], "custom-agy");
+        assert_eq!(on[0]["provider"], "antigravity");
+        assert_eq!(on[1]["id"], "gemini");
+        assert_eq!(on[1]["legacy"], true);
+        assert_eq!(catalog(&env).len(), 3);
+    }
+    #[test]
+    fn codex_metadata_ignores_tool_paths_and_context_titles_and_keeps_child_identity() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let log = env.home.join(".codex/sessions/child.jsonl");
+        put(
+            &log,
+            &[
+                json!({"type":"session_meta","payload":{"id":CHILD,"cwd":env.home,"source":{"subagent":{"thread_spawn":{"parent_thread_id":ID}}}}}),
+                json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /project"}]}}),
+                json!({"type":"response_item","payload":{"type":"function_call","arguments":{"cwd":"/unrelated/project"}}}),
+                json!({"type":"event_msg","payload":{"type":"user_message","message":"Fix the actual bug\nwith care"}}),
+            ],
+        );
+        let on = connectors(&env, &json!({"presets":["codex"]}));
+        let history = read_all(&env, &on);
+        let s = &history.sessions[0];
+        assert_eq!(s["provider"], "codex");
+        assert_eq!(s["sessionId"], CHILD);
+        assert_eq!(s["parentId"], ID);
+        assert_eq!(s["cwd"], json!(env.home));
+        assert_eq!(s["title"], "Fix the actual bug with care");
+        assert_eq!(s["resumeCapability"], "supported");
+    }
+    #[test]
+    fn title_index_rename_invalidates_without_touching_log_and_uses_latest_title_record() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let log = env.home.join(".codex/sessions/main.jsonl");
+        put(&log, &[json!({"type":"session_meta","payload":{"id":ID,"cwd":env.home,"source":"cli"}})]);
+        let index = env.home.join(".codex/session_index.jsonl");
+        put(
+            &index,
+            &[
+                json!({"id":ID,"thread_name":"Latest title","updated_at":"2026-10-02"}),
+                json!({"id":ID,"thread_name":"Older title","updated_at":"2026-10-01"}),
+            ],
+        );
+        let before = fs::metadata(&log).unwrap().modified().unwrap();
+        let on = connectors(&env, &json!({"presets":["codex"]}));
+        assert_eq!(read_all(&env, &on).sessions[0]["title"], "Latest title");
+        put(&index, &[json!({"id":ID,"thread_name":"Renamed title","updated_at":"2026-10-03"})]);
+        let next = read_all(&env, &on);
+        assert_eq!(next.sessions[0]["title"], "Renamed title");
+        assert_eq!(next.sessions[0]["titleSource"], "index");
+        assert_eq!(before, fs::metadata(&log).unwrap().modified().unwrap());
+    }
+    #[test]
+    fn antigravity_only_known_last_conversations_can_resume() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let dir = env.home.join(".gemini/antigravity-cli");
+        put(&dir.join("history.jsonl"), &[json!({"workspace":env.home,"prompt":"Do a thing"})]);
+        fs::create_dir(dir.join("cache")).unwrap();
+        fs::write(dir.join("cache/last_conversations.json"), json!({env.home.to_str().unwrap():ID}).to_string())
+            .unwrap();
+        let on = connectors(&env, &json!({"presets":["antigravity"]}));
+        let history = read_all(&env, &on);
+        assert_eq!(history.sessions.len(), 1);
+        assert_eq!(history.sessions[0]["sessionId"], ID);
+        assert_eq!(history.sessions[0]["cleanupCapability"], "unsupported");
+        assert!(
+            history.items.values().any(|s| s["sourceKind"] == "history" && s["resumeCapability"] == "history-only")
+        );
+    }
+    #[test]
+    fn claude_child_logs_cannot_resume_parent_and_titles_come_from_real_user_text() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let root = env.home.join(".claude/projects").join(paths::enc(env.home.to_str().unwrap()));
+        put(
+            &root.join(format!("{ID}.jsonl")),
+            &[
+                json!({"type":"user","sessionId":ID,"cwd":env.home,"message":{"role":"user","content":"<local-command-caveat>Ignore me"}}),
+                json!({"type":"user","sessionId":ID,"cwd":env.home,"message":{"role":"user","content":"Explain the new feature"}}),
+            ],
+        );
+        put(
+            &root.join(format!("{ID}/subagents/agent-small.jsonl")),
+            &[
+                json!({"type":"user","sessionId":ID,"cwd":env.home,"message":{"role":"user","content":"Check this module"}}),
+            ],
+        );
+        let history = read_all(&env, &connectors(&env, &json!({"presets":["claude"]})));
+        let parent = history.sessions.iter().find(|s| s["sessionId"] == ID).unwrap();
+        assert_eq!(parent["title"], "Explain the new feature");
+        let child = history.sessions.iter().find(|s| s["parentId"] == ID).unwrap();
+        assert_eq!(child["resumeCapability"], "history-only");
+        assert_ne!(child["sessionId"], ID);
+    }
     #[test]
     fn reads_escaped_cwd_and_full_logs_without_counting_unfinished_lines() {
         let temp = tempfile::tempdir().unwrap();

@@ -120,6 +120,7 @@ try {
   assert.equal(details.tasks.length, 2);
   assert.equal(details.sessions.length, 1);
   assert.equal(details.agentItems.length, 1);
+  assert.ok(details.agentSessions.some(session => session.provider === 'codex' && session.cwd === project));
   const attention = await client.call('needs_attention');
   assert.ok(attention.projects.some(node => node.path === project));
   assert.ok(attention.warnings.some(warning => warning.code === 'claude-cleanup'));
@@ -200,7 +201,7 @@ try {
   const blockedArchive = path.join(home, 'project', '_archive', 'alpha');
   await mkdir(blockedArchive, { recursive: true });
   await client.rejects('archive_project', { project }, /already exists/i);
-  assert.equal((await client.call('project_details', { project })).archivePlan, undefined);
+  assert.match((await client.call('project_details', { project })).archivePlan.error, /already exists/i);
   const customPlan = await client.call('archive_project', { project, destination: customArchive });
   assert.equal(customPlan.destination, customArchive);
   assert.equal(await exists(project), true);
@@ -227,10 +228,16 @@ try {
   checks++;
 
   const suggestions = await client.call('tidy_suggestions');
-  const orphan = suggestions.find(proposal => proposal.action?.type === 'quarantine' && proposal.action.moves.some(move => move.from === orphanDir));
+  let orphan = suggestions.find(proposal => proposal.action?.type === 'quarantine' && proposal.action.moves.some(move => move.from === orphanDir));
   assert.ok(orphan, 'The isolated missing project should produce a restorable quarantine suggestion');
   await client.call('apply_suggestion', { id: orphan.id });
   assert.equal(await exists(orphanDir), true);
+  const reviewedId = orphan.id;
+  await write(path.join(orphanDir, 'new-history.jsonl'), `${JSON.stringify({ cwd: ghost })}\n`);
+  await client.rejects('apply_suggestion', { id: reviewedId, confirm: true }, /Unknown suggestion|changed|review/i);
+  assert.equal(await exists(orphanDir), true);
+  orphan = (await client.call('tidy_suggestions')).find(proposal => proposal.action?.type === 'quarantine' && proposal.action.moves.some(move => move.from === orphanDir));
+  assert.ok(orphan && orphan.id !== reviewedId, 'Changed history must require a new proposal identity');
   const applied = await client.call('apply_suggestion', { id: orphan.id, confirm: true });
   assert.equal(await exists(orphanDir), false);
   await client.call('undo_change', { id: applied.journal.id });

@@ -634,8 +634,11 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
     if src == env.home || dest == env.home {
         return Err("Can't move the home folder".into());
     }
-    if env.data_dir.starts_with(&src) || dest.starts_with(&env.data_dir) {
-        return Err("Can't move Laci's own history and journals".into());
+    if [&env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|owned| {
+        let owned = owned.canonicalize().unwrap_or_else(|_| paths::normalize(owned));
+        owned.starts_with(&src) || dest.starts_with(&owned)
+    }) {
+        return Err("Can't move Laci's settings, history, cache or recovery data".into());
     }
     if dest.starts_with(&src) {
         return Err("Can't move a folder into itself".into());

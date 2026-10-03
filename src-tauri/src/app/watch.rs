@@ -1,13 +1,13 @@
 use laci_core::{
     env::Env,
-    files,
+    files, paths,
     service::{Refresh, array, string},
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::Value;
 use std::{
     collections::BTreeSet,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Mutex, mpsc},
     time::{Duration, Instant},
 };
@@ -35,9 +35,37 @@ pub fn batch(receiver: &mpsc::Receiver<Changes>, mut first: Changes, window: Dur
     first
 }
 
+fn git_directories(project: &Path) -> Vec<PathBuf> {
+    let git = project.join(".git");
+    if git.is_dir() {
+        return vec![git];
+    }
+    let Some(dir) = files::text(&git).and_then(|text| text.strip_prefix("gitdir: ").map(|s| s.trim().to_owned()))
+    else {
+        return vec![];
+    };
+    let dir = paths::normalize(&project.join(dir));
+    let mut directories = vec![dir.clone()];
+    if let Some(common) = files::text(&dir.join("commondir")) {
+        let common = paths::normalize(&dir.join(common.trim()));
+        if common != dir {
+            directories.push(common);
+        }
+    }
+    directories
+}
+
 /// Session content changes do not invalidate unrelated project metadata.
 pub fn refresh_for(env: &Env, snapshot: &Value, changes: &Changes) -> Refresh {
     let mut refresh = Refresh::default();
+    let projects: Vec<_> = snapshot["nodes"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(_, node)| node)
+        .filter(|node| node["kind"] == "project")
+        .collect();
+    let mut git_owners = None;
     for path in &changes.paths {
         if path.starts_with(&env.data_dir) {
             continue;
@@ -54,23 +82,40 @@ pub fn refresh_for(env: &Env, snapshot: &Value, changes: &Changes) -> Refresh {
             refresh.merge(Refresh { watches: changes.structural, ..Refresh::agents() });
             continue;
         }
-        let owner = snapshot["nodes"]
-            .as_object()
-            .into_iter()
-            .flatten()
-            .map(|(_, n)| n)
-            .filter(|node| node["kind"] == "project" && path.starts_with(string(node, "path")))
+        if changes.structural
+            && projects.iter().any(|node| {
+                path == Path::new(string(node, "path")) || path == &Path::new(string(node, "path")).join(".git")
+            })
+        {
+            refresh.merge(Refresh::full());
+            continue;
+        }
+        let owners = git_owners.get_or_insert_with(|| {
+            projects.iter().map(|node| (*node, git_directories(Path::new(string(node, "path"))))).collect::<Vec<_>>()
+        });
+        // A worktree HEAD belongs to that worktree; shared refs affect every checkout using them.
+        let git_depth = owners
+            .iter()
+            .flat_map(|(_, dirs)| dirs)
+            .filter(|dir| path.starts_with(dir))
+            .map(|dir| dir.components().count())
+            .max();
+        if let Some(depth) = git_depth {
+            for (node, dirs) in owners.iter() {
+                if dirs.iter().any(|dir| dir.components().count() == depth && path.starts_with(dir)) {
+                    refresh.projects.insert(string(node, "id").to_owned());
+                }
+            }
+            refresh.watches |= changes.structural;
+            continue;
+        }
+        let owner = projects
+            .iter()
+            .filter(|node| path.starts_with(string(node, "path")))
             .max_by_key(|node| string(node, "path").len());
         if let Some(node) = owner {
-            if changes.structural
-                && (path == std::path::Path::new(string(node, "path"))
-                    || path == &std::path::Path::new(string(node, "path")).join(".git"))
-            {
-                refresh.merge(Refresh::full());
-            } else {
-                refresh.projects.insert(string(node, "id").to_owned());
-                refresh.watches |= changes.structural;
-            }
+            refresh.projects.insert(string(node, "id").to_owned());
+            refresh.watches |= changes.structural;
         } else if array(&snapshot["roots"]).iter().filter_map(Value::as_str).any(|root| path.starts_with(root)) {
             refresh.merge(Refresh::full());
         }
@@ -136,17 +181,17 @@ impl Watches {
                     want.insert(e.path().to_owned());
                 }
             }
-            let git = path.join(".git");
-            if git.is_dir() {
+            for git in git_directories(&path) {
+                for relative in ["", "refs", "refs/heads", "refs/tags", "refs/remotes"] {
+                    want.insert(git.join(relative));
+                }
+                // Object directories can consume the general walk budget before refs are reached.
+                for e in files::walk(&git.join("refs"), false).filter(|e| e.file_type().is_dir()).take(100) {
+                    want.insert(e.path().to_owned());
+                }
                 for e in files::walk(&git, false).filter(|e| e.file_type().is_dir()).take(100) {
                     want.insert(e.path().to_owned());
                 }
-            } else if let Some(text) =
-                files::text(&git).and_then(|s| s.strip_prefix("gitdir: ").map(|s| s.trim().to_owned()))
-            {
-                let actual = path.join(text);
-                want.insert(actual.clone());
-                want.insert(actual.join("refs"));
             }
         }
         for c in array(&snapshot["connectors"]) {
@@ -242,6 +287,44 @@ mod tests {
         let refresh = refresh_for(&env, &snapshot, &metadata);
         assert_eq!(refresh.projects, BTreeSet::from(["app".to_owned()]));
         assert!(!refresh.full && !refresh.agents && !refresh.watches);
+    }
+
+    #[test]
+    fn linked_worktree_git_events_refresh_the_checkout_and_shared_refs_refresh_all_owners() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let main = home.path().join("main");
+        let linked = home.path().join("linked");
+        let private = main.join(".git/worktrees/review");
+        let heads = main.join(".git/refs/heads");
+        fs::create_dir_all(&private).unwrap();
+        for index in 0..128 {
+            fs::create_dir_all(main.join(format!(".git/objects/{index:02x}"))).unwrap();
+        }
+        fs::create_dir_all(&heads).unwrap();
+        let namespaced = heads.join("feature");
+        fs::create_dir_all(&namespaced).unwrap();
+        fs::create_dir_all(&linked).unwrap();
+        fs::write(linked.join(".git"), "gitdir: ../main/.git/worktrees/review\n").unwrap();
+        fs::write(private.join("commondir"), "../..\n").unwrap();
+        let mut snapshot = json!({"roots":[linked],"connectors":[],"nodes":{
+            "main":{"id":"main","kind":"project","path":main},
+            "linked":{"id":"linked","kind":"project","path":linked}
+        }});
+        let private_change = Changes { paths: BTreeSet::from([private.join("HEAD")]), structural: false };
+        assert_eq!(refresh_for(&env, &snapshot, &private_change).projects, BTreeSet::from(["linked".to_owned()]));
+        let shared_change = Changes { paths: BTreeSet::from([heads.join("topic")]), structural: false };
+        assert_eq!(
+            refresh_for(&env, &snapshot, &shared_change).projects,
+            BTreeSet::from(["main".to_owned(), "linked".to_owned()])
+        );
+        snapshot["nodes"].as_object_mut().unwrap().remove("main");
+        assert_eq!(refresh_for(&env, &snapshot, &private_change).projects, BTreeSet::from(["linked".to_owned()]));
+        assert_eq!(refresh_for(&env, &snapshot, &shared_change).projects, BTreeSet::from(["linked".to_owned()]));
+        let desired = Watches::desired(&env, &snapshot, &BTreeSet::new());
+        assert!(desired.contains(&private));
+        assert!(desired.contains(&heads), "a standalone linked checkout still needs its shared refs watched");
+        assert!(desired.contains(&namespaced), "large object stores cannot displace branch namespace watches");
     }
 
     #[test]

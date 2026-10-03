@@ -118,7 +118,7 @@ export const useApp = create<State>((set, get) => ({
       const revision = snapshot.revision ?? 0;
       if (revision < s.revision) return {};
       const historyPending = snapshot.historyPending ?? false;
-      const keepError = historyPending && s.errorRevision === revision;
+      const keepError = s.errorRevision === revision;
       const ready =
         !historyPending &&
         s.pendingSelection &&
@@ -417,7 +417,8 @@ export function urlOpen(url: string) {
   void run(() => api("open/url", { url }));
 }
 export function rescan() {
-  void run(async () => {
+  const revision = useApp.getState().revision;
+  return run(async () => {
     const snapshot = await api<Snapshot>("rescan");
     useApp.getState().load(snapshot);
     if (!useApp.getState().toast?.undo)
@@ -425,7 +426,9 @@ export function rescan() {
         "Scan finished",
         `${Object.values(snapshot.nodes).filter((n) => n.kind === "project").length} projects`,
       );
-  }, "Scanning your projects…");
+  }, "Scanning your projects…", {
+    onError: (error) => refreshError(error, revision),
+  });
 }
 export function backup() {
   void run(async () => {

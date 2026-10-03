@@ -6,7 +6,7 @@
  * LACI_BINARY overrides target/debug/laci; LACI_WEBDRIVER defaults to :4444.
  * LACI_SCREENSHOTS optionally receives screenshots from the real app window.
  * LACI_ONBOARDING_ONLY=1 checks the first-run wizard on an unconfigured fixture.
- * LACI_WATCHER_ONLY=1 checks archived Git and continuously written session logs.
+ * LACI_WATCHER_ONLY=1 checks archived/worktree Git and continuously written session logs.
  * LACI_KEYBOARD_ONLY=1 checks modal, connector, row and terminal keyboard behavior.
  * LACI_STARTUP_PROJECT/TEXT optionally check a README changed after a cached scan.
  */
@@ -924,6 +924,46 @@ async function keyboardRegressions() {
 }
 
 async function watcherRegressions() {
+  await check(
+    "Linked worktree branch switches refresh the native inspector",
+    async () => {
+      const current = await snapshot();
+      const main = Object.values(current.nodes).find(
+        (node) => node.git && !node.git.worktree && !node.archived &&
+          current.roots.some((root) => node.path.startsWith(root + "/")),
+      );
+      assert.ok(main, "Fixture needs a Git project below a scan root");
+      const linked = path.join(path.dirname(main.path), `native-worktree-${stamp}`);
+      const initial = `native-worktree-start-${stamp}`;
+      const switched = `native-worktree-next-${stamp}`;
+      const git = (args) => execFileSync("git", args, { stdio: "pipe" });
+      git(["-C", main.path, "worktree", "add", "-b", initial, linked, "HEAD"]);
+      try {
+        // Finish discovery and watch installation before changing only Git metadata.
+        await api("rescan");
+        const project = (await snapshot()).nodes[linked];
+        assert.ok(project?.git?.worktree, "Linked checkout must be detected");
+        await showProject(project);
+        git(["-C", linked, "switch", "-c", switched]);
+        await wait("linked Git watcher refreshed the branch", async () =>
+          (await snapshot()).nodes[linked]?.git?.branch === switched,
+        );
+        await wait("React inspector received linked worktree branch", () =>
+          textContains(".insp .pval", switched),
+        );
+        await shot("watcher-linked-worktree");
+      } finally {
+        git(["-C", main.path, "worktree", "remove", "--force", linked]);
+        for (const branch of [initial, switched]) {
+          try {
+            git(["-C", main.path, "branch", "-D", branch]);
+          } catch {
+            // A failure before switch leaves only the initial fixture branch.
+          }
+        }
+      }
+    },
+  );
   await check(
     "Archived Git branch changes reach the native inspector",
     async () => {

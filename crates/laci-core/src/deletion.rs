@@ -1,7 +1,7 @@
 //! Project removal is explicit and uses system Trash; remote names alone are not a backup.
 use crate::{Result, env::Env, ops, paths, process, service::string, sidecar};
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, path::Path, time::Duration};
+use std::{collections::BTreeSet, fs, path::Path, time::Duration};
 
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
     let mut options = vec![
@@ -27,6 +27,13 @@ fn local_head(dir: &Path) -> Result<String> {
     if git(dir, &["worktree", "list", "--porcelain"])?.lines().filter(|l| l.starts_with("worktree ")).count() != 1 {
         return Err("This repository has other worktrees. Remove them with Git first.".into());
     }
+    // These index flags can hide modified tracked bytes from both status and diff.
+    if git(dir, &["ls-files", "-v", "-z"])?
+        .split('\0')
+        .any(|entry| entry.as_bytes().first().is_some_and(|tag| *tag == b'S' || tag.is_ascii_lowercase()))
+    {
+        return Err("Tracked files use skip-worktree or assume-unchanged. Clear those flags and verify local changes before removing this project.".into());
+    }
     if !git(dir, &["status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"])?.is_empty() {
         return Err("Commit or back up local changes and untracked files first".into());
     }
@@ -37,6 +44,44 @@ fn local_head(dir: &Path) -> Result<String> {
         return Err("This project contains submodules. Their work must be checked separately.".into());
     }
     git(dir, &["rev-parse", "--verify", "HEAD"]).map_err(|_| "This project has no committed HEAD to verify".to_owned())
+}
+
+fn local_backup(dir: &Path, remote: &Path) -> Result<()> {
+    let common = git(remote, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let objects = git(remote, &["rev-parse", "--path-format=absolute", "--git-path", "objects"])?;
+    let common = Path::new(&common).canonicalize().map_err(|e| format!("Could not verify local remote: {e}"))?;
+    let objects = Path::new(&objects).canonicalize().map_err(|e| format!("Could not verify local remote: {e}"))?;
+    if common.starts_with(dir) || objects.starts_with(dir) {
+        return Err("The local remote stores Git data inside this project and would lose it when removed".into());
+    }
+    // Git stores loose objects one fanout level down and pack files directly under objects/pack.
+    // Inspect metadata only, without following links or walking an unbounded loose-object store.
+    for (index, entry) in walkdir::WalkDir::new(&objects).follow_links(false).max_depth(2).into_iter().enumerate() {
+        if index >= 100_000 {
+            return Err("The local backup has too many object entries to verify safely. Repack it or use a network backup first.".into());
+        }
+        let entry = entry.map_err(|e| format!("Could not verify local remote object storage: {e}"))?;
+        if entry.file_type().is_symlink() {
+            return Err(
+                "The local remote uses linked object storage. Use an independent backup before removing this project."
+                    .into(),
+            );
+        }
+    }
+    let borrowed = "The local remote borrows Git objects. Use an independent backup before removing this project.";
+    if std::env::var_os("GIT_ALTERNATE_OBJECT_DIRECTORIES").is_some_and(|value| !value.is_empty()) {
+        return Err(borrowed.into());
+    }
+    for name in ["alternates", "http-alternates"] {
+        match fs::read_to_string(objects.join("info").join(name)) {
+            Ok(text) if !text.trim().is_empty() => return Err(borrowed.into()),
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!("Could not verify local remote object storage: {error}"));
+            }
+            _ => (),
+        }
+    }
+    Ok(())
 }
 
 fn check(dir: &Path) -> Result<String> {
@@ -53,20 +98,27 @@ fn check(dir: &Path) -> Result<String> {
     }
     // Git treats a path as local when a slash precedes its first colon (including absolute paths).
     let local_path = url.find(':').is_none_or(|colon| url.find('/').is_some_and(|slash| slash < colon));
-    if local_path {
+    let local_remote = if local_path {
         let local = Path::new(&url);
         let local = if local.is_absolute() { local.to_owned() } else { dir.join(local) };
         let actual = local.canonicalize().map_err(|_| "The local remote backup is unavailable".to_owned())?;
         if actual.starts_with(dir) {
             return Err("The remote is inside this project and would be removed with it".into());
         }
-    }
+        local_backup(dir, &actual)?;
+        Some(actual)
+    } else {
+        None
+    };
     // Read live refs, without fetching or trusting potentially stale remote-tracking refs.
     let advertised = git(dir, &["ls-remote", "--heads", "--tags", "--", remote])
         .map_err(|error| format!("Could not verify the remote. Nothing was removed. {error}"))?;
     let remote_ids: BTreeSet<&str> = advertised.lines().filter_map(|l| l.split_once('\t').map(|p| p.0)).collect();
     // A remote can take seconds to answer; reject local work created during that wait.
     let head = local_head(dir)?;
+    if let Some(local) = local_remote {
+        local_backup(dir, &local)?;
+    }
     if !remote_ids.contains(head.as_str()) {
         return Err(
             "The current commit is not a branch or tag tip on the live remote. Push or verify the backup first.".into(),

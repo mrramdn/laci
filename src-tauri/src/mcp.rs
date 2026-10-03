@@ -213,17 +213,21 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             service.rescan()?;
             let n = project(service, string(args, "project"))?;
             let id = string(&n, "id");
-            let destination = if name == "archive_project" {
-                if n["kind"] != "project" || n["archived"] == true || n["archivePlan"].is_null() {
+            let archive_plan = if name == "archive_project" {
+                if n["kind"] != "project" || n["archived"] == true {
                     return Err("This folder cannot be archived".into());
                 }
-                args["destination"].as_str().unwrap_or(string(&n["archivePlan"], "dest")).to_owned()
+                Some(service.request("archive/plan", &json!({"id":id,"destination":args["destination"]}))?)
+            } else {
+                None
+            };
+            let destination = if let Some(plan) = &archive_plan {
+                string(plan, "dest").to_owned()
             } else {
                 paths::workspace_path(string(args, "destination"), &service.env)?.to_string_lossy().into_owned()
             };
             if args["confirm"] != true {
-                if name == "archive_project" {
-                    let plan = service.request("archive/plan", &json!({"id":id,"destination":destination}))?;
+                if let Some(plan) = archive_plan {
                     return Ok(
                         json!({"plan":plan["ops"],"destination":plan["dest"],"checks":plan["checks"],"hint":"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}),
                     );

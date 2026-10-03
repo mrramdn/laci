@@ -303,3 +303,45 @@ fn config_journal_scope_cannot_restore_a_neighboring_file() {
     assert!(destination.join("package.json").is_file());
     assert!(!source.exists());
 }
+
+#[test]
+fn projects_containing_laci_config_or_cache_cannot_be_archived_or_moved() {
+    for folder in [".config", ".cache"] {
+        let temp = tempfile::tempdir().unwrap();
+        let env = Env::for_home(temp.path().join("home"));
+        let source = env.home.join(folder);
+        let destination = env.home.join("cold/owned");
+        write(&source.join("package.json"), "{}");
+        config::save(&env, &json!({"roots":[source],"presets":[],"theme":"dark","apps":{"editor":"code"}})).unwrap();
+        let original = fs::read(env.config_dir.join("config.json")).unwrap();
+        let mut service = Service::new(env.clone());
+        assert!(
+            service
+                .request("archive", &json!({"id":source,"destination":destination}))
+                .unwrap_err()
+                .contains("Laci's settings")
+        );
+        assert!(service.request("move", &json!({"id":source,"destination":destination})).is_err());
+        assert!(source.join("package.json").is_file());
+        assert!(!destination.exists());
+        assert_eq!(fs::read(env.config_dir.join("config.json")).unwrap(), original);
+        assert!(laci_core::ops::journals(&env, 10).is_empty());
+    }
+}
+
+#[test]
+fn move_destinations_cannot_enter_laci_owned_directories() {
+    let temp = tempfile::tempdir().unwrap();
+    let env = Env::for_home(temp.path().join("home"));
+    let source = env.home.join("project/demo");
+    write(&source.join("package.json"), "{}");
+    config::save(&env, &json!({"roots":["~/project"],"presets":[]})).unwrap();
+    let mut service = Service::new(env.clone());
+    for owned in [&env.config_dir, &env.data_dir, &env.cache_dir] {
+        let destination = owned.join("misplaced-project");
+        assert!(service.request("move", &json!({"id":source,"destination":destination})).is_err());
+        assert!(!destination.exists());
+    }
+    assert!(source.join("package.json").is_file());
+    assert!(laci_core::ops::journals(&env, 10).is_empty());
+}

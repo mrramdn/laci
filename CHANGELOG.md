@@ -32,6 +32,11 @@ Release candidate for Linux x86-64. The distribution build targets Ubuntu 24.04;
 - Tidy's Applying changes overlay no longer waits for a full post-action scan. Duplicate submissions are blocked, and stale history actions wait for a successful refresh.
 - A refresh failure after a committed action appears as a warning and keeps Undo available. An older dialog's completion cannot close a newer dialog.
 - Undo refreshes the Log once; metadata and task changes avoid an unrelated full project scan.
+- Failed scan retries preserve a completed action's Undo. A snapshot from before the failure cannot clear the refresh warning.
+- Git events from a linked worktree's external git directory refresh that worktree's branch and status.
+- A custom MCP archive destination works when the default destination is occupied.
+- Trash refuses index flags that can conceal tracked changes and local backups that borrow objects from another repository.
+- Moves and archives cannot relocate Laci's own config, cache or recovery data directories.
 
 ## [1.0.0] - 2026-09-30
 

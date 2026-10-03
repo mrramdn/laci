@@ -166,3 +166,79 @@ fn local_work_created_while_the_remote_answers_prevents_trash() {
     assert!(deletion::trash(&env, &node).unwrap_err().contains("untracked"));
     assert!(dir.join("new.txt").exists());
 }
+
+#[test]
+fn hidden_tracked_changes_cannot_pass_the_trash_guard() {
+    for flag in ["--skip-worktree", "--assume-unchanged"] {
+        let (_home, env, dir, node) = fixture();
+        git(&dir, &["update-index", flag, "README.md"]);
+        fs::write(dir.join("README.md"), "local bytes absent from the remote\n").unwrap();
+        assert!(git(&dir, &["status", "--porcelain=v1", "--untracked-files=all"]).is_empty());
+        assert!(blocked(&env, &node).contains("skip-worktree or assume-unchanged"));
+        assert!(deletion::trash(&env, &node).is_err());
+        assert_eq!(fs::read_to_string(dir.join("README.md")).unwrap(), "local bytes absent from the remote\n");
+    }
+}
+
+#[test]
+fn shared_local_backups_must_be_independent_before_trash() {
+    let (_home, env, dir, node) = fixture();
+    let backup = env.home.join("backup.git");
+    fs::remove_dir_all(&backup).unwrap();
+    git(&env.home, &["clone", "--shared", "--bare", dir.to_str().unwrap(), backup.to_str().unwrap()]);
+    assert!(backup.join("objects/info/alternates").is_file());
+    assert!(blocked(&env, &node).contains("borrows Git objects"));
+    assert!(deletion::trash(&env, &node).is_err());
+    assert!(dir.join("README.md").is_file());
+    git(&backup, &["repack", "-a", "-d"]);
+    fs::remove_file(backup.join("objects/info/alternates")).unwrap();
+    assert_eq!(deletion::plan(&env, &node).unwrap()["allowed"], true);
+}
+
+#[test]
+fn a_remote_object_store_linked_into_the_project_is_not_a_backup() {
+    let (_home, env, dir, node) = fixture();
+    let objects = env.home.join("backup.git/objects");
+    fs::remove_dir_all(&objects).unwrap();
+    std::os::unix::fs::symlink(dir.join(".git/objects"), &objects).unwrap();
+    assert!(blocked(&env, &node).contains("Git data inside this project"));
+    assert!(deletion::trash(&env, &node).is_err());
+    assert!(dir.join("README.md").is_file());
+}
+
+#[test]
+fn hidden_changes_created_during_remote_verification_are_rechecked() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_home, env, dir, node) = fixture();
+    let upload = env.home.join("hide-change-upload-pack");
+    fs::write(&upload, format!(
+        "#!/bin/sh\ngit -C '{}' update-index --skip-worktree README.md\nprintf 'hidden local work\\n' > '{}/README.md'\nexec git-upload-pack \"$@\"\n",
+        dir.display(), dir.display()
+    )).unwrap();
+    fs::set_permissions(&upload, fs::Permissions::from_mode(0o700)).unwrap();
+    git(&dir, &["config", "remote.origin.uploadpack", upload.to_str().unwrap()]);
+    assert!(blocked(&env, &node).contains("skip-worktree or assume-unchanged"));
+    assert_eq!(fs::read_to_string(dir.join("README.md")).unwrap(), "hidden local work\n");
+}
+
+#[test]
+fn local_backups_cannot_borrow_pack_or_loose_object_subdirectories() {
+    for packed in [true, false] {
+        let (_home, env, dir, node) = fixture();
+        let backup = env.home.join("backup.git");
+        let borrowed = if packed {
+            git(&dir, &["repack", "-a", "-d"]);
+            git(&backup, &["repack", "-a", "-d"]);
+            "pack".to_owned()
+        } else {
+            git(&dir, &["rev-parse", "HEAD"])[..2].to_owned()
+        };
+        let linked = backup.join("objects").join(&borrowed);
+        fs::remove_dir_all(&linked).unwrap();
+        std::os::unix::fs::symlink(dir.join(".git/objects").join(&borrowed), &linked).unwrap();
+        git(&backup, &["cat-file", "-e", "HEAD"]);
+        assert!(blocked(&env, &node).contains("linked object storage"));
+        assert!(deletion::trash(&env, &node).is_err());
+        assert!(dir.join("README.md").exists());
+    }
+}

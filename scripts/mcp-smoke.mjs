@@ -197,6 +197,10 @@ try {
   checks++;
 
   const customArchive = path.join(home, 'project', '_archive', 'custom-alpha');
+  const blockedArchive = path.join(home, 'project', '_archive', 'alpha');
+  await mkdir(blockedArchive, { recursive: true });
+  await client.rejects('archive_project', { project }, /already exists/i);
+  assert.equal((await client.call('project_details', { project })).archivePlan, undefined);
   const customPlan = await client.call('archive_project', { project, destination: customArchive });
   assert.equal(customPlan.destination, customArchive);
   assert.equal(await exists(project), true);
@@ -204,6 +208,7 @@ try {
   assert.equal(await exists(customArchive), true);
   await client.call('undo_change', { id: customApplied.journal.id });
   assert.deepEqual(await readFile(path.join(project, '.laci.md')), beforeSidecar);
+  await rm(blockedArchive, { recursive: true });
   checks++;
 
   const archivePlan = await client.call('archive_project', { project });

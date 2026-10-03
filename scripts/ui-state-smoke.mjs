@@ -11,12 +11,12 @@ const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-function store() {
+function store(api = () => Promise.resolve({ entries: [] })) {
   const exports = {};
   let timerId = 0;
   const timers = new Map();
   const native = {
-    api: () => Promise.resolve({ entries: [] }),
+    api,
     errorText: (error) => error instanceof Error ? error.message : String(error),
   };
   new Function("require", "exports", "document", "localStorage", "setTimeout", "clearTimeout", compiled)(
@@ -103,6 +103,34 @@ test("a refresh failure before the action reply preserves its warning and Undo",
   assert.equal(useApp.getState().error, null);
   assert.equal(useApp.getState().toast.undo, "undo-id");
   assert.equal([...timers.values()][0].delay, 14000);
+});
+
+test("a late same-revision snapshot cannot hide a failed ordinary refresh", () => {
+  const { useApp, refreshError } = store();
+  useApp.getState().load(snapshot(6));
+  refreshError("permission denied", 6);
+  useApp.getState().load(snapshot(6), true);
+  assert.equal(useApp.getState().error, "permission denied");
+  assert.equal(useApp.getState().errorRevision, 6);
+  useApp.getState().load(snapshot(7), true);
+  assert.equal(useApp.getState().error, null);
+});
+
+test("a failed manual refresh retry retains the committed action's Undo", async () => {
+  const app = store(async (name) => {
+    assert.equal(name, "rescan");
+    app.refreshError("still cannot read history", 8);
+    throw new Error("still cannot read history");
+  });
+  app.useApp.getState().load(snapshot(5));
+  app.changed({ revision: 8, historyPending: true, journal: { id: "undo-id" } }, "Archived project");
+  app.refreshError("cannot read history", 8);
+  await app.rescan();
+  assert.equal(app.useApp.getState().toast.undo, "undo-id");
+  assert.equal(app.useApp.getState().toast.title, "Archived project");
+  assert.equal(app.useApp.getState().toast.message, "still cannot read history");
+  assert.equal(app.useApp.getState().working, "");
+  assert.equal(app.timers.size, 0);
 });
 
 test("mutation ownership rejects a repeated click while read-only tasks still run", async () => {

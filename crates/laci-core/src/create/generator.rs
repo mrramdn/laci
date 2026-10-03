@@ -6,7 +6,7 @@ use std::{
     io::{Read, Seek, SeekFrom},
     os::unix::process::CommandExt,
     path::Path,
-    process::{Command, Stdio},
+    process::Stdio,
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
@@ -89,7 +89,7 @@ impl Plan {
 }
 fn available(program: &str) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+    std::env::split_paths(&process::host_path())
         .any(|p| p.join(program).metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
 }
 pub fn plan(env: &Env, r: &Value) -> Result<Plan> {
@@ -149,7 +149,7 @@ pub fn run(plan: &Plan, cwd: &Path, cancel: &AtomicBool, progress: &dyn Fn(&str)
     progress(&format!("{}\n", preview["command"].as_str().unwrap_or("")));
     let output = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
     let mut reader = output.reopen().map_err(|e| e.to_string())?;
-    let mut child = Command::new(&plan.program)
+    let mut child = process::command(&plan.program)
         .args(&plan.args)
         .current_dir(cwd)
         .stdin(Stdio::null())

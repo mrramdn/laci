@@ -6,7 +6,7 @@ use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::{LazyLock, Mutex},
     time::{Duration, Instant},
 };
@@ -70,7 +70,7 @@ fn executable(provider: &str) -> Result<&'static str> {
     }
 }
 fn installed(program: &str) -> bool {
-    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|dir| {
+    std::env::split_paths(&crate::process::host_path()).any(|dir| {
         fs::metadata(dir.join(program)).is_ok_and(|m| {
             #[cfg(unix)]
             {
@@ -282,7 +282,7 @@ fn parse_codex_models(result: &Value) -> Result<Vec<Value>> {
 fn codex_models(cwd: &Path) -> Result<Value> {
     // Only initialize/model-list messages; discovery never starts a thread or a turn.
     let output = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
-    let mut child = Command::new("codex")
+    let mut child = crate::process::command("codex")
         .args(["app-server", "--listen", "stdio://"])
         .current_dir(cwd)
         .stdin(Stdio::piped())
@@ -506,7 +506,7 @@ mod tests {
         // Exercise the only string transport boundary with an inert argv printer.
         let words =
             std::iter::once("printf").chain(["%s\\0", &args[0], &args[1]]).map(quote).collect::<Vec<_>>().join(" ");
-        let output = Command::new("sh").args(["-c", &words]).output().unwrap();
+        let output = std::process::Command::new("sh").args(["-c", &words]).output().unwrap();
         assert!(output.status.success());
         assert_eq!(output.stdout, format!("{}\0{}\0", args[0], args[1]).as_bytes());
         assert!(external_args("unknown-terminal", &c).is_err());

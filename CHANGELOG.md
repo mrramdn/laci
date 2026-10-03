@@ -19,6 +19,7 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 - Archive remains accessible when its default destination is invalid, with a field for another destination.
 - Pure Trash actions no longer advertise Laci Undo; mixed journals explain recovery through system Trash.
 - Per-user launcher installs available icon sizes and resolves its icon through an absolute path.
+- AppImage launches host tools without its bundled Python, library and plugin paths leaking into their environment.
 - Non-Git projects no longer claim to be committed and pushed. Removed Git trailer reporting and its extra history query.
 
 ### Changed

@@ -1,5 +1,5 @@
 // A fake HOME with a few projects and agent logs, for trying laci's write actions without touching real data.
-// Usage: node scripts/sandbox.ts <dir>   then   HOME=<dir> LACI_PORT=4848 node src/server.ts
+// Usage: node scripts/sandbox.ts <dir>   then   LACI_HOME=<dir> pnpm dev
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'

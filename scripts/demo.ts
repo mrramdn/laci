@@ -1,5 +1,5 @@
 // A believable fake HOME for screenshots and demos: clients, a thesis, side projects, agent history,
-// a half-done move and an orphan. Usage: node scripts/demo.ts <dir>  then  HOME=<dir> node src/server.ts --open
+// a half-done move and an orphan. Usage: node scripts/demo.ts <dir>  then  LACI_HOME=<dir> pnpm dev
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readdirSync, utimesSync, writeFileSync } from 'node:fs'
 import path from 'node:path'

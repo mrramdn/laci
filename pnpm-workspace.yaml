@@ -1,3 +1,4 @@
+packages:
+  - ui
 allowBuilds:
-  node-pty: true
-  electron: true
+  esbuild: true

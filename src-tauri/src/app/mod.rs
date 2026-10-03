@@ -126,6 +126,19 @@ impl AppState {
         self.queue.finish(work, None);
         self.notice(self.status());
     }
+    fn launch_agent(&self, body: &Value) -> Result<Value> {
+        let (env, request, session, apps) = {
+            let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
+            let (request, session) = engine.service.agent_context(body)?;
+            (engine.service.env.clone(), request, session, engine.service.apps())
+        };
+        let command = laci_core::launch::resolve(&env, &request, session.as_ref())?;
+        if command.target == "external" {
+            laci_core::launch::external(string(&apps, "terminal"), &command)?;
+            return Ok(json!({"target":"external"}));
+        }
+        Ok(json!({"target":"internal","terminal":self.terminals.open_launch(&command)?}))
+    }
     fn request(self: &Arc<Self>, name: &str, body: &Value) -> Result<Value> {
         match name {
             "agent/models" => {
@@ -136,19 +149,7 @@ impl AppState {
                     body["refresh"].as_bool().unwrap_or(false),
                 );
             }
-            "agent/launch" => {
-                let (env, request, session, apps) = {
-                    let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
-                    let (request, session) = engine.service.agent_context(body)?;
-                    (engine.service.env.clone(), request, session, engine.service.apps())
-                };
-                let command = laci_core::launch::resolve(&env, &request, session.as_ref())?;
-                if command.target == "external" {
-                    laci_core::launch::external(string(&apps, "terminal"), &command)?;
-                    return Ok(json!({"target":"external"}));
-                }
-                return Ok(json!({"target":"internal","terminal":self.terminals.open_launch(&command)?}));
-            }
+            "agent/launch" => return self.launch_agent(body),
             "new/start" => {
                 let env = {
                     let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
@@ -179,6 +180,16 @@ impl AppState {
             }
             "new/status" => return self.creations.status(string(body, "id")),
             "new/cancel" => return self.creations.cancel(string(body, "id")),
+            "new/current" => return self.creations.current(),
+            "new/ack" => return self.creations.acknowledge(string(body, "id")),
+            "new/continue" => {
+                return self.creations.continue_agent(
+                    string(body, "id"),
+                    body["retryAttempt"].as_u64(),
+                    body.get("agent"),
+                    |request| self.launch_agent(request),
+                );
+            }
             "snapshot" => return self.snapshot(),
             "status" => return Ok(self.status()),
             "rescan" => return self.rescan(),

@@ -46,6 +46,31 @@ const CODE: &[&str] = &[
     "artisan",
 ];
 
+fn check_root_identity(path: &Path, cfg: &Value) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    crate::sidecar::plain_path(path)?;
+    let meta = std::fs::metadata(path).map_err(|_| "Folder or drive is unavailable".to_owned())?;
+    if !meta.is_dir() {
+        return Err("Location is no longer a folder".into());
+    }
+    if let Some(expected) = cfg["rootIdentities"].get(path.to_string_lossy().as_ref())
+        && (expected["device"].as_u64() != Some(meta.dev()) || expected["inode"].as_u64() != Some(meta.ino()))
+    {
+        return Err("The selected folder or drive has changed; select it again to use it".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn check_archive_destination(env: &Env, dest: &Path) -> Result<()> {
+    paths::workspace_path(&dest.to_string_lossy(), env)?;
+    let cfg = config::load(env);
+    // Scan roots are deduplicated, but a nested archive selection has its own identity.
+    for root in paths::workspace_roots(env).into_iter().filter(|root| dest.starts_with(root)) {
+        check_root_identity(&root, &cfg)?;
+    }
+    Ok(())
+}
+
 /// Configured locations stay visible when a disk is disconnected or cannot be read.
 pub fn root_status(env: &Env, cfg: &Value) -> Vec<Value> {
     use std::os::unix::fs::MetadataExt;
@@ -53,17 +78,7 @@ pub fn root_status(env: &Env, cfg: &Value) -> Vec<Value> {
         .into_iter()
         .map(|path| {
             let checked = (|| -> Result<()> {
-                crate::sidecar::plain_path(&path)?;
-                let meta = std::fs::metadata(&path).map_err(|_| "Folder or drive is unavailable".to_owned())?;
-                if !meta.is_dir() {
-                    return Err("Location is no longer a folder".into());
-                }
-                if let Some(expected) = cfg["rootIdentities"].get(path.to_string_lossy().as_ref())
-                    && (expected["device"].as_u64() != Some(meta.dev())
-                        || expected["inode"].as_u64() != Some(meta.ino()))
-                {
-                    return Err("The selected folder or drive has changed; select it again to use it".into());
-                }
+                check_root_identity(&path, cfg)?;
                 paths::workspace_path(&path.to_string_lossy(), env)?;
                 std::fs::read_dir(&path).map_err(|_| "Folder cannot be read".to_owned())?;
                 Ok(())
@@ -894,6 +909,7 @@ pub fn archive_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
         }
         paths::workspace_path(&archive_dest(env, n, &roots).to_string_lossy(), env)?
     };
+    check_archive_destination(env, &dest)?;
     if dest.starts_with(&source) {
         return Err("Can't move a folder into itself".into());
     }
@@ -1209,7 +1225,7 @@ mod tests {
                 .iter()
                 .any(|o| o["kind"] == "keep" && string(o, "detail").contains(".aider.chat.history.md"))
         );
-        assert!(env.cache_dir.join("v3-agent-facts.json").exists());
+        assert!(env.cache_dir.join("v4-agent-facts.json").exists());
     }
     #[test]
     fn metadata_edits_leave_source_activity_unchanged_and_keep_stable_id() {

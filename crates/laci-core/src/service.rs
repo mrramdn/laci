@@ -532,7 +532,6 @@ impl Service {
                 ops::with_lock(&self.env, || {
                     let mut c = config::load(&self.env);
                     let before = json!({"type":"config","roots":c["roots"],"presets":c["presets"],"apps":c["apps"],"archiveDir":c["archiveDir"],"rootIdentities":c["rootIdentities"],"terminalTarget":c["terminalTarget"]});
-                    c["rootIdentities"] = config::root_identities(&self.env, &roots, &c["rootIdentities"]);
                     c["roots"] = roots;
                     if let Some(target) = b.get("terminalTarget") {
                         c["terminalTarget"] = target.clone();
@@ -542,6 +541,11 @@ impl Service {
                     if let Some(archive_dir) = archive_dir {
                         c["archiveDir"] = archive_dir;
                     }
+                    let mut locations = array(&c["roots"]);
+                    if let Some(dir) = c["archiveDir"].as_str().filter(|dir| !dir.is_empty()) {
+                        locations.push(json!(dir));
+                    }
+                    c["rootIdentities"] = config::root_identities(&self.env, &json!(locations), &c["rootIdentities"]);
                     config::save(&self.env, &c)?;
                     activity::record(
                         &self.env,

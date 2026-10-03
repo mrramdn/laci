@@ -624,6 +624,16 @@ async function installErrorCollection() {
     );
   });
 }
+async function reloadApp() {
+  frontendErrors.push(
+    ...(await execute(() => window.__LACI_SMOKE_ERRORS__ ?? [])),
+  );
+  await command("POST", "/refresh", {});
+  await wait("React restored after reload", () =>
+    execute(() => Boolean(document.querySelector(".main .head h1"))),
+  );
+  await installErrorCollection();
+}
 
 async function newTerminalUI() {
   const before = new Set((await invoke("term_list")).map((term) => term.id));
@@ -1389,6 +1399,20 @@ async function agentRegressions() {
               entry.title === `Created ${createdName}`,
           ).length;
         assert.equal(await createCount(), 1);
+        const failedJob = await api("new/current");
+        await reloadApp();
+        await wait("failed agent continuation recovered after reload", () =>
+          textContains(".dialog .df", "Project created. Agent launch failed:"),
+        );
+        assert.equal((await api("new/current")).id, failedJob.id);
+        assert.equal(
+          await execute(
+            () =>
+              document.querySelector(".dialog .agent-fields textarea").value,
+          ),
+          prompt,
+        );
+        assert.equal((await capturedAgents()).length, before);
         await shot("agent-launch-failed-project-kept");
         await chmod(path.join(fixtureHome, "bin/agy"), 0o700);
         const oldTerms = new Set(
@@ -1421,6 +1445,29 @@ async function agentRegressions() {
           textContains(".term .xterm", "LACI_FAKE_AGENT_READY"),
         );
         await shot("agent-launch-retry");
+        await reloadApp();
+        for (let repeat = 0; repeat < 3; repeat++)
+          assert.equal(
+            (
+              await api("new/continue", {
+                id: failedJob.id,
+                retryAttempt: failedJob.continuation.attempt,
+              })
+            ).continuation.result.terminal.id,
+            terminal.id,
+          );
+        assert.equal(
+          (await capturedAgents())
+            .slice(before)
+            .filter((entry) => entry.program === "agy").length,
+          1,
+        );
+        assert.equal(await createCount(), 1);
+        assert.equal(
+          (await invoke("term_list")).filter((term) => term.id === terminal.id)
+            .length,
+          1,
+        );
         await invoke("term_close", { id: terminal.id });
         keyboardTerminalIds.delete(terminal.id);
         await wait(
@@ -1429,6 +1476,176 @@ async function agentRegressions() {
             !sameLiveProcess(await processIdentity(record.pid), identity),
         );
         fakeAgentProcesses.delete(record.pid);
+      },
+    );
+    await check(
+      "Generator completion across repeated WebView reloads launches the requested agent exactly once",
+      async () => {
+        const name = `agent-reload-${stamp}`;
+        const dest = path.join(projectRoot, name);
+        const marker = `LACI_GENERATOR_RELOAD_${stamp}`;
+        let job;
+        try {
+          await api("new/recipe", {
+            recipe: {
+              id: recipeId,
+              name: "Native reload generator",
+              program: "sh",
+              args: [
+                "-c",
+                `printf '# Reload project\\n' > "$1/README.md"; printf x >> "$1/runs"; printf '%s\\n' '${marker}'; while [ ! -f "$1/continue" ]; do sleep 0.1; done; rm "$1/continue"`,
+                "laci-native-fixture",
+                "{name}",
+              ],
+              download: false,
+            },
+          });
+          await click('.sb-top [aria-label="New project"]');
+          await type(".dialog input[pattern]", name);
+          await select('.dialog [aria-label="Project location"]', projectRoot);
+          await click(".dialog .choice", "Generator recipe");
+          await select('.dialog [aria-label="Generator recipe"]', recipeId);
+          await click(".dialog button", "Preview generator", true);
+          await wait("reload generator preview", () =>
+            textContains(
+              ".dialog .generator-preview",
+              "no download requirement",
+            ),
+          );
+          await click(".dialog .choice", "Launch an agent after creation");
+          await select('.dialog [aria-label="Agent"]', "antigravity");
+          const prompt = `Continue after reload\nKeep literal $HOME and 'quotes'.`;
+          await type(".dialog .agent-fields textarea", prompt);
+          const before = (await capturedAgents()).length;
+          await click(".dialog .df button", "Create project", true);
+          await wait("gated generator running", () =>
+            textContains(".dialog .generator-progress pre", marker),
+          );
+          job = await api("new/current");
+          const inode = (await stat(dest, { bigint: true })).ino;
+          await reloadApp();
+          await wait(
+            "requested continuation recovered with running generator",
+            () => textContains(".dialog .generator-progress pre", marker),
+          );
+          assert.equal((await api("new/current")).id, job.id);
+          assert.equal(
+            await execute(
+              () =>
+                document.querySelector(".dialog .agent-fields textarea").value,
+            ),
+            prompt,
+          );
+          assert.equal((await capturedAgents()).length, before);
+          await shot("generator-reload-agent-pending", false);
+          await writeFile(path.join(dest, "continue"), "");
+          await reloadApp();
+          await wait(
+            "generator completes after reload",
+            async () =>
+              (await api("new/status", { id: job.id })).status === "completed",
+          );
+          const completed = await wait(
+            "automatic continuation completes after reload",
+            async () => {
+              const value = await api("new/status", { id: job.id });
+              return value.continuation.status === "completed" && value;
+            },
+          );
+          const terminal = completed.continuation.result.terminal;
+          keyboardTerminalIds.add(terminal.id);
+          const record = await wait(
+            "exactly one recovered fake provider",
+            async () =>
+              (await capturedAgents())
+                .slice(before)
+                .find((entry) => entry.program === "agy"),
+          );
+          const identity = await processIdentity(record.pid);
+          assert.ok(identity && !["Z", "X"].includes(identity.state));
+          fakeAgentProcesses.set(record.pid, identity);
+          assert.deepEqual(record.argv, [`--prompt-interactive=${prompt}`]);
+          assert.equal(record.cwd, dest);
+          await wait(
+            "recovered creation acknowledged by UI",
+            async () => !(await api("new/current")),
+          );
+          await wait("creation dialog closed", () =>
+            execute(() => !document.querySelector(".dialog")),
+          );
+          if (
+            !(await execute(
+              () => document.querySelector("#term")?.hidden === false,
+            ))
+          )
+            await key("\uE034");
+          await wait("recovered continuation shows its original terminal", () =>
+            textContains(".term:not([hidden]) .xterm", "LACI_FAKE_AGENT_READY"),
+          );
+          const duplicates = await asyncExecute(
+            async (id) =>
+              Promise.all(
+                Array.from({ length: 4 }, () =>
+                  window.__TAURI_INTERNALS__.invoke("request", {
+                    name: "new/continue",
+                    body: { id },
+                  }),
+                ),
+              ),
+            job.id,
+          );
+          assert.ok(
+            duplicates.every(
+              (value) => value.continuation.result.terminal.id === terminal.id,
+            ),
+          );
+          assert.equal((await stat(dest, { bigint: true })).ino, inode);
+          assert.equal(await readFile(path.join(dest, "runs"), "utf8"), "x");
+          assert.equal(
+            (await api("log")).entries.filter(
+              (entry) =>
+                entry.path === dest && entry.title === `Created ${name}`,
+            ).length,
+            1,
+          );
+          await shot("generator-reload-agent-once");
+          await reloadApp();
+          assert.equal(
+            (await api("new/continue", { id: job.id })).continuation.result
+              .terminal.id,
+            terminal.id,
+          );
+          assert.equal(
+            (await capturedAgents())
+              .slice(before)
+              .filter((entry) => entry.program === "agy").length,
+            1,
+          );
+          assert.equal(
+            (await invoke("term_list")).filter(
+              (term) => term.id === terminal.id,
+            ).length,
+            1,
+          );
+          await invoke("term_close", { id: terminal.id });
+          keyboardTerminalIds.delete(terminal.id);
+          await wait(
+            "recovered provider stopped",
+            async () =>
+              !sameLiveProcess(await processIdentity(record.pid), identity),
+          );
+          fakeAgentProcesses.delete(record.pid);
+        } finally {
+          if (job) {
+            await api("new/cancel", { id: job.id });
+            await wait(
+              "reload generator stopped for cleanup",
+              async () =>
+                (await api("new/status", { id: job.id })).status !== "running",
+            );
+            await api("new/ack", { id: job.id });
+          }
+        }
       },
     );
   } finally {
@@ -1834,11 +2051,38 @@ async function patchRegressions() {
           );
           const originalProcess = await processIdentity(pid);
           if (!index) {
+            const job = await api("new/current");
+            assert.equal(job.status, "running");
+            assert.equal(job.request.name, name);
             const started = Date.now();
             await snapshot();
             assert.ok(
               Date.now() - started < 3000,
               "Long generator must not hold the app request lock",
+            );
+            await reloadApp();
+            await wait("generator progress restored after WebView reload", () =>
+              textContains(".dialog .generator-progress pre", marker),
+            );
+            assert.equal((await api("new/current")).id, job.id);
+            assert.equal(
+              await execute(
+                () => document.querySelector(".dialog input[pattern]").value,
+              ),
+              name,
+            );
+            assert.equal(
+              await execute(
+                () =>
+                  [...document.querySelectorAll(".dialog .df button")].find(
+                    (button) =>
+                      button.textContent.trim() === "Cancel generator",
+                  )?.disabled,
+              ),
+              false,
+            );
+            assert.ok(
+              sameLiveProcess(await processIdentity(pid), originalProcess),
             );
             assert.ok(
               originalProcess && !["Z", "X"].includes(originalProcess.state),

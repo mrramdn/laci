@@ -20,6 +20,7 @@ import { Dialogs } from "./dialogs";
 import { Palette } from "./palette";
 import { restoreTerminals, toggleTerminal, useTerms } from "./terminal-api";
 import type { Apps, Change, RefreshStatus, Snapshot } from "./types";
+import type { CreationJob } from "./new-project";
 const TerminalPanel = lazy(() => import("./TerminalPanel"));
 type LaciEvent =
   | { type: "snapshot" }
@@ -83,16 +84,22 @@ export default function App() {
           return;
         }
         unlisten = stop;
-        const [snapshot, status, apps] = await Promise.all([
+        const [snapshot, status, apps, creation] = await Promise.all([
           api<Snapshot>("snapshot"),
           api<RefreshStatus>("status"),
           api<Apps>("apps"),
+          api<CreationJob | null>("new/current"),
         ]);
         if (!live) return;
         if (!receivedSnapshot || !useApp.getState().snapshot)
           useApp.getState().load(snapshot);
         if (!receivedStatus) refreshStatus(status);
-        useApp.setState({ apps });
+        useApp.setState({
+          apps,
+          ...(creation
+            ? { modal: { kind: "new", job: creation } as const, palette: false }
+            : {}),
+        });
       } catch (error) {
         if (live) refreshError(error);
       }

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, errorText } from "./api";
+import type { CreationJob } from "./new-project";
 import type {
   ActivityLog,
   Apps,
@@ -15,7 +16,8 @@ import type {
 export type Theme = "system" | "light" | "dark";
 export type SortKey = "name" | "last" | "size" | "ai";
 export type Modal =
-  | { kind: "shortcuts" | "connector" | "new" }
+  | { kind: "shortcuts" | "connector" }
+  | { kind: "new"; job?: CreationJob }
   | { kind: "archive" | "delete" | "orphan"; id: string }
   | { kind: "terminal-close"; id: string }
   | {

@@ -95,20 +95,39 @@ pub(crate) fn prepare(env: &Env, snapshot: &Value, proposal: &mut Value) {
     }
     let check = (|| -> Result<Value> {
         let mut projects = Vec::new();
+        let ownership = |history: &Value| -> Result<Vec<PathBuf>> {
+            if history["ownershipComplete"] != true {
+                return Err("History ownership is incomplete or unreadable; cleanup is blocked".into());
+            }
+            let cwds = history["cwds"]
+                .as_object()
+                .filter(|cwds| !cwds.is_empty())
+                .ok_or("The history's project locations are unmatched")?;
+            Ok(cwds.keys().map(PathBuf::from).collect())
+        };
+        let moves = proposal["action"]["moves"].as_array().ok_or("Missing cleanup paths")?;
         let id = string(proposal, "id");
         if let Some(name) = id.strip_prefix("orphan:")
             && let Some(claude) = snapshot["claude"].get(name)
         {
-            projects.extend(claude["cwds"].as_object().into_iter().flatten().map(|(cwd, _)| PathBuf::from(cwd)));
+            if moves.len() != 1 || moves[0]["from"] != claude["dir"] {
+                return Err("The history source does not match its ownership evidence".into());
+            }
+            projects.extend(ownership(claude)?);
         } else {
-            for item in snapshot["items"].as_object().into_iter().flatten().map(|(_, item)| item) {
-                if proposal["action"]["moves"]
-                    .as_array()
-                    .is_some_and(|moves| moves.iter().any(|m| m["from"] == item["file"]))
-                {
-                    projects.push(PathBuf::from(
-                        item["cwd"].as_str().ok_or("The history's project location is unmatched")?,
-                    ));
+            for source in moves {
+                let items: Vec<_> = snapshot["items"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(_, item)| item)
+                    .filter(|item| source["from"] == item["file"])
+                    .collect();
+                if items.is_empty() {
+                    return Err("The history source has no ownership evidence".into());
+                }
+                for item in items {
+                    projects.extend(ownership(item)?);
                 }
             }
         }

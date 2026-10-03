@@ -66,6 +66,8 @@ async function request(method, route, body, timeout = 180_000) {
     headers: body === undefined ? {} : { "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(timeout),
+  }).catch((error) => {
+    throw new Error(`${method} ${route}: ${error.message ?? error}`, { cause: error });
   });
   const reply = await response.json();
   if (!response.ok || reply.value?.error) {

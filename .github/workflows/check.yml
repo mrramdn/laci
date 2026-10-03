@@ -44,16 +44,9 @@ jobs:
           trap 'rm -rf "$laci_fixture_dir"' EXIT
           export LACI_HOME="$laci_fixture_dir/home"
           node scripts/demo.ts "$LACI_HOME"
-          xvfb-run -a dbus-run-session -- sh -ec '
-            export XDG_DATA_HOME="$LACI_HOME/.local/share"
-            export LACI_EDITOR=true LACI_FILES=true LACI_TERMINAL=true
-            tauri-driver > /tmp/laci-driver.log 2>&1 &
-            driver_pid=$!
-            trap "kill $driver_pid" EXIT
-            LACI_ONBOARDING_ONLY=1 node scripts/desktop-smoke.mjs target/debug/laci
-            LACI_WATCHER_ONLY=1 node scripts/desktop-smoke.mjs target/debug/laci
-            node scripts/desktop-smoke.mjs target/debug/laci
-          '
+          for laci_suite in onboarding watcher full; do
+            xvfb-run -a dbus-run-session -- bash scripts/native-smoke.sh target/debug/laci "$laci_suite"
+          done
       - run: pnpm build
       - name: Validate production packages
         run: node scripts/package-smoke.mjs /tmp/laci-package-proof
@@ -63,16 +56,9 @@ jobs:
           trap 'rm -rf "$laci_fixture_dir"' EXIT
           export LACI_HOME="$laci_fixture_dir/home"
           node scripts/demo.ts "$LACI_HOME"
-          xvfb-run -a dbus-run-session -- sh -ec '
-            export XDG_DATA_HOME="$LACI_HOME/.local/share"
-            export LACI_EDITOR=true LACI_FILES=true LACI_TERMINAL=true
-            tauri-driver > /tmp/laci-packaged-driver.log 2>&1 &
-            driver_pid=$!
-            trap "kill $driver_pid" EXIT
-            LACI_ONBOARDING_ONLY=1 node scripts/desktop-smoke.mjs /tmp/laci-package-proof/appimage/squashfs-root/AppRun
-            LACI_WATCHER_ONLY=1 node scripts/desktop-smoke.mjs /tmp/laci-package-proof/appimage/squashfs-root/AppRun
-            LACI_MODULAR_ONLY=1 node scripts/desktop-smoke.mjs /tmp/laci-package-proof/appimage/squashfs-root/AppRun
-          '
+          for laci_suite in onboarding watcher modular; do
+            xvfb-run -a dbus-run-session -- bash scripts/native-smoke.sh /tmp/laci-package-proof/appimage/squashfs-root/AppRun "$laci_suite"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: laci-linux

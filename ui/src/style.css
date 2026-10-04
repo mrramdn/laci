@@ -567,6 +567,7 @@ kbd {
 }
 .tree-row {
   display: flex;
+  min-width: 0;
   align-items: center;
   height: 28px;
   border-radius: 6px;
@@ -1299,11 +1300,11 @@ kbd {
 .cols .sortable:hover .ar {
   opacity: 0.5;
 }
-.cols .sortable[aria-sort] {
+.cols .sortable[data-sorted] {
   color: var(--text);
   font-weight: 600;
 }
-.cols .sortable[aria-sort] .ar {
+.cols .sortable[data-sorted] .ar {
   opacity: 1;
 }
 .frow .nm .pre {
@@ -1584,7 +1585,7 @@ kbd {
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  padding: 9px 0;
+  padding: 9px 12px;
   border-top: 1px solid var(--border);
   cursor: pointer;
   transition: background 0.12s;
@@ -1592,11 +1593,18 @@ kbd {
 .choice:first-child {
   border-top: 0;
 }
-.choice:hover {
+.choice:hover:not(:has(input:disabled)) {
   background: var(--subtle);
 }
 .choice:has(input:checked) {
   background: var(--accent-soft);
+}
+.choice:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.choice input:disabled {
+  cursor: not-allowed;
 }
 .choice input {
   margin: 3px 0 0;
@@ -1815,7 +1823,6 @@ kbd {
 .pbtn:focus-within {
   background: var(--hover);
 }
-.pbtn select,
 .pbtn input {
   position: absolute;
   inset: 0;
@@ -2206,7 +2213,7 @@ textarea.notes:focus {
   background: var(--hover);
   color: var(--text);
 }
-.ttab[aria-selected="true"] {
+.ttab[data-active] {
   background: var(--bg);
   color: var(--text);
   box-shadow:
@@ -2221,7 +2228,12 @@ textarea.notes:focus {
   place-items: center;
   width: 18px;
   height: 18px;
+  padding: 0;
+  border: 0;
   border-radius: 4px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
 }
 .ttab .x:hover {
   background: var(--border-strong);
@@ -2294,6 +2306,7 @@ textarea.notes:focus {
   margin: 0;
   font: 600 16px var(--sans);
   letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
 }
 .dialog .desc {
   margin: 6px 0 0;
@@ -2308,11 +2321,13 @@ textarea.notes:focus {
 .dialog .db {
   padding: 10px 20px 14px;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 .dialog .df {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   padding: 12px 20px;
   border-top: 1px solid var(--border);
   background: var(--subtle);
@@ -2324,6 +2339,8 @@ textarea.notes:focus {
   font-size: 12px;
   color: var(--muted);
   max-width: 42ch;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .warnbox {
   border-bottom: 1px solid var(--border);
@@ -2719,6 +2736,21 @@ textarea.notes:focus {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+}
+.crumb h1,
+.crumb > .btn {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crumb > .btn {
+  display: block;
+}
+.head .count,
+.head .menu-wrap {
+  flex-shrink: 0;
 }
 .kv-fragment {
   display: contents;
@@ -2732,4 +2764,193 @@ textarea.notes:focus {
 }
 .term .ttab .x:focus-visible {
   outline: 2px solid var(--accent);
+}
+
+.select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+.select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-trigger[data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.select-chevron {
+  flex: none;
+  display: inline-flex;
+  transform: rotate(90deg);
+  color: var(--faint);
+}
+.select-popup {
+  z-index: 60;
+  box-sizing: border-box;
+  width: var(--radix-select-trigger-width);
+  max-width: calc(100vw - 16px);
+  max-height: min(280px, var(--radix-select-content-available-height));
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  box-shadow: var(--shadow-lg);
+  font-size: 12.5px;
+}
+.select-options {
+  padding: 4px;
+}
+.select-option {
+  position: relative;
+  padding: 7px 28px 7px 9px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+.select-option[data-highlighted] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.select-option[data-state="checked"] {
+  font-weight: 500;
+}
+.select-option[data-disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.select-check {
+  position: absolute;
+  right: 9px;
+  top: 7px;
+  color: var(--accent);
+}
+.select-scroll {
+  text-align: center;
+  padding: 2px;
+  color: var(--muted);
+}
+.select-portal {
+  display: contents;
+}
+.terminal-action {
+  display: inline-flex;
+  flex: none;
+  gap: 1px;
+}
+.terminal-target.icon-btn {
+  width: 18px;
+  padding: 0;
+  justify-content: center;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.root-offline {
+  margin-left: auto;
+  font-size: 10px;
+}
+
+.select-popup[data-compact] {
+  width: min(200px, calc(100vw - 16px));
+}
+.ttab-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.history-paths {
+  padding-left: 20px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.agent-fields,
+.creation-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.agent-fields textarea.inp,
+.creation-fields textarea.inp {
+  height: auto;
+  min-height: 96px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.generator-preview code,
+.session-details dd {
+  overflow-wrap: anywhere;
+}
+.generator-progress pre {
+  max-height: 160px;
+  padding: 8px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 11px var(--mono);
+  background: var(--subtle);
+}
+.session-title {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 0;
+  text-align: left;
+  font-size: 12.5px;
+}
+.session-title > span,
+.session-title > small {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.session-title > small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.session-children-toggle {
+  margin: 0 0 7px 24px;
+  font-size: 11px;
+}
+.session-children {
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+.group > .sessions {
+  padding: 0 16px;
+}
+.session-details {
+  grid-template-columns: 100px minmax(0, 1fr);
+}
+.sessions > .session-group {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 48px;
 }

@@ -606,8 +606,8 @@ fn deleting_and_undoing_the_only_checkbox_preserves_file_boundaries() {
 fn quarantine_execution_acknowledges_the_journal_before_refresh_and_keeps_undo_compatible() {
     let (_temp, env, project) = fixture();
     let history =
-        env.home.join(".claude/projects").join(laci_core::paths::enc(&env.home.join("gone").to_string_lossy()));
-    write(&history.join("session.jsonl"), &format!("{}\n", json!({"cwd":env.home.join("gone")})));
+        env.home.join(".claude/projects").join(laci_core::paths::enc(&env.home.join("project/gone").to_string_lossy()));
+    write(&history.join("session.jsonl"), &format!("{}\n", json!({"cwd":env.home.join("project/gone")})));
     config::save(&env, &json!({"roots":["~/project"],"presets":["claude"],"custom":[],"apps":{}})).unwrap();
     let mut service = loaded(&env, &project);
     let snapshot = service.snapshot().unwrap();
@@ -624,4 +624,32 @@ fn quarantine_execution_acknowledges_the_journal_before_refresh_and_keeps_undo_c
     assert!(restored["snapshot"].is_object());
     assert_eq!(restored["journal"]["state"], "undone");
     assert!(history.join("session.jsonl").exists());
+}
+
+#[test]
+fn agent_context_rechecks_enabled_connectors_even_with_an_older_snapshot() {
+    let (_temp, env, project) = fixture();
+    config::save(&env, &json!({"roots":["~/project"],"presets":["codex"]})).unwrap();
+    let mut service = loaded(&env, &project);
+    let launch = json!({"provider":"codex","projectPath":project});
+    assert!(service.agent_context(&launch).is_ok());
+    config::save(&env, &json!({"roots":["~/project"],"presets":[]})).unwrap();
+    assert!(service.agent_context(&launch).unwrap_err().contains("Add this agent connector"));
+}
+
+#[test]
+fn legacy_summary_uses_connected_provider_and_requires_choice_when_ambiguous() {
+    let (_temp, env, project) = fixture();
+    config::save(&env, &json!({"roots":["~/project"],"presets":["codex"]})).unwrap();
+    let mut service = loaded(&env, &project);
+    let node = service.node(project.to_str().unwrap()).unwrap();
+    // Resolving a command never starts a provider conversation; installed CLIs vary by host.
+    match service.action(&node, "summary", "") {
+        Ok((Some(command), true, _)) => assert!(command.starts_with("'codex' ")),
+        Err(error) => assert!(error.contains("codex is not installed"), "{error}"),
+        result => panic!("Unexpected summary resolution: {result:?}"),
+    }
+    config::save(&env, &json!({"roots":["~/project"],"presets":["codex","claude"]})).unwrap();
+    assert!(service.action(&node, "summary", "").unwrap_err().contains("Choose a connected agent"));
+    assert!(service.action(&node, "summary", "antigravity").unwrap_err().contains("Choose a connected agent"));
 }

@@ -37,13 +37,17 @@ import {
   recency,
   risksOf,
   sessionsOf,
+  globalSessions,
+  hasSessionFile,
   taskIdentity,
   tilde,
   within,
   counted,
 } from "./helpers";
 import { api } from "./api";
-import { openTerminal } from "./terminal-api";
+import { Select } from "./select";
+import { TerminalButton } from "./terminal-controls";
+import { SessionList, requestResume } from "./session-ui";
 import type { Change, Entry, Node, Snapshot, View } from "./types";
 import type { SortKey } from "./store";
 export function Sidebar() {
@@ -90,18 +94,11 @@ export function Sidebar() {
         >
           <Icon name="keyboard" />
         </button>
-        <button
-          className="icon-btn"
-          title="Search (Ctrl K)"
-          aria-label="Search"
-          onClick={() => useApp.setState({ palette: true })}
-        >
-          <Icon name="search" />
-        </button>
       </div>
       <div className="sb-search-wrap">
         <button
           className="sb-search-bar"
+          aria-label="Search projects and actions (Ctrl K)"
           onClick={() => useApp.setState({ palette: true })}
         >
           <Icon name="search" className="sm" />
@@ -140,8 +137,10 @@ export function Sidebar() {
         <button
           className="sb-item"
           onClick={rescan}
-          title={s.error ||
-            `laci watches your folders and updates by itself. Last full scan ${new Date(snapshot.scannedAt).toLocaleTimeString("en-GB")}. Click to scan everything again.`}
+          title={
+            s.error ||
+            `laci watches your folders and updates by itself. Last full scan ${new Date(snapshot.scannedAt).toLocaleTimeString("en-GB")}. Click to scan everything again.`
+          }
         >
           {!s.error && (s.busy || s.historyPending) ? (
             <span className="spin sm" />
@@ -195,6 +194,9 @@ function TreeRow({
   const s = useApp();
   const snapshot = s.snapshot!;
   const open = s.tree.has(path);
+  const unavailable = snapshot.rootStatus?.find(
+    (root) => root.path === path && !root.available,
+  );
   const listing = s.listings[path];
   useEffect(() => {
     if (open) void readListing(path);
@@ -244,14 +246,22 @@ function TreeRow({
             <Icon name="chev" />
           </button>
         )}
-        <button className="tl" onClick={() => s.cd(path)}>
+        <button
+          className="tl"
+          onClick={() => s.cd(path)}
+          title={unavailable?.reason}
+        >
           <Icon
             name={depth ? "folder" : path === snapshot.home ? "home" : "drive"}
           />
           <span className={!depth && path !== snapshot.home ? "mono" : ""}>
             {label}
           </span>
-          {count ? <span className="n">{count}</span> : null}
+          {unavailable ? (
+            <span className="faint root-offline">Unavailable</span>
+          ) : count ? (
+            <span className="n">{count}</span>
+          ) : null}
         </button>
       </div>
       {open
@@ -383,7 +393,9 @@ export function Today() {
             </div>
           ))}
           {!risks.length ? (
-            <div className="empty">Everything is committed and pushed.</div>
+            <div className="empty">
+              No Git issues found in the scanned projects.
+            </div>
           ) : null}
           {risks.length > 8 ? (
             <div className="item">
@@ -399,7 +411,9 @@ export function Today() {
           id="sec-recent"
         >
           {recent.map((n) => {
-            const session = sessionsOf(n, snapshot)[0];
+            const session = sessionsOf(n, snapshot).find(
+              (session) => !session.parentId,
+            );
             return (
               <div
                 className="item two"
@@ -442,18 +456,18 @@ export function Today() {
                       <Icon name="bot" />
                       <span>{session.title ?? "Untitled session"}</span>
                       <span className="faint">
-                        · <Time at={session.at} />
+                        · <Time at={session.updatedAt} />
                       </span>
                     </div>
                   ) : null}
                 </div>
                 <span className="meta">
-                  {session ? (
+                  {session?.resumeCapability === "supported" ? (
                     <button
                       className="btn sm act"
                       onClick={(e) => {
                         e.stopPropagation();
-                        void openTerminal(n.id, "resume", session.id);
+                        requestResume(session, n.id);
                       }}
                     >
                       <Icon name="terminal" className="sm" />
@@ -727,13 +741,28 @@ export function Folder() {
     snapshot,
     listing,
   ]);
-  const rel = within(s.cwd, snapshot.home)
-    ? s.cwd.slice(snapshot.home.length).split("/").filter(Boolean)
-    : [];
+  const anchor = within(s.cwd, snapshot.home)
+    ? snapshot.home
+    : ([...snapshot.roots]
+        .filter((root) => within(s.cwd, root))
+        .sort((a, b) => b.length - a.length)[0] ?? "/");
+  const rel = s.cwd
+    .slice(anchor === "/" ? 1 : anchor.length)
+    .split("/")
+    .filter(Boolean);
   const trail = [
-    snapshot.home,
-    ...rel.map((_, i) => snapshot.home + "/" + rel.slice(0, i + 1).join("/")),
+    anchor,
+    ...rel.map(
+      (_, i) =>
+        `${anchor === "/" ? "" : anchor}/${rel.slice(0, i + 1).join("/")}`,
+    ),
   ];
+  const crumbLabel = (path: string, index: number) =>
+    path === snapshot.home
+      ? "~"
+      : index === 0
+        ? tilde(path, snapshot.home)
+        : base(path);
   const hiddenCount =
     listing?.entries.filter((e) => e.name.startsWith(".")).length ?? 0;
   return (
@@ -742,7 +771,7 @@ export function Folder() {
         {trail.map((path, i) => (
           <span className="crumb" key={path}>
             {i === trail.length - 1 ? (
-              <h1>{i ? base(path) : "~"}</h1>
+              <h1 title={path}>{crumbLabel(path, i)}</h1>
             ) : (
               <>
                 <button
@@ -750,7 +779,7 @@ export function Folder() {
                   style={{ padding: "0 4px" }}
                   onClick={() => s.cd(path)}
                 >
-                  {i ? base(path) : "~"}
+                  {crumbLabel(path, i)}
                 </button>
                 <span className="faint"> / </span>
               </>
@@ -775,34 +804,30 @@ export function Folder() {
             <div className="menu" role="dialog" aria-label="Display">
               <div className="mrow">
                 <span>Sort by</span>
-                <select
-                  className="inp"
+                <Select
+                  label="Sort by"
                   value={s.sort.key}
-                  onChange={(e) => {
-                    const key = e.target.value as SortKey;
+                  onValueChange={(value) => {
+                    const key = value as SortKey;
                     setSort(key, SORTS[key].first);
                   }}
-                >
-                  {Object.entries(SORTS).map(([key, v]) => (
-                    <option key={key} value={key}>
-                      {v.label}
-                    </option>
-                  ))}
-                </select>
+                  options={Object.entries(SORTS).map(([value, item]) => ({
+                    value,
+                    label: item.label,
+                  }))}
+                />
               </div>
               <div className="mrow">
                 <span>Order</span>
-                <select
-                  className="inp"
-                  value={s.sort.dir}
-                  onChange={(e) => setSort(s.sort.key, Number(e.target.value))}
-                >
-                  {SORTS[s.sort.key].dirs.map((label, i) => (
-                    <option key={label} value={i ? -1 : 1}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  label="Sort order"
+                  value={String(s.sort.dir)}
+                  onValueChange={(value) => setSort(s.sort.key, Number(value))}
+                  options={SORTS[s.sort.key].dirs.map((label, i) => ({
+                    value: String(i ? -1 : 1),
+                    label,
+                  }))}
+                />
               </div>
               {s.sort.key === "last" ? (
                 <div className="mrow faint">
@@ -847,14 +872,9 @@ export function Folder() {
         >
           <Icon name="open" />
         </button>
-        <button
-          className="icon-btn"
-          title="Terminal here (F4)"
-          aria-label="Open terminal here"
-          onClick={() => void openTerminal(s.cwd)}
-        >
-          <Icon name="terminal" />
-        </button>
+        <TerminalButton
+          path={s.fileSelected ? parentOf(s.fileSelected) : s.cwd}
+        />
       </div>
       <div className="filterbar">
         <div className="showbar" role="group" aria-label="Show">
@@ -880,8 +900,8 @@ export function Folder() {
           {cap(scopeText)}
         </span>
       </div>
-      <div className="body">
-        <div className="cols">
+      <div className="body" role="grid" aria-label="Folder contents">
+        <div className="cols" role="row">
           {(
             [
               ["name", "Name", "c-name"],
@@ -892,10 +912,22 @@ export function Folder() {
               ["size", "Size", "c-size"],
             ] as const
           ).map(([key, label, className]) => (
-            <span className={className} key={label}>
+            <span
+              className={className}
+              key={label}
+              role="columnheader"
+              aria-sort={
+                s.sort.key === key
+                  ? s.sort.dir > 0
+                    ? "ascending"
+                    : "descending"
+                  : undefined
+              }
+            >
               {key ? (
                 <button
                   className="sortable"
+                  data-sorted={s.sort.key === key || undefined}
                   title={`Click to sort ${label.toLowerCase()}`}
                   onClick={() =>
                     setSort(
@@ -916,7 +948,7 @@ export function Folder() {
               )}
             </span>
           ))}
-          <span className="c-health" />
+          <span className="c-health" role="columnheader" aria-label="Health" />
         </div>
         {s.filter === "all" && !listing ? (
           <div className="empty">Reading the folder…</div>
@@ -977,6 +1009,7 @@ function FolderItem({ row }: { row: FolderRow }) {
     <div
       className={`item frow ${n?.archived ? "archived" : ""} ${!row.dir ? "file" : ""}`}
       tabIndex={0}
+      role="row"
       data-id={row.path}
       data-kind={!row.dir ? "file" : n ? "node" : "dir"}
       aria-selected={n ? s.selected === n.id : s.fileSelected === row.path}
@@ -984,7 +1017,7 @@ function FolderItem({ row }: { row: FolderRow }) {
       onDoubleClick={() => (row.dir ? s.cd(row.path) : external(row.path))}
       title={!row.dir ? "Double-click to open" : undefined}
     >
-      <span className="c-name">
+      <span role="gridcell" className="c-name">
         {n?.kind === "project" ? (
           <StatusGlyph status={n.status.value} />
         ) : (
@@ -1003,7 +1036,7 @@ function FolderItem({ row }: { row: FolderRow }) {
           <span className="dot" title="Uses laci: has a .laci.md" />
         ) : null}
       </span>
-      <span className="c-sum">
+      <span role="gridcell" className="c-sum">
         {n
           ? n.kind === "folder"
             ? (n.summary?.text ??
@@ -1018,14 +1051,14 @@ function FolderItem({ row }: { row: FolderRow }) {
                 ? `${ext.toUpperCase()} file`
                 : ""))}
       </span>
-      <span className="c-stack">
+      <span role="gridcell" className="c-stack">
         {n?.stack?.labels.slice(0, 2).map((label) => (
           <span className="tag" key={label}>
             {label}
           </span>
         ))}
       </span>
-      <span className="c-ai">
+      <span role="gridcell" className="c-ai">
         {ai ? (
           <>
             <Icon name="bot" className="sm" />
@@ -1033,10 +1066,12 @@ function FolderItem({ row }: { row: FolderRow }) {
           </>
         ) : null}
       </span>
-      <span className="c-when">
+      <span role="gridcell" className="c-when">
         <Time at={n?.lastActivity?.at ?? row.newest ?? row.at} />
       </span>
-      <span className="c-size">{bytes(size)}</span>
+      <span role="gridcell" className="c-size">
+        {bytes(size)}
+      </span>
       <span
         className="c-health"
         title={issues
@@ -1177,9 +1212,18 @@ export function Tidy() {
                               className="btn sm primary"
                               disabled={s.historyPending}
                               onClick={() => {
+                                if (p.category === "orphan") {
+                                  useApp.setState({
+                                    modal: { kind: "orphan", id: p.id },
+                                  });
+                                  return;
+                                }
                                 if (p.action?.type === "archive") {
                                   useApp.setState({
-                                    modal: { kind: "archive", id: p.action.nodeId },
+                                    modal: {
+                                      kind: "archive",
+                                      id: p.action.nodeId,
+                                    },
                                   });
                                   return;
                                 }
@@ -1194,9 +1238,11 @@ export function Tidy() {
                                 );
                               }}
                             >
-                              {p.action.type === "archive"
-                                ? "Archive…"
-                                : `Apply ${plural(p.ops.length, "change")}`}
+                              {p.category === "orphan"
+                                ? "Review history…"
+                                : p.action.type === "archive"
+                                  ? "Archive…"
+                                  : `Apply ${plural(p.ops.length, "change")}`}
                             </button>
                           ) : (
                             <span className="muted" style={{ fontSize: 12 }}>
@@ -1253,6 +1299,7 @@ export function AgentsView() {
   const linked = Object.values(snapshot.nodes)
     .filter(
       (n) =>
+        sessionsOf(n, snapshot).length ||
         n.agents.claude.length ||
         n.agents.items.some((id) => counted(id, snapshot)),
     )
@@ -1291,6 +1338,7 @@ export function AgentsView() {
               what: `${plural(dir.sessions.length, "session")} · ${plural(dir.memory.length, "memory file")}`,
               at: dir.sessions[0]?.at,
               tool: "Claude Code",
+              unavailable: dir.availability === "unavailable",
             },
           ]
         : [];
@@ -1305,22 +1353,31 @@ export function AgentsView() {
           : "folder",
       ),
       at: list[0].at,
+      unavailable: list.some((item) => item.availability === "unavailable"),
       tool:
         snapshot.connectors.find((c) => c.id === list[0].connector)?.name ??
         list[0].connector,
     })),
   ];
   const addPreset = (id: string) =>
-    void run(async () => {
-      const change = await api<Change>("connector/add", { preset: id });
-      const name = snapshot.suggestions.find((c) => c.id === id)?.name ?? "connector";
-      changed(change, `Added ${name}`);
-    }, "Adding connector…", { history: true });
+    void run(
+      async () => {
+        const change = await api<Change>("connector/add", { preset: id });
+        const name =
+          snapshot.suggestions.find((c) => c.id === id)?.name ?? "connector";
+        changed(change, `Added ${name}`);
+      },
+      "Adding connector…",
+      { history: true },
+    );
+  const outsideSessions = globalSessions(snapshot);
   const globalDirs = snapshot.global.claude.flatMap((id) =>
-    snapshot.claude[id] ? [snapshot.claude[id]] : [],
+    snapshot.claude[id]?.memory.length ? [snapshot.claude[id]] : [],
   );
   const globalItems = snapshot.global.items.flatMap((id) =>
-    snapshot.items[id] ? [snapshot.items[id]] : [],
+    snapshot.items[id] && !hasSessionFile(snapshot.items[id].file, snapshot)
+      ? [snapshot.items[id]]
+      : [],
   );
   return (
     <>
@@ -1388,13 +1445,17 @@ export function AgentsView() {
                     className="btn sm ghost"
                     disabled={s.historyPending}
                     onClick={() =>
-                      void run(async () => {
-                        changed(
-                          await api<Change>("connector/remove", { id: c.id }),
-                          `Removed ${c.name}`,
-                          "Its files stay where they are, but laci no longer shows them or moves them with projects.",
-                        );
-                      }, "Removing connector…", { history: true })
+                      void run(
+                        async () => {
+                          changed(
+                            await api<Change>("connector/remove", { id: c.id }),
+                            `Removed ${c.name}`,
+                            "Its files stay where they are, but laci no longer shows them or moves them with projects.",
+                          );
+                        },
+                        "Removing connector…",
+                        { history: true },
+                      )
                     }
                   >
                     Remove
@@ -1435,7 +1496,7 @@ export function AgentsView() {
             <Group
               title="Detached"
               count={orphans.length}
-              hint="The folder moved or was deleted"
+              hint="Missing or unavailable project locations"
               right={
                 <button className="btn sm" onClick={() => s.navigate("tidy")}>
                   Fix in Tidy up
@@ -1451,7 +1512,12 @@ export function AgentsView() {
                   >
                     {o.name}
                   </span>
-                  <span className="d">{o.what}</span>
+                  <span className="d">
+                    {o.unavailable
+                      ? "Location unavailable · "
+                      : "Confirmed missing · "}
+                    {o.what}
+                  </span>
                   <span className="meta">
                     <span className="pill">{o.tool}</span>
                     <span className="mono">{date(o.at)}</span>
@@ -1460,7 +1526,8 @@ export function AgentsView() {
               ))}
               {!orphans.length ? (
                 <div className="empty">
-                  Every session belongs to a folder that exists.
+                  No detached history found. Unavailable locations stay
+                  protected from cleanup.
                 </div>
               ) : null}
             </Group>
@@ -1503,6 +1570,15 @@ export function AgentsView() {
             </Group>
           </>
         ) : null}
+        {outsideSessions.length ? (
+          <Group
+            title="Sessions outside project folders"
+            count={outsideSessions.length}
+            hint="Includes Home sessions and folders outside the scan"
+          >
+            <SessionList sessions={outsideSessions} />
+          </Group>
+        ) : null}
         {globalDirs.length || globalItems.length ? (
           <Group
             title="Outside project folders"
@@ -1515,7 +1591,6 @@ export function AgentsView() {
                   {tilde(c.path, snapshot.home)}
                 </span>
                 <span className="d">
-                  {plural(c.sessions.length, "session")} ·{" "}
                   {plural(c.memory.length, "memory file")}
                 </span>
                 <span className="meta">
@@ -1741,14 +1816,18 @@ export function LogView() {
                             disabled={s.historyPending}
                             onClick={(e) => {
                               e.stopPropagation();
-                              void run(async () => {
-                                changed(
-                                  await api<Change>("log/undo", {
-                                    id: entry.id,
-                                  }),
-                                  "Undone",
-                                );
-                              }, "Undoing…", { history: true });
+                              void run(
+                                async () => {
+                                  changed(
+                                    await api<Change>("log/undo", {
+                                      id: entry.id,
+                                    }),
+                                    "Undone",
+                                  );
+                                },
+                                "Undoing…",
+                                { history: true },
+                              );
                             }}
                           >
                             <Icon name="undo" className="sm" />

@@ -100,36 +100,53 @@ export default function TerminalPanel() {
       />
       <div className="term-bar" role="tablist" aria-label="Terminal tabs">
         {terms.tabs.map((tab) => (
-          <button
+          <div
             className={`ttab ${tab.exited !== undefined && tab.exited !== false ? "ended" : ""}`}
             key={tab.id}
-            role="tab"
-            aria-selected={tab.id === terms.active}
-            title={tilde(tab.cwd, snapshot?.home ?? "")}
-            onClick={() => useTerms.setState({ active: tab.id })}
+            data-active={tab.id === terms.active || undefined}
+            role="presentation"
           >
-            <Icon name="terminal" className="sm" />
-            {tab.title}
-            <span
-              className="x"
-              role="button"
-              tabIndex={0}
-              aria-label={`Close terminal ${tab.title}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                requestTerminalClose(tab.id);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  requestTerminalClose(tab.id);
-                }
+            <button
+              className="ttab-select"
+              role="tab"
+              id={`terminal-tab-${tab.id}`}
+              aria-controls={`terminal-panel-${tab.id}`}
+              aria-selected={tab.id === terms.active}
+              tabIndex={tab.id === terms.active ? 0 : -1}
+              title={tilde(tab.cwd, snapshot?.home ?? "")}
+              onClick={() => useTerms.setState({ active: tab.id })}
+              onKeyDown={(event) => {
+                const index = terms.tabs.findIndex(
+                  (item) => item.id === tab.id,
+                );
+                const next =
+                  event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                      ? terms.tabs.length - 1
+                      : event.key === "ArrowRight"
+                        ? (index + 1) % terms.tabs.length
+                        : event.key === "ArrowLeft"
+                          ? (index + terms.tabs.length - 1) % terms.tabs.length
+                          : -1;
+                if (next < 0) return;
+                event.preventDefault();
+                const id = terms.tabs[next].id;
+                useTerms.setState({ active: id });
+                document.getElementById(`terminal-tab-${id}`)?.focus();
               }}
             >
+              <Icon name="terminal" className="sm" />
+              {tab.title}
+            </button>
+            <button
+              className="x"
+              aria-label={`Close terminal ${tab.title}`}
+              onClick={() => requestTerminalClose(tab.id)}
+            >
               <Icon name="x" className="sm" />
-            </span>
-          </button>
+            </button>
+          </div>
         ))}
         <button
           className="icon-btn"
@@ -290,11 +307,26 @@ function TerminalTab({
             rows: terminal.rows,
           }).catch(() => {});
           const state = useApp.getState();
-          if (!state.modal && !state.palette && !state.working) terminal.focus();
+          if (
+            !state.modal &&
+            !state.palette &&
+            !state.working &&
+            !document.activeElement?.matches('[role="tab"]')
+          )
+            terminal.focus();
         }
       });
       return () => cancelAnimationFrame(frame);
     }
   }, [visible, info.id]);
-  return <div className="term-host" ref={host} hidden={!visible} />;
+  return (
+    <div
+      className="term-host"
+      id={`terminal-panel-${info.id}`}
+      role="tabpanel"
+      aria-labelledby={`terminal-tab-${info.id}`}
+      ref={host}
+      hidden={!visible}
+    />
+  );
 }

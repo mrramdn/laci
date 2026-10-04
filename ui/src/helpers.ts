@@ -1,4 +1,4 @@
-import type { Node, Snapshot, LogEntry, Task } from "./types";
+import type { Node, Snapshot, LogEntry, Task, Session } from "./types";
 export function taskIdentity(node: Node, task: Task) {
   const matching = node.tasks.filter(
     (candidate) =>
@@ -92,10 +92,86 @@ export function descendants(node: Node, snapshot: Snapshot): Node[] {
       : [],
   );
 }
+export const PROVIDER_NAMES: Record<string, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  antigravity: "Antigravity",
+};
+export const sessionKey = (session: Session) =>
+  `${session.provider}:${session.sessionId}:${session.file}`;
+interface SessionIndex {
+  all: Session[];
+  byNode: Map<string, Session[]>;
+  global: Session[];
+  files: Set<string>;
+}
+const sessionIndexes = new WeakMap<Snapshot, SessionIndex>();
+function indexSessions(snapshot: Snapshot): SessionIndex {
+  const cached = sessionIndexes.get(snapshot);
+  if (cached) return cached;
+  const all = (
+    snapshot.sessions ??
+    Object.values(snapshot.claude).flatMap((dir) =>
+      dir.sessions.map((session) => ({
+        provider: "claude",
+        sessionId: session.id,
+        title: session.title ?? `Untitled · ${session.id.slice(0, 8)}`,
+        titleSource: session.title ? "provider" : "fallback",
+        cwd: session.cwd ?? dir.path,
+        sourceKind: "cli",
+        updatedAt: session.at,
+        resumeCapability: /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(
+          session.id,
+        )
+          ? ("supported" as const)
+          : ("history-only" as const),
+        file: `${dir.dir}/${session.id}.jsonl`,
+      })),
+    )
+  )
+    .slice()
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const byPath = new Map(
+    Object.values(snapshot.nodes).map((node) => [node.path, node]),
+  );
+  const index: SessionIndex = {
+    all,
+    byNode: new Map(),
+    global: [],
+    files: new Set(all.map((session) => session.file)),
+  };
+  for (const session of all) {
+    if (session.cwd === snapshot.home) {
+      index.global.push(session);
+      continue;
+    }
+    let cwd = session.cwd;
+    let node: Node | undefined;
+    while (cwd) {
+      node = byPath.get(cwd);
+      if (node || cwd === "/") break;
+      cwd = parentOf(cwd);
+    }
+    if (node) {
+      const list = index.byNode.get(node.id) ?? [];
+      list.push(session);
+      index.byNode.set(node.id, list);
+    } else index.global.push(session);
+  }
+  sessionIndexes.set(snapshot, index);
+  return index;
+}
 export function sessionsOf(node: Node, snapshot: Snapshot) {
-  return node.agents.claude
-    .flatMap((id) => snapshot.claude[id]?.sessions ?? [])
-    .sort((a, b) => b.at.localeCompare(a.at));
+  return indexSessions(snapshot).byNode.get(node.id) ?? [];
+}
+export function globalSessions(snapshot: Snapshot) {
+  return indexSessions(snapshot).global;
+}
+export function allSessions(snapshot: Snapshot) {
+  return indexSessions(snapshot).all;
+}
+export function hasSessionFile(file: string, snapshot: Snapshot) {
+  return indexSessions(snapshot).files.has(file);
 }
 export function counted(id: string, snapshot: Snapshot) {
   const item = snapshot.items[id];
@@ -109,8 +185,48 @@ export function counted(id: string, snapshot: Snapshot) {
 export function agentCount(node: Node, snapshot: Snapshot) {
   return (
     sessionsOf(node, snapshot).length +
-    node.agents.items.filter((id) => counted(id, snapshot)).length
+    node.agents.items.filter(
+      (id) =>
+        counted(id, snapshot) &&
+        !hasSessionFile(snapshot.items[id].file, snapshot),
+    ).length
   );
+}
+export interface SessionGroup {
+  session: Session;
+  children: SessionGroup[];
+}
+export function groupSessions(sessions: Session[]): SessionGroup[] {
+  const groups = new Map(
+    sessions.map((session) => [
+      sessionKey(session),
+      { session, children: [] as SessionGroup[] },
+    ]),
+  );
+  const parents = new Map<string, SessionGroup>();
+  for (const group of groups.values()) {
+    const identity = `${group.session.provider}:${group.session.sessionId}`;
+    if (!parents.has(identity)) parents.set(identity, group);
+  }
+  const roots: SessionGroup[] = [];
+  for (const group of groups.values()) {
+    const { session } = group;
+    const parent = session.parentId
+      ? parents.get(`${session.provider}:${session.parentId}`)
+      : undefined;
+    let cursor = parent;
+    const visited = new Set([sessionKey(session)]);
+    while (cursor && !visited.has(sessionKey(cursor.session))) {
+      visited.add(sessionKey(cursor.session));
+      cursor = cursor.session.parentId
+        ? parents.get(`${cursor.session.provider}:${cursor.session.parentId}`)
+        : undefined;
+    }
+    // Malformed or missing parent metadata must never hide a session or create a render loop.
+    if (parent && !cursor) parent.children.push(group);
+    else roots.push(group);
+  }
+  return roots;
 }
 export const RISK = new Set([
   "no-commits",

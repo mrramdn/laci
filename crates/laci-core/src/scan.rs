@@ -46,11 +46,51 @@ const CODE: &[&str] = &[
     "artisan",
 ];
 
-pub fn default_roots(env: &Env) -> Vec<PathBuf> {
-    ["project", "projects", "code", "dev", "src", "repos", "work", "tugas", "Documents", "Desktop", "Downloads"]
-        .iter()
-        .map(|s| env.home.join(s))
-        .filter(|p| p.is_dir() && agents::safe(env, p))
+fn check_root_identity(path: &Path, cfg: &Value) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    crate::sidecar::plain_path(path)?;
+    let meta = std::fs::metadata(path).map_err(|_| "Folder or drive is unavailable".to_owned())?;
+    if !meta.is_dir() {
+        return Err("Location is no longer a folder".into());
+    }
+    if let Some(expected) = cfg["rootIdentities"].get(path.to_string_lossy().as_ref())
+        && (expected["device"].as_u64() != Some(meta.dev()) || expected["inode"].as_u64() != Some(meta.ino()))
+    {
+        return Err("The selected folder or drive has changed; select it again to use it".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn check_archive_destination(env: &Env, dest: &Path) -> Result<()> {
+    paths::workspace_path(&dest.to_string_lossy(), env)?;
+    let cfg = config::load(env);
+    // Scan roots are deduplicated, but a nested archive selection has its own identity.
+    for root in paths::workspace_roots(env).into_iter().filter(|root| dest.starts_with(root)) {
+        check_root_identity(&root, &cfg)?;
+    }
+    Ok(())
+}
+
+/// Configured locations stay visible when a disk is disconnected or cannot be read.
+pub fn root_status(env: &Env, cfg: &Value) -> Vec<Value> {
+    use std::os::unix::fs::MetadataExt;
+    roots(env, cfg)
+        .into_iter()
+        .map(|path| {
+            let checked = (|| -> Result<()> {
+                check_root_identity(&path, cfg)?;
+                paths::workspace_path(&path.to_string_lossy(), env)?;
+                std::fs::read_dir(&path).map_err(|_| "Folder cannot be read".to_owned())?;
+                Ok(())
+            })();
+            match checked {
+                Ok(()) => match std::fs::metadata(&path) {
+                    Ok(meta) => json!({"path":path,"available":true,"device":meta.dev(),"inode":meta.ino()}),
+                    Err(_) => json!({"path":path,"available":false,"reason":"Folder or drive became unavailable"}),
+                },
+                Err(reason) => json!({"path":path,"available":false,"reason":reason}),
+            }
+        })
         .collect()
 }
 
@@ -149,16 +189,12 @@ fn found_nodes(env: &Env, f: &Found, parent: Option<&str>, archive_dir: Option<&
 
 fn roots(env: &Env, cfg: &Value) -> Vec<PathBuf> {
     let mut roots: Vec<_> = if let Some(list) = cfg["roots"].as_array() {
-        list.iter()
-            .filter_map(Value::as_str)
-            .filter_map(|s| paths::workspace_path(s, env).ok())
-            .filter(|p| p.is_dir())
-            .collect()
+        list.iter().filter_map(Value::as_str).map(|s| paths::expand(s, &env.home)).filter(|p| p.is_absolute()).collect()
     } else {
-        default_roots(env)
+        Vec::new()
     };
-    if let Some(dir) = configured_archive(env, cfg).filter(|dir| dir.is_dir())
-        && paths::workspace_path(&dir.to_string_lossy(), env).is_ok()
+    if let Some(dir) = configured_archive(env, cfg)
+        && dir.is_absolute()
         && !roots.iter().any(|root| dir.starts_with(root))
     {
         roots.retain(|root| !root.starts_with(&dir));
@@ -171,13 +207,21 @@ fn configured_archive(env: &Env, cfg: &Value) -> Option<PathBuf> {
     cfg["archiveDir"].as_str().filter(|s| !s.is_empty()).map(|s| paths::expand(s, &env.home))
 }
 
+fn available_roots(env: &Env, cfg: &Value) -> Vec<PathBuf> {
+    root_status(env, cfg)
+        .into_iter()
+        .filter(|s| s["available"] == true)
+        .filter_map(|s| s["path"].as_str().map(PathBuf::from))
+        .collect()
+}
+
 pub fn scan(env: &Env) -> Result<Value> {
     let started = Instant::now();
     let cfg = config::load(env);
     let roots = roots(env, &cfg);
     let on = agents::connectors(env, &cfg);
     let history = agents::read_all(env, &on);
-    let found = roots.iter().filter_map(|r| detect(env, r, &history.paths, 0)).collect();
+    let found = available_roots(env, &cfg).iter().filter_map(|r| detect(env, r, &history.paths, 0)).collect();
     build(env, cfg["roots"].is_array(), roots, on, history, found, started)
 }
 
@@ -255,6 +299,9 @@ fn build(
         files::read_limit(Path::new("/etc/hostname"), 256).unwrap_or_else(|| "localhost".into()).trim().to_owned();
     let mut snapshot = json!({"scannedAt":files::now(),"home":env.home,"host":host,"roots":roots,"configured":configured,"rootIds":root_ids,"nodes":nodes,
         "claude":history.claude,"items":history.items,"connectors":[],"suggestions":[],"global":{"claude":[],"items":[]},"orphans":{"claude":[],"items":[]},"unmatched":[],"proposals":[],"warnings":[],"tookMs":0});
+    snapshot["sessions"] = json!(history.sessions);
+    snapshot["rootStatus"] = json!(root_status(env, &config::load(env)));
+    snapshot["terminalTarget"] = json!(config::load(env)["terminalTarget"].as_str().unwrap_or("internal"));
     link(env, &mut snapshot, &on, &history.paths, &history.mentions);
     settle(env, &mut snapshot);
     plan(env, &mut snapshot);
@@ -269,7 +316,7 @@ pub fn refresh_agents(env: &Env, snapshot: &mut Value) -> Result<bool> {
     let roots = roots(env, &cfg);
     let on = agents::connectors(env, &cfg);
     let mut history = agents::read_all(env, &on);
-    let found: Vec<_> = roots.iter().filter_map(|r| detect(env, r, &history.paths, 0)).collect();
+    let found: Vec<_> = available_roots(env, &cfg).iter().filter_map(|r| detect(env, r, &history.paths, 0)).collect();
     let mut graph = Vec::new();
     let archive_dir = configured_archive(env, &cfg);
     for node in &found {
@@ -296,6 +343,9 @@ pub fn refresh_agents(env: &Env, snapshot: &mut Value) -> Result<bool> {
             }
         }
     }
+    snapshot["roots"] = json!(roots);
+    snapshot["rootStatus"] = json!(root_status(env, &cfg));
+    snapshot["sessions"] = json!(history.sessions);
     snapshot["claude"] = json!(history.claude);
     snapshot["items"] = json!(history.items);
     snapshot["global"] = json!({"claude":[],"items":[]});
@@ -410,6 +460,10 @@ fn link(
                 append(snapshot, "global", "claude", json!(name));
             }
         } else {
+            let missing = c["cwds"].as_object().is_some_and(|cwds| {
+                !cwds.is_empty() && cwds.keys().all(|p| crate::orphan::absence(env, Path::new(p)).is_ok())
+            });
+            snapshot["claude"][name]["availability"] = json!(if missing { "missing" } else { "unavailable" });
             append(snapshot, "orphans", "claude", json!(name));
         }
     }
@@ -433,6 +487,8 @@ fn link(
             }
         } else if let Some(cwd) = item["cwd"].as_str() {
             if !Path::new(cwd).exists() {
+                snapshot["items"][id]["availability"] =
+                    json!(if crate::orphan::absence(env, Path::new(cwd)).is_ok() { "missing" } else { "unavailable" });
                 append(snapshot, "orphans", "items", json!(id));
             } else if let Some(node) = nearest(&snapshot["nodes"], cwd) {
                 snapshot["nodes"][&node]["agents"]["items"].as_array_mut().expect("node items").push(json!(id));
@@ -490,7 +546,7 @@ fn link(
             let hits=snapshot["nodes"].as_object().into_iter().flatten().map(|(_,n)|n).filter(|n|n["kind"]=="project").filter(|n|{
                 let path=Path::new(n["path"].as_str().unwrap_or("")).join(link["path"].as_str().unwrap_or(""));path.exists()&&paths::workspace_path(&path.to_string_lossy(),env).is_ok()
             }).count();if hits>0{suggestion["found"]=json!(true);suggestion["detail"]=json!(format!("in {}",plural(hits as u64,"project")));}
-        }else if let Some(dir)=link["dir"].as_str().map(Path::new)&&agents::safe(env,dir)&&!files::entries(dir).is_empty(){suggestion["found"]=json!(true);suggestion["detail"]=json!(bytes(files::size(dir)));}suggestion
+        }else if let Some(dir)=link["dir"].as_str().map(Path::new)&&agents::safe(env,dir)&&std::fs::read_dir(dir).is_ok_and(|mut entries|entries.next().is_some()){suggestion["found"]=json!(true);suggestion["detail"]=json!("History found");}suggestion
     }).collect();
     snapshot["suggestions"] = json!(suggestions);
     if on.iter().any(|c| c["id"] == "claude") {
@@ -815,7 +871,9 @@ pub fn move_ops(env: &Env, from: &Path, to: &Path, snapshot: &Value) -> Vec<Valu
             .flatten()
             .map(|(_, i)| i)
             .filter(|i| {
-                i["connector"] == c["id"] && i["cwd"].as_str().is_some_and(|p| paths::within(Path::new(p), from))
+                i["cleanupCapability"] != "unsupported"
+                    && i["connector"] == c["id"]
+                    && i["cwd"].as_str().is_some_and(|p| paths::within(Path::new(p), from))
             })
             .collect();
         if mine.is_empty() {
@@ -851,6 +909,7 @@ pub fn archive_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
         }
         paths::workspace_path(&archive_dest(env, n, &roots).to_string_lossy(), env)?
     };
+    check_archive_destination(env, &dest)?;
     if dest.starts_with(&source) {
         return Err("Can't move a folder into itself".into());
     }
@@ -908,11 +967,10 @@ fn plan(env: &Env, snapshot: &mut Value) {
         .map(|(id, _)| id.clone())
         .collect();
     for id in ids {
-        if let Ok(plan) = archive_plan(env, snapshot, &id, None) {
-            snapshot["nodes"][&id]["archivePlan"] = plan;
-        } else if let Some(node) = snapshot["nodes"][&id].as_object_mut() {
-            node.remove("archivePlan");
-        }
+        snapshot["nodes"][&id]["archivePlan"] = match archive_plan(env, snapshot, &id, None) {
+            Ok(plan) => plan,
+            Err(error) => json!({"error":error,"ops":[],"checks":[]}),
+        };
     }
     snapshot["proposals"] = json!(proposals(env, snapshot));
 }
@@ -940,6 +998,11 @@ fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
                 (*n, paths::enc(&unarchived) == name)
             })
             .collect();
+        if c["cwds"].as_object().is_none_or(|cwds| {
+            cwds.is_empty() || cwds.keys().any(|cwd| crate::orphan::absence(env, Path::new(cwd)).is_err())
+        }) {
+            candidates.clear();
+        }
         candidates.sort_by_key(|(_, exact)| !exact);
         if let Some((n, exact)) = candidates.first() {
             let mut ops = vec![
@@ -967,6 +1030,9 @@ fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
     let mut groups: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
     for id in array(&snapshot["orphans"]["items"]).iter().filter_map(Value::as_str) {
         let it = &snapshot["items"][id];
+        if it["cleanupCapability"] == "unsupported" {
+            continue;
+        }
         groups
             .entry(format!("{}\0{}", string(it, "connector"), it["cwd"].as_str().unwrap_or(string(it, "file"))))
             .or_default()
@@ -980,7 +1046,9 @@ fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
         let cwd = first["cwd"].as_str();
         let id = string(c, "id");
         let unit = if c["link"]["kind"] == "cwd" { "session" } else { "folder" };
-        let formerly = if c["link"]["kind"] == "cwd" {
+        let formerly = if c["link"]["kind"] == "cwd"
+            && cwd.is_some_and(|path| crate::orphan::absence(env, Path::new(path)).is_ok())
+        {
             cwd.and_then(|p| {
                 half.iter().find_map(|claude| {
                     let old = stale_cwds(claude).into_iter().map(|(p, _)| p).min_by_key(String::len)?;
@@ -1008,7 +1076,7 @@ fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
         if n["kind"] == "project"
             && n["archived"] != true
             && n["status"]["value"] == "dormant"
-            && n["archivePlan"].is_object()
+            && n["archivePlan"]["dest"].is_string()
         {
             let age = files::age(string(&n["lastActivity"], "at"));
             out.push(json!({"id":format!("archive:{}",string(n,"id")),"category":"status","title":format!("Archive {}?",string(n,"label")),"why":if age.is_finite(){format!("No commits, file changes or agent sessions for {} days.",age as u64)}else{"No recorded commits, file changes or agent sessions.".into()},"confidence":"med","nodeId":n["id"],"ops":n["archivePlan"]["ops"],"action":{"type":"archive","nodeId":n["id"]}}));
@@ -1034,6 +1102,9 @@ fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
             continue;
         }
         out.push(json!({"id":format!("dup:{root}"),"category":"duplicate","title":format!("{} exists in {} places",string(nodes[0],"name"),nodes.len()),"why":format!("{} share their first commit. One is probably a stale copy.",nodes.iter().map(|n|paths::tilde(Path::new(string(n,"path")),&env.home)).collect::<Vec<_>>().join(" and ")),"confidence":"med","ops":nodes.iter().map(|n|json!({"kind":"keep","label":paths::tilde(Path::new(string(n,"path")),&env.home),"detail":format!("last commit {} · {} commits",string(&n["git"],"lastCommitAt").get(..10).unwrap_or("—"),u(&n["git"],"commits"))})).collect::<Vec<_>>()}));
+    }
+    for proposal in &mut out {
+        crate::orphan::prepare(env, snapshot, proposal);
     }
     out.sort_by_key(|p| {
         (
@@ -1107,7 +1178,7 @@ mod tests {
         );
         write(
             &env.home.join(".codex/sessions/2026/session.jsonl"),
-            &format!("{}\n", json!({"payload":{"cwd":former}})),
+            &format!("{}\n", json!({"type":"session_meta","payload":{"cwd":former}})),
         );
         let nested = project.join("notes");
         let former_nested = env.home.join("project/past-docs");
@@ -1154,7 +1225,7 @@ mod tests {
                 .iter()
                 .any(|o| o["kind"] == "keep" && string(o, "detail").contains(".aider.chat.history.md"))
         );
-        assert!(env.cache_dir.join("v2-agent-facts.json").exists());
+        assert!(env.cache_dir.join("v4-agent-facts.json").exists());
     }
     #[test]
     fn metadata_edits_leave_source_activity_unchanged_and_keep_stable_id() {

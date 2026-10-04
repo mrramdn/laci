@@ -3,7 +3,7 @@ members = ["crates/laci-core", "src-tauri"]
 resolver = "3"
 
 [workspace.package]
-version = "2.0.0-rc.1"
+version = "2.0.0-rc.2"
 edition = "2024"
 rust-version = "1.98"
 publish = false
@@ -27,7 +27,7 @@ notify = "8"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "io-std"] }
 rmcp = { version = "3", features = ["server", "macros", "transport-io"] }
-rustix = { version = "1", features = ["fs"] }
+rustix = { version = "1", features = ["fs", "process"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

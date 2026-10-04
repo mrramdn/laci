@@ -134,6 +134,14 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
         "project_details" => {
             let mut n = project(service, string(args, "project"))?;
             let s = service.snapshot()?;
+            n["agentSessions"] = json!(
+                array(&s["sessions"])
+                    .into_iter()
+                    .filter(|session| session["cwd"]
+                        .as_str()
+                        .is_some_and(|cwd| Path::new(cwd).starts_with(string(&n, "path"))))
+                    .collect::<Vec<_>>()
+            );
             n["sessions"] = json!(
                 array(&n["agents"]["claude"])
                     .iter()
@@ -191,12 +199,16 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             let s = service.snapshot()?;
             let id = string(args, "id");
             let proposal = array(&s["proposals"]).into_iter().find(|p| p["id"] == id).ok_or("Unknown suggestion")?;
+            let recovery = args["recovery"].as_str().unwrap_or("quarantine");
+            if !["quarantine", "trash"].contains(&recovery) {
+                return Err("Choose Quarantine or system Trash".into());
+            }
             if args["confirm"] != true {
                 return Ok(
-                    json!({"plan":proposal,"hint":"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}),
+                    json!({"plan":proposal,"selectedRecovery":recovery,"hint":if recovery=="trash" {"Orphan history will move to system Trash; restore it through the file manager. Show the exact source paths before confirming."}else{"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}}),
                 );
             }
-            service.request_as("apply", &json!({"id":id}), "agent")
+            service.request_as("apply", &json!({"id":id,"recovery":recovery}), "agent")
         }
         "delete_project" => {
             service.rescan()?;
@@ -397,7 +409,7 @@ fn tools() -> Vec<Tool> {
         (
             "apply_suggestion",
             "Apply a Tidy suggestion; requires confirm after preview",
-            json!({"id":text,"confirm":boolean}),
+            json!({"id":text,"confirm":boolean,"recovery":{"type":"string","enum":["quarantine","trash"],"description":"Orphan history only; Quarantine is the default and supports Laci Undo. System Trash recovery uses the file manager."}}),
             vec!["id"],
         ),
         (

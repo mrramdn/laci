@@ -4,6 +4,8 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.0.0-rc.2] - 2026-10-04
+
 ### Added
 
 - Explicit scan locations, including an empty selection and unavailable-drive status. Optional folder suggestions use a bounded search.

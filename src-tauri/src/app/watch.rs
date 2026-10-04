@@ -1,4 +1,5 @@
 use laci_core::{
+    agents,
     env::Env,
     files, paths,
     service::{Refresh, array, string},
@@ -75,9 +76,10 @@ pub fn refresh_for(env: &Env, snapshot: &Value, changes: &Changes) -> Refresh {
             continue;
         }
         if array(&snapshot["connectors"]).iter().any(|connector| {
-            connector["link"]["dir"]
-                .as_str()
-                .is_some_and(|dir| path.starts_with(dir) || std::path::Path::new(dir).starts_with(path))
+            agents::metadata_paths(env, connector).iter().any(|metadata| path == metadata || metadata.starts_with(path))
+                || connector["link"]["dir"]
+                    .as_str()
+                    .is_some_and(|dir| path.starts_with(dir) || std::path::Path::new(dir).starts_with(path))
         }) {
             refresh.merge(Refresh { watches: changes.structural, ..Refresh::agents() });
             continue;
@@ -195,6 +197,11 @@ impl Watches {
             }
         }
         for c in array(&snapshot["connectors"]) {
+            for metadata in agents::metadata_paths(env, &c) {
+                if let Some(parent) = metadata.parent() {
+                    want.insert(parent.to_owned());
+                }
+            }
             if let Some(dir) = c["link"]["dir"].as_str() {
                 let mut parent = PathBuf::from(dir);
                 while !parent.is_dir() && parent.pop() {}
@@ -236,6 +243,18 @@ mod tests {
         thread,
     };
 
+    #[test]
+    fn codex_title_index_is_watched_and_refreshes_only_agent_metadata() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let root = env.home.join(".codex");
+        fs::create_dir_all(root.join("sessions")).unwrap();
+        let snapshot = json!({"connectors":[{"id":"codex","provider":"codex","link":{"dir":root.join("sessions")}}],"nodes":{},"roots":[]});
+        let desired = Watches::desired(&env, &snapshot, &BTreeSet::new());
+        assert!(desired.contains(&root));
+        let changes = Changes { paths: BTreeSet::from([root.join("session_index.jsonl")]), structural: false };
+        assert_eq!(refresh_for(&env, &snapshot, &changes), Refresh::agents());
+    }
     #[test]
     fn continuous_changes_flush_at_the_batch_deadline() {
         let (sender, receiver) = mpsc::channel();

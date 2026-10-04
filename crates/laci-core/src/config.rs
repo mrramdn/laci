@@ -14,10 +14,14 @@ static CONNECTOR_ID: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^custom-[a-z0-9][a-z0-9-]*$").expect("connector ID pattern"));
 
 pub fn load(env: &Env) -> Value {
+    let fresh = !env.config_dir.join("config.json").is_file();
     let mut c = files::text(&env.config_dir.join("config.json"))
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .filter(Value::is_object)
         .unwrap_or_else(|| json!({}));
+    if fresh {
+        c["presets"] = json!([]);
+    }
     c["custom"] = json!(
         c["custom"]
             .as_array()
@@ -27,6 +31,9 @@ pub fn load(env: &Env) -> Value {
             .collect::<Vec<_>>()
     );
     c["apps"] = validate_apps(&c["apps"]).unwrap_or_else(|_| json!({}));
+    if !matches!(c["terminalTarget"].as_str(), Some("internal" | "external")) {
+        c.as_object_mut().expect("config object").remove("terminalTarget");
+    }
     if !matches!(c["theme"].as_str(), Some("light" | "dark")) {
         c.as_object_mut().expect("config object").remove("theme");
     }
@@ -45,15 +52,15 @@ pub fn save(env: &Env, c: &Value) -> Result<()> {
 }
 pub fn validate_roots(env: &Env, roots: &Value) -> Result<Value> {
     let array = roots.as_array().ok_or("Pick folders to scan")?;
-    if array.is_empty() {
-        return Err("Pick at least one folder".into());
-    }
     let mut roots: Vec<std::path::PathBuf> = Vec::new();
     for value in array {
-        let p = paths::selected_directory(value.as_str().ok_or("Invalid folder")?, env)?;
-        if !p.is_dir() {
-            return Err(format!("{} doesn't exist", paths::tilde(&p, &env.home)));
-        }
+        let raw = value.as_str().ok_or("Invalid folder")?;
+        let requested = paths::expand(raw.trim(), &env.home);
+        let existing = load(env)["roots"].as_array().is_some_and(|roots| {
+            roots.iter().filter_map(Value::as_str).any(|root| paths::expand(root, &env.home) == requested)
+        });
+        // Retaining a selected but disconnected disk must not prevent unrelated settings edits.
+        let p = if existing && requested.is_absolute() { requested } else { paths::selected_directory(raw, env)? };
         if !roots.iter().any(|r| paths::within(&p, r)) {
             roots.push(p);
         }
@@ -65,12 +72,51 @@ pub fn validate_roots(env: &Env, roots: &Value) -> Result<Value> {
         .collect();
     Ok(Value::Array(minimal))
 }
+
+/// Restore an already recorded selection even when its drive is offline.
+pub(crate) fn restore_roots(env: &Env, roots: &Value) -> Result<Value> {
+    let roots = roots.as_array().ok_or("Invalid saved scan locations")?;
+    roots
+        .iter()
+        .map(|root| {
+            let p = paths::expand(root.as_str().ok_or("Invalid saved folder")?, &env.home);
+            if !p.is_absolute() {
+                return Err("Invalid saved folder".into());
+            }
+            Ok(json!(paths::tilde(&p, &env.home)))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Value::Array)
+}
+
+/// Remember the selected filesystem so an empty mountpoint is not mistaken for a deleted project.
+pub fn root_identities(env: &Env, roots: &Value, previous: &Value) -> Value {
+    use std::os::unix::fs::MetadataExt;
+    let mut out = json!({});
+    for raw in roots.as_array().into_iter().flatten().filter_map(Value::as_str) {
+        let path = paths::expand(raw, &env.home);
+        let key = path.to_string_lossy();
+        if let Some(old) = previous.get(key.as_ref()) {
+            out[key.as_ref()] = old.clone();
+        } else if let Ok(meta) = std::fs::metadata(&path) {
+            out[key.as_ref()] = json!({"device":meta.dev(),"inode":meta.ino()});
+        }
+    }
+    out
+}
+
 pub fn validate_archive_dir(env: &Env, value: &Value) -> Result<Value> {
     let raw = value.as_str().ok_or("Pick an archive folder")?.trim();
     if raw.is_empty() {
         return Ok(json!(""));
     }
-    let path = paths::selected_directory(raw, env)?;
+    let requested = paths::expand(raw, &env.home);
+    let stored = load(env)["archiveDir"].as_str().map(|old| paths::expand(old, &env.home));
+    let path = if stored.as_ref() == Some(&requested) && requested.is_absolute() {
+        requested
+    } else {
+        paths::selected_directory(raw, env)?
+    };
     Ok(json!(paths::tilde(&path, &env.home)))
 }
 

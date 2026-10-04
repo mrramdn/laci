@@ -11,7 +11,8 @@ import {
   run,
   savePref,
 } from "./store";
-import { parentOf, within } from "./helpers";
+import { parentOf } from "./helpers";
+import { selectIsOpen } from "./select";
 import { AgentsView, Folder, LogView, Sidebar, Tidy, Today } from "./views";
 import { Settings } from "./settings";
 import { Inspector } from "./inspector";
@@ -19,6 +20,7 @@ import { Dialogs } from "./dialogs";
 import { Palette } from "./palette";
 import { restoreTerminals, toggleTerminal, useTerms } from "./terminal-api";
 import type { Apps, Change, RefreshStatus, Snapshot } from "./types";
+import type { CreationJob } from "./new-project";
 const TerminalPanel = lazy(() => import("./TerminalPanel"));
 type LaciEvent =
   | { type: "snapshot" }
@@ -82,16 +84,22 @@ export default function App() {
           return;
         }
         unlisten = stop;
-        const [snapshot, status, apps] = await Promise.all([
+        const [snapshot, status, apps, creation] = await Promise.all([
           api<Snapshot>("snapshot"),
           api<RefreshStatus>("status"),
           api<Apps>("apps"),
+          api<CreationJob | null>("new/current"),
         ]);
         if (!live) return;
         if (!receivedSnapshot || !useApp.getState().snapshot)
           useApp.getState().load(snapshot);
         if (!receivedStatus) refreshStatus(status);
-        useApp.setState({ apps });
+        useApp.setState({
+          apps,
+          ...(creation
+            ? { modal: { kind: "new", job: creation } as const, palette: false }
+            : {}),
+        });
       } catch (error) {
         if (live) refreshError(error);
       }
@@ -120,21 +128,22 @@ export default function App() {
       event.preventDefault();
       event.stopPropagation();
       const state = useApp.getState();
-      if (state.modal || state.working) return;
+      if (state.modal || state.working || selectIsOpen()) return;
       if (palette) useApp.setState({ palette: !state.palette });
       else if (!state.palette) toggleTerminal();
     };
     const key = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing) return;
+      if (event.defaultPrevented || event.isComposing || selectIsOpen()) return;
       const target = event.target as HTMLElement;
       if (!(target instanceof HTMLElement)) return;
       const input =
-        target.matches("input,textarea,select") || target.isContentEditable;
+        target.matches('input,textarea,select,[role="combobox"]') ||
+        target.isContentEditable;
       const state = useApp.getState();
       if (state.working) return;
       if (event.key === "Escape") {
         if (state.palette) useApp.setState({ palette: false });
-        else if (state.modal) useApp.setState({ modal: null });
+        else if (state.modal) return;
         else if (state.display) useApp.setState({ display: false });
         else if (target.closest(".xterm")) return;
         else useApp.setState({ selected: null, pendingSelection: null });
@@ -184,8 +193,7 @@ export default function App() {
         event.key === "Backspace" &&
         state.view === "folder" &&
         state.snapshot &&
-        state.cwd !== state.snapshot.home &&
-        within(state.cwd, state.snapshot.home)
+        state.cwd !== "/"
       ) {
         event.preventDefault();
         state.cd(parentOf(state.cwd));
@@ -278,7 +286,7 @@ export default function App() {
                   async () =>
                     changed(
                       await api<Change>("undo", { id: s.toast!.undo }),
-                      "Undone. Everything is back where it was.",
+                      "Journaled changes undone",
                     ),
                   "Undoing…",
                   { history: true },

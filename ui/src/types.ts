@@ -56,7 +56,6 @@ export interface GitInfo {
   /** Commits per week for the last 26 weeks, oldest first. */
   weekly: number[];
   authors: number;
-  aiTrailers: number;
   worktree: boolean;
 }
 
@@ -105,6 +104,20 @@ export interface ClaudeDir {
   cwds: Record<string, number>;
   /** cwd values that no longer exist on disk (left behind by a move or a delete). */
   gone: string[];
+  availability?: "missing" | "unavailable";
+}
+
+export interface Session {
+  provider: string;
+  sessionId: string;
+  title: string;
+  titleSource: string;
+  cwd?: string | null;
+  parentId?: string | null;
+  sourceKind: string;
+  updatedAt: string;
+  resumeCapability: "supported" | "history-only";
+  file: string;
 }
 
 /** How a connector finds the project a piece of agent history belongs to. */
@@ -126,6 +139,13 @@ export interface ConnectorSpec {
 
 /** A connector as the app shows it: what it reads, whether it's on, and what it found. */
 export interface ConnectorState extends ConnectorSpec {
+  provider?: string;
+  capabilities?: {
+    launch: boolean;
+    resume: boolean;
+    titles: boolean;
+    modelDiscovery: string;
+  };
   /** From laci's catalog, as opposed to one the user described. */
   builtin: boolean;
   /** One line on what it keeps, for the card. */
@@ -161,6 +181,7 @@ export interface Item {
   /** Lines that record `cwd` (what a move rewrites). */
   lines: number;
   title?: string;
+  availability?: "missing" | "unavailable";
 }
 
 export interface Agents {
@@ -186,6 +207,7 @@ export interface Op {
 
 export interface ArchivePlan {
   dest: string;
+  error?: string;
   checks: Issue[];
   ops: Op[];
 }
@@ -223,7 +245,12 @@ export type Action =
 export interface Proposal {
   id: string;
   category:
-    "reconnect" | "migration" | "orphan" | "status" | "space" | "duplicate";
+    | "reconnect"
+    | "migration"
+    | "orphan"
+    | "status"
+    | "space"
+    | "duplicate";
   title: string;
   why: string;
   confidence: "high" | "med" | "low";
@@ -275,12 +302,15 @@ export interface Snapshot {
   home: string;
   host: string;
   roots: string[];
-  /** False until the user picked their folders in the setup screen (roots are a guess until then). */
+  rootStatus?: RootStatus[];
+  terminalTarget?: TerminalTarget;
+  /** False until the user saves their selections, which may be empty. */
   configured: boolean;
   rootIds: string[];
   nodes: Record<string, Node>;
   claude: Record<string, ClaudeDir>;
   items: Record<string, Item>;
+  sessions?: Session[];
   /** Connectors the user added (or, before they chose, the ones with data here). */
   connectors: ConnectorState[];
   suggestions: Suggestion[];
@@ -300,9 +330,17 @@ export interface Apps {
   files: string;
   terminal: string;
 }
+export type TerminalTarget = "internal" | "external";
+export interface RootStatus {
+  path: string;
+  available: boolean;
+  reason?: string;
+}
 export interface SetupInfo {
   configured: boolean;
   roots: string[];
+  rootStatus?: RootStatus[];
+  terminalTarget?: TerminalTarget;
   archiveDir?: string;
   candidates: { path: string; repos: number }[];
   presets: string[];
@@ -357,7 +395,7 @@ export interface Change {
   historyPending?: boolean;
   snapshot?: Snapshot;
   node?: Node;
-  journal?: { id: string; title: string };
+  journal?: { id: string; title: string; canUndo?: boolean; recovery?: string };
   path?: string;
   warnings?: string[];
 }

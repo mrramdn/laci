@@ -4,6 +4,35 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.0.0-rc.2] - 2026-10-04
+
+### Added
+
+- Explicit scan locations, including an empty selection and unavailable-drive status. Optional folder suggestions use a bounded search.
+- Claude Code, Codex and Antigravity connectors with provider capabilities, readable session titles, grouped child sessions and provider-aware resume in Laci or an external terminal.
+- Optional agent launch after project creation, with a prompt and provider-supported model/effort overrides. Model discovery runs only on request.
+- Referenced local template folders and generator recipes, including Vite. Preview the command, prerequisites and download requirement before starting; view progress, cancel the owned generator process, and retain partial output on failure.
+- Orphan-history system Trash alongside the default Quarantine action. Fresh path, source, mounted-root and process checks block stale or ambiguous cleanup.
+
+### Fixed
+
+- Orphan cleanup requires complete ownership evidence and confirms every recorded project is missing. Shared, bounded, unreadable or unfinished histories remain protected.
+- Recent Codex cwd and Claude title metadata refresh beyond the transcript head window. Codex child sessions recognize top-level and nested parent IDs.
+- Archive preview and execution reject a replaced selected destination folder; a valid alternative or explicit Settings reselection remains available.
+- New-project progress, cancellation and optional agent continuation recover after a WebView reload. Repeated continuation requests launch once; an explicit failed-launch retry keeps the created project.
+- Token-styled dropdowns follow the app theme, retain keyboard/typeahead behavior and close before their enclosing dialog. Forms keep drafts until submission or explicit discard.
+- One sidebar search entrypoint, a Terminal control beside Copy path, visible sort direction, external-root breadcrumbs and keyboard navigation.
+- Archive remains accessible when its default destination is invalid, with a field for another destination.
+- Pure Trash actions no longer advertise Laci Undo; mixed journals explain recovery through system Trash.
+- Per-user launcher installs available icon sizes and resolves its icon through an absolute path.
+- AppImage launches host tools without its bundled Python, library and plugin paths leaking into their environment.
+- Non-Git projects no longer claim to be committed and pushed. Removed Git trailer reporting and its extra history query.
+
+### Changed
+
+- New installations start with no selected roots or connectors. Existing explicit and custom connector settings remain readable.
+- Raw prototype captures are excluded from source; maintained documentation captures use synthetic data.
+
 ## [2.0.0-rc.1]
 
 Release candidate for Linux x86-64. The distribution build targets Ubuntu 24.04; the license remains undecided.

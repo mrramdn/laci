@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { api, errorText } from "./api";
 import { APP_NAMES, cap, plural, tilde } from "./helpers";
+import { Select } from "./select";
 import { Icon } from "./common";
 import { useApp, changed, rescan, run } from "./store";
-import type { Apps, Change, SetupInfo } from "./types";
+import type { Apps, Change, SetupInfo, TerminalTarget } from "./types";
 export function Settings({ first = false }: { first?: boolean }) {
   const s = useApp();
   const snapshot = s.snapshot!;
@@ -12,6 +13,10 @@ export function Settings({ first = false }: { first?: boolean }) {
   const [presets, setPresets] = useState<Set<string>>(new Set());
   const [extra, setExtra] = useState<string[]>([]);
   const [apps, setApps] = useState<Apps>(s.apps);
+  const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>(
+    s.terminalTarget,
+  );
+  const [discovering, setDiscovering] = useState(false);
   const [folder, setFolder] = useState("");
   const [archiveDir, setArchiveDir] = useState("");
   const [error, setError] = useState("");
@@ -27,6 +32,7 @@ export function Settings({ first = false }: { first?: boolean }) {
         setArchiveDir(info.archiveDir ?? "");
         setPresets(new Set(info.presets));
         setApps(info.apps);
+        setTerminalTarget(info.terminalTarget ?? "internal");
         setExtra(
           info.roots.filter(
             (root) => !info.candidates.some((c) => c.path === root),
@@ -76,29 +82,38 @@ export function Settings({ first = false }: { first?: boolean }) {
       );
       return;
     }
-    await run(async () => {
-      setSaving(true);
-      setError("");
-      if (first) useApp.setState({ setupPending: true });
-      try {
-        const result = await api<Change>("setup/save", {
-          roots: [...roots],
-          archiveDir: archivePath,
-          presets: [...presets],
-          apps,
-        });
-        changed(result, first ? "All set" : "Settings saved");
-        useApp.setState({ apps, ...(first ? { view: "today" as const } : {}) });
-      } catch (error) {
-        if (first) useApp.setState({ setupPending: false });
-        throw error;
-      } finally {
-        setSaving(false);
-      }
-    }, first ? "Scanning your projects…" : "Saving and scanning…", {
-      history: true,
-      onError: (error) => setError(errorText(error)),
-    });
+    await run(
+      async () => {
+        setSaving(true);
+        setError("");
+        if (first) useApp.setState({ setupPending: true });
+        try {
+          const result = await api<Change>("setup/save", {
+            roots: [...roots],
+            archiveDir: archivePath,
+            presets: [...presets],
+            apps,
+            terminalTarget,
+          });
+          changed(result, first ? "All set" : "Settings saved");
+          useApp.setState({
+            apps,
+            terminalTarget,
+            ...(first ? { view: "today" as const } : {}),
+          });
+        } catch (error) {
+          if (first) useApp.setState({ setupPending: false });
+          throw error;
+        } finally {
+          setSaving(false);
+        }
+      },
+      first ? "Scanning your projects…" : "Saving and scanning…",
+      {
+        history: true,
+        onError: (error) => setError(errorText(error)),
+      },
+    );
   }
   const content = (
     <div className={`setup-in ${first ? "" : "in-app"}`}>
@@ -119,9 +134,7 @@ export function Settings({ first = false }: { first?: boolean }) {
         </>
       ) : null}
       {!info ? (
-        <div className="empty">
-          {error || "Looking around your home folder…"}
-        </div>
+        <div className="empty">{error || "Loading your settings…"}</div>
       ) : (
         <>
           <section className="sset">
@@ -129,27 +142,59 @@ export function Settings({ first = false }: { first?: boolean }) {
               <span className="num">1</span>Where do you keep projects?
             </h2>
             <p>
-              laci looks for projects in these folders, including mounted drives.
-              You can still browse everything else from Home.
+              laci looks for projects in these folders, including mounted
+              drives. You can leave every folder unchecked and browse without
+              scanning.
             </p>
-            {candidates.map((c) => (
-              <label className="opt" key={c.path}>
-                <input
-                  type="checkbox"
-                  className="cb"
-                  checked={roots.has(c.path)}
-                  onChange={() => toggle(roots, c.path, setRoots)}
-                />
-                <span className="mono">{tilde(c.path, snapshot.home)}</span>
-                <span className={`r ${c.repos ? "ok" : ""}`}>
-                  {c.repos === null
-                    ? "added by you"
-                    : c.repos
-                      ? plural(c.repos, "git repo")
-                      : "no repos"}
-                </span>
-              </label>
-            ))}
+            {candidates.map((c) => {
+              const unavailable = info.rootStatus?.find(
+                (root) => root.path === c.path && !root.available,
+              );
+              return (
+                <label className="opt" key={c.path}>
+                  <input
+                    type="checkbox"
+                    className="cb"
+                    checked={roots.has(c.path)}
+                    onChange={() => toggle(roots, c.path, setRoots)}
+                  />
+                  <span className="mono">{tilde(c.path, snapshot.home)}</span>
+                  <span
+                    className={`r ${c.repos && !unavailable ? "ok" : ""}`}
+                    title={unavailable?.reason}
+                  >
+                    {unavailable
+                      ? "Unavailable"
+                      : c.repos === null
+                        ? "added by you"
+                        : c.repos
+                          ? plural(c.repos, "git repo")
+                          : "no repos"}
+                  </span>
+                </label>
+              );
+            })}
+            <button
+              className="btn sm"
+              disabled={discovering}
+              onClick={() => {
+                setDiscovering(true);
+                setError("");
+                void api<Pick<SetupInfo, "candidates">>("setup/discover")
+                  .then(
+                    (result) =>
+                      setInfo((current) =>
+                        current
+                          ? { ...current, candidates: result.candidates }
+                          : current,
+                      ),
+                    (error) => setError(errorText(error)),
+                  )
+                  .finally(() => setDiscovering(false));
+              }}
+            >
+              {discovering ? "Looking for folders…" : "Suggest folders"}
+            </button>
             <form
               className="addrow"
               onSubmit={(e) => {
@@ -225,6 +270,21 @@ export function Settings({ first = false }: { first?: boolean }) {
               <span className="num">3</span>Open things with
             </h2>
             <p>What the Editor, Files and external terminal buttons launch.</p>
+            <label className="fld">
+              <span>Default terminal target</span>
+              <Select
+                label="Default terminal target"
+                value={terminalTarget}
+                onValueChange={(value) =>
+                  setTerminalTarget(value as TerminalTarget)
+                }
+                options={[
+                  { value: "internal", label: "Laci terminal" },
+                  { value: "external", label: "External terminal" },
+                ]}
+              />
+              <small>You can choose a different target for each launch.</small>
+            </label>
             <div className="apps">
               {(
                 [
@@ -235,24 +295,19 @@ export function Settings({ first = false }: { first?: boolean }) {
               ).map(([key, label]) => (
                 <label className="fld" key={key}>
                   <span>{label}</span>
-                  <select
-                    className="inp"
+                  <Select
+                    label={label}
                     value={apps[key]}
-                    onChange={(e) =>
-                      setApps({ ...apps, [key]: e.target.value })
+                    onValueChange={(value) =>
+                      setApps({ ...apps, [key]: value })
                     }
-                  >
-                    {[...new Set([...info.installed[key], apps[key]])].map(
-                      (app) => (
-                        <option key={app} value={app}>
-                          {APP_NAMES[app] ?? cap(app)}
-                          {info.installed[key].includes(app)
-                            ? ""
-                            : " (not installed)"}
-                        </option>
-                      ),
-                    )}
-                  </select>
+                    options={[
+                      ...new Set([...info.installed[key], apps[key]]),
+                    ].map((app) => ({
+                      value: app,
+                      label: `${APP_NAMES[app] ?? cap(app)}${info.installed[key].includes(app) ? "" : " (not installed)"}`,
+                    }))}
+                  />
                 </label>
               ))}
             </div>
@@ -281,8 +336,12 @@ export function Settings({ first = false }: { first?: boolean }) {
         ) : null}
         <button
           className="btn primary"
-          disabled={!info || saving || (!retryScan && (s.historyPending || s.setupPending))}
-          onClick={() => retryScan ? rescan() : void save()}
+          disabled={
+            !info ||
+            saving ||
+            (!retryScan && (s.historyPending || s.setupPending))
+          }
+          onClick={() => (retryScan ? rescan() : void save())}
         >
           {saving
             ? "Saving…"

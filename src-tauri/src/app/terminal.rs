@@ -1,4 +1,4 @@
-use laci_core::Result;
+use laci_core::{Result, launch::LaunchCommand};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::Serialize;
 use std::{
@@ -7,7 +7,7 @@ use std::{
     path::Path,
     sync::{Arc, Mutex},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::ipc::Channel;
 
@@ -39,11 +39,40 @@ pub struct Terminals {
 }
 impl Terminals {
     pub fn open(&self, cwd: &Path, title: &str, command: Option<String>, run: bool) -> Result<Info> {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".into());
+        let (executable, args) = if let Some(command) = command {
+            let script = if run {
+                "bash -lc \"$1\"; exec \"${SHELL:-bash}\" -l"
+            } else {
+                "printf '$ %s\\n' \"$1\"; read -r -p 'Press Enter to run, Ctrl+C to cancel ' _ && bash -lc \"$1\"; exec \"${SHELL:-bash}\" -l"
+            };
+            ("bash".into(), vec!["-lc".into(), script.into(), "laci-action".into(), command])
+        } else {
+            (shell, vec!["-l".into()])
+        };
+        self.open_launch(&LaunchCommand {
+            executable,
+            args,
+            cwd: cwd.to_owned(),
+            title: title.into(),
+            target: "internal".into(),
+        })
+    }
+    pub fn open_launch(&self, command: &LaunchCommand) -> Result<Info> {
+        let cwd = &command.cwd;
+        let title = &command.title;
         let pair = native_pty_system()
             .openpty(PtySize { rows: 30, cols: 120, pixel_width: 0, pixel_height: 0 })
             .map_err(|e| e.to_string())?;
-        let mut cmd = CommandBuilder::new(std::env::var("SHELL").unwrap_or_else(|_| "bash".into()));
-        cmd.arg("-l");
+        let mut cmd = CommandBuilder::new(&command.executable);
+        for (key, value) in laci_core::process::host_env_overrides() {
+            if let Some(value) = value {
+                cmd.env(key, value);
+            } else {
+                cmd.env_remove(key);
+            }
+        }
+        cmd.args(&command.args);
         cmd.cwd(cwd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
@@ -53,7 +82,8 @@ impl Terminals {
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
         let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
         let id = format!("{:x}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos());
-        let info = Info { id: id.clone(), cwd: cwd.to_string_lossy().into_owned(), title: title.into(), exited: None };
+        let info =
+            Info { id: id.clone(), cwd: cwd.to_string_lossy().into_owned(), title: title.to_owned(), exited: None };
         self.tabs.lock().map_err(|e| e.to_string())?.insert(
             id.clone(),
             Terminal {
@@ -119,13 +149,6 @@ impl Terminals {
                 }
             }
         });
-        if let Some(command) = command {
-            let state = self.clone();
-            thread::spawn(move || {
-                thread::sleep(Duration::from_millis(400));
-                let _ = state.input(&id, &format!("{command}{}", if run { "\r" } else { "" }));
-            });
-        }
         Ok(info)
     }
     pub fn list(&self) -> Vec<Info> {
@@ -170,5 +193,47 @@ impl Terminals {
         for id in ids {
             self.close(&id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn pty_executes_exact_argv_and_cwd_without_shell_input() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().join("folder with spaces");
+        std::fs::create_dir(&cwd).unwrap();
+        let actual_cwd = home.path().join("cwd");
+        let actual_args = home.path().join("args");
+        let first = "--flag\n$(touch should-not-exist); `pwd` ' \"";
+        let second = "another\nline \\ 雨";
+        let command = LaunchCommand {
+            executable: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                "pwd > \"$1\"; printf '%s\\0' \"$2\" \"$3\" > \"$4\"".into(),
+                "laci-test".into(),
+                actual_cwd.to_string_lossy().into_owned(),
+                first.into(),
+                second.into(),
+                actual_args.to_string_lossy().into_owned(),
+            ],
+            cwd: cwd.clone(),
+            title: "Fixture".into(),
+            target: "internal".into(),
+        };
+        let terminals = Terminals::default();
+        let info = terminals.open_launch(&command).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while std::time::Instant::now() < deadline
+            && !terminals.list().iter().any(|t| t.id == info.id && t.exited.is_some())
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        terminals.close(&info.id);
+        assert_eq!(std::fs::read_to_string(actual_cwd).unwrap().trim_end(), cwd.to_str().unwrap());
+        assert_eq!(std::fs::read(actual_args).unwrap(), format!("{first}\0{second}\0").as_bytes());
+        assert!(!cwd.join("should-not-exist").exists());
     }
 }

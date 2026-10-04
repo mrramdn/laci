@@ -11,6 +11,7 @@ pub struct Engine {
     pub revision: u64,
     pub history_pending: bool,
     history_refresh: Refresh,
+    creation_running: bool,
 }
 impl Engine {
     pub fn new(mut service: Service) -> Self {
@@ -23,6 +24,7 @@ impl Engine {
             service,
             revision: 0,
             history_pending,
+            creation_running: false,
             history_refresh: if history_pending { Refresh::full() } else { Refresh::default() },
         }
     }
@@ -37,6 +39,9 @@ impl Engine {
         value["historyPending"] = json!(self.history_pending);
     }
     pub fn execute(&mut self, name: &str, body: &Value) -> Result<RequestOutcome> {
+        if self.creation_running && mutates(name) {
+            return Err("A project is being created. Wait before changing files or settings.".into());
+        }
         if self.history_pending && changes_history(name) {
             return Err("History is refreshing. Wait before changing files again.".into());
         }
@@ -56,6 +61,32 @@ impl Engine {
         }
         Ok(outcome)
     }
+    pub fn begin_creation(&mut self) -> Result<()> {
+        if self.creation_running || self.history_pending {
+            return Err(
+                "History is refreshing or a project is being created. Wait before creating another project.".into()
+            );
+        }
+        self.creation_running = true;
+        self.fence_creation();
+        Ok(())
+    }
+    pub fn finish_creation(&mut self, result: &mut Result<Value>) {
+        self.creation_running = false;
+        // Failed and cancelled generators also leave partial filesystem changes.
+        self.fence_creation();
+        if let Ok(value) = result {
+            self.stamp(value);
+        }
+    }
+    fn fence_creation(&mut self) {
+        self.revision += 1;
+        self.history_pending = true;
+        self.history_refresh.merge(Refresh::full());
+        if let Some(snapshot) = self.service.current.as_mut() {
+            snapshot["proposals"] = json!([]);
+        }
+    }
     pub fn prepare(&self, mut refresh: Refresh) -> Prepared {
         refresh.merge(self.history_refresh.clone());
         Prepared {
@@ -65,14 +96,19 @@ impl Engine {
             refresh,
         }
     }
-    pub fn install(&mut self, prepared: &Prepared, snapshot: Value) -> bool {
+    pub fn install(&mut self, prepared: &Prepared, mut snapshot: Value) -> bool {
         if self.revision != prepared.revision {
             return false;
         }
         self.revision += 1;
+        if self.creation_running {
+            snapshot["proposals"] = json!([]);
+        }
         self.service.current = Some(snapshot);
-        self.history_pending = false;
-        self.history_refresh = Refresh::default();
+        self.history_pending = self.creation_running;
+        if !self.creation_running {
+            self.history_refresh = Refresh::default();
+        }
         true
     }
 }
@@ -177,6 +213,29 @@ mod tests {
         let initial = engine.prepare(Refresh::full());
         assert!(engine.install(&initial, snapshot));
         (home, engine, id)
+    }
+
+    #[test]
+    fn creation_fences_mutations_and_prevents_failure_or_running_scans_from_restoring_proposals() {
+        let (_home, mut engine, _) = engine();
+        let before = engine.prepare(Refresh::full());
+        engine.begin_creation().unwrap();
+        assert!(!engine.install(&before, json!({"nodes":{},"proposals":[{"id":"stale"}]})));
+        assert!(engine.begin_creation().is_err());
+        // This must fail before entering the global file-change lock held by the generator.
+        assert!(engine.execute("theme", &json!({"theme":"dark"})).unwrap_err().contains("being created"));
+        assert!(engine.execute("log", &json!({})).is_ok());
+        let running = engine.prepare(Refresh::full());
+        assert!(engine.install(&running, json!({"nodes":{},"proposals":[{"id":"partial"}]})));
+        assert!(engine.history_pending);
+        assert_eq!(engine.snapshot().unwrap()["proposals"], json!([]));
+        let partial = engine.prepare(Refresh::full());
+        engine.finish_creation(&mut Err("Generator failed after writing partial output".into()));
+        assert!(!engine.install(&partial, json!({"nodes":{},"proposals":[]})));
+        let complete = engine.prepare(Refresh::full());
+        assert!(engine.install(&complete, json!({"nodes":{},"proposals":[]})));
+        assert!(!engine.history_pending);
+        assert!(engine.begin_creation().is_ok());
     }
 
     #[test]

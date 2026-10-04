@@ -1,3 +1,4 @@
+mod creation;
 mod state;
 mod terminal;
 mod watch;
@@ -25,6 +26,7 @@ struct AppState {
     queue: Arc<RefreshQueue>,
     handle: tauri::AppHandle,
     terminals: Terminals,
+    creations: creation::Creations,
     watches: Option<Watches>,
     listings: Mutex<BTreeSet<PathBuf>>,
 }
@@ -124,8 +126,70 @@ impl AppState {
         self.queue.finish(work, None);
         self.notice(self.status());
     }
-    fn request(&self, name: &str, body: &Value) -> Result<Value> {
+    fn launch_agent(&self, body: &Value) -> Result<Value> {
+        let (env, request, session, apps) = {
+            let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
+            let (request, session) = engine.service.agent_context(body)?;
+            (engine.service.env.clone(), request, session, engine.service.apps())
+        };
+        let command = laci_core::launch::resolve(&env, &request, session.as_ref())?;
+        if command.target == "external" {
+            laci_core::launch::external(string(&apps, "terminal"), &command)?;
+            return Ok(json!({"target":"external"}));
+        }
+        Ok(json!({"target":"internal","terminal":self.terminals.open_launch(&command)?}))
+    }
+    fn request(self: &Arc<Self>, name: &str, body: &Value) -> Result<Value> {
         match name {
+            "agent/models" => {
+                let env = self.engine.lock().map_err(|e| e.to_string())?.service.env.clone();
+                return laci_core::launch::capabilities(
+                    &env,
+                    string(body, "provider"),
+                    body["refresh"].as_bool().unwrap_or(false),
+                );
+            }
+            "agent/launch" => return self.launch_agent(body),
+            "new/start" => {
+                let env = {
+                    let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
+                    engine.begin_creation()?;
+                    engine.service.env.clone()
+                };
+                self.notice(self.status());
+                let record_env = env.clone();
+                let weak = Arc::downgrade(self);
+                let project_name = string(body, "name").to_owned();
+                let started = self.creations.start(env, body.clone(), move |result| {
+                    if let Ok(value) = result.as_ref() {
+                        laci_core::activity::record(&record_env, json!({"by":"app","title":format!("Created {project_name}"),"path":value["path"],"detail":value["warnings"]}));
+                    }
+                    if let Some(state) = weak.upgrade() {
+                        state.engine.lock().unwrap_or_else(|e| e.into_inner()).finish_creation(result);
+                        state.queue.request(Refresh::full());
+                        state.notice(json!({"type":"log"}));
+                        state.notice(state.status());
+                    }
+                });
+                if let Err(error) = &started {
+                    self.engine.lock().unwrap_or_else(|e| e.into_inner()).finish_creation(&mut Err(error.clone()));
+                    self.queue.request(Refresh::full());
+                    self.notice(self.status());
+                }
+                return started;
+            }
+            "new/status" => return self.creations.status(string(body, "id")),
+            "new/cancel" => return self.creations.cancel(string(body, "id")),
+            "new/current" => return self.creations.current(),
+            "new/ack" => return self.creations.acknowledge(string(body, "id")),
+            "new/continue" => {
+                return self.creations.continue_agent(
+                    string(body, "id"),
+                    body["retryAttempt"].as_u64(),
+                    body.get("agent"),
+                    |request| self.launch_agent(request),
+                );
+            }
             "snapshot" => return self.snapshot(),
             "status" => return Ok(self.status()),
             "rescan" => return self.rescan(),
@@ -261,6 +325,7 @@ pub fn run(env: Env) -> Result<()> {
                 engine: Mutex::new(Engine::new(service)), queue: Arc::clone(&queue),
                 handle: app.handle().clone(),
                 terminals: Terminals::default(), watches,
+                creations: creation::Creations::default(),
                 listings: Mutex::new(BTreeSet::new()),
             });
             app.manage(Arc::clone(&state));
@@ -302,6 +367,7 @@ pub fn run(env: Env) -> Result<()> {
         .map_err(|e| e.to_string())?
         .run(|handle, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                handle.state::<Shared>().creations.cancel_all();
                 handle.state::<Shared>().terminals.close_all();
             }
         });

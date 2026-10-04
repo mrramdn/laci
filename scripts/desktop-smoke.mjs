@@ -2191,12 +2191,23 @@ async function watcherRegressions() {
     "Linked worktree branch switches refresh the native inspector",
     async () => {
       const current = await snapshot();
+      const hasHead = (projectPath) => {
+        try {
+          execFileSync("git", ["-C", projectPath, "rev-parse", "--verify", "HEAD"], {
+            stdio: "ignore",
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      };
       const main = Object.values(current.nodes).find(
         (node) =>
           node.git &&
           !node.git.worktree &&
           !node.archived &&
-          current.roots.some((root) => node.path.startsWith(root + "/")),
+          current.roots.some((root) => node.path.startsWith(root + "/")) &&
+          hasHead(node.path),
       );
       assert.ok(main, "Fixture needs a Git project below a scan root");
       const linked = path.join(

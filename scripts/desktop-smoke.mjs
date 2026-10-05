@@ -468,6 +468,19 @@ async function modularRegressions() {
             await readFile(path.join(destination, "README.md"), "utf8")
           ).includes("Modular project"),
         );
+        let idleSince;
+        await wait(
+          "archive scan and project Git checks settle before Undo",
+          async () => {
+            const status = await api("status");
+            if (status.busy || status.historyPending) {
+              idleSince = undefined;
+              return false;
+            }
+            idleSince ??= Date.now();
+            return Date.now() - idleSince >= 750;
+          },
+        );
         await click(".toast button", "Undo", true);
         await wait("external archive undone", async () => {
           const current = await snapshot();
@@ -518,6 +531,9 @@ async function modularRegressions() {
           path.join(source, "secret.env"),
           "Ignored bytes stay in Trash\n",
         );
+        // Closing the blocked plan can leave the inspector unselected after its
+        // filesystem refresh; explicitly reopen the project before the retry.
+        await showProject((await snapshot()).nodes[source]);
         await click(".insp .iacts button", "Move to Trash", true);
         await wait("fresh Trash plan ready", () =>
           execute(() => {

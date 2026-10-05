@@ -4,6 +4,17 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-05
+
+Stable Linux release, built on GitHub Actions for Ubuntu 24.04. MIT licensed.
+
+### Compared with v1
+
+- Replaced the Electron runtime with Rust and Tauri 2. Desktop, CLI and MCP now share the same native engine; installed builds do not require Node.js.
+- Added configurable scan locations and archive destinations, richer Claude Code/Codex/Antigravity session history, provider-aware resume and guided project creation.
+- Added project removal to system Trash, guarded by fresh remote Git verification and preservation of external agent history.
+- Improved refresh responsiveness, recovery after interrupted operations and native keyboard/focus behavior.
+
 ## [2.0.0-rc.2] - 2026-10-04
 
 ### Added

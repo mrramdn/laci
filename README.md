@@ -378,4 +378,4 @@ Scanning stays local. If you launch an agent, clone a repository, create a remot
 
 ## License
 
-Not chosen yet.
+Laci is licensed under the [MIT License](LICENSE).

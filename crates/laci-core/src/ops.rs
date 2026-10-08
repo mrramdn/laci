@@ -942,6 +942,39 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
         )
     })
 }
+/// Puts a session the backup still holds back where its tool keeps it. `id` names a session of the
+/// current scan, so both paths come from the engine and are checked again here.
+pub fn restore_backup(env: &Env, snap: &Value, id: &str) -> Result<Value> {
+    with_lock(env, || {
+        let session = snap["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|s| s["backup"] == true && s["id"] == id)
+            .ok_or("That session is no longer in the backup; refresh history")?;
+        let connector = snap["connectors"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|c| c["id"] == session["connector"])
+            .ok_or("Connect this agent before restoring its sessions")?;
+        let kept = data(env, "history")?.join(connector["id"].as_str().ok_or("Missing connector")?);
+        let source = value_path(env, &session["file"])?;
+        let relative = source.strip_prefix(&kept).map_err(|_| "That file is not part of the backup".to_owned())?;
+        let target = value_path(env, &connector["link"]["dir"])?.join(relative);
+        if session["restoreTo"].as_str() != target.to_str() {
+            return Err("That session no longer matches the backup; refresh history".into());
+        }
+        sidecar::plain_path(&target)?;
+        if exists(&target) {
+            return Err("That session is already back in place".into());
+        }
+        let content = fs::read(&source).map_err(|e| e.to_string())?;
+        files::replace(&target, &content)?;
+        // The file keeps today's date on purpose: a tool that deletes old logs would remove it again at once.
+        Ok(json!({"restored":target,"title":session["title"],"provider":session["provider"]}))
+    })
+}
 const BACKUP_STATE: &str = "backup.json";
 /// When agent history was last backed up and what the backup holds, or nothing if it never ran.
 pub fn backup_state(env: &Env) -> Option<Value> {

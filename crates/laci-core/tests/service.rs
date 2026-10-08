@@ -937,3 +937,67 @@ fn a_tool_the_user_describes_can_be_started_and_given_the_mcp_server() {
     undo_latest(&mut service, "connector:custom-aider");
     assert_eq!(laci_core::providers::get(&env, "custom-aider").unwrap().prompt, ["--message", "{prompt}"]);
 }
+
+#[test]
+fn sessions_only_the_backup_holds_are_listed_and_can_be_put_back() {
+    const ID: &str = "11111111-2222-3333-4444-555555555555";
+    const CODEX: &str = "99999999-2222-3333-4444-555555555555";
+    let (_temp, env, project) = fixture();
+    config::save(&env, &json!({"roots":["~/project"],"presets":["claude","codex"],"custom":[]})).unwrap();
+    let store = env.home.join(".claude/projects").join(laci_core::paths::enc(&project.to_string_lossy()));
+    let session = store.join(format!("{ID}.jsonl"));
+    write(
+        &session,
+        &format!(
+            "{}\n",
+            json!({"type":"user","cwd":project,"sessionId":ID,"message":{"role":"user","content":"Fix the login page"}})
+        ),
+    );
+    write(
+        &store.join(format!("{ID}/subagents/agent-a.jsonl")),
+        &format!("{}\n", json!({"type":"user","cwd":project,"sessionId":ID})),
+    );
+    write(&store.join("memory/MEMORY.md"), "- note\n");
+    let rollout = env.home.join(".codex/sessions/2026/rollout.jsonl");
+    write(&rollout, &format!("{}\n", json!({"type":"session_meta","payload":{"id":CODEX,"cwd":project}})));
+    let mut service = loaded(&env, &project);
+    let snap = service.snapshot().unwrap();
+    let cleanup: Vec<_> = snap["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|w| w["code"].as_str())
+        .filter(|code| code.ends_with("-cleanup"))
+        .collect();
+    assert_eq!(cleanup, ["claude-cleanup"], "Codex keeps its history, so only Claude Code is warned about");
+
+    let done = service.request("backup", &json!({})).unwrap();
+    assert_eq!(done["snapshot"]["backup"]["pending"], 0, "Codex sessions count as backed up too");
+    fs::remove_file(&session).unwrap();
+    fs::remove_file(&rollout).unwrap();
+    let snap = service.rescan().unwrap();
+    let kept: Vec<&Value> = snap["sessions"].as_array().unwrap().iter().filter(|s| s["backup"] == true).collect();
+    assert_eq!(kept.len(), 2, "one per deleted session; subagent logs and memory are not sessions");
+    let lost = *kept.iter().find(|s| s["provider"] == "claude").unwrap();
+    assert_eq!(
+        (&lost["title"], &lost["resumeCapability"], &lost["cwd"], &lost["restoreTo"]),
+        (&json!("Fix the login page"), &json!("history-only"), &json!(project), &json!(session))
+    );
+    assert!(lost["file"].as_str().unwrap().starts_with(env.data_dir.join("history/claude").to_str().unwrap()));
+    assert!(kept.iter().any(|s| s["provider"] == "codex" && s["sessionId"] == CODEX));
+    let (request, found) =
+        service.agent_context(&json!({"provider":"claude","sessionId":ID,"projectPath":project})).unwrap();
+    assert!(laci_core::launch::resolve(&env, &request, found.as_ref()).is_err(), "a copy cannot be resumed");
+
+    let done = service.request("backup/restore", &json!({"id":lost["id"]})).unwrap();
+    assert!(fs::read_to_string(&session).unwrap().contains("Fix the login page"));
+    let back = done["snapshot"]["sessions"].as_array().unwrap().iter().find(|s| s["sessionId"] == ID).unwrap();
+    assert_eq!((&back["backup"], &back["resumeCapability"]), (&Value::Null, &json!("supported")));
+    let entry = &activity::read_log(&env, 10)[0];
+    assert_eq!(
+        (&entry["title"], &entry["detail"]),
+        (&json!("Restored a Claude Code session from the backup"), &json!("Fix the login page"))
+    );
+    assert!(service.request("backup/restore", &json!({"id":lost["id"]})).is_err(), "it is no longer missing");
+    assert!(service.request("backup/restore", &json!({"id":"backup:claude:../../x.jsonl"})).is_err());
+}

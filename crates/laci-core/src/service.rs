@@ -772,6 +772,8 @@ impl Service {
                     let allowed=paths::workspace_path(&e.path().to_string_lossy(),&self.env).is_ok();let dir=allowed&&e.path().is_dir();
                     json!({"name":e.file_name().to_string_lossy(),"path":e.path(),"dir":dir,"link":link,"size":meta.map(|m|m.len()),"at":files::modified(&e.path()),"git":dir&&e.path().join(".git").exists()})}).collect();
                 Ok(json!({"path":path,"entries":entries}))
+            "agent/mcp" => Ok(json!({"agents":crate::mcp_setup::statuses(&self.env)})),
+            "agent/mcp/apply" => crate::mcp_setup::change(&self.env, string(b, "provider"), b["remove"] == true, by),
             }
             "ls/newest" => {
                 let path = paths::workspace_path(string(b, "path"), &self.env)?;

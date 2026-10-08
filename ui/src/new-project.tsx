@@ -4,6 +4,7 @@ import { DialogFrame } from "./dialogs";
 import {
   AgentFields,
   agentDraft,
+  withoutContinue,
   agentProviders,
   type AgentDraft,
   validateAgentDraft,
@@ -214,7 +215,7 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
         await api<CreationJob>("new/continue", {
           id: job.id,
           retryAttempt: job.continuation.attempt,
-          agent,
+          agent: withoutContinue(agent),
         }),
       );
       setPollVersion((version) => version + 1);
@@ -279,7 +280,7 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
       setJob(
         await api<CreationJob>("new/start", {
           ...draft,
-          agent: launchAfter ? agent : null,
+          agent: launchAfter ? withoutContinue(agent) : null,
         }),
       );
     } catch (error) {

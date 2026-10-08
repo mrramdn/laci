@@ -20,6 +20,7 @@ export type Modal =
   | { kind: "new"; job?: CreationJob }
   | { kind: "archive" | "delete" | "orphan"; id: string }
   | { kind: "terminal-close"; id: string }
+  | { kind: "mcp"; provider: string }
   | {
       kind: "agent";
       projectPath: string;

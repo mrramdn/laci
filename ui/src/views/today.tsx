@@ -135,7 +135,7 @@ export function Today() {
       <div className="body">
         <BackupNotice />
         {snapshot.warnings
-          .filter((warning) => warning.code !== "claude-cleanup")
+          .filter((warning) => !warning.code.endsWith("-cleanup"))
           .map((warning, i) => (
             <div className="callout" key={i}>
               <Icon name="alert" />

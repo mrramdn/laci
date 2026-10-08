@@ -148,6 +148,7 @@ pub fn mutates(name: &str) -> bool {
             | "new/recipe"
             | "connector/add"
             | "connector/remove"
+            | "backup/restore"
     )
 }
 
@@ -164,6 +165,7 @@ pub fn changes_history(name: &str) -> bool {
             | "new"
             | "connector/add"
             | "connector/remove"
+            | "backup/restore"
     )
 }
 
@@ -335,7 +337,7 @@ impl Service {
             "apply" => Refresh { watches: true, ..Refresh::agents() },
             // The warning and the backup line on Today come from the agent pass.
             "backup" if value["skipped"] != true => Refresh::agents(),
-            "backup/auto" => Refresh::agents(),
+            "backup/auto" | "backup/restore" => Refresh::agents(),
             _ => Refresh::default(),
         };
         if changes_history(name)
@@ -571,6 +573,20 @@ impl Service {
                 }
                 Ok(result)
             }
+            "backup/restore" => {
+                let snap = self.snapshot()?;
+                let result = ops::restore_backup(&self.env, &snap, string(b, "id"))?;
+                let name = array(&snap["connectors"])
+                    .into_iter()
+                    .find(|c| c["provider"] == result["provider"])
+                    .map(|c| string(&c, "name").to_owned())
+                    .unwrap_or_else(|| "agent".into());
+                activity::record(
+                    &self.env,
+                    json!({"by":by,"title":format!("Restored a {name} session from the backup"),"path":result["restored"],"detail":result["title"]}),
+                );
+                Ok(result)
+            }
             "backup/auto" => {
                 let on = b["on"].as_bool().ok_or("Choose on or off")?;
                 ops::with_lock(&self.env, || {
@@ -700,7 +716,12 @@ impl Service {
                             json!(array(&c["custom"]).into_iter().filter(|p| p["id"] != id).collect::<Vec<_>>());
                         (
                             id.to_owned(),
-                            format!("Removed {} history", string(&old, "name")),
+                            // A tool Laci only starts has no history to speak of.
+                            format!(
+                                "Removed {}{}",
+                                string(&old, "name"),
+                                if old["link"]["kind"] == "none" { "" } else { " history" }
+                            ),
                             if let Some(spec) = custom {
                                 json!({"type":"connector","spec":spec})
                             } else {
@@ -736,7 +757,11 @@ impl Service {
                         c["custom"] = json!(custom);
                         (
                             key.clone(),
-                            format!("Added {} history", string(&spec, "name")),
+                            format!(
+                                "Added {}{}",
+                                string(&spec, "name"),
+                                if spec["link"]["kind"] == "none" { "" } else { " history" }
+                            ),
                             json!({"type":"connector","remove":key}),
                         )
                     };
@@ -749,6 +774,8 @@ impl Service {
                 })?;
                 Ok(json!({}))
             }
+            "agent/mcp" => Ok(json!({"agents":crate::mcp_setup::statuses(&self.env)})),
+            "agent/mcp/apply" => crate::mcp_setup::change(&self.env, string(b, "provider"), b["remove"] == true, by),
             "health" => {
                 let node = self.node(string(b, "id"))?;
                 Ok(readers::health(&paths::workspace_path(string(&node, "path"), &self.env)?))

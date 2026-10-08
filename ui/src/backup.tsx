@@ -18,7 +18,8 @@ function turnOn(thenBackup: boolean) {
 export function BackupNotice() {
   const snapshot = useApp((s) => s.snapshot);
   const state = snapshot?.backup;
-  const warning = snapshot?.warnings.find((w) => w.code === "claude-cleanup");
+  // One per agent that deletes its own history; the first is enough to act on.
+  const warning = snapshot?.warnings.find((w) => w.code.endsWith("-cleanup"));
   const dest = state?.dest;
   const folder = dest ? (
     <button className="btn sm" onClick={() => external(dest, "files")}>

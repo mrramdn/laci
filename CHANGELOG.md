@@ -4,6 +4,26 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-08
+
+Laci works with any agent, not only Claude Code.
+
+### Added
+
+- **Provider registry.** Each agent Laci can start is described by its program, how its arguments are built, its models and effort levels, and where it keeps its MCP servers. Claude Code, Codex and Antigravity are built in.
+- **Your own agents.** A tool described in `config.json`, or in "Add another AI tool" under "Something else", can be started from Laci like the built-in ones. Only a command name is needed. A history store is optional.
+- **MCP setup in the app.** Each agent card on the Agents page shows whether Laci's MCP server is set up. "Set up…" shows the exact command or JSON first, then applies it. Laci keeps a copy of the agent's settings file in `~/.local/share/laci/mcp-backups/` before a change, and writes the change to the Log.
+- **Continue the last conversation.** The Start dialog offers this for agents that support it: Claude Code, Codex, Antigravity, and your own tools when described.
+- **Antigravity effort levels.** Low, medium, high, xhigh and max can be chosen, also with the default model.
+- **Sessions only the backup holds.** A session its tool has deleted is listed from Laci's backup, marked "In backup only". Restore puts it back where the tool keeps it. Works for Claude Code and Codex sessions.
+
+### Changed
+
+- The "deletes session logs after N days" warning comes from each agent's description, not only Claude Code. The backup status counts sessions from every connected history store.
+- When an agent cannot list its models, the Start dialog shows the agent's own reason, such as a request to sign in first.
+- On the Agents page the built-in agents come first, then your own tools.
+- Gemini CLI stays a history-only connector. Google replaced it with Antigravity CLI for personal accounts in June 2026, so the agent Laci starts is Antigravity. Old Gemini CLI logs can still be read.
+
 ## [2.1.0] - 2026-10-08
 
 Today, Health, backup and agent management, reworked after the 2.0.0 audit.

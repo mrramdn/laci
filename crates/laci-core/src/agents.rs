@@ -9,7 +9,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::{env::Env, files, paths};
+use crate::{env::Env, files, paths, providers};
 
 pub fn catalog(env: &Env) -> Vec<Value> {
     vec![
@@ -34,7 +34,8 @@ fn same_store(a: &Value, b: &Value) -> bool {
             a.canonicalize().unwrap_or_else(|_| paths::normalize(a))
                 == b.canonicalize().unwrap_or_else(|_| paths::normalize(b))
         }
-        _ => a["link"] == b["link"],
+        // Tools Laci only starts keep no store, so two of them never share one.
+        _ => a["link"]["kind"] != "none" && a["link"] == b["link"],
     }
 }
 pub fn connectors(env: &Env, cfg: &Value) -> Vec<Value> {
@@ -44,7 +45,11 @@ pub fn connectors(env: &Env, cfg: &Value) -> Vec<Value> {
     for custom in cfg["custom"].as_array().into_iter().flatten() {
         let Ok(mut c) = crate::config::validate_connector(env, custom) else { continue };
         c["builtin"] = json!(false);
-        c["about"] = json!("User-configured history store");
+        c["about"] = json!(match (c["agent"].is_object(), c["link"]["kind"] == "none") {
+            (true, true) => "Started from Laci; it keeps no history Laci reads",
+            (true, false) => "Started from Laci, with the history store you described",
+            _ => "User-configured history store",
+        });
         if let Some(p) = c["link"]["dir"].as_str() {
             c["link"]["dir"] = json!(paths::expand(p, &env.home));
         }
@@ -69,6 +74,22 @@ pub fn connectors(env: &Env, cfg: &Value) -> Vec<Value> {
             out.push(c);
         }
     }
+    // What each one can do comes from its description, built in or the user's own.
+    let known = providers::builtins();
+    for c in &mut out {
+        let described = if c["provider"].is_null() { providers::from_spec(c) } else { None };
+        if described.is_some() {
+            c["provider"] = c["id"].clone();
+            c["capabilities"] = json!({"launch":true,"resume":false,"titles":false,"modelDiscovery":"aliases"});
+        }
+        let Some(provider) = described.as_ref().or_else(|| known.iter().find(|p| c["provider"] == p.id.as_str()))
+        else {
+            continue;
+        };
+        c["command"] = json!(provider.command);
+        c["capabilities"]["continue"] = json!(!provider.continue_last.is_empty());
+        c["capabilities"]["mcp"] = json!(provider.mcp.is_some());
+    }
     out
 }
 /// Metadata alongside a provider store needs watches as well as the logs themselves.
@@ -87,6 +108,8 @@ pub fn store_name(link: &Value, path: &str) -> String {
 pub fn where_for(env: &Env, link: &Value) -> String {
     if let Some(dir) = link["dir"].as_str() {
         paths::tilde(Path::new(dir), &env.home)
+    } else if link["kind"] == "none" {
+        String::new()
     } else {
         format!("<project>/{}", link["path"].as_str().unwrap_or(""))
     }
@@ -627,6 +650,43 @@ fn read_antigravity(env: &Env, dir: &Path, connector: &str, cache: &mut Cache, o
     }
 }
 
+/// Sessions Laci's backup still holds although their tool has deleted them. They cannot be resumed
+/// from there, only read and put back.
+fn read_backup(env: &Env, on: &[Value], cache: &mut Cache, out: &mut AgentData) {
+    for c in on {
+        let (Some(id), Some(store)) = (c["id"].as_str(), c["link"]["dir"].as_str()) else { continue };
+        let provider = c["provider"].as_str().unwrap_or(id);
+        // Only these two keep one log per session in a form Laci reads.
+        if !matches!(provider, "claude" | "codex") {
+            continue;
+        }
+        let store = paths::expand(store, &env.home);
+        let kept = env.data_dir.join("history").join(id);
+        for file in regular_files(env, &kept, ".jsonl") {
+            let Ok(relative) = file.strip_prefix(&kept) else { continue };
+            // Claude Code keeps a session at <project>/<id>.jsonl; deeper logs belong to its subagents.
+            if provider == "claude" && relative.components().count() != 2 {
+                continue;
+            }
+            let original = store.join(relative);
+            if fs::symlink_metadata(&original).is_ok() {
+                continue;
+            }
+            let facts = cache.facts(&format!("backup:{provider}"), &file, || session_facts(&file, provider));
+            let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+            let mut session = normalized_session(provider, &file, &facts, (provider == "claude").then_some(&*stem));
+            session["id"] = json!(format!("backup:{id}:{}", relative.display()));
+            session["connector"] = json!(id);
+            session["backup"] = json!(true);
+            session["restoreTo"] = json!(original);
+            session["resumeCapability"] = json!("history-only");
+            session["at"] = session["updatedAt"].clone();
+            session["bytes"] = json!(fs::metadata(&file).map_or(0, |m| m.len()));
+            out.sessions.push(session);
+        }
+    }
+}
+
 pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
     let mut cache = Cache::load(env);
     let mut out = AgentData::default();
@@ -753,6 +813,7 @@ pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
             out.paths.insert(PathBuf::from(p));
         }
     }
+    read_backup(env, on, &mut cache, &mut out);
     out.sessions.sort_by(|a, b| b["updatedAt"].as_str().cmp(&a["updatedAt"].as_str()));
     cache.save(env);
     out

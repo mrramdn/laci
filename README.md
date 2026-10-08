@@ -116,9 +116,31 @@ A connector tells laci where an AI tool keeps its history, so it shows on the ri
 
 Codex titles use its title index, then a bounded first user message, then a short session ID. Child sessions appear under their parent. Home sessions stay global and can be inspected and resumed without a matched project. Antigravity uses `agy` and its last-conversation index; it does not expose full titles or resumability for history-only records. Laci does not edit provider title/model settings.
 
-Claude Code deletes session logs after a retention period. **Back up logs now** copies agent logs to `~/.local/share/laci/history`; Today then shows when the backup last ran and how many sessions it keeps, with **Open backup folder**. Automatic backup is optional and runs at most once an hour, only when a session changed. Nothing is ever removed from the backup.
+Claude Code, Codex and Antigravity are built in. Any other tool can be added with its command name in **Add another AI tool**; how it takes a first prompt, continues its last conversation and picks a model is optional. A tool does not need a history store that Laci can read. The same description can be written in `~/.config/laci/config.json`:
 
-![Agents: connected tools, sessions per project, and history whose folder is gone](docs/screenshots/agents.png)
+```json
+{
+  "custom": [
+    {
+      "id": "custom-aider",
+      "name": "Aider",
+      "link": { "kind": "inside", "path": ".aider.chat.history.md" },
+      "agent": {
+        "command": "aider",
+        "prompt": ["--message", "{prompt}"],
+        "model": ["--model", "{model}"],
+        "models": [{ "id": "sonnet" }]
+      }
+    }
+  ]
+}
+```
+
+`{prompt}` and `{model}` stand for the value. Each list element is passed as one argument, never through a shell. `link` can be left out for a tool whose history Laci cannot read.
+
+Claude Code deletes session logs after a retention period. **Back up logs now** copies agent logs to `~/.local/share/laci/history`; Today then shows when the backup last ran and how many sessions it keeps, with **Open backup folder**. Automatic backup is optional and runs at most once an hour, only when a session changed. Nothing is ever removed from the backup. Sessions a tool has deleted stay listed from the backup, marked "In backup only", and can be restored.
+
+![Agents: each tool with its MCP setup, your own tool beside the built-in ones, and one list of sessions](docs/screenshots/agents.png)
 
 ### New project
 
@@ -144,7 +166,7 @@ laci watches your project folders, each project's files and git state, the agent
 
 ### For agents: MCP
 
-laci ships an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Codex and other agents can ask laci what exists, and move, archive or create projects the safe way instead of using `ls` and `mv`. What they change shows up in the Log. See [Agents](#agents-mcp).
+laci ships an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Codex, Antigravity and other agents can ask laci what exists, and move, archive or create projects the safe way instead of using `ls` and `mv`. What they change shows up in the Log. See [Agents](#agents-mcp).
 
 ### In the terminal
 
@@ -206,10 +228,13 @@ laci json      # the complete scan as JSON
 
 ### Agents (MCP)
 
+The Agents page can set this up for you. Each agent card shows whether Laci's MCP server is set up: "Set up", "Not set up", "Points elsewhere" or "Switched off". **Set up…** shows the exact command or JSON first, then applies it. The steps below are the manual fallback.
+
 Register the installed binary as a stdio server. The MCP path runs without creating a window.
 
 ```sh
 claude mcp add laci --scope user -- /home/you/.local/bin/laci mcp
+agy mcp add laci /home/you/.local/bin/laci mcp
 ```
 
 ```toml
@@ -218,6 +243,8 @@ claude mcp add laci --scope user -- /home/you/.local/bin/laci mcp
 command = "/home/you/.local/bin/laci"
 args = ["mcp"]
 ```
+
+Codex can also add it with a command: `codex mcp add laci -- /home/you/.local/bin/laci mcp`.
 
 Then ask your agent things like *"which projects could lose work?"*, *"archive dummy2"*, *"move ~/Downloads/foo into ~/project/clients"* or *"start a new project called shop-api in ~/project/clients"*.
 

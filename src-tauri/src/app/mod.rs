@@ -154,6 +154,17 @@ impl AppState {
                     body["refresh"].as_bool().unwrap_or(false),
                 );
             }
+            // The agent's own program can take a while; it never runs under the engine lock.
+            "agent/mcp" | "agent/mcp/apply" => {
+                let env = self.engine.lock().map_err(|e| e.to_string())?.service.env.clone();
+                if name == "agent/mcp" {
+                    return Ok(json!({"agents":laci_core::mcp_setup::statuses(&env)}));
+                }
+                let result =
+                    laci_core::mcp_setup::change(&env, string(body, "provider"), body["remove"] == true, "app")?;
+                self.notice(json!({"type":"log"}));
+                return Ok(result);
+            }
             "agent/launch" => return self.launch_agent(body),
             "new/start" => {
                 let env = {

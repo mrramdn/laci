@@ -10,16 +10,17 @@ import {
   date,
   groupSessions,
   plural,
-  PROVIDER_NAMES,
+  providerName,
   sessionKey,
   sessionsOf,
   tilde,
   counted,
 } from "../helpers";
 import { api } from "../api";
-import { agentProviders, LAUNCHABLE_PROVIDERS } from "../agent-launch";
+import { agentProviders } from "../agent-launch";
 import type { AgentCapabilities } from "../agent-launch";
 import { SessionList } from "../session-ui";
+import { McpRow, loadMcp } from "../mcp-setup";
 import type { Change, ClaudeDir, ConnectorState, Suggestion } from "../types";
 
 const SESSION_LIMIT = 50;
@@ -42,13 +43,16 @@ export function AgentsView() {
   const sessions = allSessions(snapshot);
   const launchable = agentProviders(snapshot.connectors);
   const providerOf = (c: ConnectorState) => c.provider ?? c.id;
+  // The agents Laci ships with come first, then the user's own, then what is not connected yet.
   const cards = [
-    ...snapshot.connectors.map((c) => ({
-      id: c.id,
-      provider: providerOf(c),
-      connector: c as ConnectorState | undefined,
-      suggestion: undefined as Suggestion | undefined,
-    })),
+    ...[...snapshot.connectors]
+      .sort((a, b) => Number(b.builtin) - Number(a.builtin))
+      .map((c) => ({
+        id: c.id,
+        provider: providerOf(c),
+        connector: c as ConnectorState | undefined,
+        suggestion: undefined as Suggestion | undefined,
+      })),
     ...snapshot.suggestions.map((x) => ({
       id: x.id,
       provider: x.id,
@@ -56,12 +60,10 @@ export function AgentsView() {
       suggestion: x as Suggestion | undefined,
     })),
   ];
+  // Whether its program is installed is worth showing before an agent is connected, too.
   const wanted = [
-    ...new Set(
-      cards
-        .map((card) => card.provider)
-        .filter((id) => LAUNCHABLE_PROVIDERS.includes(id)),
-    ),
+    ...launchable.map((item) => item.value),
+    ...snapshot.suggestions.filter((x) => x.launch).map((x) => x.id),
   ].join(",");
   const [caps, setCaps] = useState<Record<string, AgentCapabilities>>({});
   useEffect(() => {
@@ -76,6 +78,10 @@ export function AgentsView() {
       live = false;
     };
   }, [wanted]);
+  const connectedIds = snapshot.connectors.map((c) => c.id).join(",");
+  useEffect(() => {
+    void loadMcp();
+  }, [connectedIds]);
   const usage = useMemo(() => {
     const map = new Map<string, { count: number; last: string }>();
     for (const session of sessions) {
@@ -150,7 +156,6 @@ export function AgentsView() {
               >
                 <div className="top">
                   <span className="k">{name}</span>
-                  {c && !c.builtin ? <span className="tag">Custom</span> : null}
                   <label className="switch">
                     <input
                       type="checkbox"
@@ -176,18 +181,25 @@ export function AgentsView() {
                     ) : null}
                   </p>
                 )}
-                {info ? (
+                {info || (c && !c.builtin) ? (
                   <div className="agent-state">
-                    <span className={`pill ${info.installed ? "ok" : "warn"}`}>
-                      {info.installed ? "Installed" : "Not on PATH"}
-                    </span>
+                    {info ? (
+                      <span
+                        className={`pill ${info.installed ? "ok" : "warn"}`}
+                      >
+                        {info.installed ? "Installed" : "Not on PATH"}
+                      </span>
+                    ) : null}
+                    {c && !c.builtin ? (
+                      <span className="pill">Custom</span>
+                    ) : null}
                   </div>
                 ) : null}
-                {c ? (
+                {c && c.link.kind !== "none" ? (
                   <div className="agent-use">
                     {use
                       ? `${plural(use.count, "session")} · last used ${since(use.last)}`
-                      : c.present && c.id !== "claude"
+                      : c.present && c.count
                         ? plural(
                             c.count,
                             c.link.kind === "cwd"
@@ -204,6 +216,9 @@ export function AgentsView() {
                     Starts with: {model} ·{" "}
                     {remembered?.effort ?? "Default effort"}
                   </div>
+                ) : null}
+                {c?.capabilities?.mcp ? (
+                  <McpRow provider={card.provider} />
                 ) : null}
                 {canLaunch && info?.installed ? (
                   <div className="foot">
@@ -227,14 +242,23 @@ export function AgentsView() {
                 {c ? (
                   <details className="agent-details">
                     <summary>Details</summary>
-                    <div className="v">
-                      {c.present ? bytes(c.bytes) : "Nothing here yet"}
-                    </div>
-                    <div className="p">{c.where}</div>
-                    <div className="mv">
-                      On move:{" "}
-                      {c.moves.charAt(0).toLowerCase() + c.moves.slice(1)}
-                    </div>
+                    {c.link.kind === "none" ? null : (
+                      <>
+                        <div className="v">
+                          {c.present ? bytes(c.bytes) : "Nothing here yet"}
+                        </div>
+                        <div className="p">{c.where}</div>
+                        <div className="mv">
+                          On move:{" "}
+                          {c.moves.charAt(0).toLowerCase() + c.moves.slice(1)}
+                        </div>
+                      </>
+                    )}
+                    {c.command ? (
+                      <div className="mv">
+                        Started with: <span className="mono">{c.command}</span>
+                      </div>
+                    ) : null}
                     {!c.builtin ? (
                       <div className="foot">
                         <button
@@ -272,6 +296,10 @@ function SessionsSection() {
   const [query, setQuery] = useState("");
   const [agent, setAgent] = useState("all");
   const [resumable, setResumable] = useState(false);
+  const [backupOnly, setBackupOnly] = useState(false);
+  // Once the last of them is restored the chip goes, and so must its filter.
+  const anyInBackup = all.some((session) => session.backup);
+  const inBackup = backupOnly && anyInBackup;
   const [scope, setScope] = useState<"all" | "in" | "out">("all");
   const owners = useMemo(() => {
     const map = new Map<string, (typeof snapshot.nodes)[string]>();
@@ -286,6 +314,7 @@ function SessionsSection() {
     const node = owners.get(sessionKey(session));
     if (agent !== "all" && session.provider !== agent) return false;
     if (resumable && session.resumeCapability !== "supported") return false;
+    if (inBackup && !session.backup) return false;
     if (scope === "in" && !node) return false;
     if (scope === "out" && node) return false;
     if (!needle) return true;
@@ -315,7 +344,7 @@ function SessionsSection() {
         <div className="showbar" role="group" aria-label="Agent">
           {chip("All agents", agent === "all", () => setAgent("all"))}
           {providers.map((provider) =>
-            chip(PROVIDER_NAMES[provider] ?? provider, agent === provider, () =>
+            chip(providerName(snapshot, provider), agent === provider, () =>
               setAgent(provider),
             ),
           )}
@@ -326,6 +355,9 @@ function SessionsSection() {
           {chip("Outside projects", scope === "out", () => setScope("out"))}
         </div>
         {chip("Resumable", resumable, () => setResumable(!resumable))}
+        {anyInBackup
+          ? chip("In backup only", inBackup, () => setBackupOnly(!inBackup))
+          : null}
       </div>
       {shown.length ? (
         <>

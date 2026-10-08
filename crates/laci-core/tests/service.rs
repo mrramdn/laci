@@ -774,3 +774,57 @@ fn a_badge_leaves_nothing_behind_in_a_summary() {
     let line = "Shell config. [![build](https://img.example/b.svg)](https://ci.example) See the [docs](docs/a.md).";
     assert_eq!(readers::strip_md(line), "Shell config. See the docs.");
 }
+
+#[test]
+fn health_lists_what_stands_behind_the_counts() {
+    let (temp, env, project) = fixture();
+    let git = |dir: &Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.test")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.test")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    };
+    let remote = temp.path().join("backup.git");
+    fs::create_dir(&remote).unwrap();
+    git(&remote, &["init", "-q", "--bare", "--initial-branch=main"]);
+    write(&project.join("package.json"), r#"{"name":"demo","version":"1.4.0"}"#);
+    git(&project, &["init", "-q", "--initial-branch=main"]);
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "-qm", "feat: first release"]);
+    git(&project, &["tag", "v1.3.0"]);
+    git(&project, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(&project, &["push", "-q", "-u", "origin", "main"]);
+    for name in ["one", "two"] {
+        write(&project.join(format!("{name}.txt")), name);
+        git(&project, &["add", "-A"]);
+        git(&project, &["commit", "-qm", &format!("feat: {name}")]);
+    }
+    write(&project.join("one.txt"), "edited");
+    write(&project.join("draft.txt"), "new");
+
+    let mut service = loaded(&env, &project);
+    let health = service.request("health", &json!({"id":project})).unwrap();
+    assert_eq!(health["changes"], json!([{"code":"M","path":"one.txt"},{"code":"??","path":"draft.txt"}]));
+    assert_eq!(health["changesMore"], 0);
+    let subjects = |key: &str| -> Vec<String> {
+        health[key].as_array().unwrap().iter().map(|c| c["subject"].as_str().unwrap().to_owned()).collect()
+    };
+    assert_eq!(subjects("unpushed"), ["feat: two", "feat: one"]);
+    assert_eq!(subjects("recent"), ["feat: two", "feat: one", "feat: first release"]);
+    assert_eq!(health["recent"][0]["author"], "Test");
+    assert!(health["recent"][0]["at"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(
+        (&health["release"]["version"], &health["release"]["source"], &health["release"]["tag"]),
+        (&json!("1.4.0"), &json!("package.json"), &json!("v1.3.0"))
+    );
+    assert_eq!(health["release"]["since"], 2);
+    assert!(service.request("health", &json!({"id":"/nowhere"})).is_err());
+}

@@ -1,5 +1,5 @@
 //! Edits the project's private Markdown notes without rewriting unrelated content.
-use crate::{Result, files, process, readers};
+use crate::{Result, files, git, readers};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::{
@@ -55,8 +55,7 @@ fn edit(dir: &Path, transform: impl FnOnce(&str) -> String) -> Result<()> {
     ensure_excluded(dir)
 }
 pub(crate) fn exclude_file(dir: &Path) -> Option<PathBuf> {
-    let raw =
-        process::run("git", &["rev-parse", "--git-path", "info/exclude"], Some(dir), Duration::from_secs(5)).ok()?;
+    let raw = git::plain(dir, &["rev-parse", "--git-path", "info/exclude"], Duration::from_secs(5)).ok()?;
     if raw.is_empty() {
         return None;
     }

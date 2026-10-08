@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeSet, HashMap},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::Stdio,
     time::{Duration, Instant},
 };
@@ -670,9 +670,14 @@ impl Service {
             }
             "open/url" => {
                 let url = string(b, "url");
-                if !url.starts_with("https://") && !url.starts_with("http://") {
-                    return Err("Only web addresses can be opened".into());
-                }
+                let url = if url.starts_with("https://") || url.starts_with("http://") {
+                    url
+                } else if url.starts_with("mailto:") {
+                    // Only the address: a mail link can also ask the mail program to attach a file.
+                    url.split('?').next().unwrap_or(url)
+                } else {
+                    return Err("Only web and mail addresses can be opened".into());
+                };
                 detach("xdg-open", &[url.into()], &self.env.home)?;
                 Ok(json!({"ok":true}))
             }
@@ -914,6 +919,20 @@ fn external_terminal(app: &str, cwd: &Path, cmd: Option<&str>, confirm: bool) ->
         "alacritty" => vec!["--working-directory".into(), d],
         "wezterm" => vec!["start".into(), "--cwd".into(), d],
         _ => Vec::new(),
+        } else if what == "link" {
+            let node = self.place(id)?;
+            let project = paths::workspace_path(string(&node, "path"), &self.env)?;
+            let shown = match link_target(&project, string(b, "arg"))? {
+                LinkTarget::Open(file) => {
+                    detach("xdg-open", &[file.to_string_lossy().into_owned()], file.parent().unwrap_or(&project))?;
+                    false
+                }
+                LinkTarget::Show(folder) => {
+                    detach(string(&apps, "files"), &[folder.to_string_lossy().into_owned()], &folder)?;
+                    true
+                }
+            };
+            return Ok(json!({"ok":true,"shown":shown}));
     };
     if let Some(cmd) = cmd {
         args.push(if app == "wezterm" || app == "gnome-terminal" { "--" } else { "-e" }.into());
@@ -925,4 +944,57 @@ fn external_terminal(app: &str, cwd: &Path, cmd: Option<&str>, confirm: bool) ->
         args.extend(["bash".into(), "-lc".into(), script.into(), cmd.into()]);
     }
     detach(app, &args, cwd)
+}
+/// Where a link in a project's README leads.
+#[derive(Debug, PartialEq)]
+pub enum LinkTarget {
+    /// A document inside the project, for the system's default viewer.
+    Open(PathBuf),
+    /// A folder for the file manager: the target itself, or the one holding a file that is not a document.
+    Show(PathBuf),
+}
+/// File types that only display. Whatever else a link names is shown in its folder, never started.
+const DOCUMENTS: [&str; 19] = [
+    "md", "markdown", "txt", "rst", "adoc", "pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "csv", "tsv", "json",
+    "yaml", "yml", "toml", "log",
+];
+fn percent_decoded(text: &str) -> Option<String> {
+    let mut out = Vec::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('%') {
+        out.extend_from_slice(&rest.as_bytes()[..at]);
+        out.push(u8::from_str_radix(rest.get(at + 1..at + 3)?, 16).ok()?);
+        rest = &rest[at + 3..];
+    }
+    out.extend_from_slice(rest.as_bytes());
+    String::from_utf8(out).ok()
+}
+/// A README is not trusted: its link text can promise one thing and name another. The target must be inside
+/// the project, also after links on disk are followed.
+pub fn link_target(project: &Path, href: &str) -> Result<LinkTarget> {
+    let outside = "That link leads outside this project";
+    let raw = href.split(['#', '?']).next().unwrap_or("");
+    let decoded = percent_decoded(raw).unwrap_or_else(|| raw.to_owned());
+    // Like on code hosts, a leading slash means the top of the project.
+    let relative = decoded.trim_start_matches('/');
+    if relative.is_empty() || relative.contains('\0') {
+        return Err("That link has no file to open".into());
+    }
+    let target = paths::normalize(&project.join(relative));
+    if !target.starts_with(project) {
+        return Err(outside.into());
+    }
+    let real = target.canonicalize().map_err(|_| "That file is gone".to_owned())?;
+    if !real.starts_with(project.canonicalize().map_err(|_| "That folder is gone".to_owned())?) {
+        return Err(outside.into());
+    }
+    let document =
+        real.extension().and_then(|e| e.to_str()).is_some_and(|e| DOCUMENTS.contains(&e.to_ascii_lowercase().as_str()));
+    Ok(if real.is_dir() {
+        LinkTarget::Show(real)
+    } else if document {
+        LinkTarget::Open(real)
+    } else {
+        LinkTarget::Show(real.parent().unwrap_or(project).to_owned())
+    })
 }

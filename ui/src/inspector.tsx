@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import { api, errorText } from "./api";
 import { useApp, external, run, toast, urlOpen } from "./store";
+import { anchorOf, renderReadme } from "./readme";
 import {
   agentCount,
   APP_NAMES,
@@ -1017,24 +1015,12 @@ function AgentsTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
   );
 }
 function ReadmeTab({ node }: { node: Node }) {
-  const html = useMemo(() => {
-    const raw = marked.parse(node.readme?.raw ?? "", { async: false });
-    const clean = DOMPurify.sanitize(raw);
-    const doc = new DOMParser().parseFromString(clean, "text/html");
-    for (const image of doc.querySelectorAll("img")) {
-      const src = image.getAttribute("src") ?? "";
-      if (
-        src &&
-        !/^https?:|^data:|^asset:/.test(src) &&
-        !src.startsWith("//")
-      ) {
-        const url = new URL(src, `https://local.invalid${node.path}/`);
-        const file = decodeURIComponent(url.pathname);
-        if (file.startsWith(node.path + "/")) image.src = convertFileSrc(file);
-      }
-    }
-    return doc.body.innerHTML;
-  }, [node.path, node.readme?.raw]);
+  const [remoteFor, setRemoteFor] = useState<string>();
+  const loadRemote = remoteFor === node.path;
+  const { html, remote } = useMemo(
+    () => renderReadme(node.readme?.raw ?? "", node.path, loadRemote),
+    [node.path, node.readme?.raw, loadRemote],
+  );
   return (
     <>
       <div className="sec-t">
@@ -1043,18 +1029,53 @@ function ReadmeTab({ node }: { node: Node }) {
           <span className="faint">· still the scaffold template</span>
         ) : null}
       </div>
+      {remote && !loadRemote ? (
+        <div className="readme-note">
+          <span>
+            {plural(remote, "image")} from the web {remote === 1 ? "is" : "are"}{" "}
+            not loaded.
+          </span>
+          <button className="btn sm" onClick={() => setRemoteFor(node.path)}>
+            Load images
+          </button>
+        </div>
+      ) : null}
       <div
         className="readme"
         dangerouslySetInnerHTML={{ __html: html }}
         onClick={(e) => {
-          const link = (e.target as HTMLElement).closest("a");
-          if (link) {
+          const target = e.target as HTMLElement;
+          const link = target.closest("a");
+          if (target.closest("[data-remote]")) {
             e.preventDefault();
-            const href = link.getAttribute("href") ?? "";
-            if (/^https?:\/\//.test(href)) urlOpen(href);
+            setRemoteFor(node.path);
+          } else if (link) {
+            e.preventDefault();
+            const href = (link.getAttribute("href") ?? "").trim();
+            if (/^(https?:\/\/|mailto:)/i.test(href)) urlOpen(href);
+            else if (href.startsWith("//")) urlOpen(`https:${href}`);
             else if (href.startsWith("#"))
-              document.getElementById(href.slice(1))?.scrollIntoView();
-            else external(`${node.path}/${href}`);
+              e.currentTarget
+                .querySelector(`#${CSS.escape(anchorOf(href.slice(1)))}`)
+                ?.scrollIntoView();
+            // The cleaner drops addresses it does not allow, leaving a link with nowhere to go.
+            else if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href))
+              toast(
+                "Link not opened",
+                "A README can open web, mail and project links only",
+              );
+            else
+              void run(async () => {
+                const result = await api<{ shown: boolean }>("open", {
+                  id: node.id,
+                  what: "link",
+                  arg: href,
+                });
+                toast(
+                  result.shown ? "Shown in the file manager" : "Opened",
+                  href,
+                );
+              });
           }
         }}
       />

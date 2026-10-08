@@ -774,3 +774,96 @@ fn a_badge_leaves_nothing_behind_in_a_summary() {
     let line = "Shell config. [![build](https://img.example/b.svg)](https://ci.example) See the [docs](docs/a.md).";
     assert_eq!(readers::strip_md(line), "Shell config. See the docs.");
 }
+
+#[test]
+fn health_lists_what_stands_behind_the_counts() {
+    let (temp, env, project) = fixture();
+    let git = |dir: &Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.test")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.test")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    };
+    let remote = temp.path().join("backup.git");
+    fs::create_dir(&remote).unwrap();
+    git(&remote, &["init", "-q", "--bare", "--initial-branch=main"]);
+    write(&project.join("package.json"), r#"{"name":"demo","version":"1.4.0"}"#);
+    git(&project, &["init", "-q", "--initial-branch=main"]);
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "-qm", "feat: first release"]);
+    git(&project, &["tag", "v1.3.0"]);
+    git(&project, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(&project, &["push", "-q", "-u", "origin", "main"]);
+    for name in ["one", "two"] {
+        write(&project.join(format!("{name}.txt")), name);
+        git(&project, &["add", "-A"]);
+        git(&project, &["commit", "-qm", &format!("feat: {name}")]);
+    }
+    write(&project.join("one.txt"), "edited");
+    write(&project.join("draft.txt"), "new");
+
+    let mut service = loaded(&env, &project);
+    let health = service.request("health", &json!({"id":project})).unwrap();
+    assert_eq!(health["changes"], json!([{"code":"M","path":"one.txt"},{"code":"??","path":"draft.txt"}]));
+    assert_eq!(health["changesMore"], 0);
+    let subjects = |key: &str| -> Vec<String> {
+        health[key].as_array().unwrap().iter().map(|c| c["subject"].as_str().unwrap().to_owned()).collect()
+    };
+    assert_eq!(subjects("unpushed"), ["feat: two", "feat: one"]);
+    assert_eq!(subjects("recent"), ["feat: two", "feat: one", "feat: first release"]);
+    assert_eq!(health["recent"][0]["author"], "Test");
+    assert!(health["recent"][0]["at"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(
+        (&health["release"]["version"], &health["release"]["source"], &health["release"]["tag"]),
+        (&json!("1.4.0"), &json!("package.json"), &json!("v1.3.0"))
+    );
+    assert_eq!(health["release"]["since"], 2);
+    assert!(service.request("health", &json!({"id":"/nowhere"})).is_err());
+}
+
+#[test]
+fn a_backup_leaves_a_trace_and_clears_the_warning_until_a_session_changes() {
+    let (_temp, env, project) = fixture();
+    config::save(&env, &json!({"roots":["~/project"],"presets":["claude"],"custom":[]})).unwrap();
+    let store = env.home.join(".claude/projects").join(laci_core::paths::enc(&project.to_string_lossy()));
+    let session = store.join("11111111-2222-3333-4444-555555555555.jsonl");
+    write(&session, &format!("{}\n", json!({"type":"user","cwd":project,"sessionId":"s1"})));
+    write(&store.join("memory/MEMORY.md"), "- note\n");
+    let mut service = loaded(&env, &project);
+    let warned = |snap: &Value| snap["warnings"].as_array().unwrap().iter().any(|w| w["code"] == "claude-cleanup");
+    let snap = service.snapshot().unwrap();
+    assert!(warned(&snap));
+    assert_eq!(snap["backup"], json!({"auto":false}));
+
+    assert_eq!(service.request("backup", &json!({"auto":true})).unwrap(), json!({"skipped":true}));
+    let done = service.request("backup", &json!({})).unwrap();
+    assert_eq!((&done["copied"], &done["sessions"], &done["files"]), (&json!(2), &json!(1), &json!(2)));
+    assert_eq!(done["dest"], "~/.local/share/laci/history");
+    let snap = done["snapshot"].clone();
+    assert!(!warned(&snap), "Nothing changed since the backup, so there is nothing to warn about");
+    assert_eq!((&snap["backup"]["pending"], &snap["backup"]["sessions"]), (&json!(0), &json!(1)));
+    let entry = &activity::read_log(&env, 10)[0];
+    assert_eq!(entry["title"], "Backed up 2 agent history files");
+    assert!(entry["detail"].as_str().unwrap().starts_with("1 session kept · "));
+
+    service.request("backup", &json!({})).unwrap();
+    assert_eq!(activity::read_log(&env, 10)[0]["title"], "Agent history backup is up to date");
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    write(&session, &format!("{}\n{}\n", json!({"type":"user","cwd":project,"sessionId":"s1"}), json!({"more":1})));
+    service.request("backup/auto", &json!({"on":true})).unwrap();
+    let snap = service.rescan().unwrap();
+    assert_eq!((&snap["backup"]["pending"], &snap["backup"]["auto"]), (&json!(1), &json!(true)));
+    let warning = snap["warnings"].as_array().unwrap().iter().find(|w| w["code"] == "claude-cleanup").unwrap();
+    assert!(warning["detail"].as_str().unwrap().ends_with("1 session has changed since the last backup."));
+    // An automatic run waits an hour after the last one, however much has changed.
+    assert_eq!(service.request("backup", &json!({"auto":true})).unwrap(), json!({"skipped":true}));
+}

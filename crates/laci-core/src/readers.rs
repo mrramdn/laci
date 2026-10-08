@@ -229,6 +229,91 @@ pub fn git_info(dir: &Path) -> Option<Value> {
         "worktree":dir.join(".git").is_file()}),
     )
 }
+/// The version a project declares for itself, and the file that says so.
+fn manifest_version(dir: &Path) -> Option<(String, &'static str)> {
+    let quoted = |text: &str, sections: &[&str]| {
+        let mut inside = false;
+        text.lines().find_map(|line| {
+            let line = line.trim();
+            if line.starts_with('[') {
+                inside = sections.contains(&line);
+            }
+            if inside { re!(r#"^version\s*=\s*"([^"]+)""#).captures(line).map(|c| c[1].to_owned()) } else { None }
+        })
+    };
+    let json = |name: &str| {
+        serde_json::from_str::<Value>(&files::text(&dir.join(name))?).ok()?["version"].as_str().map(str::to_owned)
+    };
+    None.or_else(|| json("package.json").map(|v| (v, "package.json")))
+        .or_else(|| {
+            quoted(&files::text(&dir.join("Cargo.toml"))?, &["[package]", "[workspace.package]"])
+                .map(|v| (v, "Cargo.toml"))
+        })
+        .or_else(|| {
+            quoted(&files::text(&dir.join("pyproject.toml"))?, &["[project]", "[tool.poetry]"])
+                .map(|v| (v, "pyproject.toml"))
+        })
+        .or_else(|| {
+            let text = files::text(&dir.join("pubspec.yaml"))?;
+            text.lines()
+                .find_map(|line| re!(r"^version:\s*(\S+)").captures(line).map(|c| (c[1].to_owned(), "pubspec.yaml")))
+        })
+        .or_else(|| json("composer.json").map(|v| (v, "composer.json")))
+        .filter(|(version, _)| !version.is_empty())
+}
+/// What stands behind the counts on the Health tab: the changed files, the commits not pushed, the latest
+/// commits, and where the project is against its last release. Read when the tab opens, so a scan stays fast.
+pub fn health(dir: &Path) -> Value {
+    const SHOWN: usize = 200;
+    let mut out = json!({"changes":[],"unpushed":[],"recent":[],"stashes":[]});
+    if let Some((version, source)) = manifest_version(dir) {
+        out["release"] = json!({"version":version,"source":source});
+    }
+    if git::plain(dir, &["rev-parse", "--is-inside-work-tree"], Duration::from_secs(20)).as_deref() != Ok("true") {
+        return out;
+    }
+    let repo = git::Repo::at(dir);
+    let changes: Vec<_> = repo
+        .status()
+        .into_iter()
+        .filter(|line| !line.starts_with("##") && line.len() > 3 && line != SIDECAR_UNTRACKED)
+        .map(|line| json!({"code":line[..2].trim(),"path":line[3..]}))
+        .collect();
+    out["changesMore"] = json!(changes.len().saturating_sub(SHOWN));
+    out["changes"] = json!(changes.into_iter().take(SHOWN).collect::<Vec<_>>());
+    let commits = |args: &[&str]| -> Vec<Value> {
+        let mut full = vec!["log", "--format=%h%x1f%s%x1f%cI%x1f%an"];
+        full.extend_from_slice(args);
+        repo.read(&full)
+            .lines()
+            .filter_map(|line| {
+                let mut cols = line.split('\x1f');
+                Some(json!({"hash":cols.next()?,"subject":cols.next()?,"at":utc(cols.next()?),"author":cols.next()?}))
+            })
+            .collect()
+    };
+    out["recent"] = json!(commits(&["-10"]));
+    if !repo.read(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).is_empty() {
+        out["unpushed"] = json!(commits(&["-50", "@{upstream}..HEAD"]));
+    }
+    out["stashes"] = json!(
+        repo.read(&["stash", "list", "--format=%gd%x1f%gs%x1f%cI"])
+            .lines()
+            .filter_map(|line| {
+                let mut cols = line.split('\x1f');
+                Some(json!({"ref":cols.next()?,"subject":cols.next()?,"at":utc(cols.next()?)}))
+            })
+            .collect::<Vec<_>>()
+    );
+    let tag = repo.read(&["describe", "--tags", "--abbrev=0"]);
+    if !tag.is_empty() {
+        out["release"]["tag"] = json!(tag);
+        out["release"]["tagAt"] = json!(utc(&repo.read(&["log", "-1", "--format=%cI", &tag])));
+        out["release"]["since"] =
+            json!(repo.read(&["rev-list", "--count", &format!("{tag}..HEAD")]).parse::<u64>().unwrap_or(0));
+    }
+    out
+}
 fn readme(dir: &Path) -> Option<Value> {
     let file = files::entries(dir)
         .into_iter()

@@ -14,7 +14,7 @@ import type {
   View,
 } from "./types";
 export type Theme = "system" | "light" | "dark";
-export type SortKey = "name" | "last" | "size" | "ai";
+export type SortKey = "name" | "last" | "size" | "ai" | "priority" | "deadline";
 export type Modal =
   | { kind: "shortcuts" | "connector" }
   | { kind: "new"; job?: CreationJob }
@@ -55,6 +55,8 @@ interface State {
   view: View;
   cwd: string;
   selected: string | null;
+  /** Which row was clicked, for lists that can show one project more than once. */
+  selectedRow: string | null;
   tab: Tab;
   fileSelected: string | null;
   theme: Theme;
@@ -79,7 +81,7 @@ interface State {
   load: (snapshot: Snapshot, live?: boolean) => void;
   patch: (node: Node) => void;
   cd: (path: string) => void;
-  select: (id: string, tab?: Tab) => void;
+  select: (id: string, tab?: Tab, row?: string) => void;
   navigate: (view: View) => void;
 }
 export function pref<T>(key: string, fallback: T): T {
@@ -111,6 +113,7 @@ export const useApp = create<State>((set, get) => ({
   view: "today",
   cwd: "",
   selected: null,
+  selectedRow: null,
   tab: "health",
   fileSelected: null,
   theme: (document.documentElement.dataset.theme as Theme) || "system",
@@ -198,9 +201,10 @@ export const useApp = create<State>((set, get) => ({
         snapshot?.nodes[path]?.kind === "project" ? path : get().selected,
     });
   },
-  select: (id, tab) =>
+  select: (id, tab, row) =>
     set({
       selected: id,
+      selectedRow: row ?? null,
       pendingSelection: null,
       fileSelected: null,
       ...(tab ? { tab } : {}),
@@ -465,16 +469,48 @@ export function rescan() {
     },
   );
 }
+// The store is loaded on its own by the state smoke test, so it keeps its one wording helper local.
+const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export function backup() {
   void run(async () => {
-    const result = await api<{ copied: number; size: string; dest: string }>(
-      "backup",
-    );
+    const result = await api<BackupResult>("backup", {});
+    if (result.snapshot) acknowledge({ snapshot: result.snapshot });
     toast(
       result.copied
-        ? `Backed up ${result.copied} logs (${result.size})`
+        ? `Backed up ${count(result.copied, "file")}`
         : "Already backed up",
-      `Copies live in ${result.dest}`,
+      `${count(result.sessions, "session")} kept in ${result.dest}`,
     );
+    void refreshLog();
   }, "Copying agent logs…");
 }
+interface BackupResult {
+  copied: number;
+  size: string;
+  dest: string;
+  sessions: number;
+  total: number;
+  snapshot?: Snapshot;
+}
+const AUTO_BACKUP_EVERY = 10 * 60 * 1000;
+let autoBackupAt = 0;
+function autoBackup(snapshot: Snapshot | null) {
+  const state = snapshot?.backup;
+  // `pending` is unknown until the first backup has run, and that first run is wanted too.
+  if (!state?.auto || state.pending === 0) return;
+  if (Date.now() - autoBackupAt < AUTO_BACKUP_EVERY) return;
+  autoBackupAt = Date.now();
+  void api<Partial<BackupResult> & { skipped?: boolean }>("backup", {
+    auto: true,
+  })
+    .then((result) => {
+      if (result.skipped || !result.copied) return;
+      if (result.snapshot) acknowledge({ snapshot: result.snapshot });
+      toast(`Backed up ${count(result.copied, "file")} automatically`);
+      void refreshLog();
+    })
+    .catch(() => {});
+}
+useApp.subscribe((state, previous) => {
+  if (state.snapshot !== previous.snapshot) autoBackup(state.snapshot);
+});

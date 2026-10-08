@@ -19,7 +19,7 @@ import {
 import type { SessionGroup } from "./helpers";
 import { run, toast, useApp } from "./store";
 import type { Modal } from "./store";
-import type { Session } from "./types";
+import type { Node, Session } from "./types";
 
 export function requestResume(session: Session, projectPath?: string) {
   if (session.resumeCapability !== "supported" || !(projectPath ?? session.cwd))
@@ -38,10 +38,13 @@ export function SessionList({
   sessions,
   projectPath,
   limit,
+  projectOf,
 }: {
   sessions: Session[];
   projectPath?: string;
   limit?: number;
+  /** Lists that mix projects: shows each session's project and opens it on click. */
+  projectOf?: (session: Session) => Node | undefined;
 }) {
   return (
     <div className="sessions">
@@ -52,6 +55,7 @@ export function SessionList({
             key={sessionKey(group.session)}
             group={group}
             projectPath={projectPath}
+            projectOf={projectOf}
           />
         ))}
     </div>
@@ -60,14 +64,24 @@ export function SessionList({
 function SessionRow({
   group,
   projectPath,
+  projectOf,
 }: {
   group: SessionGroup;
   projectPath?: string;
+  projectOf?: (session: Session) => Node | undefined;
 }) {
   const home = useApp((state) => state.snapshot!.home);
   const [expanded, setExpanded] = useState(false);
   const { session, children } = group;
   const provider = PROVIDER_NAMES[session.provider] ?? session.provider;
+  const node = projectOf?.(session);
+  const place = node
+    ? node.label
+    : session.cwd
+      ? session.cwd === home
+        ? "Home"
+        : tilde(session.cwd, home)
+      : "No folder recorded";
   return (
     <div className="session-group">
       <div className="sess">
@@ -76,27 +90,30 @@ function SessionRow({
           className="session-title"
           title={session.title}
           onClick={() =>
-            useApp.setState({
-              modal: {
-                kind: "session",
-                provider: session.provider,
-                sessionId: session.sessionId,
-                file: session.file,
-                projectPath,
-              },
-            })
+            node
+              ? useApp.getState().select(node.id, "agents")
+              : useApp.setState({
+                  modal: {
+                    kind: "session",
+                    provider: session.provider,
+                    sessionId: session.sessionId,
+                    file: session.file,
+                    projectPath,
+                  },
+                })
           }
         >
           <span>{session.title}</span>
           <small>
-            {provider}
+            {projectOf ? place : provider}
             {session.sourceKind === "subagent" ? " · Child session" : ""}
             {session.resumeCapability !== "supported" ? " · History only" : ""}
           </small>
-          {!projectPath && session.cwd ? (
+          {!projectOf && !projectPath && session.cwd ? (
             <small className="mono">{tilde(session.cwd, home)}</small>
           ) : null}
         </button>
+        {projectOf ? <span className="pill">{provider}</span> : null}
         <span className="m">
           <Time at={session.updatedAt} />
         </span>
@@ -127,6 +144,7 @@ function SessionRow({
                   key={sessionKey(child.session)}
                   group={child}
                   projectPath={projectPath}
+                  projectOf={projectOf}
                 />
               ))}
             </div>
@@ -137,7 +155,88 @@ function SessionRow({
   );
 }
 
+/** An agent request without a project yet: pick one, then the start dialog opens. */
+function ProjectPicker({ provider }: { provider?: string }) {
+  const snapshot = useApp((s) => s.snapshot!);
+  const [filter, setFilter] = useState("");
+  const needle = filter.trim().toLowerCase();
+  const projects = Object.values(snapshot.nodes)
+    .filter((node) => node.kind === "project" && !node.archived)
+    .filter(
+      (node) =>
+        !needle ||
+        node.label.toLowerCase().includes(needle) ||
+        node.path.toLowerCase().includes(needle),
+    )
+    .sort((a, b) =>
+      (b.lastActivity?.at ?? "").localeCompare(a.lastActivity?.at ?? ""),
+    );
+  return (
+    <DialogFrame
+      title="Choose a project"
+      description={`${PROVIDER_NAMES[provider ?? ""] ?? "The agent"} starts in the project you pick.`}
+      footer={
+        <>
+          <span className="grow" />
+          <button
+            className="btn"
+            onClick={() => useApp.setState({ modal: null })}
+          >
+            Cancel
+          </button>
+        </>
+      }
+    >
+      <input
+        className="inp"
+        type="search"
+        name="projectFilter"
+        aria-label="Filter projects"
+        placeholder="Filter projects"
+        autoComplete="off"
+        autoFocus
+        value={filter}
+        onChange={(event) => setFilter(event.target.value)}
+      />
+      <div className="project-pick">
+        {projects.slice(0, 100).map((node) => (
+          <button
+            className="pick"
+            key={node.id}
+            onClick={() =>
+              useApp.setState({
+                modal: { kind: "agent", provider, projectPath: node.id },
+              })
+            }
+          >
+            <Icon name="code" />
+            <div className="txt">
+              <b>{node.label}</b>
+              <p className="mono">{tilde(node.path, snapshot.home)}</p>
+            </div>
+            <span className="faint">
+              {node.lastActivity ? <Time at={node.lastActivity.at} /> : "—"}
+            </span>
+          </button>
+        ))}
+        {!projects.length ? <p className="muted">No project matches</p> : null}
+      </div>
+    </DialogFrame>
+  );
+}
+
 export function AgentDialog({
+  request,
+}: {
+  request: Extract<NonNullable<Modal>, { kind: "agent" }>;
+}) {
+  return request.projectPath ? (
+    <StartDialog request={request} />
+  ) : (
+    <ProjectPicker provider={request.provider} />
+  );
+}
+function StartDialog({
   request,
 }: {
   request: Extract<NonNullable<Modal>, { kind: "agent" }>;

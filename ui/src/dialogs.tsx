@@ -740,6 +740,7 @@ const KINDS: [Link["kind"], string][] = [
   ["named", "One folder per project, named after the path"],
   ["inside", "It lives inside the project folder"],
   ["mentions", "Its files mention project paths"],
+  ["none", "It keeps no history Laci can read"],
 ];
 function ConnectorDialog() {
   const s = useApp();
@@ -782,19 +783,40 @@ function ConnectorDialog() {
     event.preventDefault();
     const fields = Object.fromEntries(new FormData(event.currentTarget));
     const text = (key: string) => String(fields[key] ?? "");
-    const link: Link =
-      kind === "cwd"
-        ? { kind, dir: text("dir"), ext: text("ext"), field: text("field") }
-        : kind === "named"
-          ? {
-              kind,
-              dir: text("dir"),
-              naming: text("naming") as "dashes" | "sha256",
-            }
-          : kind === "inside"
-            ? { kind, path: text("path") }
-            : { kind, dir: text("dir"), ext: text("ext") };
-    void add({ name: text("name"), link });
+    const link: Link | undefined =
+      kind === "none"
+        ? undefined
+        : kind === "cwd"
+          ? { kind, dir: text("dir"), ext: text("ext"), field: text("field") }
+          : kind === "named"
+            ? {
+                kind,
+                dir: text("dir"),
+                naming: text("naming") as "dashes" | "sha256",
+              }
+            : kind === "inside"
+              ? { kind, path: text("path") }
+              : { kind, dir: text("dir"), ext: text("ext") };
+    const agent: Record<string, unknown> = {};
+    for (const key of [
+      "command",
+      "prompt",
+      "continue",
+      "model",
+      "models",
+      "effort",
+      "efforts",
+    ]) {
+      const value = text(key).trim();
+      if (value) agent[key] = value;
+    }
+    const mcpFile = text("mcpFile").trim();
+    if (mcpFile) agent.mcp = { file: mcpFile };
+    void add({
+      name: text("name").trim(),
+      ...(link ? { link } : {}),
+      ...(agent.command ? { agent } : {}),
+    });
   }
   const suggestions = [...s.snapshot!.suggestions].sort(
     (a, b) => Number(b.found) - Number(a.found),
@@ -802,7 +824,7 @@ function ConnectorDialog() {
   return (
     <DialogFrame
       title="Add another AI tool"
-      description="Pick a tool Laci knows, or describe your own. Laci shows its history on each project and carries it along when you move or archive one."
+      description="Pick a tool Laci knows, or describe your own. Laci shows its history on each project, carries it along when you move or archive one, and can start it for you."
       form
       onSubmit={submit}
       footer={
@@ -898,7 +920,7 @@ function ConnectorDialog() {
           />
         </div>
         <div key={kind}>
-          {kind === "cwd" ? (
+          {kind === "none" ? null : kind === "cwd" ? (
             <>
               <label className="fld">
                 <span>Where it keeps its history</span>
@@ -1002,6 +1024,106 @@ function ConnectorDialog() {
             </>
           )}
         </div>
+        <div className="sec-t">Start it from Laci</div>
+        <label className="fld">
+          <span>Command</span>
+          <input
+            className="inp mono"
+            name="command"
+            placeholder="aider"
+            autoComplete="off"
+            spellCheck={false}
+            required={open && kind === "none"}
+            maxLength={40}
+          />
+          <small>
+            {kind === "none"
+              ? "The program's name, as you would type it in a terminal."
+              : "The program's name, as you would type it in a terminal. Leave empty if Laci should only show this tool's history."}
+          </small>
+        </label>
+        <details className="advanced">
+          <summary>Arguments</summary>
+          <label className="fld">
+            <span>First prompt</span>
+            <input
+              className="inp mono"
+              name="prompt"
+              placeholder="--message {prompt}"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <small>{"{prompt}"} stands for the text you type in Laci.</small>
+          </label>
+          <label className="fld">
+            <span>Continue the last conversation</span>
+            <input
+              className="inp mono"
+              name="continue"
+              placeholder="--continue"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </label>
+          <div className="row2">
+            <label className="fld">
+              <span>Model</span>
+              <input
+                className="inp mono"
+                name="model"
+                placeholder="--model {model}"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+            <label className="fld">
+              <span>Models</span>
+              <input
+                className="inp mono"
+                name="models"
+                placeholder="sonnet, opus"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+          </div>
+          <div className="row2">
+            <label className="fld">
+              <span>Effort</span>
+              <input
+                className="inp mono"
+                name="effort"
+                placeholder="--effort {effort}"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+            <label className="fld">
+              <span>Effort levels</span>
+              <input
+                className="inp mono"
+                name="efforts"
+                placeholder="low, medium, high"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+          </div>
+          <label className="fld">
+            <span>MCP settings file</span>
+            <input
+              className="inp mono"
+              name="mcpFile"
+              placeholder="~/.tool/mcp.json"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <small>
+              A JSON file with an mcpServers table. Laci can then add its own
+              MCP server there from the Agents page.
+            </small>
+          </label>
+        </details>
       </details>
     </DialogFrame>
   );

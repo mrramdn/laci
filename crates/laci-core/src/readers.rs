@@ -1,4 +1,4 @@
-use crate::{Result, env::Env, files, paths, process};
+use crate::{Result, env::Env, files, git, paths};
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde_json::{Value, json};
@@ -17,7 +17,9 @@ macro_rules! re {
     }};
 }
 pub fn strip_md(s: &str) -> String {
-    let mut out = re!(r"!\[[^\]]*\]\([^)]*\)").replace_all(s, "").into_owned();
+    // A badge is an image inside a link; it goes as a whole, or its link would be left behind.
+    let mut out = re!(r"\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)").replace_all(s, "").into_owned();
+    out = re!(r"!\[[^\]]*\]\([^)]*\)").replace_all(&out, "").into_owned();
     out = re!(r"\[([^\]]+)\]\([^)]*\)").replace_all(&out, "$1").into_owned();
     out = re!(r"<[^>]+>").replace_all(&out, "").into_owned();
     for marker in ["**", "__", "~~", "`"] {
@@ -148,33 +150,35 @@ pub fn tasks(dir: &Path) -> Value {
     result["taskFiles"] = json!(summaries);
     result
 }
-fn git(dir: &Path, args: &[&str]) -> String {
-    process::run("git", args, Some(dir), Duration::from_secs(20)).unwrap_or_default()
-}
 fn utc(text: &str) -> String {
     DateTime::parse_from_rfc3339(text)
         .map(|t| t.with_timezone(&Utc).to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
         .unwrap_or_default()
 }
+/// Laci's own notes file. It is hidden through the repository's exclude list once Laci writes it; one made by
+/// hand is not a change to the project either.
+const SIDECAR_UNTRACKED: &str = "?? .laci.md";
 pub fn git_info(dir: &Path) -> Option<Value> {
-    if git(dir, &["rev-parse", "--is-inside-work-tree"]) != "true" {
+    let inside = git::plain(dir, &["rev-parse", "--is-inside-work-tree"], Duration::from_secs(20));
+    if inside.as_deref() != Ok("true") {
         return None;
     }
-    let root = git(dir, &["rev-parse", "--show-toplevel"]);
+    let repo = git::Repo::at(dir);
+    let root = repo.read(&["rev-parse", "--show-toplevel"]);
     if !dir.join(".git").exists() && Path::new(&root) != dir {
         return None;
     }
-    let count = git(dir, &["rev-list", "--count", "HEAD"]).parse::<u64>().unwrap_or(0);
-    let last = git(dir, &["log", "-1", "--format=%cI%x1f%s"]);
-    let roots = git(dir, &["log", "--max-parents=0", "--format=%H%x1f%cI", "HEAD"]);
+    let count = repo.read(&["rev-list", "--count", "HEAD"]).parse::<u64>().unwrap_or(0);
+    let last = repo.read(&["log", "-1", "--format=%cI%x1f%s"]);
+    let roots = repo.read(&["log", "--max-parents=0", "--format=%H%x1f%cI", "HEAD"]);
     let first = roots.lines().last().unwrap_or("");
     let mut first = first.split('\x1f');
     let mut last = last.split('\x1f');
-    let status = git(dir, &["status", "--porcelain=v1", "-b", "--untracked-files=normal"]);
-    let head = status.lines().next().unwrap_or("");
+    let status = repo.status();
+    let head = status.first().map(String::as_str).unwrap_or("");
     let upstream = head.split("...").nth(1).and_then(|s| s.split_whitespace().next()).unwrap_or("");
     let mut remotes = Vec::new();
-    for line in git(dir, &["remote", "-v"]).lines() {
+    for line in repo.read(&["remote", "-v"]).lines() {
         let cols: Vec<_> = line.split_whitespace().collect();
         if cols.len() < 3 || cols[2] != "(fetch)" {
             continue;
@@ -201,7 +205,7 @@ pub fn git_info(dir: &Path) -> Option<Value> {
         }
     });
     let mut weekly = vec![0u64; 26];
-    for t in git(dir, &["log", "--since=182.days", "--format=%ct"]).lines() {
+    for t in repo.read(&["log", "--since=182.days", "--format=%ct"]).lines() {
         if let Ok(t) = t.parse::<i64>() {
             let week = (Utc::now().timestamp() - t) / 604800;
             if (0..26).contains(&week) {
@@ -218,10 +222,10 @@ pub fn git_info(dir: &Path) -> Option<Value> {
     };
     Some(
         json!({"commits":count,"rootCommit":first.next().unwrap_or(""),"firstCommitAt":utc(first.next().unwrap_or("")),
-        "lastCommitAt":utc(last.next().unwrap_or("")),"lastSubject":last.next().unwrap_or(""),"branch":git(dir,&["branch","--show-current"]),
-        "remotes":remotes,"upstream":upstream,"dirty":status.lines().filter(|l|!l.starts_with("##")&&!l.is_empty()).count(),
-        "ahead":number("ahead"),"behind":number("behind"),"stashes":git(dir,&["stash","list"]).lines().count(),"weekly":weekly,
-        "authors":git(dir,&["shortlog","-sne","HEAD"]).lines().count(),
+        "lastCommitAt":utc(last.next().unwrap_or("")),"lastSubject":last.next().unwrap_or(""),"branch":repo.read(&["branch","--show-current"]),
+        "remotes":remotes,"upstream":upstream,"dirty":status.iter().filter(|l|!l.starts_with("##")&&!l.is_empty()&&*l!=SIDECAR_UNTRACKED).count(),
+        "ahead":number("ahead"),"behind":number("behind"),"stashes":repo.read(&["stash","list"]).lines().count(),"weekly":weekly,
+        "authors":repo.read(&["shortlog","-sne","HEAD"]).lines().count(),
         "worktree":dir.join(".git").is_file()}),
     )
 }

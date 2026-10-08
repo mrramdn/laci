@@ -180,7 +180,11 @@ try {
   assert.equal(movedDetails.agentItems.find(item => item.connector === 'codex').cwd, movedPath, 'A same-length cwd rewrite with preserved mtime must invalidate agent cache');
   assert.equal((await stat(movedClaude, { bigint: true })).mtimeNs, beforeClaudeAt);
   assert.equal((await stat(codexFile, { bigint: true })).mtimeNs, beforeCodexAt);
-  await client.call('undo_change', { id: moved.journal.id });
+  const undoPlan = await client.call('undo_change', { id: moved.journal.id });
+  assert.equal(undoPlan.plan.journal, moved.journal.id);
+  assert.match(undoPlan.hint, /Nothing has changed yet/);
+  assert.equal(await exists(movedPath), true, 'An undo must be previewed before it changes anything');
+  await client.call('undo_change', { id: moved.journal.id, confirm: true });
   assert.equal(await exists(project), true);
   assert.equal(await exists(movedPath), false);
   assert.equal(await readFile(claudeFile, 'utf8'), originalClaude);
@@ -207,7 +211,7 @@ try {
   assert.equal(await exists(project), true);
   const customApplied = await client.call('archive_project', { project, destination: customArchive, confirm: true });
   assert.equal(await exists(customArchive), true);
-  await client.call('undo_change', { id: customApplied.journal.id });
+  await client.call('undo_change', { id: customApplied.journal.id, confirm: true });
   assert.deepEqual(await readFile(path.join(project, '.laci.md')), beforeSidecar);
   await rm(blockedArchive, { recursive: true });
   checks++;
@@ -221,7 +225,7 @@ try {
   const archivedDetails = await client.call('project_details', { project: archivePlan.destination });
   assert.equal(archivedDetails.archived, true);
   assert.equal(archivedDetails.meta.status, 'archived');
-  await client.call('undo_change', { id: archived.journal.id });
+  await client.call('undo_change', { id: archived.journal.id, confirm: true });
   assert.equal(await exists(project), true);
   assert.deepEqual(await readFile(path.join(project, '.laci.md')), beforeSidecar);
   assert.equal(await readFile(claudeFile, 'utf8'), originalClaude);
@@ -240,7 +244,7 @@ try {
   assert.ok(orphan && orphan.id !== reviewedId, 'Changed history must require a new proposal identity');
   const applied = await client.call('apply_suggestion', { id: orphan.id, confirm: true });
   assert.equal(await exists(orphanDir), false);
-  await client.call('undo_change', { id: applied.journal.id });
+  await client.call('undo_change', { id: applied.journal.id, confirm: true });
   assert.equal(await exists(orphanDir), true);
   checks++;
 
@@ -256,6 +260,11 @@ try {
   await client.rejects('add_next_step', { project, text: 'x'.repeat(301) }, /length|maxLength|300/i);
   await client.rejects('complete_task', { project, text: 'does-not-match' }, /No checkbox matches/i);
   await client.rejects('apply_suggestion', { id: 'missing-suggestion' }, /Unknown suggestion/i);
+  await client.rejects('undo_change', { id: 'missing-change' }, /Unknown change/i);
+  await client.rejects('undo_change', { id: moved.journal.id }, /no longer be undone/i);
+  await client.rejects('create_project', { parent: '~/project', name: 'extra', scanProject: true, confirm: true }, /Unknown argument scanProject/i);
+  await client.rejects('recent_changes', { limit: 5 }, /Unknown argument limit/i);
+  assert.equal(await exists(path.join(home, 'project', 'extra')), false);
   assert.equal(await exists(path.join(home, 'escape')), false);
   const changes = await client.call('recent_changes');
   assert.ok(changes.entries.some(entry => entry.by === 'agent'));

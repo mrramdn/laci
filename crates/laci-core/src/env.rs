@@ -7,6 +7,8 @@ pub struct Env {
     pub config_dir: PathBuf,
     pub data_dir: PathBuf,
     pub cache_dir: PathBuf,
+    /// One-run app overrides (`terminal`, `editor`, `files`), from LACI_TERMINAL, LACI_EDITOR and LACI_FILES.
+    pub app_overrides: std::collections::HashMap<&'static str, String>,
 }
 
 impl Env {
@@ -15,6 +17,7 @@ impl Env {
             config_dir: home.join(".config/laci"),
             data_dir: home.join(".local/share/laci"),
             cache_dir: home.join(".cache/laci"),
+            app_overrides: Default::default(),
             home,
         }
     }
@@ -26,6 +29,11 @@ impl Env {
             .filter(|p| p.is_absolute())
             .ok_or("Set HOME to an absolute folder path")?;
         let mut env = Self::for_home(home);
+        for (key, var) in [("terminal", "LACI_TERMINAL"), ("editor", "LACI_EDITOR"), ("files", "LACI_FILES")] {
+            if let Some(v) = std::env::var(var).ok().filter(|s| !s.is_empty()) {
+                env.app_overrides.insert(key, v);
+            }
+        }
         // LACI_HOME isolates a demo without changing the caller's HOME or XDG settings.
         if std::env::var_os("LACI_HOME").is_none() {
             for (key, dest) in [("XDG_CONFIG_HOME", &mut env.config_dir), ("XDG_CACHE_HOME", &mut env.cache_dir)] {

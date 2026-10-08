@@ -48,7 +48,7 @@ Core mutation execution returns the committed result and its refresh scope. Desk
 
 The desktop creates one local window and uses Tauri IPC with a local-content policy. Markdown is sanitized. Local README images are scoped to scanned project directories. Commands selected by the interface are allowlisted; script/session arguments must exist in the snapshot and are shell quoted.
 
-`laci mcp` serves the 14 compatible v1 tool names plus `delete_project` over stdio without starting GTK or a window. Read calls reuse a recent snapshot. Move/archive/Trash/Tidy/create calls return a preview until `confirm: true` is supplied. Confirmed destructive operations refresh the scan and use the same engine as the desktop.
+`laci mcp` serves the 14 compatible v1 tool names plus `delete_project` over stdio without starting GTK or a window. Read calls reuse a recent snapshot. Move/archive/Trash/Tidy/create/undo calls return a preview until `confirm: true` is supplied. Arguments a tool does not list are rejected. Confirmed destructive operations refresh the scan and use the same engine as the desktop.
 
 ## Session launch and creation
 

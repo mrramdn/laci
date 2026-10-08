@@ -5,7 +5,6 @@ use std::{
     time::Instant,
 };
 
-use chrono::Utc;
 use rayon::prelude::*;
 use regex::Regex;
 use serde_json::{Value, json};
@@ -583,6 +582,19 @@ fn u(v: &Value, key: &str) -> u64 {
 fn plural(n: u64, unit: &str) -> String {
     format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }
+/// `count(1, "commit not pushed", "commits not pushed")`: for phrases where the noun is not the last word.
+fn count(n: u64, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+/// What a store holds, without counting something that is not there: "2 memory files", never "0 sessions + …".
+fn history_size(sessions: u64, memory: u64) -> String {
+    match (sessions, memory) {
+        (0, 0) => "Empty history".into(),
+        (0, _) => plural(memory, "memory file"),
+        (_, 0) => plural(sessions, "session"),
+        _ => format!("{} + {}", plural(sessions, "session"), plural(memory, "memory file")),
+    }
+}
 pub fn bytes(n: u64) -> String {
     if n >= 1_000_000_000 {
         format!("{:.1} GB", n as f64 / 1e9)
@@ -681,6 +693,16 @@ fn issue(code: &str, severity: &str, title: String, detail: Option<String>) -> V
     }
     v
 }
+/// `days` until the deadline, negative once it has passed. Nothing is raised more than a week ahead.
+fn deadline_issue(days: i64) -> Option<(&'static str, &'static str, String)> {
+    Some(match days {
+        ..0 => ("overdue", "high", format!("Overdue by {}", count(days.unsigned_abs(), "day", "days"))),
+        0 => ("due-soon", "high", "Due today".into()),
+        1 => ("due-soon", "high", "Due tomorrow".into()),
+        2..=7 => ("due-soon", if days == 2 { "high" } else { "med" }, format!("Due in {days} days")),
+        _ => return None,
+    })
+}
 fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
     let mut out = Vec::new();
     let g = &n["git"];
@@ -700,7 +722,7 @@ fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
                     "no-remote",
                     "high",
                     "No remote".into(),
-                    Some(format!("{} exist only on this disk", plural(u(g, "commits"), "commit"))),
+                    Some(count(u(g, "commits"), "commit exists only on this disk", "commits exist only on this disk")),
                 ));
             }
             if u(g, "dirty") > 0 && u(g, "commits") > 0 {
@@ -711,25 +733,25 @@ fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
                     (n["archived"] == true).then(|| "Archived with work that was never committed".into()),
                 ));
             }
-            for (key, code, sev, unit, detail) in [
+            for (key, code, sev, (one, many), detail) in [
                 (
                     "ahead",
                     "unpushed",
                     "med",
-                    "commit not pushed",
+                    ("commit not pushed", "commits not pushed"),
                     (!string(g, "upstream").is_empty()).then(|| format!("ahead of {}", string(g, "upstream"))),
                 ),
                 (
                     "stashes",
                     "stash",
                     "med",
-                    "forgotten stash",
+                    ("forgotten stash", "forgotten stashes"),
                     Some("Stashes are easy to lose and never pushed".into()),
                 ),
-                ("behind", "behind", "low", "commit behind remote", None),
+                ("behind", "behind", "low", ("commit behind remote", "commits behind remote"), None),
             ] {
                 if u(g, key) > 0 {
-                    out.push(issue(code, sev, plural(u(g, key), unit), detail));
+                    out.push(issue(code, sev, count(u(g, key), one, many), detail));
                 }
             }
         } else if n["type"] == "code" {
@@ -756,8 +778,8 @@ fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
                 "low",
                 "Agent logs point to an old path".into(),
                 Some(format!(
-                    "{} still say {}",
-                    plural(stale.iter().map(|(_, n)| n).sum(), "line"),
+                    "{} {}",
+                    count(stale.iter().map(|(_, n)| n).sum(), "line still says", "lines still say"),
                     stale
                         .iter()
                         .take(2)
@@ -773,11 +795,10 @@ fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
         && let Some(deadline) =
             n["meta"]["deadline"].as_str().and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
     {
-        let days = deadline.signed_duration_since(Utc::now().date_naive()).num_days();
-        if days < 0 {
-            out.push(issue("overdue", "high", format!("Deadline passed {}d ago", -days), None));
-        } else if days <= 7 {
-            out.push(issue("due-soon", "high", format!("Due in {days}d"), None));
+        // The user's own calendar day: a deadline of today is not overdue until local midnight.
+        let days = deadline.signed_duration_since(chrono::Local::now().date_naive()).num_days();
+        if let Some((code, severity, title)) = deadline_issue(days) {
+            out.push(issue(code, severity, title, None));
         }
     }
     let age = files::age(string(&n["lastActivity"], "at"));
@@ -981,15 +1002,7 @@ fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
     let quarantine = env.data_dir.join("orphans");
     for name in array(&snapshot["orphans"]["claude"]).iter().filter_map(Value::as_str) {
         let c = &snapshot["claude"][name];
-        let what = format!(
-            "{}{}",
-            plural(array(&c["sessions"]).len() as u64, "session"),
-            if array(&c["memory"]).is_empty() {
-                String::new()
-            } else {
-                format!(" + {}", plural(array(&c["memory"]).len() as u64, "memory file"))
-            }
-        );
+        let what = history_size(array(&c["sessions"]).len() as u64, array(&c["memory"]).len() as u64);
         let mut candidates: Vec<_> = nodes
             .iter()
             .filter(|n| name.ends_with(&format!("-{}", paths::enc(string(n, "name")))))
@@ -1025,7 +1038,7 @@ fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
         .filter(|c| c["path"].is_string() && !stale_cwds(c).is_empty())
         .collect();
     if !half.is_empty() {
-        out.push(json!({"id":"migration:stale-cwd","category":"migration","title":format!("Finish {} half-done moves",half.len()),"why":"These session folders were renamed after a move, but their logs still record the old path. Search, stats and the next move would get it wrong.","confidence":"high","ops":half.iter().map(|c|{let stale=stale_cwds(c);json!({"kind":"rewrite","label":paths::tilde(Path::new(string(c,"path")),&env.home),"from":stale.iter().map(|(p,_)|paths::tilde(Path::new(p),&env.home)).collect::<Vec<_>>().join(", "),"to":paths::tilde(Path::new(string(c,"path")),&env.home),"detail":plural(stale.iter().map(|(_,n)|n).sum(),"line")})}).collect::<Vec<_>>(),"action":{"type":"rewrite-claude","items":half.iter().map(|c|json!({"dir":c["dir"],"pairs":stale_roots(c).iter().map(|r|json!([r,c["path"]])).collect::<Vec<_>>()})).collect::<Vec<_>>()}}));
+        out.push(json!({"id":"migration:stale-cwd","category":"migration","title":format!("Finish {}",count(half.len() as u64,"half-done move","half-done moves")),"why":"These session folders were renamed after a move, but their logs still record the old path. Search, stats and the next move would get it wrong.","confidence":"high","ops":half.iter().map(|c|{let stale=stale_cwds(c);json!({"kind":"rewrite","label":paths::tilde(Path::new(string(c,"path")),&env.home),"from":stale.iter().map(|(p,_)|paths::tilde(Path::new(p),&env.home)).collect::<Vec<_>>().join(", "),"to":paths::tilde(Path::new(string(c,"path")),&env.home),"detail":plural(stale.iter().map(|(_,n)|n).sum(),"line")})}).collect::<Vec<_>>(),"action":{"type":"rewrite-claude","items":half.iter().map(|c|json!({"dir":c["dir"],"pairs":stale_roots(c).iter().map(|r|json!([r,c["path"]])).collect::<Vec<_>>()})).collect::<Vec<_>>()}}));
     }
     let mut groups: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
     for id in array(&snapshot["orphans"]["items"]).iter().filter_map(Value::as_str) {
@@ -1089,7 +1102,7 @@ fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
         })
         .collect();
     if !heavy.is_empty() {
-        out.push(json!({"id":"space:inactive","category":"space","title":format!("Free {} from {} inactive projects",bytes(heavy.iter().map(|n|u(&n["size"],"reclaimable")).sum()),heavy.len()),"why":"Dependencies and build output in archived or dormant projects. They go to system trash; a fresh install brings them back.","confidence":"high","action":{"type":"trash","paths":heavy.iter().flat_map(|n|array(&n["size"]["parts"]).iter().map(|p|Path::new(string(n,"path")).join(string(p,"path")))).collect::<Vec<_>>()},"ops":heavy.iter().map(|n|json!({"kind":"delete","label":n["label"],"detail":format!("{} · {}",bytes(u(&n["size"],"reclaimable")),array(&n["size"]["parts"]).iter().map(|p|string(p,"path")).collect::<Vec<_>>().join(", "))})).collect::<Vec<_>>()}));
+        out.push(json!({"id":"space:inactive","category":"space","title":format!("Free {} from {}",bytes(heavy.iter().map(|n|u(&n["size"],"reclaimable")).sum()),count(heavy.len() as u64,"inactive project","inactive projects")),"why":"Dependencies and build output in archived or dormant projects. They go to system trash; a fresh install brings them back.","confidence":"high","action":{"type":"trash","paths":heavy.iter().flat_map(|n|array(&n["size"]["parts"]).iter().map(|p|Path::new(string(n,"path")).join(string(p,"path")))).collect::<Vec<_>>()},"ops":heavy.iter().map(|n|json!({"kind":"delete","label":n["label"],"detail":format!("{} · {}",bytes(u(&n["size"],"reclaimable")),array(&n["size"]["parts"]).iter().map(|p|string(p,"path")).collect::<Vec<_>>().join(", "))})).collect::<Vec<_>>()}));
     }
     let mut same: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
     for n in &nodes {
@@ -1101,7 +1114,7 @@ fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
         if nodes.len() < 2 {
             continue;
         }
-        out.push(json!({"id":format!("dup:{root}"),"category":"duplicate","title":format!("{} exists in {} places",string(nodes[0],"name"),nodes.len()),"why":format!("{} share their first commit. One is probably a stale copy.",nodes.iter().map(|n|paths::tilde(Path::new(string(n,"path")),&env.home)).collect::<Vec<_>>().join(" and ")),"confidence":"med","ops":nodes.iter().map(|n|json!({"kind":"keep","label":paths::tilde(Path::new(string(n,"path")),&env.home),"detail":format!("last commit {} · {} commits",string(&n["git"],"lastCommitAt").get(..10).unwrap_or("—"),u(&n["git"],"commits"))})).collect::<Vec<_>>()}));
+        out.push(json!({"id":format!("dup:{root}"),"category":"duplicate","title":format!("{} exists in {} places",string(nodes[0],"name"),nodes.len()),"why":format!("{} share their first commit. One is probably a stale copy.",nodes.iter().map(|n|paths::tilde(Path::new(string(n,"path")),&env.home)).collect::<Vec<_>>().join(" and ")),"confidence":"med","ops":nodes.iter().map(|n|json!({"kind":"keep","label":paths::tilde(Path::new(string(n,"path")),&env.home),"detail":format!("last commit {} · {}",string(&n["git"],"lastCommitAt").get(..10).unwrap_or("—"),count(u(&n["git"],"commits"),"commit","commits"))})).collect::<Vec<_>>()}));
     }
     for proposal in &mut out {
         crate::orphan::prepare(env, snapshot, proposal);
@@ -1246,5 +1259,48 @@ mod tests {
         let root_node = json!({"path":env.home.join("project"),"name":"project"});
         let dest = archive_dest(&env, &root_node, &[env.home.join("project")]);
         assert!(!dest.starts_with(env.home.join("project")), "A configured root must never archive into itself");
+    }
+    #[test]
+    fn deadlines_read_naturally_and_only_near_ones_are_urgent() {
+        let title = |days| deadline_issue(days).map(|(code, severity, title)| format!("{code} {severity} {title}"));
+        assert_eq!(title(-12).unwrap(), "overdue high Overdue by 12 days");
+        assert_eq!(title(-1).unwrap(), "overdue high Overdue by 1 day");
+        assert_eq!(title(0).unwrap(), "due-soon high Due today");
+        assert_eq!(title(1).unwrap(), "due-soon high Due tomorrow");
+        assert_eq!(title(2).unwrap(), "due-soon high Due in 2 days");
+        assert_eq!(title(3).unwrap(), "due-soon med Due in 3 days");
+        assert_eq!(title(7).unwrap(), "due-soon med Due in 7 days");
+        assert_eq!(title(8), None);
+    }
+    #[test]
+    fn a_deadline_is_measured_in_local_calendar_days() {
+        let today = chrono::Local::now().date_naive();
+        let node = |deadline: chrono::NaiveDate| json!({"kind":"folder","archived":false,"agents":{},"status":{"value":"active"},"meta":{"deadline":deadline.format("%Y-%m-%d").to_string()}});
+        let titles = |deadline| {
+            issues(&Env::for_home(std::env::temp_dir()), &node(deadline), &json!({}))
+                .iter()
+                .map(|i| i["title"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(titles(today), ["Due today"]);
+        assert_eq!(titles(today.succ_opt().unwrap()), ["Due tomorrow"]);
+        assert_eq!(titles(today.pred_opt().unwrap()), ["Overdue by 1 day"]);
+    }
+    #[test]
+    fn history_is_described_by_what_it_holds() {
+        assert_eq!(history_size(3, 0), "3 sessions");
+        assert_eq!(history_size(1, 2), "1 session + 2 memory files");
+        assert_eq!(history_size(0, 1), "1 memory file");
+        assert_eq!(history_size(0, 0), "Empty history");
+    }
+    #[test]
+    fn count_picks_singular_or_plural_phrase() {
+        assert_eq!(count(0, "stash", "stashes"), "0 stashes");
+        assert_eq!(count(1, "stash", "stashes"), "1 stash");
+        assert_eq!(count(2, "stash", "stashes"), "2 stashes");
+        let node = json!({"kind":"project","type":"docs","archived":false,"agents":{},"git":{"commits":1,"remotes":[],"ahead":0,"behind":0,"stashes":0,"dirty":0}});
+        let found = issues(&Env::for_home(std::env::temp_dir()), &node, &json!({}));
+        let no_remote = found.iter().find(|i| i["code"] == "no-remote").unwrap();
+        assert_eq!(no_remote["detail"], "1 commit exists only on this disk");
     }
 }

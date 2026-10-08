@@ -30,7 +30,14 @@ export function Settings({ first = false }: { first?: boolean }) {
         setInfo(info);
         setRoots(new Set(info.roots));
         setArchiveDir(info.archiveDir ?? "");
-        setPresets(new Set(info.presets));
+        setPresets(
+          new Set([
+            ...info.presets,
+            ...(first
+              ? snapshot.suggestions.filter((c) => c.found).map((c) => c.id)
+              : []),
+          ]),
+        );
         setApps(info.apps);
         setTerminalTarget(info.terminalTarget ?? "internal");
         setExtra(
@@ -44,6 +51,8 @@ export function Settings({ first = false }: { first?: boolean }) {
     return () => {
       live = false;
     };
+    // Runs once on mount: first-run ticks are a one-time default.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const catalog = [
     ...snapshot.connectors
@@ -55,7 +64,7 @@ export function Settings({ first = false }: { first?: boolean }) {
         found: c.present,
       })),
     ...snapshot.suggestions,
-  ];
+  ].sort((a, b) => a.name.localeCompare(b.name));
   const candidates = [
     ...(info?.candidates ?? []),
     ...extra

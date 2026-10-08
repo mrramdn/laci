@@ -3,7 +3,7 @@ use crate::{Result, config, env::Env, files, ops, paths, readers, sidecar};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
-    fs::{self, OpenOptions},
+    fs,
     io::{Read, Seek, SeekFrom, Write},
     path::Path,
     sync::atomic::{AtomicU64, Ordering},
@@ -28,18 +28,11 @@ pub fn record(env: &Env, mut entry: Value) -> Value {
         let file = activity_file(env);
         paths::home_path(&file.to_string_lossy(), env)?;
         sidecar::plain_path(&file)?;
-        fs::create_dir_all(&env.data_dir).map_err(|e| e.to_string())?;
-        if fs::metadata(&file).is_ok_and(|m| m.len() > 4 * 1024 * 1024) {
-            fs::rename(&file, file.with_extension("jsonl.1")).map_err(|e| e.to_string())?;
-        }
+        files::private_dir(&env.data_dir)?;
+        files::rotate_private(&file, &file.with_extension("jsonl.1"), 4 * 1024 * 1024);
         let mut bytes = serde_json::to_vec(&entry).map_err(|e| e.to_string())?;
         bytes.push(b'\n');
-        OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(file)
-            .and_then(|mut f| f.write_all(&bytes))
-            .map_err(|e| e.to_string())
+        files::private_append(&file).and_then(|mut f| f.write_all(&bytes)).map_err(|e| e.to_string())
     })();
     if let Err(error) = wrote {
         eprintln!("Could not write the activity log: {error}");

@@ -2730,7 +2730,16 @@ try {
             "utf8",
           ),
         );
-        assert.deepEqual(saved.apps, selectedApps);
+        // A LACI_EDITOR, LACI_FILES or LACI_TERMINAL value is for this run only and is never written.
+        assert.deepEqual(
+          saved.apps,
+          Object.fromEntries(
+            Object.entries(selectedApps).filter(
+              ([kind, value]) =>
+                value !== process.env[`LACI_${kind.toUpperCase()}`],
+            ),
+          ),
+        );
         await nav("Settings", "Settings");
         await wait("saved settings loaded", () =>
           textContains(".main .sset", "Where do you keep projects?"),
@@ -2970,9 +2979,13 @@ try {
         }
         assert.equal(
           await execute(
-            () => document.querySelectorAll(".readme script").length,
+            () =>
+              document.querySelectorAll(
+                ".readme script, .readme style, .readme form, .readme [style], .readme [class]:not(.readme-remote)",
+              ).length,
           ),
           0,
+          "A README renders as text structure only",
         );
         await click('.insp [role="tab"]', "Health");
         await shot("project");

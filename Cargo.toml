@@ -20,7 +20,7 @@ sha2 = "0.10"
 rayon = "1"
 walkdir = "2"
 tempfile = "3"
-tauri = { version = "2", features = ["devtools", "protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-build = "2"
 tauri-plugin-single-instance = "2"
 portable-pty = "0.9"

@@ -92,11 +92,17 @@ export function descendants(node: Node, snapshot: Snapshot): Node[] {
       : [],
   );
 }
-export const PROVIDER_NAMES: Record<string, string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  antigravity: "Antigravity",
-};
+/** The name an agent goes by: the name of the connector it is connected under. */
+export function providerName(
+  snapshot: Snapshot | null | undefined,
+  provider: string | undefined,
+) {
+  if (!provider) return "";
+  return (
+    snapshot?.connectors.find((c) => (c.provider ?? c.id) === provider)?.name ??
+    provider
+  );
+}
 export const sessionKey = (session: Session) =>
   `${session.provider}:${session.sessionId}:${session.file}`;
 interface SessionIndex {

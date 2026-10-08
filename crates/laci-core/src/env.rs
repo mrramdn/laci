@@ -9,6 +9,8 @@ pub struct Env {
     pub cache_dir: PathBuf,
     /// One-run app overrides (`terminal`, `editor`, `files`), from LACI_TERMINAL, LACI_EDITOR and LACI_FILES.
     pub app_overrides: std::collections::HashMap<&'static str, String>,
+    /// The installed Laci program: what an agent is told to run as its MCP server.
+    pub program: PathBuf,
 }
 
 impl Env {
@@ -18,6 +20,7 @@ impl Env {
             data_dir: home.join(".local/share/laci"),
             cache_dir: home.join(".cache/laci"),
             app_overrides: Default::default(),
+            program: PathBuf::from("laci"),
             home,
         }
     }
@@ -29,6 +32,14 @@ impl Env {
             .filter(|p| p.is_absolute())
             .ok_or("Set HOME to an absolute folder path")?;
         let mut env = Self::for_home(home);
+        // An AppImage runs from a mount that is gone when it closes; the file itself is what stays.
+        if let Some(program) = std::env::var_os("APPIMAGE")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute() && path.is_file())
+            .or_else(|| std::env::current_exe().ok())
+        {
+            env.program = program;
+        }
         for (key, var) in [("terminal", "LACI_TERMINAL"), ("editor", "LACI_EDITOR"), ("files", "LACI_FILES")] {
             if let Some(v) = std::env::var(var).ok().filter(|s| !s.is_empty()) {
                 env.app_overrides.insert(key, v);

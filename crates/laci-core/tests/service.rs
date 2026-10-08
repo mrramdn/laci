@@ -867,3 +867,73 @@ fn a_backup_leaves_a_trace_and_clears_the_warning_until_a_session_changes() {
     // An automatic run waits an hour after the last one, however much has changed.
     assert_eq!(service.request("backup", &json!({"auto":true})).unwrap(), json!({"skipped":true}));
 }
+
+#[test]
+fn a_tool_the_user_describes_can_be_started_and_given_the_mcp_server() {
+    let (_temp, mut env, project) = fixture();
+    env.program = env.home.join("bin/laci");
+    write(&env.program, "");
+    let mut service = loaded(&env, &project);
+    let snap = service
+        .request(
+            "connector/add",
+            &json!({"name":"Aider","agent":{"command":"laci-test-aider","prompt":"--message {prompt}",
+                "continue":"--restore-chat-history","mcp":{"file":"~/.aider/mcp.json"}}}),
+        )
+        .unwrap();
+    let card = snap["connectors"].as_array().unwrap().iter().find(|c| c["id"] == "custom-aider").unwrap();
+    assert_eq!(
+        (&card["provider"], &card["command"], &card["where"]),
+        (&json!("custom-aider"), &json!("laci-test-aider"), &json!(""))
+    );
+    assert_eq!(card["link"], json!({"kind":"none"}));
+    assert_eq!(
+        card["capabilities"],
+        json!({"launch":true,"resume":false,"titles":false,"modelDiscovery":"aliases","continue":true,"mcp":true})
+    );
+    assert_eq!(activity::read_log(&env, 10)[0]["title"], "Added Aider");
+    // A second tool without history is its own card, not a copy of the first.
+    let snap = service.request("connector/add", &json!({"name":"Other","agent":{"command":"other"}})).unwrap();
+    assert_eq!(snap["connectors"].as_array().unwrap().len(), 2);
+
+    let (request, session) = service
+        .agent_context(&json!({"provider":"custom-aider","projectPath":project,"prompt":"hi","continue":true}))
+        .unwrap();
+    assert!(session.is_none() && request.continue_last);
+    let error = laci_core::launch::resolve(&env, &request, None).unwrap_err();
+    assert_eq!(error, "laci-test-aider is not installed or is not on PATH");
+    assert!(service.agent_context(&json!({"provider":"custom-nope","projectPath":project})).is_err());
+    assert!(service.agent_context(&json!({"provider":"../claude","projectPath":project})).is_err());
+
+    let list = service.request("agent/mcp", &json!({})).unwrap();
+    assert_eq!(list["agents"].as_array().unwrap().len(), 1, "only tools that keep MCP servers are listed");
+    assert_eq!(
+        (&list["agents"][0]["provider"], &list["agents"][0]["state"]),
+        (&json!("custom-aider"), &json!("missing"))
+    );
+    let done = service.request("agent/mcp/apply", &json!({"provider":"custom-aider"})).unwrap();
+    assert_eq!(done["status"]["state"], "registered");
+    let saved: Value = serde_json::from_str(&fs::read_to_string(env.home.join(".aider/mcp.json")).unwrap()).unwrap();
+    assert_eq!(saved["mcpServers"]["laci"], json!({"command":env.program,"args":["mcp"]}));
+    let entry = &activity::read_log(&env, 10)[0];
+    assert_eq!(
+        (&entry["title"], &entry["detail"]),
+        (&json!("Added Laci's MCP server to Aider"), &json!("Edited ~/.aider/mcp.json"))
+    );
+    service.request("agent/mcp/apply", &json!({"provider":"custom-aider","remove":true})).unwrap();
+    let entry = &activity::read_log(&env, 10)[0];
+    assert_eq!(entry["title"], "Removed Laci's MCP server from Aider");
+    assert!(
+        entry["detail"]
+            .as_str()
+            .unwrap()
+            .contains("earlier file kept at ~/.local/share/laci/mcp-backups/custom-aider/")
+    );
+    assert!(service.request("agent/mcp/apply", &json!({"provider":"claude"})).is_err(), "Claude Code is not connected");
+
+    service.request("connector/remove", &json!({"id":"custom-aider"})).unwrap();
+    assert_eq!(activity::read_log(&env, 10)[0]["title"], "Removed Aider");
+    assert!(laci_core::providers::get(&env, "custom-aider").is_err());
+    undo_latest(&mut service, "connector:custom-aider");
+    assert_eq!(laci_core::providers::get(&env, "custom-aider").unwrap().prompt, ["--message", "{prompt}"]);
+}

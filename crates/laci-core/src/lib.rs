@@ -6,6 +6,7 @@ pub mod create;
 pub mod deletion;
 pub mod env;
 pub mod files;
+mod git;
 pub mod launch;
 pub mod ops;
 mod orphan;

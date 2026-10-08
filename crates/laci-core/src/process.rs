@@ -94,6 +94,17 @@ pub(crate) fn host_path() -> OsString {
 }
 
 pub fn run(program: &str, args: &[&str], cwd: Option<&Path>, timeout: Duration) -> Result<String> {
+    run_env(program, args, cwd, timeout, &[])
+}
+
+/// Like [`run`], with variables set (`Some`) or removed (`None`) for the child only.
+pub(crate) fn run_env(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    timeout: Duration,
+    env: &[(&str, Option<&str>)],
+) -> Result<String> {
     // Files avoid pipe backpressure and reader threads surviving a child with inherited descriptors.
     let output = tempfile::tempfile().map_err(|e| e.to_string())?;
     let errors = tempfile::tempfile().map_err(|e| e.to_string())?;
@@ -105,6 +116,12 @@ pub fn run(program: &str, args: &[&str], cwd: Option<&Path>, timeout: Duration) 
         .stderr(errors.try_clone().map_err(|e| e.to_string())?)
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("LC_ALL", "C");
+    for (key, value) in env {
+        match value {
+            Some(value) => command.env(key, value),
+            None => command.env_remove(key),
+        };
+    }
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }

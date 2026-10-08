@@ -52,6 +52,10 @@ pub fn hosts() -> Value {
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
     process::run("git", args, Some(dir), Duration::from_secs(60))
 }
+/// Questions about the new repository, asked the same guarded way as everywhere else.
+fn git_read(dir: &Path, args: &[&str]) -> Result<String> {
+    crate::git::plain(dir, args, Duration::from_secs(60))
+}
 
 pub fn create_project(env: &Env, request: &Value) -> Result<Value> {
     create_with_progress(env, request, &AtomicBool::new(false), &|_| {})
@@ -193,7 +197,7 @@ fn create_unlocked(env: &Env, r: &Value, cancel: &AtomicBool, progress: &dyn Fn(
         warnings.push("Project created; cancellation prevented any remaining remote creation.".into());
     }
     if remote != "none" && from != "clone" && !cancel.load(Ordering::Relaxed) {
-        if git(&dest, &["rev-parse", "--verify", "HEAD"]).is_err() {
+        if git_read(&dest, &["rev-parse", "--verify", "HEAD"]).is_err() {
             warnings.push("Nothing committed yet, so no remote was created".into());
         } else {
             let mut github = None;
@@ -207,7 +211,7 @@ fn create_unlocked(env: &Env, r: &Value, cancel: &AtomicBool, progress: &dyn Fn(
                 )
                 .is_ok()
                 {
-                    github = git(&dest, &["remote", "get-url", "origin"]).ok();
+                    github = git_read(&dest, &["remote", "get-url", "origin"]).ok();
                 } else {
                     warnings.push(
                         "Creating the GitHub repo failed. Check `gh auth status`, or whether the name is taken.".into(),

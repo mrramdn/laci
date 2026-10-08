@@ -1,5 +1,5 @@
 //! Project removal is explicit and uses system Trash; remote names alone are not a backup.
-use crate::{Result, env::Env, ops, paths, process, service::string, sidecar};
+use crate::{Result, env::Env, git::Repo, ops, paths, process, service::string, sidecar};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, fs, path::Path, time::Duration};
 
@@ -13,7 +13,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
         "core.sshCommand=ssh -oBatchMode=yes -oConnectTimeout=5",
     ];
     options.extend_from_slice(args);
-    process::run("git", &options, Some(dir), Duration::from_secs(15))
+    Repo::at(dir).run(&options, Duration::from_secs(15))
 }
 
 fn local_head(dir: &Path) -> Result<String> {
@@ -27,6 +27,10 @@ fn local_head(dir: &Path) -> Result<String> {
     if git(dir, &["worktree", "list", "--porcelain"])?.lines().filter(|l| l.starts_with("worktree ")).count() != 1 {
         return Err("This repository has other worktrees. Remove them with Git first.".into());
     }
+    // Checked before `status`, which would start Git inside each submodule under that submodule's settings.
+    if dir.join(".gitmodules").exists() || dir.join(".git/modules").is_dir() {
+        return Err("This project contains submodules. Their work must be checked separately.".into());
+    }
     // These index flags can hide modified tracked bytes from both status and diff.
     if git(dir, &["ls-files", "-v", "-z"])?
         .split('\0')
@@ -39,9 +43,6 @@ fn local_head(dir: &Path) -> Result<String> {
     }
     if !git(dir, &["stash", "list"])?.is_empty() {
         return Err("This project has stashes that are only stored locally".into());
-    }
-    if dir.join(".gitmodules").exists() || dir.join(".git/modules").is_dir() {
-        return Err("This project contains submodules. Their work must be checked separately.".into());
     }
     git(dir, &["rev-parse", "--verify", "HEAD"]).map_err(|_| "This project has no committed HEAD to verify".to_owned())
 }

@@ -1359,6 +1359,99 @@ async function agentRegressions() {
       },
     );
     await check(
+      "A described tool starts from its own arguments and takes the MCP server",
+      async () => {
+        await wait(
+          "history ready for a new tool",
+          async () => !(await api("status")).historyPending,
+        );
+        await api("connector/add", {
+          name: `Fixture tool ${stamp}`,
+          agent: {
+            command: "claude",
+            prompt: "--say {prompt}",
+            continue: "--again",
+            mcp: { file: "~/.fixture-tool/mcp.json" },
+          },
+        });
+        const tool = await wait("described tool listed", async () =>
+          (await snapshot()).connectors.find(
+            (connector) => connector.name === `Fixture tool ${stamp}`,
+          ),
+        );
+        try {
+          assert.equal(tool.provider, tool.id);
+          assert.deepEqual(tool.link, { kind: "none" });
+          assert.equal(tool.capabilities.launch, true);
+          const before = (await capturedAgents()).length;
+          const result = await api("agent/launch", {
+            provider: tool.id,
+            projectPath: target,
+            prompt: "literal $HOME",
+            continue: true,
+            target: "internal",
+          });
+          const record = await wait(
+            "described tool received its own arguments",
+            async () =>
+              (await capturedAgents())
+                .slice(before)
+                .find((entry) => entry.program === "claude"),
+          );
+          assert.deepEqual(record.argv, ["--again", "--say", "literal $HOME"]);
+          assert.equal(record.cwd, target);
+          const identity = await processIdentity(record.pid);
+          assert.ok(identity && !["Z", "X"].includes(identity.state));
+          fakeAgentProcesses.set(record.pid, identity);
+          keyboardTerminalIds.add(result.terminal.id);
+          await invoke("term_close", { id: result.terminal.id });
+          keyboardTerminalIds.delete(result.terminal.id);
+          await wait(
+            "described tool stopped",
+            async () =>
+              !sameLiveProcess(await processIdentity(record.pid), identity),
+          );
+          fakeAgentProcesses.delete(record.pid);
+
+          const status = (await api("agent/mcp")).agents.find(
+            (agent) => agent.provider === tool.id,
+          );
+          assert.equal(status.state, "missing");
+          assert.equal(status.how, "file");
+          const applied = await api("agent/mcp/apply", { provider: tool.id });
+          assert.equal(applied.status.state, "registered");
+          const saved = JSON.parse(
+            await readFile(
+              path.join(fixtureHome, ".fixture-tool/mcp.json"),
+              "utf8",
+            ),
+          );
+          assert.deepEqual(saved.mcpServers.laci.args, ["mcp"]);
+          assert.equal(saved.mcpServers.laci.command, status.laci);
+          const removed = await api("agent/mcp/apply", {
+            provider: tool.id,
+            remove: true,
+          });
+          assert.equal(removed.status.state, "missing");
+          assert.equal(
+            (await capturedAgents()).length,
+            before + 1,
+            "Editing a settings file starts no program",
+          );
+        } finally {
+          await wait(
+            "history ready to remove the tool",
+            async () => !(await api("status")).historyPending,
+          );
+          await api("connector/remove", { id: tool.id });
+          await rm(path.join(fixtureHome, ".fixture-tool"), {
+            recursive: true,
+            force: true,
+          });
+        }
+      },
+    );
+    await check(
       "Generator success survives missing agent CLI and retry does not recreate or recommit the project",
       async () => {
         await api("new/recipe", {

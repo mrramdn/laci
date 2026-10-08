@@ -267,15 +267,23 @@ fn discover(env: &Env, provider: &str, refresh: bool) -> Result<Value> {
         let found = if discovery == Discovery::Codex {
             codex_models(&env.home)
         } else {
-            crate::process::run("agy", &["models"], Some(&env.home), Duration::from_secs(12))
-                .and_then(|s| parse_agy_models(&s))
-                .map(|mut models| {
-                    // The listing names no effort levels; --effort belongs to the session, so every model takes it.
-                    for model in models.as_array_mut().into_iter().flatten() {
-                        model["efforts"] = result["defaultEfforts"].clone();
-                    }
-                    models
-                })
+            // The agent keeps its state under home; it must be the home Laci reads, also on a demo home.
+            let home = env.home.to_string_lossy();
+            crate::process::run_env(
+                "agy",
+                &["models"],
+                Some(&env.home),
+                Duration::from_secs(12),
+                &[("HOME", Some(home.as_ref()))],
+            )
+            .and_then(|s| parse_agy_models(&s))
+            .map(|mut models| {
+                // The listing names no effort levels; --effort belongs to the session, so every model takes it.
+                for model in models.as_array_mut().into_iter().flatten() {
+                    model["efforts"] = result["defaultEfforts"].clone();
+                }
+                models
+            })
         };
         match found {
             Ok(models) => {
@@ -287,10 +295,13 @@ fn discover(env: &Env, provider: &str, refresh: bool) -> Result<Value> {
                     "Models and supported efforts reported by Codex. Default keeps provider settings."
                 });
             }
-            Err(_) => {
-                result["message"] = json!(
-                    "Model discovery is unavailable. Default still uses your provider's settings; try Refresh models later."
-                )
+            Err(error) => {
+                result["message"] = json!(match discovery_reason(&error) {
+                    Some(reason) => format!(
+                        "Model discovery is unavailable: {reason}. Default still uses your provider's settings."
+                    ),
+                    None => "Model discovery is unavailable. Default still uses your provider's settings; try Refresh models later.".into(),
+                })
             }
         }
     }
@@ -301,6 +312,13 @@ fn discover(env: &Env, provider: &str, refresh: bool) -> Result<Value> {
         cache.insert(key, (Instant::now(), result.clone()));
     }
     Ok(result)
+}
+/// The agent's own last line about a failed listing, such as a request to sign in first.
+fn discovery_reason(error: &str) -> Option<String> {
+    let said = error.split_once(" failed:").map_or(error, |(_, said)| said);
+    let line = said.lines().rev().map(str::trim).find(|line| !line.is_empty())?;
+    let line = line.trim_start_matches("Error:").trim().trim_end_matches('.');
+    (!line.is_empty() && line.chars().count() <= 200 && !line.chars().any(char::is_control)).then(|| line.to_owned())
 }
 fn parse_agy_models(text: &str) -> Result<Value> {
     let models: Vec<_> = text
@@ -327,12 +345,14 @@ fn parse_codex_models(result: &Value) -> Result<Vec<Value>> {
         Some(json!({"id":id,"label":m["displayName"].as_str().unwrap_or(id),"efforts":efforts,"defaultEffort":m["defaultReasoningEffort"],"isDefault":m["isDefault"]}))
     }).collect())
 }
+/// `cwd` is Laci's home, which is also where Codex must look for its own settings.
 fn codex_models(cwd: &Path) -> Result<Value> {
     // Only initialize/model-list messages; discovery never starts a thread or a turn.
     let output = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
     let mut child = crate::process::command("codex")
         .args(["app-server", "--listen", "stdio://"])
         .current_dir(cwd)
+        .env("HOME", cwd)
         .stdin(Stdio::piped())
         .stdout(output.reopen().map_err(|e| e.to_string())?)
         .stderr(Stdio::null())
@@ -618,6 +638,15 @@ mod tests {
         assert_eq!(models[0]["efforts"], json!(["low"]));
         assert_eq!(models[1]["efforts"], json!(["high", "max"]));
         assert!(parse_agy_models("Fetching available models...\nPlease sign in").is_err());
+        assert_eq!(
+            discovery_reason(
+                "agy failed: Fetching available models...\nError: Please sign in to view available models."
+            )
+            .as_deref(),
+            Some("Please sign in to view available models")
+        );
+        assert_eq!(discovery_reason("agy failed: "), None, "an agent that says nothing gives no reason");
+        assert_eq!(discovery_reason("codex took too long").as_deref(), Some("codex took too long"));
         let models = parse_agy_models("Fetching available models...\nmodel-a\tModel A\nmodel-b\tModel B\n").unwrap();
         assert_eq!(models[0]["id"], "model-a");
         assert_eq!(models[0]["efforts"], json!([]));

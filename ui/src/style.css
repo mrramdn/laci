@@ -1508,6 +1508,34 @@ kbd {
 .callout + .stats {
   padding-top: 4px;
 }
+.callout .acts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: none;
+  max-width: 55%;
+}
+.callout p.last {
+  color: var(--faint);
+}
+.backup-ok {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 12px 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.backup-ok .i {
+  color: var(--green);
+  flex: none;
+}
+.backup-ok .txt {
+  flex: 1;
+  min-width: 0;
+}
 .stat .top {
   display: flex;
   align-items: center;
@@ -1985,6 +2013,55 @@ kbd {
   font: 11px var(--mono);
   color: var(--faint);
   margin-top: 4px;
+}
+.hlist {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: 12px;
+}
+.hlist li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 1px 0;
+  font-weight: 400;
+}
+.hlist .nm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hlist .h,
+.hlist .w,
+.hlist .tag {
+  flex: none;
+}
+.hlist .h {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.hlist .w {
+  font-size: 11.5px;
+}
+.hlist .tag {
+  min-width: 52px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.hlist .more-row .more {
+  padding-top: 2px;
+}
+.hnote {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.hrel {
+  margin: 0 0 2px;
+  font-size: 12.5px;
 }
 .cmds {
   display: flex;

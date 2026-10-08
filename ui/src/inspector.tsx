@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { ReactNode } from "react";
 import type { ChangeEvent } from "react";
 import { api, errorText } from "./api";
 import { useApp, external, run, toast, urlOpen } from "./store";
@@ -32,7 +40,7 @@ import { Select } from "./select";
 import { TerminalButton } from "./terminal-controls";
 import { SessionList, requestResume } from "./session-ui";
 import { openTerminal } from "./terminal-api";
-import type { Node, Snapshot, Task } from "./types";
+import type { Commit, Health, Node, Snapshot, Task } from "./types";
 export function Inspector({ node: n }: { node: Node }) {
   const s = useApp();
   const snapshot = s.snapshot!;
@@ -402,7 +410,94 @@ export function Inspector({ node: n }: { node: Node }) {
     </aside>
   );
 }
+const CHANGE_TAGS: Record<string, string> = {
+  M: "edited",
+  A: "added",
+  D: "deleted",
+  R: "renamed",
+  "??": "new",
+};
+const SHOWN = 5;
+const WEEK = 7 * 864e5;
+function HealthList<T>({
+  items,
+  render,
+  tail,
+}: {
+  items: T[];
+  render: (item: T) => ReactNode;
+  tail?: ReactNode;
+}) {
+  const [all, setAll] = useState(false);
+  const rest = items.length - SHOWN;
+  return (
+    <ul className="hlist">
+      {(all ? items : items.slice(0, SHOWN)).map((item, i) => (
+        <li key={i}>{render(item)}</li>
+      ))}
+      {rest > 0 ? (
+        <li className="more-row">
+          <button className="more" onClick={() => setAll(!all)}>
+            {all ? "Show less" : `Show ${rest} more`}
+          </button>
+        </li>
+      ) : null}
+      {tail}
+    </ul>
+  );
+}
+function CommitRow({ commit, author }: { commit: Commit; author?: boolean }) {
+  return (
+    <>
+      <span className="mono h">{commit.hash.slice(0, 7)}</span>
+      <span className="nm" title={commit.subject}>
+        {commit.subject}
+        {author && commit.author ? (
+          <span className="faint"> · {commit.author}</span>
+        ) : null}
+      </span>
+      <span className="faint w">
+        <Time at={commit.at} />
+      </span>
+    </>
+  );
+}
+function useHealth(n: Node) {
+  const [state, setState] = useState<{
+    id: string;
+    health?: Health;
+    failed?: boolean;
+  } | null>(null);
+  const request = useRef(0);
+  const git = n.git;
+  const project = n.kind === "project";
+  useEffect(() => {
+    if (!project) return;
+    const mine = ++request.current;
+    api<Health>("health", { id: n.id })
+      .then((health) => {
+        if (mine === request.current) setState({ id: n.id, health });
+      })
+      .catch(() => {
+        if (mine === request.current)
+          setState((old) =>
+            old?.id === n.id && old.health ? old : { id: n.id, failed: true },
+          );
+      });
+  }, [
+    project,
+    n.id,
+    n.revision,
+    git?.dirty,
+    git?.ahead,
+    git?.commits,
+    git?.stashes,
+  ]);
+  return project && state?.id === n.id ? state : null;
+}
 function HealthTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
+  const loaded = useHealth(n);
+  const health = loaded?.health;
   const issues =
     n.kind === "project"
       ? n.issues
@@ -415,7 +510,81 @@ function HealthTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
           );
   const git = n.git;
   const stack = n.stack;
-  const max = Math.max(...(git?.weekly ?? []), 1);
+  const weeks = git?.firstCommitAt
+    ? Math.min(
+        26,
+        Math.max(
+          8,
+          Math.floor((Date.now() - Date.parse(git.firstCommitAt)) / WEEK) + 1,
+        ),
+      )
+    : 8;
+  const weekly = (git?.weekly ?? []).slice(-weeks);
+  const max = Math.max(...weekly, 1);
+  const weekStart = (i: number) =>
+    new Date(Date.now() - (weekly.length - i) * WEEK).toISOString();
+  const release = health?.release;
+  const releaseLines: string[] = [];
+  if (release?.version)
+    releaseLines.push(
+      `Version ${release.version}${release.source ? ` in ${release.source}` : ""}`,
+    );
+  if (release?.tag)
+    releaseLines.push(
+      release.since === 0
+        ? `Nothing new since ${release.tag}`
+        : `Last tag ${release.tag}${release.tagAt ? ` on ${date(release.tagAt)}` : ""}${release.since ? ` · ${plural(release.since, "commit")} since` : ""}`,
+    );
+  else if (git && release?.version) releaseLines.push("No release tag yet");
+  const details = (code: string) => {
+    if (!health) return null;
+    if (code === "dirty" && health.changes.length)
+      return (
+        <HealthList
+          items={health.changes}
+          render={(c) => (
+            <>
+              <span className="tag">{CHANGE_TAGS[c.code] ?? c.code}</span>
+              <span className="mono nm" title={c.path}>
+                {c.path}
+              </span>
+            </>
+          )}
+          tail={
+            health.changesMore ? (
+              <li className="faint">
+                and {plural(health.changesMore, "more file")}
+              </li>
+            ) : null
+          }
+        />
+      );
+    if (code === "unpushed" && health.unpushed.length)
+      return (
+        <HealthList
+          items={health.unpushed}
+          render={(c) => <CommitRow commit={c} />}
+        />
+      );
+    if (code === "stash" && health.stashes.length)
+      return (
+        <HealthList
+          items={health.stashes}
+          render={(st) => (
+            <>
+              <span className="mono h">{st.ref}</span>
+              <span className="nm" title={st.subject}>
+                {st.subject}
+              </span>
+              <span className="faint w">
+                <Time at={st.at} />
+              </span>
+            </>
+          )}
+        />
+      );
+    return null;
+  };
   return (
     <>
       <div className="sec-t">Checks</div>
@@ -426,6 +595,11 @@ function HealthTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
             <div className="txt">
               <p>{issue.title}</p>
               {issue.detail ? <p className="d">{issue.detail}</p> : null}
+              {n.kind === "project" ? (
+                <Fragment key={`${n.id}:${issue.code}`}>
+                  {details(issue.code)}
+                </Fragment>
+              ) : null}
             </div>
             {n.kind === "project" ? (
               <FixButton node={n} code={issue.code} />
@@ -457,6 +631,31 @@ function HealthTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
           </div>
         </div>
       )}
+      {loaded?.failed ? (
+        <p className="faint hnote">Details unavailable</p>
+      ) : null}
+      {releaseLines.length ? (
+        <>
+          <div className="sec-t">Release</div>
+          {releaseLines.map((line) => (
+            <p className="hrel" key={line}>
+              {line}
+            </p>
+          ))}
+        </>
+      ) : null}
+      {health?.recent.length ? (
+        <>
+          <div className="sec-t">Recent commits</div>
+          <HealthList
+            key={n.id}
+            items={health.recent}
+            render={(c) => (
+              <CommitRow commit={c} author={(git?.authors ?? 0) > 1} />
+            )}
+          />
+        </>
+      ) : null}
       {git ? (
         <>
           <div className="sec-t">
@@ -466,22 +665,23 @@ function HealthTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
               {git.authors > 1 ? ` · ${git.authors} authors` : ""}
             </span>
           </div>
-          <div className="spark" aria-label="Commits per week, last 26 weeks">
-            {git.weekly.map((count, i) => (
+          <div
+            className="spark"
+            aria-label={`Commits per week, last ${weekly.length} weeks`}
+          >
+            {weekly.map((count, i) => (
               <i
                 key={i}
                 className={count ? "" : "z"}
                 style={{
                   height: `${count ? Math.max(10, (count / max) * 100) : 6}%`,
                 }}
-                title={`${count} commits`}
+                title={`Week of ${date(weekStart(i))}: ${plural(count, "commit")}`}
               />
             ))}
           </div>
           <div className="spark-cap">
-            <span>
-              {date(new Date(Date.now() - 182 * 864e5).toISOString())}
-            </span>
+            <span>{date(weekStart(0))}</span>
             <span>this week</span>
           </div>
           <dl className="kv" style={{ marginTop: 12 }}>

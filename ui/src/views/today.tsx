@@ -8,7 +8,8 @@ import {
   Group,
   Expand,
 } from "../common";
-import { useApp, backup, run } from "../store";
+import { useApp, run } from "../store";
+import { BackupNotice } from "../backup";
 import {
   deadlinesOf,
   plural,
@@ -132,18 +133,18 @@ export function Today() {
         </div>
       </div>
       <div className="body">
-        {snapshot.warnings.map((warning, i) => (
-          <div className="callout" key={i}>
-            <Icon name="alert" />
-            <div className="txt">
-              <b>{warning.title}</b>
-              <p>{warning.detail}</p>
+        <BackupNotice />
+        {snapshot.warnings
+          .filter((warning) => warning.code !== "claude-cleanup")
+          .map((warning, i) => (
+            <div className="callout" key={i}>
+              <Icon name="alert" />
+              <div className="txt">
+                <b>{warning.title}</b>
+                <p>{warning.detail}</p>
+              </div>
             </div>
-            <button className="btn sm" onClick={backup}>
-              Back up logs now
-            </button>
-          </div>
-        ))}
+          ))}
         {deadlines.length ? (
           <Group
             title="Deadlines"

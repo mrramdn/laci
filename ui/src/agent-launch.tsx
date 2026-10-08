@@ -15,9 +15,13 @@ export interface AgentDraft {
 }
 export interface AgentCapabilities {
   models: { id: string; label?: string; efforts: string[] }[];
+  /** Effort levels that can be set while the model stays the provider's default. */
+  defaultEfforts?: string[];
   customModel: boolean;
   installed: boolean;
   message: string;
+  /** The model and effort last used to start this agent. */
+  remembered?: { model: string | null; effort: string | null };
 }
 export function agentDraft(
   provider = "",

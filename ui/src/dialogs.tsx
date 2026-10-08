@@ -24,7 +24,7 @@ function close() {
 function dialogControls(host: HTMLElement | null) {
   return Array.from(
     host?.querySelectorAll<HTMLElement>(
-      'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]',
+      'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex="0"]',
     ) ?? [],
   ).filter(
     (element) =>
@@ -413,6 +413,7 @@ function Shortcuts() {
         ["Next / Prev row", ["↓", "↑"]],
         ["Open / Select", ["↵"]],
         ["Parent folder", ["⌫"]],
+        ["Next / Prev pane", ["F6", "Shift F6"]],
         ["Close / Dismiss", ["Esc"]],
       ],
     ],
@@ -731,44 +732,37 @@ function DeleteProject({ id }: { id: string }) {
     </DialogFrame>
   );
 }
-const KINDS: Record<Link["kind"], [string, string]> = {
-  cwd: [
-    "Log files that record the folder",
-    "Each log names the folder it ran in, like Codex.",
-  ],
-  named: [
-    "One folder per project",
-    "The tool keeps a folder named after each project, like Claude Code.",
-  ],
-  inside: [
-    "Inside the project",
-    "History sits in the project folder itself, like Aider.",
-  ],
-  mentions: [
-    "Files that mention the project",
-    "Notes or plans that mention a project path, like Claude plans.",
-  ],
-};
+const KINDS: [Link["kind"], string][] = [
+  ["cwd", "Each log file records its project folder"],
+  ["named", "One folder per project, named after the path"],
+  ["inside", "It lives inside the project folder"],
+  ["mentions", "Its files mention project paths"],
+];
 function ConnectorDialog() {
   const s = useApp();
-  const [custom, setCustom] = useState(false);
   const [kind, setKind] = useState<Link["kind"]>("cwd");
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const name = useRef<HTMLInputElement>(null);
+  // Opening the form puts the caret in its first field, so typing can start at once.
+  useEffect(() => {
+    if (open) name.current?.focus();
+  }, [open]);
   async function add(body: Record<string, unknown>) {
     await run(
       async () => {
         setSaving(true);
         setError("");
         const modal = useApp.getState().modal;
-        const name =
+        const label =
           typeof body.name === "string"
             ? body.name
             : (s.snapshot?.suggestions.find((c) => c.id === body.preset)
                 ?.name ?? "connector");
         try {
           const change = await api<Change>("connector/add", body);
-          changed(change, `Added ${name}`);
+          changed(change, `Added ${label}`);
           if (useApp.getState().modal === modal) close();
         } finally {
           setSaving(false);
@@ -799,68 +793,13 @@ function ConnectorDialog() {
             : { kind, dir: text("dir"), ext: text("ext") };
     void add({ name: text("name"), link });
   }
-  if (!custom)
-    return (
-      <DialogFrame
-        title="Add a connector"
-        description="Pick the AI tool. laci shows its history on each project and carries it along when you move or archive one."
-        footer={
-          <>
-            {error ? (
-              <p className="err" role="alert">
-                {error}
-              </p>
-            ) : (
-              <p>Saved in ~/.config/laci/config.json</p>
-            )}
-            <button className="btn" disabled={saving} onClick={close}>
-              Cancel
-            </button>
-          </>
-        }
-      >
-        {[...s.snapshot!.suggestions]
-          .sort((a, b) => Number(b.found) - Number(a.found))
-          .map((suggestion) => (
-            <button
-              className="pick"
-              key={suggestion.id}
-              disabled={saving || s.historyPending}
-              onClick={() => void add({ preset: suggestion.id })}
-            >
-              <Icon name="bot" />
-              <div className="txt">
-                <b>{suggestion.name}</b>
-                <p>
-                  {suggestion.about} ·{" "}
-                  <span className="mono">{suggestion.where}</span>
-                </p>
-              </div>
-              {suggestion.found ? (
-                <span className="found">
-                  Found{suggestion.detail ? ` · ${suggestion.detail}` : ""}
-                </span>
-              ) : (
-                <span className="faint" style={{ fontSize: 12 }}>
-                  Not on this PC
-                </span>
-              )}
-            </button>
-          ))}
-        <button className="pick" onClick={() => setCustom(true)}>
-          <Icon name="plus" />
-          <div className="txt">
-            <b>Another tool…</b>
-            <p>Tell laci where it keeps its history</p>
-          </div>
-          <Icon name="chev" className="sm" />
-        </button>
-      </DialogFrame>
-    );
+  const suggestions = [...s.snapshot!.suggestions].sort(
+    (a, b) => Number(b.found) - Number(a.found),
+  );
   return (
     <DialogFrame
-      title="Another tool"
-      description="Tell laci where it keeps its history. It will show up on each project, and move along when you move or archive one."
+      title="Add another AI tool"
+      description="Pick a tool Laci knows, or describe your own. Laci shows its history on each project and carries it along when you move or archive one."
       form
       onSubmit={submit}
       footer={
@@ -876,145 +815,191 @@ function ConnectorDialog() {
             type="button"
             className="btn"
             disabled={saving}
-            onClick={() => setCustom(false)}
+            onClick={close}
           >
-            Back
+            Cancel
           </button>
-          <button className="btn primary" disabled={saving || s.historyPending}>
-            Add connector
-          </button>
+          {open ? (
+            <button
+              className="btn primary"
+              disabled={saving || s.historyPending}
+            >
+              Add tool
+            </button>
+          ) : null}
         </>
       }
     >
-      <label className="fld">
-        <span>Name</span>
-        <input
-          className="inp"
-          name="name"
-          placeholder="OpenCode, Cursor, my own agent…"
-          autoComplete="off"
-          required
-          maxLength={40}
-        />
-      </label>
-      <div className="fld">
-        <span>Where does it keep its history?</span>
-        <div className="choices">
-          {Object.entries(KINDS).map(([value, [title, description]]) => (
-            <label className="choice" key={value}>
-              <input
-                type="radio"
-                name="kind"
-                value={value}
-                checked={kind === value}
-                onChange={() => setKind(value as Link["kind"])}
-              />
-              <div>
-                <b>{title}</b>
-                <p>{description}</p>
+      {suggestions.length ? (
+        <div className="tool-rows">
+          {suggestions.map((suggestion) => (
+            <div className="tool-row" key={suggestion.id}>
+              <Icon name="bot" />
+              <div className="txt">
+                <b>{suggestion.name}</b>
+                <p>
+                  {suggestion.about}
+                  {suggestion.found ? (
+                    <>
+                      {" · "}
+                      <span className="found">
+                        found on this PC
+                        {suggestion.detail ? ` · ${suggestion.detail}` : ""}
+                      </span>
+                    </>
+                  ) : null}
+                </p>
               </div>
-            </label>
+              <button
+                type="button"
+                className="btn sm"
+                aria-label={`Connect ${suggestion.name}`}
+                disabled={saving || s.historyPending}
+                onClick={() => void add({ preset: suggestion.id })}
+              >
+                Connect
+              </button>
+            </div>
           ))}
         </div>
-      </div>
-      <div key={kind}>
-        {kind === "cwd" ? (
-          <>
-            <label className="fld">
-              <span>Folder with the logs</span>
-              <input
-                className="inp mono"
-                name="dir"
-                placeholder="~/.tool/sessions"
-                required
-              />
-              <small>Searched with every subfolder.</small>
-            </label>
-            <div className="row2">
+      ) : (
+        <p className="muted">Every tool Laci knows is already connected.</p>
+      )}
+      <details
+        className="more-fields"
+        open={open}
+        onToggle={(event) => {
+          setOpen(event.currentTarget.open);
+        }}
+      >
+        <summary>Something else</summary>
+        <label className="fld">
+          <span>Name</span>
+          <input
+            ref={name}
+            className="inp"
+            name="name"
+            placeholder="OpenCode, Cursor, my own tool…"
+            autoComplete="off"
+            required={open}
+            maxLength={40}
+          />
+        </label>
+        <div className="fld">
+          <span>How Laci finds the project</span>
+          <Select
+            label="How Laci finds the project"
+            value={kind}
+            options={KINDS.map(([value, label]) => ({ value, label }))}
+            onValueChange={(value) => setKind(value as Link["kind"])}
+          />
+        </div>
+        <div key={kind}>
+          {kind === "cwd" ? (
+            <>
               <label className="fld">
-                <span>File type</span>
+                <span>Where it keeps its history</span>
                 <input
                   className="inp mono"
-                  name="ext"
-                  defaultValue=".jsonl"
-                  required
+                  name="dir"
+                  placeholder="~/.tool/sessions"
+                  required={open}
                 />
+                <small>Searched with every subfolder.</small>
               </label>
+              <details className="advanced">
+                <summary>Advanced</summary>
+                <div className="row2">
+                  <label className="fld">
+                    <span>File type</span>
+                    <input
+                      className="inp mono"
+                      name="ext"
+                      defaultValue=".jsonl"
+                      required={open}
+                    />
+                  </label>
+                  <label className="fld">
+                    <span>Field that holds the folder</span>
+                    <input
+                      className="inp mono"
+                      name="field"
+                      defaultValue="cwd"
+                      required={open}
+                    />
+                  </label>
+                </div>
+              </details>
+            </>
+          ) : kind === "named" ? (
+            <>
               <label className="fld">
-                <span>Field that holds the folder</span>
+                <span>Where it keeps its history</span>
                 <input
                   className="inp mono"
-                  name="field"
-                  defaultValue="cwd"
-                  required
+                  name="dir"
+                  placeholder="~/.tool/projects"
+                  required={open}
+                />
+                <small>The folder that holds one folder per project.</small>
+              </label>
+              <label className="fld">
+                <span>How the folders are named</span>
+                <Select
+                  label="How the folders are named"
+                  name="naming"
+                  defaultValue="dashes"
+                  options={[
+                    {
+                      value: "dashes",
+                      label: "Path with dashes: -home-me-project-app",
+                    },
+                    { value: "sha256", label: "SHA-256 hash of the path" },
+                  ]}
                 />
               </label>
-            </div>
-          </>
-        ) : kind === "named" ? (
-          <>
+            </>
+          ) : kind === "inside" ? (
             <label className="fld">
-              <span>Folder that holds one folder per project</span>
+              <span>Where it keeps its history</span>
               <input
                 className="inp mono"
-                name="dir"
-                placeholder="~/.tool/projects"
-                required
+                name="path"
+                placeholder=".tool/history"
+                required={open}
               />
+              <small>
+                A file or a folder inside each project. It already moves with
+                the project; Laci shows it on the project.
+              </small>
             </label>
-            <label className="fld">
-              <span>How the folders are named</span>
-              <Select
-                label="How the folders are named"
-                name="naming"
-                defaultValue="dashes"
-                options={[
-                  {
-                    value: "dashes",
-                    label: "Path with dashes: -home-me-project-app",
-                  },
-                  { value: "sha256", label: "SHA-256 hash of the path" },
-                ]}
-              />
-            </label>
-          </>
-        ) : kind === "inside" ? (
-          <label className="fld">
-            <span>Path inside each project</span>
-            <input
-              className="inp mono"
-              name="path"
-              placeholder=".tool/history"
-              required
-            />
-            <small>
-              A file or a folder. It already moves with the project; laci shows
-              it on the project.
-            </small>
-          </label>
-        ) : (
-          <div className="row2">
-            <label className="fld">
-              <span>Folder</span>
-              <input
-                className="inp mono"
-                name="dir"
-                placeholder="~/.tool/plans"
-                required
-              />
-            </label>
-            <label className="fld">
-              <span>File type</span>
-              <input
-                className="inp mono"
-                name="ext"
-                defaultValue=".md"
-                required
-              />
-            </label>
-          </div>
-        )}
-      </div>
+          ) : (
+            <>
+              <label className="fld">
+                <span>Where it keeps its history</span>
+                <input
+                  className="inp mono"
+                  name="dir"
+                  placeholder="~/.tool/plans"
+                  required={open}
+                />
+              </label>
+              <details className="advanced">
+                <summary>Advanced</summary>
+                <label className="fld">
+                  <span>File type</span>
+                  <input
+                    className="inp mono"
+                    name="ext"
+                    defaultValue=".md"
+                    required={open}
+                  />
+                </label>
+              </details>
+            </>
+          )}
+        </div>
+      </details>
     </DialogFrame>
   );
 }

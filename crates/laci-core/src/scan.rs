@@ -558,15 +558,27 @@ fn link(
         } else {
             30
         };
-        if keep < 3650 {
-            let oldest = claude
-                .iter()
-                .flat_map(|(_, c)| array(&c["sessions"]).iter())
-                .filter_map(|s| s["at"].as_str())
-                .min()
-                .unwrap_or("—");
-            snapshot["warnings"].as_array_mut().expect("warnings list").push(json!({"code":"claude-cleanup","severity":"high","title":format!("Claude Code deletes session logs after {keep} days"),"detail":format!("Your oldest surviving session is from {}. Memory files are kept, conversation history is not.",oldest.get(..10).unwrap_or(oldest))}));
+        let times = || claude.iter().flat_map(|(_, c)| array(&c["sessions"]).iter()).filter_map(|s| s["at"].as_str());
+        // Sessions that changed after the last backup are the ones still at risk.
+        let mut backup = crate::ops::backup_state(env).unwrap_or_else(|| json!({}));
+        let ran = backup["at"].is_string();
+        if ran {
+            let at = string(&backup, "at").to_owned();
+            backup["pending"] = json!(times().filter(|t| *t > at.as_str()).count());
+            backup["dest"] = json!(paths::tilde(Path::new(string(&backup, "dest")), &env.home));
         }
+        backup["auto"] = json!(crate::config::load(env)["autoBackup"] == true);
+        if keep < 3650 && !(ran && backup["pending"] == 0) {
+            let oldest = times().min().unwrap_or("—");
+            let behind = if ran {
+                let changed = count(u(&backup, "pending"), "session has changed", "sessions have changed");
+                format!(" {changed} since the last backup.")
+            } else {
+                String::new()
+            };
+            snapshot["warnings"].as_array_mut().expect("warnings list").push(json!({"code":"claude-cleanup","severity":"high","title":format!("Claude Code deletes session logs after {keep} days"),"detail":format!("Your oldest surviving session is from {}. Memory files are kept, conversation history is not.{behind}",oldest.get(..10).unwrap_or(oldest))}));
+        }
+        snapshot["backup"] = backup;
     }
 }
 
@@ -579,7 +591,7 @@ fn string<'a>(v: &'a Value, key: &str) -> &'a str {
 fn u(v: &Value, key: &str) -> u64 {
     v[key].as_u64().unwrap_or(0)
 }
-fn plural(n: u64, unit: &str) -> String {
+pub fn plural(n: u64, unit: &str) -> String {
     format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }
 /// `count(1, "commit not pushed", "commits not pushed")`: for phrases where the noun is not the last word.

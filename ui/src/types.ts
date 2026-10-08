@@ -245,12 +245,7 @@ export type Action =
 export interface Proposal {
   id: string;
   category:
-    | "reconnect"
-    | "migration"
-    | "orphan"
-    | "status"
-    | "space"
-    | "duplicate";
+    "reconnect" | "migration" | "orphan" | "status" | "space" | "duplicate";
   title: string;
   why: string;
   confidence: "high" | "med" | "low";
@@ -295,6 +290,45 @@ export interface Node {
   archivePlan?: ArchivePlan;
 }
 
+/** When agent history was last copied to Laci's own folder. `at` is missing until the first backup. */
+export interface Backup {
+  /** The user turned on automatic backups. */
+  auto: boolean;
+  at?: string;
+  /** Session logs the backup holds, including ones their tool has since deleted. */
+  sessions?: number;
+  files?: number;
+  bytes?: number;
+  dest?: string;
+  /** Sessions that changed after `at`. */
+  pending?: number;
+}
+export interface Commit {
+  hash: string;
+  subject: string;
+  at: string;
+  author: string;
+}
+/** What stands behind the counts on the Health tab. From the `health` request, not from the snapshot. */
+export interface Health {
+  /** `code` is the two-letter Git status: "M", "A", "D", "R", "??". */
+  changes: { code: string; path: string }[];
+  /** Changed files beyond the 200 listed. */
+  changesMore?: number;
+  unpushed: Commit[];
+  /** Newest first, at most ten. */
+  recent: Commit[];
+  stashes: { ref: string; subject: string; at: string }[];
+  /** `version` and `source` come from the project's manifest; `tag` is the latest Git tag reachable from HEAD. */
+  release?: {
+    version?: string;
+    source?: string;
+    tag?: string;
+    tagAt?: string;
+    /** Commits since `tag`. */
+    since?: number;
+  };
+}
 export interface Snapshot {
   revision?: number;
   historyPending?: boolean;
@@ -322,6 +356,8 @@ export interface Snapshot {
   unmatched: string[];
   proposals: Proposal[];
   warnings: Issue[];
+  /** Present while the Claude Code connector is on. */
+  backup?: Backup;
   tookMs: number;
 }
 

@@ -851,14 +851,14 @@ async function keyboardRegressions() {
   await check(
     "Connector steps focus Name, trap Tab and restore the opener",
     async () => {
-      await nav("Agent history", "Agent history");
-      await tabTo(".stat.add, .empty-hero button", "Add a connector");
+      await nav("Agents", "Agents");
+      await tabTo(".stat.add, .empty-hero button", "Add another AI tool");
       const opener = await command("GET", "/element/active");
       await key("\uE007");
-      await tabTo(".dialog .pick", "Another tool…");
+      await tabTo(".dialog .more-fields summary", "Something else");
       await key("\uE007");
       await wait("custom connector form rendered", () =>
-        textContains(".dialog .dh h2", "Another tool"),
+        element(".dialog input[name=name]"),
       );
       await painted();
       assert.ok(
@@ -875,11 +875,14 @@ async function keyboardRegressions() {
       );
       await key("\uE004", false, true);
       assert.ok(
-        await focused(".dialog .df button", "Add connector", true),
-        "Shift+Tab wraps to the dialog footer",
+        await focused(".dialog .more-fields summary", "Something else"),
+        "Shift+Tab leaves Name for the Something else disclosure",
       );
       await key("\uE004");
-      assert.ok(await focused(".dialog input[name=name]"), "Tab wraps to Name");
+      assert.ok(
+        await focused(".dialog input[name=name]"),
+        "Tab returns to Name",
+      );
       const controls = await execute(
         () =>
           [
@@ -898,17 +901,8 @@ async function keyboardRegressions() {
           "Tab must stay inside the custom connector dialog",
         );
       }
-      await tabTo(".dialog .df button", "Back", true);
+      await tabTo(".dialog .df button", "Cancel", true);
       await key("\uE007");
-      await wait("connector picker returned", () =>
-        textContains(".dialog .dh h2", "Add a connector"),
-      );
-      await painted();
-      assert.ok(
-        await focused(".dialog button:not([disabled])"),
-        "Back must focus an enabled picker control",
-      );
-      await key("\uE00C");
       await wait("connector dialog closed", () =>
         execute(() => !document.querySelector('.dialog[role="dialog"]')),
       );
@@ -2942,7 +2936,7 @@ try {
         if (proposal)
           await command("POST", `/element/${proposal[elementKey]}/click`, {});
         await shot("tidy");
-        await nav("Agent history", "Agent history");
+        await nav("Agents", "Agents");
         await shot("agents");
         await nav("Log", "Log");
         await nav("Settings", "Settings");
@@ -3254,15 +3248,18 @@ try {
 
       await check("Custom connector dialog and removal", async () => {
         const name = `Desktop smoke ${stamp}`;
-        await nav("Agent history", "Agent history");
-        await click(".stat.add, .empty-hero button", "Add a connector");
+        await nav("Agents", "Agents");
+        await click(".stat.add, .empty-hero button", "Add another AI tool");
         await shot("connector-picker");
-        await click(".dialog .pick", "Another tool…");
+        await click(".dialog .more-fields summary", "Something else");
         await type(".dialog input[name=name]", name);
-        await click(".dialog input[name=kind][value=inside]");
+        await select(
+          '.dialog [aria-label="How Laci finds the project"]',
+          "inside",
+        );
         await type(".dialog input[name=path]", ".smoke-agent");
         await shot("connector-custom");
-        await click(".dialog .df button", "Add connector", true);
+        await click(".dialog .df button", "Add tool", true);
         await wait("custom connector saved", async () =>
           (await snapshot()).connectors.some(
             (connector) => connector.name === name && !connector.builtin,
@@ -3272,9 +3269,13 @@ try {
           "custom connector removal enabled in React",
           () =>
             execute((name) => {
-              const button = [...document.querySelectorAll(".stat")]
-                .find((card) => card.querySelector(".k")?.textContent === name)
-                ?.querySelector("button");
+              const card = [...document.querySelectorAll(".stat")].find(
+                (item) => item.querySelector(".k")?.textContent === name,
+              );
+              if (card) card.querySelector("details").open = true;
+              const button = [...(card?.querySelectorAll("button") ?? [])].find(
+                (item) => item.textContent === "Remove",
+              );
               return button && !button.disabled ? button : null;
             }, name),
         );

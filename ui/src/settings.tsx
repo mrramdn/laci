@@ -3,8 +3,14 @@ import { api, errorText } from "./api";
 import { APP_NAMES, cap, plural, tilde } from "./helpers";
 import { Select } from "./select";
 import { Icon } from "./common";
-import { useApp, changed, rescan, run } from "./store";
-import type { Apps, Change, SetupInfo, TerminalTarget } from "./types";
+import { useApp, acknowledge, changed, rescan, run } from "./store";
+import type {
+  Apps,
+  Change,
+  SetupInfo,
+  Snapshot,
+  TerminalTarget,
+} from "./types";
 export function Settings({ first = false }: { first?: boolean }) {
   const s = useApp();
   const snapshot = s.snapshot!;
@@ -256,7 +262,7 @@ export function Settings({ first = false }: { first?: boolean }) {
             </h2>
             <p>
               Their sessions show on each project and move with it. Other tools
-              can be added in Agent history.
+              can be added in Agents.
             </p>
             {catalog.map((c) => (
               <label className="opt" key={c.id}>
@@ -273,6 +279,31 @@ export function Settings({ first = false }: { first?: boolean }) {
                 </span>
               </label>
             ))}
+            {!first && snapshot.backup ? (
+              <label className="opt">
+                <input
+                  type="checkbox"
+                  className="cb"
+                  checked={snapshot.backup.auto}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    void run(async () => {
+                      const result = await api<{ snapshot?: Snapshot }>(
+                        "backup/auto",
+                        { on },
+                      );
+                      if (result.snapshot)
+                        acknowledge({ snapshot: result.snapshot });
+                    });
+                  }}
+                />
+                <span>Back up agent history automatically</span>
+                <span className="sub">
+                  Copies new and changed session logs to Laci's own folder at
+                  most once an hour. Nothing is ever removed from the backup.
+                </span>
+              </label>
+            ) : null}
           </section>
           <section className="sset">
             <h2>

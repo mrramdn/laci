@@ -146,8 +146,12 @@ fn resolve_with_capabilities(
         }
     }
     if let Some(effort) = &r.effort {
-        // Default model can be changed by provider settings; its supported efforts are unknown.
-        let supported = chosen.and_then(|m| m["efforts"].as_array());
+        // With the default model, only levels the provider accepts for any model are known to be safe.
+        let supported = if r.model.is_some() {
+            chosen.and_then(|m| m["efforts"].as_array())
+        } else {
+            caps["defaultEfforts"].as_array()
+        };
         if !supported.is_some_and(|list| list.iter().any(|v| v == effort)) {
             return Err("That effort is not supported for the selected model; use Default".into());
         }
@@ -195,24 +199,72 @@ fn defaults(provider: &str) -> Result<Value> {
     let bin = executable(provider)?;
     let mut result = json!({"provider":provider,"executable":bin,"installed":installed(bin),"launch":true,"resume":true,"prompt":true,"models":[],"customModel":false,"discovery":"unavailable","message":"Use Default to keep the provider's settings."});
     if provider == "claude" {
+        // The names and levels the Claude Code CLI accepts for --model and --effort.
+        let efforts = json!(["low", "medium", "high", "xhigh", "max"]);
         result["models"] = json!([
-            {"id":"sonnet","label":"Sonnet (provider alias)","efforts":["low","medium","high"]},
-            {"id":"opus","label":"Opus (provider alias)","efforts":["low","medium","high"]},
-            {"id":"haiku","label":"Haiku (provider alias)","efforts":[]}
+            {"id":"fable","label":"Fable","efforts":efforts},
+            {"id":"opus","label":"Opus","efforts":efforts},
+            {"id":"sonnet","label":"Sonnet","efforts":efforts},
+            {"id":"haiku","label":"Haiku","efforts":[]}
         ]);
+        // The CLI takes an effort without a model, so it can be set while the model stays the provider's default.
+        result["defaultEfforts"] = efforts;
         result["customModel"] = json!(true);
         result["discovery"] = json!("aliases");
         result["message"] = json!(
-            "Provider aliases and custom model IDs; availability depends on your Claude account. Default keeps provider settings. Custom IDs use Default effort."
+            "Model names are Claude Code aliases; which ones work depends on your account. Default keeps what Claude Code is set to. A custom model ID uses Default effort."
         );
     }
     Ok(result)
+}
+/// The model and effort last used to start this agent, so the next start offers them again.
+pub fn remembered(env: &Env, provider: &str) -> Value {
+    let saved = crate::config::load(env)["agentDefaults"][provider].clone();
+    json!({"model":saved["model"].as_str(),"effort":saved["effort"].as_str()})
+}
+pub fn remember(env: &Env, request: &LaunchRequest) -> Result<()> {
+    let choice = json!({"model":request.model,"effort":request.effort});
+    if remembered(env, &request.provider) == choice {
+        return Ok(());
+    }
+    crate::ops::with_lock(env, || {
+        let mut config = crate::config::load(env);
+        if !config["agentDefaults"].is_object() {
+            config["agentDefaults"] = json!({});
+        }
+        config["agentDefaults"][&request.provider] = choice;
+        crate::config::save(env, &config)
+    })
 }
 type CapabilityCache = BTreeMap<String, (Instant, Value)>;
 static CAPABILITIES: LazyLock<Mutex<CapabilityCache>> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 /// Called only by an explicit model request or a launch with overrides, never by scanning.
 pub fn capabilities(env: &Env, provider: &str, refresh: bool) -> Result<Value> {
+    let mut result = discover(env, provider, refresh)?;
+    result["listed"] = json!(true);
+    result["remembered"] = remembered(env, provider);
+    Ok(result)
+}
+/// What is known without starting the provider's program: its fixed list, or the last list it reported.
+/// Opening a dialog asks this way; asking the provider itself stays an explicit request.
+pub fn known(env: &Env, provider: &str) -> Result<Value> {
+    let key = format!("{}:{provider}", env.home.display());
+    let cached = CAPABILITIES.lock().ok().and_then(|cache| cache.get(&key).map(|(_, value)| value.clone()));
+    let mut result = match cached {
+        Some(value) => value,
+        None => defaults(provider)?,
+    };
+    // Claude Code's names are fixed; the others list their models only when asked.
+    let listed = provider == "claude" || result["discovery"] == "available";
+    if !listed {
+        result["message"] = json!("Default uses the provider's own settings. Load models to choose another one.");
+    }
+    result["listed"] = json!(listed);
+    result["remembered"] = remembered(env, provider);
+    Ok(result)
+}
+fn discover(env: &Env, provider: &str, refresh: bool) -> Result<Value> {
     let key = format!("{}:{provider}", env.home.display());
     if !refresh
         && let Ok(cache) = CAPABILITIES.lock()
@@ -471,6 +523,42 @@ mod tests {
             LaunchRequest::from_value(&json!({"provider":"codex","model":"default","effort":"default"})).unwrap();
         assert!(defaults.model.is_none() && defaults.effort.is_none());
         assert!(LaunchRequest::from_value(&json!({"provider":"codex","prompt":"nul\u{0000}"})).is_err());
+    }
+    #[test]
+    fn claude_takes_an_effort_with_the_default_model_and_the_last_choice_is_remembered() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let caps = defaults("claude").unwrap();
+        let ids: Vec<_> = caps["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["fable", "opus", "sonnet", "haiku"]);
+        let mut r = request(&env, "claude");
+        r.effort = Some("xhigh".into());
+        let c = resolve_with_capabilities(&env, &r, None, &caps).unwrap();
+        assert_eq!(c.args, ["--effort", "xhigh"]);
+        r.effort = Some("extreme".into());
+        assert!(resolve_with_capabilities(&env, &r, None, &caps).is_err());
+        r.model = Some("haiku".into());
+        r.effort = Some("high".into());
+        assert!(resolve_with_capabilities(&env, &r, None, &caps).is_err(), "Haiku lists no effort levels");
+
+        assert_eq!(capabilities(&env, "claude", false).unwrap()["remembered"], json!({"model":null,"effort":null}));
+        let passive = known(&env, "claude").unwrap();
+        assert_eq!((&passive["listed"], passive["models"].as_array().unwrap().len()), (&json!(true), 4));
+        let codex = known(&env, "codex").unwrap();
+        assert_eq!(
+            (&codex["listed"], &codex["models"]),
+            (&json!(false), &json!([])),
+            "Codex is not asked until requested"
+        );
+        r.model = Some("fable".into());
+        r.effort = Some("max".into());
+        remember(&env, &r).unwrap();
+        assert_eq!(capabilities(&env, "claude", false).unwrap()["remembered"], json!({"model":"fable","effort":"max"}));
+        assert_eq!(remembered(&env, "codex"), json!({"model":null,"effort":null}));
+        r.model = None;
+        r.effort = None;
+        remember(&env, &r).unwrap();
+        assert_eq!(remembered(&env, "claude"), json!({"model":null,"effort":null}));
     }
     #[test]
     fn discovery_preserves_per_model_efforts_and_rejects_unrecognized_agy_output() {

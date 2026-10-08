@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useApp, rescan, setTheme } from "./store";
 import { ago, days, tilde } from "./helpers";
-import { Icon, KindIcon, restoreFocus } from "./common";
+import { Icon, KindIcon, PriorityGlyph, restoreFocus } from "./common";
+import { DeadlinePill } from "./deadline";
 import type { Node, View } from "./types";
 export function Palette() {
   const s = useApp();
@@ -38,7 +39,7 @@ export function Palette() {
   const actions = [
     ["view:today", "Open Today", "inbox"],
     ["view:tidy", "Open Tidy up", "sparkles"],
-    ["view:agents", "Open Agent history", "history"],
+    ["view:agents", "Open Agents", "history"],
     ["view:log", "Open Log", "scroll"],
     ["new", "New project", "plus"],
     ["shortcuts", "Keyboard shortcuts", "keyboard"],
@@ -167,6 +168,12 @@ export function Palette() {
                   <span>
                     <Highlight text={item.label} query={query} />
                   </span>
+                  {item.node?.kind === "project" && item.node.meta.priority ? (
+                    <PriorityGlyph priority={item.node.meta.priority} />
+                  ) : null}
+                  {item.node?.kind === "project" ? (
+                    <DeadlinePill deadline={item.node.meta.deadline} />
+                  ) : null}
                   <span className="sub mono">
                     <Highlight text={item.sub} query={query} />
                   </span>

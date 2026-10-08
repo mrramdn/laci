@@ -650,6 +650,43 @@ fn read_antigravity(env: &Env, dir: &Path, connector: &str, cache: &mut Cache, o
     }
 }
 
+/// Sessions Laci's backup still holds although their tool has deleted them. They cannot be resumed
+/// from there, only read and put back.
+fn read_backup(env: &Env, on: &[Value], cache: &mut Cache, out: &mut AgentData) {
+    for c in on {
+        let (Some(id), Some(store)) = (c["id"].as_str(), c["link"]["dir"].as_str()) else { continue };
+        let provider = c["provider"].as_str().unwrap_or(id);
+        // Only these two keep one log per session in a form Laci reads.
+        if !matches!(provider, "claude" | "codex") {
+            continue;
+        }
+        let store = paths::expand(store, &env.home);
+        let kept = env.data_dir.join("history").join(id);
+        for file in regular_files(env, &kept, ".jsonl") {
+            let Ok(relative) = file.strip_prefix(&kept) else { continue };
+            // Claude Code keeps a session at <project>/<id>.jsonl; deeper logs belong to its subagents.
+            if provider == "claude" && relative.components().count() != 2 {
+                continue;
+            }
+            let original = store.join(relative);
+            if fs::symlink_metadata(&original).is_ok() {
+                continue;
+            }
+            let facts = cache.facts(&format!("backup:{provider}"), &file, || session_facts(&file, provider));
+            let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+            let mut session = normalized_session(provider, &file, &facts, (provider == "claude").then_some(&*stem));
+            session["id"] = json!(format!("backup:{id}:{}", relative.display()));
+            session["connector"] = json!(id);
+            session["backup"] = json!(true);
+            session["restoreTo"] = json!(original);
+            session["resumeCapability"] = json!("history-only");
+            session["at"] = session["updatedAt"].clone();
+            session["bytes"] = json!(fs::metadata(&file).map_or(0, |m| m.len()));
+            out.sessions.push(session);
+        }
+    }
+}
+
 pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
     let mut cache = Cache::load(env);
     let mut out = AgentData::default();
@@ -776,6 +813,7 @@ pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
             out.paths.insert(PathBuf::from(p));
         }
     }
+    read_backup(env, on, &mut cache, &mut out);
     out.sessions.sort_by(|a, b| b["updatedAt"].as_str().cmp(&a["updatedAt"].as_str()));
     cache.save(env);
     out

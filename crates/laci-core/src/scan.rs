@@ -549,35 +549,48 @@ fn link(
         }else if let Some(dir)=link["dir"].as_str().map(Path::new)&&agents::safe(env,dir)&&std::fs::read_dir(dir).is_ok_and(|mut entries|entries.next().is_some()){suggestion["found"]=json!(true);suggestion["detail"]=json!("History found");}suggestion
     }).collect();
     snapshot["suggestions"] = json!(suggestions);
-    if on.iter().any(|c| c["id"] == "claude") {
-        let settings = env.home.join(".claude/settings.json");
-        let keep = if agents::safe(env, &settings) {
-            files::text(&settings)
-                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-                .and_then(|s| s["cleanupPeriodDays"].as_u64())
-                .unwrap_or(30)
-        } else {
-            30
-        };
-        let times = || claude.iter().flat_map(|(_, c)| array(&c["sessions"]).iter()).filter_map(|s| s["at"].as_str());
+    // History kept in a store of its own can be copied; what lives inside a project travels with it.
+    if on.iter().any(|c| c["link"]["dir"].is_string() && c["link"]["kind"] != "mentions") {
         // Sessions that changed after the last backup are the ones still at risk.
+        let live: Vec<(String, String)> = array(&snapshot["sessions"])
+            .iter()
+            .filter(|s| s["backup"] != true)
+            .map(|s| (string(s, "provider").to_owned(), string(s, "updatedAt").to_owned()))
+            .collect();
         let mut backup = crate::ops::backup_state(env).unwrap_or_else(|| json!({}));
         let ran = backup["at"].is_string();
         if ran {
             let at = string(&backup, "at").to_owned();
-            backup["pending"] = json!(times().filter(|t| *t > at.as_str()).count());
+            backup["pending"] = json!(live.iter().filter(|(_, t)| t.as_str() > at.as_str()).count());
             backup["dest"] = json!(paths::tilde(Path::new(string(&backup, "dest")), &env.home));
         }
         backup["auto"] = json!(crate::config::load(env)["autoBackup"] == true);
-        if keep < 3650 && !(ran && backup["pending"] == 0) {
-            let oldest = times().min().unwrap_or("—");
+        let covered = ran && backup["pending"] == 0;
+        // Each agent that deletes its own history says so in a setting of its own.
+        for provider in crate::providers::all(env) {
+            let Some(retention) = &provider.retention else { continue };
+            if covered || !on.iter().any(|c| c["provider"] == provider.id.as_str()) {
+                continue;
+            }
+            let keep = paths::home_path(&retention.file, env)
+                .ok()
+                .filter(|file| agents::safe(env, file))
+                .and_then(|file| files::text(&file))
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .and_then(|settings| settings[&retention.key].as_u64())
+                .unwrap_or(retention.days);
+            if keep >= 3650 {
+                continue;
+            }
+            let oldest =
+                live.iter().filter(|(owner, _)| *owner == provider.id).map(|(_, t)| t.as_str()).min().unwrap_or("—");
             let behind = if ran {
                 let changed = count(u(&backup, "pending"), "session has changed", "sessions have changed");
                 format!(" {changed} since the last backup.")
             } else {
                 String::new()
             };
-            snapshot["warnings"].as_array_mut().expect("warnings list").push(json!({"code":"claude-cleanup","severity":"high","title":format!("Claude Code deletes session logs after {keep} days"),"detail":format!("Your oldest surviving session is from {}. Memory files are kept, conversation history is not.{behind}",oldest.get(..10).unwrap_or(oldest))}));
+            snapshot["warnings"].as_array_mut().expect("warnings list").push(json!({"code":format!("{}-cleanup",provider.id),"severity":"high","title":format!("{} deletes session logs after {keep} days",provider.name),"detail":format!("Your oldest surviving session is from {}. {}{behind}",oldest.get(..10).unwrap_or(oldest),retention.note)}));
         }
         snapshot["backup"] = backup;
     }

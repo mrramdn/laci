@@ -335,7 +335,7 @@ impl Service {
             "apply" => Refresh { watches: true, ..Refresh::agents() },
             // The warning and the backup line on Today come from the agent pass.
             "backup" if value["skipped"] != true => Refresh::agents(),
-            "backup/auto" => Refresh::agents(),
+            "backup/auto" | "backup/restore" => Refresh::agents(),
             _ => Refresh::default(),
         };
         if changes_history(name)
@@ -571,6 +571,20 @@ impl Service {
                 }
                 Ok(result)
             }
+            "backup/restore" => {
+                let snap = self.snapshot()?;
+                let result = ops::restore_backup(&self.env, &snap, string(b, "id"))?;
+                let name = array(&snap["connectors"])
+                    .into_iter()
+                    .find(|c| c["provider"] == result["provider"])
+                    .map(|c| string(&c, "name").to_owned())
+                    .unwrap_or_else(|| "agent".into());
+                activity::record(
+                    &self.env,
+                    json!({"by":by,"title":format!("Restored a {name} session from the backup"),"path":result["restored"],"detail":result["title"]}),
+                );
+                Ok(result)
+            }
             "backup/auto" => {
                 let on = b["on"].as_bool().ok_or("Choose on or off")?;
                 ops::with_lock(&self.env, || {
@@ -758,6 +772,8 @@ impl Service {
                 })?;
                 Ok(json!({}))
             }
+            "agent/mcp" => Ok(json!({"agents":crate::mcp_setup::statuses(&self.env)})),
+            "agent/mcp/apply" => crate::mcp_setup::change(&self.env, string(b, "provider"), b["remove"] == true, by),
             "health" => {
                 let node = self.node(string(b, "id"))?;
                 Ok(readers::health(&paths::workspace_path(string(&node, "path"), &self.env)?))
@@ -772,8 +788,6 @@ impl Service {
                     let allowed=paths::workspace_path(&e.path().to_string_lossy(),&self.env).is_ok();let dir=allowed&&e.path().is_dir();
                     json!({"name":e.file_name().to_string_lossy(),"path":e.path(),"dir":dir,"link":link,"size":meta.map(|m|m.len()),"at":files::modified(&e.path()),"git":dir&&e.path().join(".git").exists()})}).collect();
                 Ok(json!({"path":path,"entries":entries}))
-            "agent/mcp" => Ok(json!({"agents":crate::mcp_setup::statuses(&self.env)})),
-            "agent/mcp/apply" => crate::mcp_setup::change(&self.env, string(b, "provider"), b["remove"] == true, by),
             }
             "ls/newest" => {
                 let path = paths::workspace_path(string(b, "path"), &self.env)?;

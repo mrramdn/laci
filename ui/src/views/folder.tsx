@@ -1,17 +1,27 @@
 import { useEffect, useMemo } from "react";
-import { Icon, KindIcon, StatusGlyph, SeverityGlyph, Time } from "../common";
+import {
+  Icon,
+  KindIcon,
+  StatusGlyph,
+  SeverityGlyph,
+  PriorityGlyph,
+  Time,
+} from "../common";
 import { useApp, readListing, savePref, external } from "../store";
 import {
   agentCount,
   base,
   bytes,
   cap,
+  deadlineInfo,
   descendants,
   parentOf,
+  priorityRank,
   plural,
   tilde,
   within,
 } from "../helpers";
+import { DeadlinePill } from "../deadline";
 import { Select } from "../select";
 import { TerminalButton } from "../terminal-controls";
 import type { Entry, Node, Snapshot } from "../types";
@@ -34,6 +44,16 @@ const SORTS: Record<SortKey, { label: string; dirs: string[]; first: number }> =
       dirs: ["Fewest first", "Most first"],
       first: -1,
     },
+    priority: {
+      label: "Priority",
+      dirs: ["High first", "Low first"],
+      first: 1,
+    },
+    deadline: {
+      label: "Deadline",
+      dirs: ["Soonest first", "Latest first"],
+      first: 1,
+    },
   };
 const FILTERS = [
   ["all", "All files", "Everything in this folder"],
@@ -53,6 +73,8 @@ const FILTERS = [
     "Needs attention",
     "Uncommitted, unpushed, no remote, or other problems",
   ],
+  ["deadline", "Has deadline", "Projects with a deadline set in laci"],
+  ["priority", "High priority", "Projects marked as high priority"],
 ];
 const EXT: Record<string, string> = {
   md: "Markdown",
@@ -95,7 +117,11 @@ function filterNode(n: Node, key: string, snapshot: Snapshot) {
       ? agentCount(n, snapshot) > 0
       : key === "attention"
         ? n.issues.some((i) => i.severity !== "low")
-        : true;
+        : key === "deadline"
+          ? !!deadlineInfo(n.meta.deadline)
+          : key === "priority"
+            ? n.meta.priority === "high"
+            : true;
 }
 interface FolderRow extends Entry {
   n?: Node;
@@ -156,12 +182,20 @@ export function Folder() {
               : row.dir
                 ? undefined
                 : row.size
-            : row.n
-              ? [row.n, ...descendants(row.n, snapshot)].reduce(
-                  (sum, n) => sum + agentCount(n, snapshot),
-                  0,
-                )
-              : undefined;
+            : s.sort.key === "priority"
+              ? row.n?.meta.priority
+                ? priorityRank(row.n.meta.priority)
+                : undefined
+              : s.sort.key === "deadline"
+                ? deadlineInfo(row.n?.meta.deadline)
+                  ? row.n?.meta.deadline
+                  : undefined
+                : row.n
+                  ? [row.n, ...descendants(row.n, snapshot)].reduce(
+                      (sum, n) => sum + agentCount(n, snapshot),
+                      0,
+                    )
+                  : undefined;
     return rows.sort((a, b) => {
       if (s.foldersFirst && a.dir !== b.dir) return a.dir ? -1 : 1;
       const va = value(a),
@@ -478,6 +512,12 @@ function FolderItem({ row }: { row: FolderRow }) {
           {row.pre ? <span className="pre">{row.pre}/</span> : null}
           {row.name}
         </span>
+        {n?.kind === "project" && n.meta.priority ? (
+          <PriorityGlyph priority={n.meta.priority} />
+        ) : null}
+        {n?.kind === "project" ? (
+          <DeadlinePill deadline={n.meta.deadline} />
+        ) : null}
         {n?.sidecar ? (
           <span className="dot" title="Uses laci: has a .laci.md" />
         ) : null}

@@ -860,6 +860,15 @@ kbd {
 .item.two .glyph {
   margin-top: 2px;
 }
+.item .badge,
+.item .pill,
+.item .glyph,
+.c-name .pill,
+.c-name .glyph,
+.pal-item .pill,
+.pal-item .glyph {
+  flex: none;
+}
 .item .lines {
   flex: 1;
   min-width: 0;

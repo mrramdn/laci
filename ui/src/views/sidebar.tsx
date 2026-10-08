@@ -1,12 +1,12 @@
 import { useEffect } from "react";
 import { Icon } from "../common";
 import { useApp, readListing, setTheme, rescan } from "../store";
-import { base, cap, risksOf, tilde, within } from "../helpers";
+import { base, cap, todayBadge, tilde, within } from "../helpers";
 import type { View } from "../types";
 export function Sidebar() {
   const s = useApp();
   const snapshot = s.snapshot!;
-  const hot = risksOf(snapshot).filter((r) => r.i.severity === "high").length;
+  const hot = todayBadge(snapshot);
   const nav: [View, string, string, number][] = [
     ["today", "Today", "inbox", hot],
     [

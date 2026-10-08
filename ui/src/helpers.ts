@@ -236,18 +236,80 @@ export const RISK = new Set([
   "stash",
   "no-git",
 ]);
+const SEVERITY_RANK: Record<string, number> = { high: 0, med: 1, low: 2 };
+export const PRIORITY_RANK: Record<string, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+  none: 3,
+};
+export const priorityRank = (priority?: string) =>
+  PRIORITY_RANK[priority ?? "none"] ?? PRIORITY_RANK.none;
+export const byPriority = (a: Node, b: Node) =>
+  priorityRank(a.meta.priority) - priorityRank(b.meta.priority);
 export function risksOf(snapshot: Snapshot) {
   return Object.values(snapshot.nodes)
-    .flatMap((n) =>
-      n.issues.filter((i) => RISK.has(i.code)).map((i) => ({ n, i })),
-    )
-    .sort((a, b) =>
-      a.i.severity === b.i.severity
-        ? days(a.n.lastActivity?.at) - days(b.n.lastActivity?.at)
-        : a.i.severity === "high"
-          ? -1
-          : 1,
+    .map((n) => ({
+      n,
+      issues: n.issues
+        .filter((i) => RISK.has(i.code))
+        .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]),
+    }))
+    .filter((r) => r.issues.length)
+    .sort(
+      (a, b) =>
+        SEVERITY_RANK[a.issues[0].severity] -
+          SEVERITY_RANK[b.issues[0].severity] ||
+        byPriority(a.n, b.n) ||
+        days(a.n.lastActivity?.at) - days(b.n.lastActivity?.at),
     );
+}
+export function deadlineInfo(deadline: string | undefined, now = new Date()) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(deadline ?? "");
+  if (!m) return undefined;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const due = new Date(y, mo - 1, d);
+  if (
+    due.getFullYear() !== y ||
+    due.getMonth() !== mo - 1 ||
+    due.getDate() !== d
+  )
+    return undefined;
+  // Both sides are local midnights; rounding absorbs the 23 or 25 hour days around DST changes.
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.round((due.getTime() - today.getTime()) / 864e5);
+  const label =
+    diff < 0
+      ? `Overdue by ${plural(-diff, "day")}`
+      : diff === 0
+        ? "Due today"
+        : diff === 1
+          ? "Due tomorrow"
+          : `Due in ${diff} days`;
+  return {
+    days: diff,
+    label,
+    tone: diff <= 0 ? "bad" : diff <= 2 ? "warn" : "",
+  };
+}
+export function deadlinesOf(snapshot: Snapshot, now = new Date()) {
+  return Object.values(snapshot.nodes)
+    .filter(
+      (n) => n.kind === "project" && !n.archived && n.status.value !== "done",
+    )
+    .flatMap((n) => {
+      const info = deadlineInfo(n.meta.deadline, now);
+      return info && info.days <= 14 ? [{ n, info }] : [];
+    })
+    .sort((a, b) => a.info.days - b.info.days || byPriority(a.n, b.n));
+}
+export function todayBadge(snapshot: Snapshot) {
+  const ids = new Set<string>();
+  for (const { n, issues } of risksOf(snapshot))
+    if (issues.some((i) => i.severity === "high")) ids.add(n.id);
+  for (const { n, info } of deadlinesOf(snapshot))
+    if (info.days <= 0) ids.add(n.id);
+  return ids.size;
 }
 export const FIX_LABEL: Record<string, string> = {
   "no-remote": "Create remote",

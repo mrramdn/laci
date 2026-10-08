@@ -286,6 +286,9 @@ export function Today() {
     .filter((n) => n.kind === "project" && !n.archived)
     .sort(recency)
     .slice(0, 5);
+  const activeCount = all.filter(
+    (n) => n.kind === "project" && !n.archived && n.status.value === "active",
+  ).length;
   const checks = all
     .filter((n) => !n.archived)
     .sort(recency)
@@ -307,6 +310,30 @@ export function Today() {
         .filter((h) => h.open && !n.archived),
     )
     .sort((a, b) => b.f.at.localeCompare(a.f.at));
+  if (!snapshot.roots.length)
+    return (
+      <>
+        <div className="head">
+          <h1>Today</h1>
+        </div>
+        <div className="body">
+          <div className="empty-box">
+            <Icon name="folder" />
+            <b>No folders selected yet</b>
+            <p>
+              Choose the folders that hold your projects and Laci will list them
+              here.
+            </p>
+            <button
+              className="btn primary"
+              onClick={() => s.navigate("settings")}
+            >
+              Choose folders
+            </button>
+          </div>
+        </div>
+      </>
+    );
   return (
     <>
       <div className="head">
@@ -322,7 +349,7 @@ export function Today() {
         <div className="quick-stats" role="group" aria-label="Quick jump">
           {[
             [risks.length, "at risk", "alert", "sec-risks", "bad"],
-            [recent.length, "active", "play", "sec-recent", ""],
+            [activeCount, "active", "play", "sec-recent", ""],
             [checks.length, "to-dos", "check", "sec-todos", ""],
           ].map(([count, label, icon, id, className]) =>
             count || id === "sec-recent" ? (
@@ -384,7 +411,7 @@ export function Today() {
                 {i.detail}
               </span>
               <span className="meta">
-                <FixButton node={n} code={i.code} className="act" />
+                <FixButton node={n} code={i.code} className="act always" />
                 {n.archived ? <span className="pill">Archived</span> : null}
                 <span className="mono">
                   <Time at={n.lastActivity?.at} />

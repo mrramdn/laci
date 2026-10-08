@@ -11,7 +11,7 @@ laci shows every folder like a file manager, and for each project it adds its gi
   <img alt="The Today view: work that could be lost, projects to pick up again, and open to-dos" src="docs/screenshots/today-light.png">
 </picture>
 
-> Status: 2.0.0-rc.1, Linux x86-64 release candidate. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
+> Status: 2.0.1, Linux x86-64. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
 
 ## Contents
 
@@ -220,8 +220,8 @@ Then ask your agent things like *"which projects could lose work?"*, *"archive d
 | `tidy_suggestions` | The Tidy up list |
 | `set_project_fields` | Status, priority, deadline |
 | `add_next_step`, `complete_task`, `write_notes` | Edit to-dos and notes |
-| `move_project`, `archive_project`, `delete_project`, `apply_suggestion`, `create_project` | Changes on disk. Two calls: the first returns the plan, the second (with `confirm: true`) runs it |
-| `recent_changes`, `undo_change` | The Log, and undo |
+| `move_project`, `archive_project`, `delete_project`, `apply_suggestion`, `create_project`, `undo_change` | Changes on disk. Two calls: the first returns the plan, the second (with `confirm: true`) runs it |
+| `recent_changes` | The Log, and which entries can be undone |
 
 Moves and new projects must stay inside home or a scan/archive folder explicitly selected in Settings, and only one laci process (the app or an agent) changes files at a time.
 

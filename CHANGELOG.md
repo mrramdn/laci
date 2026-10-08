@@ -4,6 +4,35 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-10-08
+
+Fixes and hardening found in an audit of 2.0.0. No data format changes.
+
+### Security
+
+- Reading a folder's Git state no longer starts programs that the folder's own Git settings name (file monitor, filters, hooks, pager, signature checker), and never fetches missing objects. Filters from your own Git settings, such as Git LFS, keep working. This matters for projects copied in from elsewhere: the scan runs without a click.
+- A link in a README opens only inside its project, also after links on disk are followed. Documents and images open in their default app; any other file is shown in its folder instead of being started.
+- README rendering allows text structure only: no styles, classes, forms or media, so a README cannot restyle or cover the app. Images from the web load after you choose **Load images**.
+- MCP `undo_change` returns a preview first and runs with `confirm: true`, like the other tools that change files. Arguments a tool does not list are rejected.
+- The web inspector is no longer built into release packages.
+- Laci's data and cache folders are private to your user (`0700`), and the activity and debug logs are `0600`. The debug log is never written through a link.
+
+### Fixed
+
+- Deadlines are counted in your local calendar day. Before 07:00 in UTC+7 every deadline was a day off. Wording is now "Due today", "Due tomorrow", "Due in 3 days" and "Overdue by 2 days"; only overdue and the next two days are marked urgent.
+- Issue wording: "10 commits not pushed", "2 forgotten stashes", "1 commit exists only on this disk", "Finish 1 half-done move", and history that holds only memory files no longer reads "0 sessions".
+- An untracked `.laci.md` made by hand no longer counts as an uncommitted change.
+- Saving Settings while `LACI_EDITOR`, `LACI_FILES` or `LACI_TERMINAL` is set no longer writes that one-run value into `config.json`.
+- Log: a Settings save says what changed and is skipped when nothing did; titles start with a capital.
+- Today: the **active** count is the number of active projects, not the length of the recent list; fix buttons are visible without hovering; with no folders selected there is a **Choose folders** button.
+- First run ticks the AI tools found on this PC. The tool list in Settings keeps one order.
+- Session rows outside project folders are styled like the rest of the list.
+- README: `mailto:` links open the mail app, and links to headings scroll to them.
+
+### Changed
+
+- A submodule with uncommitted changes still counts as one change on its parent, but Laci reads it directly instead of letting Git start itself inside the submodule.
+
 ## [2.0.0] - 2026-10-05
 
 Stable Linux release, built on GitHub Actions for Ubuntu 24.04. MIT licensed.

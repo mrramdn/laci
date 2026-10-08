@@ -13,6 +13,7 @@ mod orphan;
 pub mod paths;
 pub mod process;
 pub mod readers;
+pub mod providers;
 pub mod scan;
 pub mod service;
 pub mod sidecar;

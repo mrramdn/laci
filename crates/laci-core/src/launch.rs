@@ -1,5 +1,10 @@
 //! Provider commands are argv, never terminal input or interpolated shell programs.
-use crate::{Result, env::Env, paths};
+use crate::{
+    Result,
+    env::Env,
+    paths,
+    providers::{self, Discovery},
+};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -19,6 +24,8 @@ pub struct LaunchRequest {
     pub prompt: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// Pick up the agent's most recent conversation in the folder instead of starting a new one.
+    pub continue_last: bool,
     pub target: String,
 }
 impl LaunchRequest {
@@ -34,8 +41,11 @@ impl LaunchRequest {
             }
             Ok(Some(text.to_owned()))
         }
-        let provider = optional(value, "provider", 40)?.ok_or("Choose a provider")?;
-        executable(&provider)?;
+        let provider = optional(value, "provider", 60)?.ok_or("Choose a provider")?;
+        // Whether such an agent exists is checked against the registry when the command is built.
+        if !provider.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-') {
+            return Err("This connector provides history only; choose a supported agent".into());
+        }
         let target = optional(value, "target", 20)?.unwrap_or_else(|| "internal".into());
         if !matches!(target.as_str(), "internal" | "external") {
             return Err("Choose Laci or an external terminal".into());
@@ -47,6 +57,7 @@ impl LaunchRequest {
             prompt: optional(value, "prompt", 64 * 1024)?,
             model: optional(value, "model", 200)?,
             effort: optional(value, "effort", 30)?,
+            continue_last: value["continue"] == true,
             target,
         })
     }
@@ -61,17 +72,10 @@ pub struct LaunchCommand {
     pub target: String,
 }
 
-fn executable(provider: &str) -> Result<&'static str> {
-    match provider {
-        "claude" => Ok("claude"),
-        "codex" => Ok("codex"),
-        "antigravity" => Ok("agy"),
-        _ => Err("This connector provides history only; choose a supported agent".into()),
-    }
-}
-fn installed(program: &str) -> bool {
-    std::env::split_paths(&crate::process::host_path()).any(|dir| {
-        fs::metadata(dir.join(program)).is_ok_and(|m| {
+/// Where the host's PATH finds a program, if it does.
+pub(crate) fn located(program: &str) -> Option<PathBuf> {
+    std::env::split_paths(&crate::process::host_path()).map(|dir| dir.join(program)).find(|path| {
+        fs::metadata(path).is_ok_and(|m| {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -83,6 +87,9 @@ fn installed(program: &str) -> bool {
             }
         })
     })
+}
+fn installed(program: &str) -> bool {
+    located(program).is_some()
 }
 pub fn session_id_valid(id: &str) -> bool {
     id.len() == 36
@@ -98,7 +105,7 @@ pub fn resolve(env: &Env, request: &LaunchRequest, session: Option<&Value>) -> R
     let caps = if request.model.is_some() || request.effort.is_some() {
         capabilities(env, &request.provider, false)?
     } else {
-        defaults(&request.provider)?
+        defaults(env, &request.provider)?
     };
     let command = resolve_with_capabilities(env, request, session, &caps)?;
     if !installed(&command.executable) {
@@ -112,10 +119,11 @@ fn resolve_with_capabilities(
     session: Option<&Value>,
     caps: &Value,
 ) -> Result<LaunchCommand> {
-    let bin = executable(&r.provider)?;
+    let provider = providers::get(env, &r.provider)?;
     let session = if let Some(id) = &r.session_id {
         let s = session.ok_or("That session is no longer available; refresh history")?;
-        if !session_id_valid(id)
+        if provider.resume.is_empty()
+            || !session_id_valid(id)
             || s["provider"] != r.provider
             || s["sessionId"] != *id
             || s["resumeCapability"] != "supported"
@@ -158,64 +166,44 @@ fn resolve_with_capabilities(
     }
     let mut args = Vec::new();
     if let Some(id) = &r.session_id {
-        args.extend([
-            match r.provider.as_str() {
-                "codex" => "resume",
-                "claude" => "--resume",
-                _ => "--conversation",
-            }
-            .into(),
-            id.clone(),
-        ]);
+        args.extend(providers::fill(&provider.resume, "id", id));
+    } else if r.continue_last {
+        if provider.continue_last.is_empty() {
+            return Err(format!("{} cannot continue its last conversation from here", provider.name));
+        }
+        args.extend(provider.continue_last.iter().cloned());
     }
-    if r.provider == "codex" {
-        args.extend(["-C".into(), cwd.to_string_lossy().into_owned()]);
-    }
+    args.extend(providers::fill(&provider.cwd, "cwd", &cwd.to_string_lossy()));
     if let Some(model) = &r.model {
-        args.extend(["--model".into(), model.clone()]);
+        if provider.model.is_empty() {
+            return Err(format!("{} takes no model from Laci; use Default", provider.name));
+        }
+        args.extend(providers::fill(&provider.model, "model", model));
     }
     if let Some(effort) = &r.effort {
-        if r.provider == "codex" {
-            args.extend(["-c".into(), format!("model_reasoning_effort={}", json!(effort))]);
-        } else {
-            args.extend(["--effort".into(), effort.clone()]);
-        }
+        args.extend(providers::fill(&provider.effort, "effort", effort));
     }
     if let Some(prompt) = &r.prompt {
         if prompt.contains('\0') || prompt.len() > 64 * 1024 {
             return Err("Invalid prompt".into());
         }
-        if r.provider == "antigravity" {
-            args.push(format!("--prompt-interactive={prompt}"));
-        } else {
-            args.extend(["--".into(), prompt.clone()]);
+        if provider.prompt.is_empty() {
+            return Err(format!("{} takes no first prompt from Laci; leave it empty", provider.name));
         }
+        args.extend(providers::fill(&provider.prompt, "prompt", prompt));
     }
-    let title = session.and_then(|s| s["title"].as_str()).unwrap_or(&r.provider).to_owned();
-    Ok(LaunchCommand { executable: bin.into(), args, cwd, title, target: r.target.clone() })
+    let title = session.and_then(|s| s["title"].as_str()).unwrap_or(&provider.name).to_owned();
+    Ok(LaunchCommand { executable: provider.command, args, cwd, title, target: r.target.clone() })
 }
 
-fn defaults(provider: &str) -> Result<Value> {
-    let bin = executable(provider)?;
-    let mut result = json!({"provider":provider,"executable":bin,"installed":installed(bin),"launch":true,"resume":true,"prompt":true,"models":[],"customModel":false,"discovery":"unavailable","message":"Use Default to keep the provider's settings."});
-    if provider == "claude" {
-        // The names and levels the Claude Code CLI accepts for --model and --effort.
-        let efforts = json!(["low", "medium", "high", "xhigh", "max"]);
-        result["models"] = json!([
-            {"id":"fable","label":"Fable","efforts":efforts},
-            {"id":"opus","label":"Opus","efforts":efforts},
-            {"id":"sonnet","label":"Sonnet","efforts":efforts},
-            {"id":"haiku","label":"Haiku","efforts":[]}
-        ]);
-        // The CLI takes an effort without a model, so it can be set while the model stays the provider's default.
-        result["defaultEfforts"] = efforts;
-        result["customModel"] = json!(true);
-        result["discovery"] = json!("aliases");
-        result["message"] = json!(
-            "Model names are Claude Code aliases; which ones work depends on your account. Default keeps what Claude Code is set to. A custom model ID uses Default effort."
-        );
-    }
-    Ok(result)
+fn defaults(env: &Env, provider: &str) -> Result<Value> {
+    let p = providers::get(env, provider)?;
+    Ok(json!({
+        "provider":p.id,"name":p.name,"executable":p.command,"installed":installed(&p.command),"launch":true,
+        "resume":!p.resume.is_empty(),"continue":!p.continue_last.is_empty(),"prompt":!p.prompt.is_empty(),
+        "models":p.models,"defaultEfforts":p.efforts,"customModel":p.custom_model,
+        "discovery":if p.discovery == Discovery::Fixed { "aliases" } else { "unavailable" },"message":p.note,
+    }))
 }
 /// The model and effort last used to start this agent, so the next start offers them again.
 pub fn remembered(env: &Env, provider: &str) -> Value {
@@ -253,10 +241,10 @@ pub fn known(env: &Env, provider: &str) -> Result<Value> {
     let cached = CAPABILITIES.lock().ok().and_then(|cache| cache.get(&key).map(|(_, value)| value.clone()));
     let mut result = match cached {
         Some(value) => value,
-        None => defaults(provider)?,
+        None => defaults(env, provider)?,
     };
-    // Claude Code's names are fixed; the others list their models only when asked.
-    let listed = provider == "claude" || result["discovery"] == "available";
+    // A fixed list is known as it stands; the other agents list their models only when asked.
+    let listed = result["discovery"] == "aliases" || result["discovery"] == "available";
     if !listed {
         result["message"] = json!("Default uses the provider's own settings. Load models to choose another one.");
     }
@@ -273,20 +261,28 @@ fn discover(env: &Env, provider: &str, refresh: bool) -> Result<Value> {
     {
         return Ok(value.clone());
     }
-    let mut result = defaults(provider)?;
-    if result["installed"] == true && provider != "claude" {
-        let discovery = if provider == "codex" {
+    let mut result = defaults(env, provider)?;
+    let discovery = providers::get(env, provider)?.discovery;
+    if result["installed"] == true && discovery != Discovery::Fixed {
+        let found = if discovery == Discovery::Codex {
             codex_models(&env.home)
         } else {
             crate::process::run("agy", &["models"], Some(&env.home), Duration::from_secs(12))
                 .and_then(|s| parse_agy_models(&s))
+                .map(|mut models| {
+                    // The listing names no effort levels; --effort belongs to the session, so every model takes it.
+                    for model in models.as_array_mut().into_iter().flatten() {
+                        model["efforts"] = result["defaultEfforts"].clone();
+                    }
+                    models
+                })
         };
-        match discovery {
+        match found {
             Ok(models) => {
                 result["models"] = models;
                 result["discovery"] = json!("available");
-                result["message"] = json!(if provider == "antigravity" {
-                    "Models reported by agy. Effort overrides are unavailable because this listing does not report per-model effort support."
+                result["message"] = json!(if discovery == Discovery::Agy {
+                    "Models reported by agy. Effort is passed as --effort; a model uses the levels it supports."
                 } else {
                     "Models and supported efforts reported by Codex. Default keeps provider settings."
                 });
@@ -458,7 +454,7 @@ mod tests {
             let mut r = request(&env, provider);
             r.project_path = project.to_string_lossy().into_owned();
             r.prompt = Some(prompt.into());
-            let c = resolve_with_capabilities(&env, &r, None, &defaults(provider).unwrap()).unwrap();
+            let c = resolve_with_capabilities(&env, &r, None, &defaults(&env, provider).unwrap()).unwrap();
             assert_eq!(c.cwd, project);
             assert!(!c.args.iter().any(|a| a == "--model" || a == "--effort" || a == "-c"));
             assert_eq!(
@@ -484,7 +480,7 @@ mod tests {
         r.session_id = Some(ID.into());
         r.project_path = selected.to_string_lossy().into_owned();
         let mut session = json!({"provider":"codex","sessionId":ID,"cwd":env.home,"resumeCapability":"supported","title":"Readable name"});
-        let caps = defaults("codex").unwrap();
+        let caps = defaults(&env, "codex").unwrap();
         let c = resolve_with_capabilities(&env, &r, Some(&session), &caps).unwrap();
         assert_eq!(c.args, ["resume", ID, "-C", selected.to_str().unwrap()]);
         assert_eq!(c.title, "Readable name");
@@ -516,9 +512,9 @@ mod tests {
         r.effort = None;
         assert!(resolve_with_capabilities(&env, &r, None, &caps).is_err());
         r.provider = "claude".into();
-        assert!(resolve_with_capabilities(&env, &r, None, &defaults("claude").unwrap()).is_ok());
+        assert!(resolve_with_capabilities(&env, &r, None, &defaults(&env, "claude").unwrap()).is_ok());
         r.model = Some("--model=bad".into());
-        assert!(resolve_with_capabilities(&env, &r, None, &defaults("claude").unwrap()).is_err());
+        assert!(resolve_with_capabilities(&env, &r, None, &defaults(&env, "claude").unwrap()).is_err());
         let defaults =
             LaunchRequest::from_value(&json!({"provider":"codex","model":"default","effort":"default"})).unwrap();
         assert!(defaults.model.is_none() && defaults.effort.is_none());
@@ -528,7 +524,7 @@ mod tests {
     fn claude_takes_an_effort_with_the_default_model_and_the_last_choice_is_remembered() {
         let home = tempfile::tempdir().unwrap();
         let env = Env::for_home(home.path().to_owned());
-        let caps = defaults("claude").unwrap();
+        let caps = defaults(&env, "claude").unwrap();
         let ids: Vec<_> = caps["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["fable", "opus", "sonnet", "haiku"]);
         let mut r = request(&env, "claude");
@@ -559,6 +555,56 @@ mod tests {
         r.effort = None;
         remember(&env, &r).unwrap();
         assert_eq!(remembered(&env, "claude"), json!({"model":null,"effort":null}));
+    }
+    #[test]
+    fn a_described_tool_starts_from_its_own_arguments_and_agents_continue_their_last_conversation() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        crate::config::save(
+            &env,
+            &json!({"roots":[],"presets":[],"custom":[{"id":"custom-aider","name":"Aider","agent":{
+                "command":"aider","prompt":"--message {prompt}","continue":"--restore-chat-history",
+                "model":"--model {model}","models":"sonnet","effort":"--reasoning-effort {effort}","efforts":"low high"}}]}),
+        )
+        .unwrap();
+        let caps = known(&env, "custom-aider").unwrap();
+        assert_eq!((&caps["listed"], &caps["continue"], &caps["resume"]), (&json!(true), &json!(true), &json!(false)));
+        assert_eq!(caps["models"], json!([{"id":"sonnet","label":"sonnet","efforts":["low","high"]}]));
+        let mut r = request(&env, "custom-aider");
+        r.prompt = Some("fix the $(bug)".into());
+        r.model = Some("sonnet".into());
+        r.effort = Some("high".into());
+        let c = resolve_with_capabilities(&env, &r, None, &caps).unwrap();
+        assert_eq!(c.executable, "aider");
+        assert_eq!(c.args, ["--model", "sonnet", "--reasoning-effort", "high", "--message", "fix the $(bug)"]);
+        assert_eq!(c.title, "Aider");
+        r.effort = Some("max".into());
+        assert!(resolve_with_capabilities(&env, &r, None, &caps).is_err(), "not one of its levels");
+        r.effort = None;
+        r.model = Some("typed-by-hand".into());
+        assert!(resolve_with_capabilities(&env, &r, None, &caps).is_ok());
+        r.session_id = Some(ID.into());
+        let session = json!({"provider":"custom-aider","sessionId":ID,"cwd":env.home,"resumeCapability":"supported"});
+        assert!(resolve_with_capabilities(&env, &r, Some(&session), &caps).is_err(), "it has no resume arguments");
+        assert!(resolve_with_capabilities(&env, &request(&env, "custom-gone"), None, &caps).is_err());
+
+        let home_text = home.path().to_str().unwrap();
+        for (provider, expected) in [
+            ("claude", vec!["--continue"]),
+            ("codex", vec!["resume", "--last", "-C", home_text]),
+            ("antigravity", vec!["--continue"]),
+            ("custom-aider", vec!["--restore-chat-history"]),
+        ] {
+            let mut r = request(&env, provider);
+            r.continue_last = true;
+            let c = resolve_with_capabilities(&env, &r, None, &defaults(&env, provider).unwrap()).unwrap();
+            assert_eq!(c.args, expected, "{provider}");
+        }
+        // Antigravity takes an effort for the session, whichever model is in use.
+        let mut r = request(&env, "antigravity");
+        r.effort = Some("xhigh".into());
+        let c = resolve_with_capabilities(&env, &r, None, &known(&env, "antigravity").unwrap()).unwrap();
+        assert_eq!(c.args, ["--effort", "xhigh"]);
     }
     #[test]
     fn discovery_preserves_per_model_efforts_and_rejects_unrecognized_agy_output() {

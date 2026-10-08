@@ -529,6 +529,7 @@ fn link(
                     "cwd" => "Paths in the logs are rewritten",
                     "named" => "Its folder is renamed to match",
                     "inside" => "Travels with the folder",
+                    "none" => "Nothing to move: Laci only starts it",
                     _ => "Left as is: they only mention the old path",
                 }
             });
@@ -540,7 +541,7 @@ fn link(
         .collect();
     snapshot["connectors"] = json!(states);
     let suggestions:Vec<_>=agents::catalog(env).into_iter().filter(|c|!on.iter().any(|on|on["id"]==c["id"])).map(|c|{
-        let link=&c["link"];let mut suggestion=json!({"id":c["id"],"name":c["name"],"about":c["about"],"where":agents::where_for(env,link),"found":false});
+        let link=&c["link"];let mut suggestion=json!({"id":c["id"],"name":c["name"],"about":c["about"],"where":agents::where_for(env,link),"found":false,"launch":c["capabilities"]["launch"]==true});
         if link["kind"]=="inside"{
             let hits=snapshot["nodes"].as_object().into_iter().flatten().map(|(_,n)|n).filter(|n|n["kind"]=="project").filter(|n|{
                 let path=Path::new(n["path"].as_str().unwrap_or("")).join(link["path"].as_str().unwrap_or(""));path.exists()&&paths::workspace_path(&path.to_string_lossy(),env).is_ok()

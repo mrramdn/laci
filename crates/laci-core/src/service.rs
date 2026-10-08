@@ -700,7 +700,12 @@ impl Service {
                             json!(array(&c["custom"]).into_iter().filter(|p| p["id"] != id).collect::<Vec<_>>());
                         (
                             id.to_owned(),
-                            format!("Removed {} history", string(&old, "name")),
+                            // A tool Laci only starts has no history to speak of.
+                            format!(
+                                "Removed {}{}",
+                                string(&old, "name"),
+                                if old["link"]["kind"] == "none" { "" } else { " history" }
+                            ),
                             if let Some(spec) = custom {
                                 json!({"type":"connector","spec":spec})
                             } else {
@@ -736,7 +741,11 @@ impl Service {
                         c["custom"] = json!(custom);
                         (
                             key.clone(),
-                            format!("Added {} history", string(&spec, "name")),
+                            format!(
+                                "Added {}{}",
+                                string(&spec, "name"),
+                                if spec["link"]["kind"] == "none" { "" } else { " history" }
+                            ),
                             json!({"type":"connector","remove":key}),
                         )
                     };

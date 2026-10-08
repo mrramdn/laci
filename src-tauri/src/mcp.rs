@@ -174,9 +174,21 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
         "recent_changes" => service.request_as("log", args, "agent"),
         "undo_change" => {
             let id = string(args, "id");
-            let log = service.request_as("log", &json!({}), "agent")?;
-            let found = array(&log["entries"]).iter().any(|e| e["id"] == id);
-            service.request_as(if found { "log/undo" } else { "undo" }, &json!({"id":id}), "agent")
+            let entries = array(&service.request_as("log", &json!({}), "agent")?["entries"]);
+            let entry = entries.iter().find(|e| e["id"] == id);
+            if args["confirm"] != true {
+                // A move can be named by its journal id, which is what `move_project` returns.
+                let shown = entry
+                    .or_else(|| entries.iter().find(|e| e["journal"] == id))
+                    .ok_or("Unknown change. Use recent_changes to find its id.")?;
+                if shown["canUndo"] != true {
+                    return Err("That change can no longer be undone".into());
+                }
+                return Ok(
+                    json!({"plan":shown,"hint":"Nothing has changed yet. Show this change to the user; if they agree, call again with confirm: true."}),
+                );
+            }
+            service.request_as(if entry.is_some() { "log/undo" } else { "undo" }, &json!({"id":id}), "agent")
         }
         "create_project" => {
             if args["confirm"] != true {
@@ -185,12 +197,12 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                     json!({"plan":format!("Create {} in {}",string(args,"name"),parent.display()),"request":args,"hint":"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}),
                 );
             }
-            let mut body = args.clone();
-            if body["from"].is_null() {
-                body["from"] = json!("empty");
-            }
-            if body["remote"].is_null() {
-                body["remote"] = json!("none");
+            // Only what the tool describes reaches the engine; its other creation options stay with the app.
+            let mut body = json!({"from":"empty","remote":"none"});
+            for key in ["parent", "name", "from", "summary", "template", "url", "remote"] {
+                if !args[key].is_null() {
+                    body[key] = args[key].clone();
+                }
             }
             service.request_as("new", &body, "agent")
         }
@@ -319,7 +331,7 @@ fn validate_args(name: &str, args: &Value) -> Result<(), String> {
     for (key, value) in args.as_object().ok_or("Arguments must be an object")? {
         let rule = &schema["properties"][key];
         if rule.is_null() {
-            continue;
+            return Err(format!("Unknown argument {key}"));
         }
         let valid = match string(rule, "type") {
             "string" => value.is_string(),
@@ -419,12 +431,18 @@ fn tools() -> Vec<Tool> {
             vec!["parent", "name"],
         ),
         ("recent_changes", "Read the change log and which entries can be undone", json!({}), vec![]),
-        ("undo_change", "Undo a journaled move or a current Log entry", json!({"id":text}), vec!["id"]),
+        (
+            "undo_change",
+            "Undo a journaled move or a current Log entry; requires confirm after preview",
+            json!({"id":text,"confirm":boolean}),
+            vec!["id"],
+        ),
     ];
     definitions
         .into_iter()
         .map(|(name, description, properties, required)| {
-            let schema = json!({"type":"object","properties":properties,"required":required});
+            let schema =
+                json!({"type":"object","properties":properties,"required":required,"additionalProperties":false});
             let readonly =
                 ["list_projects", "project_details", "needs_attention", "tidy_suggestions", "recent_changes"]
                     .contains(&name);

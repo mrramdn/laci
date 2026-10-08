@@ -926,6 +926,27 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
                 bytes += metadata.len();
             }
         }
-        Ok(json!({"copied":copied,"bytes":bytes,"size":bytes,"dest":dest}))
+        // What the backup holds now, including sessions their tool has since deleted.
+        let (mut sessions, mut kept, mut total) = (0u64, 0u64, 0u64);
+        for item in walkdir::WalkDir::new(&dest).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+            if item.file_type().is_file() {
+                kept += 1;
+                total += item.metadata().map_or(0, |m| m.len());
+                sessions += u64::from(item.path().extension().is_some_and(|e| e == "jsonl"));
+            }
+        }
+        let state = json!({"at":files::now(),"copied":copied,"sessions":sessions,"files":kept,"bytes":total});
+        files::replace(&data(env, BACKUP_STATE)?, state.to_string().as_bytes())?;
+        Ok(
+            json!({"copied":copied,"bytes":bytes,"size":bytes,"dest":dest,"sessions":sessions,"files":kept,"total":total}),
+        )
     })
+}
+const BACKUP_STATE: &str = "backup.json";
+/// When agent history was last backed up and what the backup holds, or nothing if it never ran.
+pub fn backup_state(env: &Env) -> Option<Value> {
+    let mut state: Value = serde_json::from_str(&files::text(&data(env, BACKUP_STATE).ok()?)?).ok()?;
+    state["at"].as_str()?;
+    state["dest"] = json!(data(env, "history").ok()?);
+    Some(state)
 }

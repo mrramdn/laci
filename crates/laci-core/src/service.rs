@@ -333,6 +333,9 @@ impl Service {
             "connector/add" | "connector/remove" => Refresh { watches: true, ..Refresh::agents() },
             "apply" if matches!(apply_kind.as_deref(), Some("archive" | "trash")) => Refresh::full(),
             "apply" => Refresh { watches: true, ..Refresh::agents() },
+            // The warning and the backup line on Today come from the agent pass.
+            "backup" if value["skipped"] != true => Refresh::agents(),
+            "backup/auto" => Refresh::agents(),
             _ => Refresh::default(),
         };
         if changes_history(name)
@@ -540,11 +543,49 @@ impl Service {
                 Ok(json!({"ok":true}))
             }
             "backup" => {
+                let auto = b["auto"] == true;
                 let snap = self.snapshot()?;
+                // An automatic run is opt-in, at most hourly, and only when a session changed since the last one.
+                if auto
+                    && (config::load(&self.env)["autoBackup"] != true
+                        || snap["backup"]["pending"] == 0
+                        || files::age(string(&snap["backup"], "at")) < 1.0 / 24.0)
+                {
+                    return Ok(json!({"skipped":true}));
+                }
                 let mut result = ops::backup_history(&self.env, &snap)?;
+                let copied = result["copied"].as_u64().unwrap_or(0);
                 result["size"] = json!(scan::bytes(result["bytes"].as_u64().unwrap_or(0)));
                 result["dest"] = json!(paths::tilde(Path::new(string(&result, "dest")), &self.env.home));
+                if copied > 0 || !auto {
+                    let kept = format!(
+                        "{} kept · {} in {}",
+                        scan::plural(result["sessions"].as_u64().unwrap_or(0), "session"),
+                        scan::bytes(result["total"].as_u64().unwrap_or(0)),
+                        string(&result, "dest")
+                    );
+                    activity::record(
+                        &self.env,
+                        json!({"by":if auto {"auto"} else {by},"title":if copied > 0 {format!("Backed up {}",scan::plural(copied,"agent history file"))} else {"Agent history backup is up to date".into()},"detail":kept}),
+                    );
+                }
                 Ok(result)
+            }
+            "backup/auto" => {
+                let on = b["on"].as_bool().ok_or("Choose on or off")?;
+                ops::with_lock(&self.env, || {
+                    let mut c = config::load(&self.env);
+                    if c["autoBackup"].as_bool().unwrap_or(false) != on {
+                        c["autoBackup"] = json!(on);
+                        config::save(&self.env, &c)?;
+                        activity::record(
+                            &self.env,
+                            json!({"by":by,"title":format!("Automatic history backup turned {}",if on {"on"} else {"off"})}),
+                        );
+                    }
+                    Ok(())
+                })?;
+                Ok(json!({"on":on}))
             }
             "theme" => {
                 let theme = string(b, "theme");

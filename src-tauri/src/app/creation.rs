@@ -44,7 +44,9 @@ impl Creations {
         let continuation = if request["agent"].is_null() {
             Value::Null
         } else {
-            agent_request(&request["agent"], &Value::Null)?;
+            let agent = agent_request(&request["agent"], &Value::Null)?;
+            // A project is not created for an agent that cannot be started afterwards.
+            laci_core::providers::get(&env, agent["provider"].as_str().unwrap_or(""))?;
             json!({"status":"pending","attempt":0})
         };
         let mut jobs = self.jobs.lock().map_err(|e| e.to_string())?;

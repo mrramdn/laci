@@ -137,9 +137,13 @@ pub fn validate_connector(env: &Env, raw: &Value) -> Result<Value> {
     if name.is_empty() || name.chars().count() > 40 {
         return Err("Give the connector a name (up to 40 characters)".into());
     }
+    let agent = if raw["agent"].is_null() { None } else { Some(crate::providers::validate_agent(env, &raw["agent"])?) };
     let mut link = raw["link"].clone();
     let kind = raw["link"]["kind"].as_str().unwrap_or("");
-    if kind == "inside" {
+    if agent.is_some() && matches!(kind, "" | "none") {
+        // A tool Laci only starts: it keeps no history Laci can read.
+        link = json!({"kind":"none"});
+    } else if kind == "inside" {
         let p = link["path"].as_str().ok_or("Pick a path inside the project")?.trim().trim_end_matches('/');
         if p.is_empty() || p.len() > 200 || p.starts_with('/') || p.split('/').any(|s| s == ".." || s.is_empty()) {
             return Err("History path must stay inside the project".into());
@@ -176,7 +180,11 @@ pub fn validate_connector(env: &Env, raw: &Value) -> Result<Value> {
     if !CONNECTOR_ID.is_match(&id) {
         return Err("Invalid connector id".into());
     }
-    Ok(json!({"id":id,"name":name,"link":link}))
+    let mut spec = json!({"id":id,"name":name,"link":link});
+    if let Some(agent) = agent {
+        spec["agent"] = agent;
+    }
+    Ok(spec)
 }
 
 #[cfg(test)]

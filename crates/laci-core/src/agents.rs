@@ -9,7 +9,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::{env::Env, files, paths};
+use crate::{env::Env, files, paths, providers};
 
 pub fn catalog(env: &Env) -> Vec<Value> {
     vec![
@@ -34,7 +34,8 @@ fn same_store(a: &Value, b: &Value) -> bool {
             a.canonicalize().unwrap_or_else(|_| paths::normalize(a))
                 == b.canonicalize().unwrap_or_else(|_| paths::normalize(b))
         }
-        _ => a["link"] == b["link"],
+        // Tools Laci only starts keep no store, so two of them never share one.
+        _ => a["link"]["kind"] != "none" && a["link"] == b["link"],
     }
 }
 pub fn connectors(env: &Env, cfg: &Value) -> Vec<Value> {
@@ -44,7 +45,11 @@ pub fn connectors(env: &Env, cfg: &Value) -> Vec<Value> {
     for custom in cfg["custom"].as_array().into_iter().flatten() {
         let Ok(mut c) = crate::config::validate_connector(env, custom) else { continue };
         c["builtin"] = json!(false);
-        c["about"] = json!("User-configured history store");
+        c["about"] = json!(match (c["agent"].is_object(), c["link"]["kind"] == "none") {
+            (true, true) => "Started from Laci; it keeps no history Laci reads",
+            (true, false) => "User-configured history store, started from Laci",
+            _ => "User-configured history store",
+        });
         if let Some(p) = c["link"]["dir"].as_str() {
             c["link"]["dir"] = json!(paths::expand(p, &env.home));
         }
@@ -69,6 +74,22 @@ pub fn connectors(env: &Env, cfg: &Value) -> Vec<Value> {
             out.push(c);
         }
     }
+    // What each one can do comes from its description, built in or the user's own.
+    let known = providers::builtins();
+    for c in &mut out {
+        let described = if c["provider"].is_null() { providers::from_spec(c) } else { None };
+        if described.is_some() {
+            c["provider"] = c["id"].clone();
+            c["capabilities"] = json!({"launch":true,"resume":false,"titles":false,"modelDiscovery":"aliases"});
+        }
+        let Some(provider) = described.as_ref().or_else(|| known.iter().find(|p| c["provider"] == p.id.as_str()))
+        else {
+            continue;
+        };
+        c["command"] = json!(provider.command);
+        c["capabilities"]["continue"] = json!(!provider.continue_last.is_empty());
+        c["capabilities"]["mcp"] = json!(provider.mcp.is_some());
+    }
     out
 }
 /// Metadata alongside a provider store needs watches as well as the logs themselves.
@@ -87,6 +108,8 @@ pub fn store_name(link: &Value, path: &str) -> String {
 pub fn where_for(env: &Env, link: &Value) -> String {
     if let Some(dir) = link["dir"].as_str() {
         paths::tilde(Path::new(dir), &env.home)
+    } else if link["kind"] == "none" {
+        String::new()
     } else {
         format!("<project>/{}", link["path"].as_str().unwrap_or(""))
     }

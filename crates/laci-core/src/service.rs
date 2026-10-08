@@ -708,6 +708,10 @@ impl Service {
                 })?;
                 Ok(json!({}))
             }
+            "health" => {
+                let node = self.node(string(b, "id"))?;
+                Ok(readers::health(&paths::workspace_path(string(&node, "path"), &self.env)?))
+            }
             "ls" => {
                 let raw = b["path"].as_str().unwrap_or(self.env.home.to_str().unwrap_or(""));
                 let path = paths::workspace_path(raw, &self.env)?;

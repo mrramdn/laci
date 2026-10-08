@@ -1,0 +1,223 @@
+import { useEffect } from "react";
+import { Icon, Time, Group, Ops } from "../common";
+import { useApp, run, changed, toggleExpanded, refreshLog } from "../store";
+import { daysBack, logKind, plural } from "../helpers";
+import { api } from "../api";
+import type { Change } from "../types";
+const LOG_FILTERS = [
+  ["all", "All"],
+  ["moves", "Moves and archives"],
+  ["projects", "Project edits"],
+  ["setup", "Settings"],
+  ["agent", "By agents"],
+];
+export function LogView() {
+  const s = useApp();
+  const log = s.activity;
+  useEffect(() => {
+    void refreshLog();
+  }, []);
+  const filter = (
+    entry: NonNullable<typeof log>["entries"][number],
+    key: string,
+  ) =>
+    key === "moves"
+      ? logKind(entry) === "move"
+      : key === "projects"
+        ? ["meta", "todo", "notes", "new"].includes(logKind(entry))
+        : key === "setup"
+          ? logKind(entry) === "setup"
+          : key === "agent"
+            ? entry.by === "agent"
+            : true;
+  const groups = new Map<string, NonNullable<typeof log>["entries"]>();
+  for (const entry of log?.entries.filter((e) => filter(e, s.logFilter)) ??
+    []) {
+    const day = new Date(entry.at);
+    const back = daysBack(day);
+    const label =
+      back === 0
+        ? "Today"
+        : back === 1
+          ? "Yesterday"
+          : day.toLocaleDateString("en-GB", {
+              weekday: "long",
+              day: "numeric",
+              month: "short",
+              ...(day.getFullYear() !== new Date().getFullYear()
+                ? { year: "numeric" }
+                : {}),
+            });
+    groups.set(label, [...(groups.get(label) ?? []), entry]);
+  }
+  const icons: Record<string, string> = {
+    undo: "undo",
+    move: "route",
+    meta: "rename",
+    todo: "keep",
+    notes: "file",
+    setup: "gear",
+    new: "plus",
+    other: "history",
+  };
+  return (
+    <>
+      <div className="head">
+        <h1>Log</h1>
+        <span className="count">
+          {log ? plural(log.entries.length, "change") : ""}
+        </span>
+        <span className="grow" />
+        <button
+          className="btn sm ghost"
+          title={log?.file}
+          onClick={() => void run(() => api("log/open"))}
+        >
+          <Icon name="file" className="sm" />
+          Debug log
+        </button>
+      </div>
+      <div className="filterbar">
+        <div className="showbar" role="group" aria-label="Show">
+          {LOG_FILTERS.map(([key, label]) => (
+            <button
+              className="chipf"
+              key={key}
+              aria-pressed={s.logFilter === key}
+              onClick={() => useApp.setState({ logFilter: key })}
+            >
+              {label}
+              {key !== "all" ? (
+                <span className="n">
+                  {log?.entries.filter((e) => filter(e, key)).length ?? 0}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+        <span className="grow" />
+        <span className="scope">
+          Everything laci changed, from the app or an agent · newest first
+        </span>
+      </div>
+      <div className="body">
+        {!log ? (
+          <div className="empty">Reading the log…</div>
+        ) : log.error ? (
+          <div className="empty">{log.error}</div>
+        ) : (
+          [...groups.entries()].map(([label, entries]) => (
+            <Group title={label} count={entries.length} key={label}>
+              {entries.map((entry) => {
+                const key = "log:" + entry.id;
+                const open = !!s.expanded[key];
+                const more = !!entry.steps?.length || !!entry.error;
+                const n = entry.path
+                  ? s.snapshot?.nodes[entry.path]
+                  : undefined;
+                return (
+                  <div className="prop-row" data-open={open} key={entry.id}>
+                    <div
+                      className="item two"
+                      tabIndex={more ? 0 : undefined}
+                      aria-expanded={more ? open : undefined}
+                      onClick={() => more && toggleExpanded(key)}
+                    >
+                      {more ? <Icon name="chev" className="sm chev" /> : null}
+                      <Icon name={icons[logKind(entry)]} />
+                      <div className="lines">
+                        <div className="l1">
+                          <span
+                            className="t"
+                            style={{ maxWidth: "none", whiteSpace: "normal" }}
+                          >
+                            {entry.title}
+                          </span>
+                          {n && !entry.title.includes(n.name) ? (
+                            <span className="pill">{n.label}</span>
+                          ) : null}
+                        </div>
+                        {entry.detail ? (
+                          <div className="l2">
+                            <span>{entry.detail}</span>
+                          </div>
+                        ) : null}
+                      </div>
+                      <span className="meta">
+                        {entry.by === "agent" ? (
+                          <span className="pill">
+                            <Icon name="bot" className="sm" />
+                            Agent
+                          </span>
+                        ) : null}
+                        {entry.state === "undone" ? (
+                          <span className="pill">Undone</span>
+                        ) : entry.state === "failed" ||
+                          entry.state === "running" ? (
+                          <span className="pill bad">
+                            {entry.state === "failed"
+                              ? "Failed"
+                              : "Didn’t finish"}
+                          </span>
+                        ) : null}
+                        {entry.canUndo ? (
+                          <button
+                            className="btn sm act"
+                            disabled={s.historyPending}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void run(
+                                async () => {
+                                  changed(
+                                    await api<Change>("log/undo", {
+                                      id: entry.id,
+                                    }),
+                                    "Undone",
+                                  );
+                                },
+                                "Undoing…",
+                                { history: true },
+                              );
+                            }}
+                          >
+                            <Icon name="undo" className="sm" />
+                            Undo
+                          </button>
+                        ) : entry.superseded ? (
+                          <span
+                            className="faint"
+                            style={{ fontSize: 12 }}
+                            title="Changed again later. Undo the newer change first."
+                          >
+                            Changed since
+                          </span>
+                        ) : null}
+                        <span className="mono">
+                          <Time at={entry.at} long />
+                        </span>
+                      </span>
+                    </div>
+                    {open ? (
+                      <div className="prop-body">
+                        {entry.error ? (
+                          <p style={{ color: "var(--red)" }}>{entry.error}</p>
+                        ) : null}
+                        {entry.steps?.length ? <Ops ops={entry.steps} /> : null}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </Group>
+          ))
+        )}
+        {log && !log.error && !groups.size ? (
+          <div className="empty">
+            Nothing yet. Moves, archives, status changes, to-dos and notes show
+            up here, with a way to undo them.
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}

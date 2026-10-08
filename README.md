@@ -220,8 +220,8 @@ Then ask your agent things like *"which projects could lose work?"*, *"archive d
 | `tidy_suggestions` | The Tidy up list |
 | `set_project_fields` | Status, priority, deadline |
 | `add_next_step`, `complete_task`, `write_notes` | Edit to-dos and notes |
-| `move_project`, `archive_project`, `delete_project`, `apply_suggestion`, `create_project` | Changes on disk. Two calls: the first returns the plan, the second (with `confirm: true`) runs it |
-| `recent_changes`, `undo_change` | The Log, and undo |
+| `move_project`, `archive_project`, `delete_project`, `apply_suggestion`, `create_project`, `undo_change` | Changes on disk. Two calls: the first returns the plan, the second (with `confirm: true`) runs it |
+| `recent_changes` | The Log, and which entries can be undone |
 
 Moves and new projects must stay inside home or a scan/archive folder explicitly selected in Settings, and only one laci process (the app or an agent) changes files at a time.
 

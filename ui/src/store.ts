@@ -469,16 +469,48 @@ export function rescan() {
     },
   );
 }
+// The store is loaded on its own by the state smoke test, so it keeps its one wording helper local.
+const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export function backup() {
   void run(async () => {
-    const result = await api<{ copied: number; size: string; dest: string }>(
-      "backup",
-    );
+    const result = await api<BackupResult>("backup", {});
+    if (result.snapshot) acknowledge({ snapshot: result.snapshot });
     toast(
       result.copied
-        ? `Backed up ${result.copied} logs (${result.size})`
+        ? `Backed up ${count(result.copied, "file")}`
         : "Already backed up",
-      `Copies live in ${result.dest}`,
+      `${count(result.sessions, "session")} kept in ${result.dest}`,
     );
+    void refreshLog();
   }, "Copying agent logs…");
 }
+interface BackupResult {
+  copied: number;
+  size: string;
+  dest: string;
+  sessions: number;
+  total: number;
+  snapshot?: Snapshot;
+}
+const AUTO_BACKUP_EVERY = 10 * 60 * 1000;
+let autoBackupAt = 0;
+function autoBackup(snapshot: Snapshot | null) {
+  const state = snapshot?.backup;
+  // `pending` is unknown until the first backup has run, and that first run is wanted too.
+  if (!state?.auto || state.pending === 0) return;
+  if (Date.now() - autoBackupAt < AUTO_BACKUP_EVERY) return;
+  autoBackupAt = Date.now();
+  void api<Partial<BackupResult> & { skipped?: boolean }>("backup", {
+    auto: true,
+  })
+    .then((result) => {
+      if (result.skipped || !result.copied) return;
+      if (result.snapshot) acknowledge({ snapshot: result.snapshot });
+      toast(`Backed up ${count(result.copied, "file")} automatically`);
+      void refreshLog();
+    })
+    .catch(() => {});
+}
+useApp.subscribe((state, previous) => {
+  if (state.snapshot !== previous.snapshot) autoBackup(state.snapshot);
+});

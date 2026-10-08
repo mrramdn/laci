@@ -11,7 +11,7 @@ laci shows every folder like a file manager, and for each project it adds its gi
   <img alt="The Today view: work that could be lost, projects to pick up again, and open to-dos" src="docs/screenshots/today-light.png">
 </picture>
 
-> Status: 2.0.1, Linux x86-64. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
+> Status: 2.1.0, Linux x86-64. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
 
 ## Contents
 
@@ -45,10 +45,13 @@ laci puts all of this in one place and makes moving projects safe.
 
 The home screen answers "what should I look at?". Each list says how it's ordered.
 
-- **Could lose work**: no remote, never committed, uncommitted or unpushed changes, stashes. Each row has a one-click fix (for example *Create remote* or *Push*) that opens in the built-in terminal.
+- **Deadlines**: overdue projects and the next 14 days, soonest first, with their priority. Shown only when there are any.
+- **Could lose work**: no remote, never committed, uncommitted or unpushed changes, stashes. One row per project, every issue as a chip, and a one-click fix for the worst one (for example *Create remote* or *Push*) that opens in the built-in terminal.
 - **Pick up where you left off**: recently active projects, each with its last commit and last agent session.
 - **Open to-dos**: every open `- [ ]` checkbox across your notes files, plus next steps you add in laci.
 - **Handoffs**: `HANDOFF.md` or `TODO.md` files that still have open items under a TODO heading.
+
+Each list opens the tab that fits it: a risk opens Health, a recent project opens Agents, a deadline opens To-do.
 
 ### Browse everything
 
@@ -63,7 +66,7 @@ Every folder and file, like Dolphin or Finder, with projects marked by their sta
 
 Select a project to see its summary, status, priority, deadline, remote, branch, stack and size. The panel has four tabs:
 
-- **Health**: checks and a commit chart.
+- **Health**: checks with what stands behind them (the changed files, the commits not pushed, the stashes), a release line (declared version, last tag, commits since), recent commits and a commit chart.
 - **To-do**: next steps and notes.
 - **Agents**: sessions, memory and plans from every connected tool.
 - **README**: the rendered README.
@@ -105,13 +108,17 @@ Undoing a deleted to-do requires its `.laci.md` to remain unchanged after deleti
 
 ![The Log: an archive expanded to show its steps, and edits made by an agent](docs/screenshots/log.png)
 
-### Agent history and connectors
+### Agents
+
+The Agents page has one card per AI tool: whether it is connected and installed, how many sessions it has, the model and effort it starts with, and **Start…** to open it in a project. Below the cards, one list holds every session, newest first, with search and filters for agent, resumable and inside or outside projects. Storage sizes, detached history and the backup live under **Storage and cleanup**.
 
 A connector tells laci where an AI tool keeps its history, so it shows on the right project and travels with it. Claude Code, Codex and Antigravity are offered as built-ins, enabled only when you select them. Previously configured integrations and custom stores remain readable; adding a built-in does not duplicate an existing store. Any other tool can be added with a short form, no code: its logs record the folder, it keeps one folder per project, it keeps history inside the project, or its files mention project paths.
 
 Codex titles use its title index, then a bounded first user message, then a short session ID. Child sessions appear under their parent. Home sessions stay global and can be inspected and resumed without a matched project. Antigravity uses `agy` and its last-conversation index; it does not expose full titles or resumability for history-only records. Laci does not edit provider title/model settings.
 
-![Agent history: connected tools, sessions per project, and history whose folder is gone](docs/screenshots/agents.png)
+Claude Code deletes session logs after a retention period. **Back up logs now** copies agent logs to `~/.local/share/laci/history`; Today then shows when the backup last ran and how many sessions it keeps, with **Open backup folder**. Automatic backup is optional and runs at most once an hour, only when a session changed. Nothing is ever removed from the backup.
+
+![Agents: connected tools, sessions per project, and history whose folder is gone](docs/screenshots/agents.png)
 
 ### New project
 
@@ -176,8 +183,10 @@ The app opens with its cached scan while checking for changes. Fonts are bundled
 | --- | --- |
 | <kbd>Ctrl</kbd> <kbd>K</kbd> | Jump to any project, folder or action |
 | <kbd>F4</kbd> or <kbd>Ctrl</kbd> <kbd>`</kbd> | Show or hide the terminal |
+| <kbd>F6</kbd> / <kbd>Shift</kbd> <kbd>F6</kbd> | Move between the sidebar, the list, the details panel and the terminal |
 | <kbd>Ctrl</kbd> <kbd>H</kbd> | Show or hide hidden files |
 | <kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd> | Move through lists and open |
+| <kbd>←</kbd> <kbd>→</kbd> | Collapse or expand a folder in the sidebar tree |
 | <kbd>Backspace</kbd> | Go up one folder |
 | <kbd>Esc</kbd> | Close the details panel, a menu or a dialog |
 

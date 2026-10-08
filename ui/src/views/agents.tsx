@@ -296,6 +296,10 @@ function SessionsSection() {
     if (scope === "out" && node) return false;
     if (!needle) return true;
     return [session.title, node?.label, node?.path, session.cwd].some((text) =>
+  const [backupOnly, setBackupOnly] = useState(false);
+  // Once the last of them is restored the chip goes, and so must its filter.
+  const anyInBackup = all.some((session) => session.backup);
+  const inBackup = backupOnly && anyInBackup;
       text?.toLowerCase().includes(needle),
     );
   });
@@ -310,6 +314,7 @@ function SessionsSection() {
       <div className="agent-filters">
         <input
           className="inp"
+    if (inBackup && !session.backup) return false;
           type="search"
           name="sessionSearch"
           aria-label="Search sessions"
@@ -350,6 +355,9 @@ function SessionsSection() {
 }
 
 function StorageSection() {
+        {anyInBackup
+          ? chip("In backup only", inBackup, () => setBackupOnly(!inBackup))
+          : null}
   const s = useApp();
   const open = !!s.expanded[STORAGE];
   return (

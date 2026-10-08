@@ -2111,7 +2111,8 @@ kbd {
   opacity: 0;
 }
 .sess:hover .act,
-.sess:focus-within .act {
+.sess:focus-within .act,
+.sess .act.always {
   opacity: 1;
 }
 .todo {

@@ -148,6 +148,7 @@ pub fn mutates(name: &str) -> bool {
             | "new/recipe"
             | "connector/add"
             | "connector/remove"
+            | "backup/restore"
     )
 }
 
@@ -164,6 +165,7 @@ pub fn changes_history(name: &str) -> bool {
             | "new"
             | "connector/add"
             | "connector/remove"
+            | "backup/restore"
     )
 }
 

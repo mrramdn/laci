@@ -13,6 +13,7 @@ export interface AgentDraft {
   customModel: string;
   effort: string;
   target: TerminalTarget;
+  continueLast: boolean;
 }
 export interface AgentCapabilities {
   models: { id: string; label?: string; efforts: string[] }[];
@@ -25,6 +26,12 @@ export interface AgentCapabilities {
   listed?: boolean;
   /** The model and effort last used to start this agent. */
   remembered?: { model: string | null; effort: string | null };
+  /** This agent can pick up its most recent conversation in a folder. */
+  continue?: boolean;
+  /** This agent accepts a first prompt from Laci. */
+  prompt?: boolean;
+  /** The agent's display name. */
+  name?: string;
 }
 export function agentDraft(
   provider = "",
@@ -37,7 +44,16 @@ export function agentDraft(
     model: "",
     customModel: "",
     effort: "",
+    continueLast: false,
   };
+}
+/** The draft as the engine takes it: whether to continue is a request field of its own. */
+export function withoutContinue(
+  draft: AgentDraft,
+): Omit<AgentDraft, "continueLast"> {
+  const rest: Partial<AgentDraft> = { ...draft };
+  delete rest.continueLast;
+  return rest as Omit<AgentDraft, "continueLast">;
 }
 /** The connected agents Laci can start, as the engine reports them. */
 export function agentProviders(connectors: ConnectorState[]) {
@@ -89,11 +105,13 @@ export function AgentFields({
   onChange,
   fixedProvider = false,
   disabled = false,
+  allowContinue = false,
 }: {
   draft: AgentDraft;
   onChange: (draft: AgentDraft) => void;
   fixedProvider?: boolean;
   disabled?: boolean;
+  allowContinue?: boolean;
 }) {
   const connectors = useApp((s) => s.snapshot?.connectors ?? []);
   const [capabilities, setCapabilities] = useState<
@@ -182,6 +200,7 @@ export function AgentFields({
                 model: "",
                 customModel: "",
                 effort: "",
+                continueLast: false,
               });
             }}
           />
@@ -212,10 +231,36 @@ export function AgentFields({
           value={draft.prompt}
           rows={4}
           maxLength={65536}
+          disabled={caps?.prompt === false}
           onChange={(e) => onChange({ ...draft, prompt: e.target.value })}
           placeholder="What would you like the agent to work on?"
         />
+        {caps?.prompt === false ? (
+          <small className="agent-hint">
+            This tool takes no first prompt from Laci.
+          </small>
+        ) : null}
       </label>
+      {allowContinue && caps?.continue ? (
+        <div>
+          <label className="opt">
+            <input
+              type="checkbox"
+              className="cb"
+              name="continueLast"
+              checked={draft.continueLast}
+              onChange={(e) =>
+                onChange({ ...draft, continueLast: e.target.checked })
+              }
+            />
+            <span>Continue the last conversation in this folder</span>
+          </label>
+          <small className="agent-hint">
+            Instead of a new conversation, the agent picks up its most recent
+            one here.
+          </small>
+        </div>
+      ) : null}
       <div className="row2">
         <label className="fld">
           <span>Model</span>
@@ -357,10 +402,11 @@ export async function launchAgent(
   const result = await api<{ target: TerminalTarget; terminal?: TerminalInfo }>(
     "agent/launch",
     {
-      ...draft,
+      ...withoutContinue(draft),
       model: draft.model === "custom" ? draft.customModel : draft.model,
       projectPath,
       sessionId,
+      ...(draft.continueLast && !sessionId ? { continue: true } : {}),
     },
   );
   const terminal = result.terminal;

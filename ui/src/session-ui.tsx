@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { errorText } from "./api";
+import { api, errorText } from "./api";
 import {
   agentDraft,
   agentProviders,
@@ -17,9 +17,9 @@ import {
   tilde,
 } from "./helpers";
 import type { SessionGroup } from "./helpers";
-import { run, toast, useApp } from "./store";
+import { changed, run, toast, useApp } from "./store";
 import type { Modal } from "./store";
-import type { Node, Session } from "./types";
+import type { Change, Node, Session } from "./types";
 
 export function requestResume(session: Session, projectPath?: string) {
   if (session.resumeCapability !== "supported" || !(projectPath ?? session.cwd))
@@ -32,6 +32,20 @@ export function requestResume(session: Session, projectPath?: string) {
       projectPath: projectPath ?? session.cwd!,
     },
   });
+}
+
+export function restoreSession(session: Session) {
+  void run(
+    async () => {
+      changed(
+        await api<Change>("backup/restore", { id: session.id }),
+        "Session restored",
+        session.title,
+      );
+    },
+    "Restoring session…",
+    { history: true },
+  );
 }
 
 export function SessionList({
@@ -72,6 +86,7 @@ function SessionRow({
 }) {
   const snapshot = useApp((state) => state.snapshot!);
   const home = snapshot.home;
+  const historyPending = useApp((state) => state.historyPending);
   const [expanded, setExpanded] = useState(false);
   const { session, children } = group;
   const provider = providerName(snapshot, session.provider);
@@ -108,7 +123,11 @@ function SessionRow({
           <small>
             {projectOf ? place : provider}
             {session.sourceKind === "subagent" ? " · Child session" : ""}
-            {session.resumeCapability !== "supported" ? " · History only" : ""}
+            {session.backup
+              ? " · In backup only"
+              : session.resumeCapability !== "supported"
+                ? " · History only"
+                : ""}
           </small>
           {!projectOf && !projectPath && session.cwd ? (
             <small className="mono">{tilde(session.cwd, home)}</small>
@@ -118,8 +137,17 @@ function SessionRow({
         <span className="m">
           <Time at={session.updatedAt} />
         </span>
-        {session.resumeCapability === "supported" &&
-        (projectPath ?? session.cwd) ? (
+        {session.backup ? (
+          <button
+            className="btn sm act always"
+            title="Put this session back where its tool keeps it"
+            disabled={historyPending}
+            onClick={() => restoreSession(session)}
+          >
+            Restore
+          </button>
+        ) : session.resumeCapability === "supported" &&
+          (projectPath ?? session.cwd) ? (
           <button
             className="btn sm act"
             onClick={() => requestResume(session, projectPath)}
@@ -340,6 +368,7 @@ function StartDialog({
           onChange={setDraft}
           fixedProvider={Boolean(request.sessionId)}
           disabled={saving}
+          allowContinue={!request.sessionId}
         />
       ) : (
         <p>
@@ -363,6 +392,7 @@ export function SessionDialog({
       item.sessionId === request.sessionId &&
       item.file === request.file,
   );
+  const historyPending = useApp((s) => s.historyPending);
   return (
     <DialogFrame
       title={session?.title ?? "Session unavailable"}
@@ -380,6 +410,18 @@ export function SessionDialog({
           >
             Close
           </button>
+          {session?.backup ? (
+            <button
+              className="btn primary"
+              disabled={historyPending}
+              onClick={() => {
+                useApp.setState({ modal: null });
+                restoreSession(session);
+              }}
+            >
+              Restore
+            </button>
+          ) : null}
           {session?.resumeCapability === "supported" &&
           (request.projectPath ?? session.cwd) ? (
             <button
@@ -414,7 +456,7 @@ export function SessionDialog({
                   ? "Provider metadata"
                   : "Untitled fallback"}
           </dd>
-          <dt>History file</dt>
+          <dt>{session.backup ? "Backup copy" : "History file"}</dt>
           <dd className="mono">{tilde(session.file, snapshot.home)}</dd>
           {session.parentId ? (
             <>
@@ -424,11 +466,13 @@ export function SessionDialog({
           ) : null}
           <dt>Resume</dt>
           <dd>
-            {session.resumeCapability === "supported"
-              ? session.cwd || request.projectPath
-                ? "Available after the folder is checked"
-                : "Folder not recorded"
-              : "History only; this entry cannot be resumed"}
+            {session.backup
+              ? "Restore it first; a copy cannot be resumed"
+              : session.resumeCapability === "supported"
+                ? session.cwd || request.projectPath
+                  ? "Available after the folder is checked"
+                  : "Folder not recorded"
+                : "History only; this entry cannot be resumed"}
           </dd>
         </dl>
       ) : null}

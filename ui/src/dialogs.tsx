@@ -24,7 +24,7 @@ function close() {
 function dialogControls(host: HTMLElement | null) {
   return Array.from(
     host?.querySelectorAll<HTMLElement>(
-      'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]',
+      'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex="0"]',
     ) ?? [],
   ).filter(
     (element) =>
@@ -745,6 +745,10 @@ function ConnectorDialog() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const name = useRef<HTMLInputElement>(null);
+  // Opening the form puts the caret in its first field, so typing can start at once.
+  useEffect(() => {
+    if (open) name.current?.focus();
+  }, [open]);
   async function add(body: Record<string, unknown>) {
     await run(
       async () => {
@@ -865,9 +869,7 @@ function ConnectorDialog() {
         className="more-fields"
         open={open}
         onToggle={(event) => {
-          const next = event.currentTarget.open;
-          setOpen(next);
-          if (next) requestAnimationFrame(() => name.current?.focus());
+          setOpen(event.currentTarget.open);
         }}
       >
         <summary>Something else</summary>

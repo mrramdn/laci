@@ -55,6 +55,8 @@ interface State {
   view: View;
   cwd: string;
   selected: string | null;
+  /** Which row was clicked, for lists that can show one project more than once. */
+  selectedRow: string | null;
   tab: Tab;
   fileSelected: string | null;
   theme: Theme;
@@ -79,7 +81,7 @@ interface State {
   load: (snapshot: Snapshot, live?: boolean) => void;
   patch: (node: Node) => void;
   cd: (path: string) => void;
-  select: (id: string, tab?: Tab) => void;
+  select: (id: string, tab?: Tab, row?: string) => void;
   navigate: (view: View) => void;
 }
 export function pref<T>(key: string, fallback: T): T {
@@ -111,6 +113,7 @@ export const useApp = create<State>((set, get) => ({
   view: "today",
   cwd: "",
   selected: null,
+  selectedRow: null,
   tab: "health",
   fileSelected: null,
   theme: (document.documentElement.dataset.theme as Theme) || "system",
@@ -198,9 +201,10 @@ export const useApp = create<State>((set, get) => ({
         snapshot?.nodes[path]?.kind === "project" ? path : get().selected,
     });
   },
-  select: (id, tab) =>
+  select: (id, tab, row) =>
     set({
       selected: id,
+      selectedRow: row ?? null,
       pendingSelection: null,
       fileSelected: null,
       ...(tab ? { tab } : {}),

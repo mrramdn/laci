@@ -262,7 +262,7 @@ export function Settings({ first = false }: { first?: boolean }) {
             </h2>
             <p>
               Their sessions show on each project and move with it. Other tools
-              can be added in Agent history.
+              can be added in Agents.
             </p>
             {catalog.map((c) => (
               <label className="opt" key={c.id}>

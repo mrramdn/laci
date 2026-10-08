@@ -242,6 +242,25 @@ static CAPABILITIES: LazyLock<Mutex<CapabilityCache>> = LazyLock::new(|| Mutex::
 /// Called only by an explicit model request or a launch with overrides, never by scanning.
 pub fn capabilities(env: &Env, provider: &str, refresh: bool) -> Result<Value> {
     let mut result = discover(env, provider, refresh)?;
+    result["listed"] = json!(true);
+    result["remembered"] = remembered(env, provider);
+    Ok(result)
+}
+/// What is known without starting the provider's program: its fixed list, or the last list it reported.
+/// Opening a dialog asks this way; asking the provider itself stays an explicit request.
+pub fn known(env: &Env, provider: &str) -> Result<Value> {
+    let key = format!("{}:{provider}", env.home.display());
+    let cached = CAPABILITIES.lock().ok().and_then(|cache| cache.get(&key).map(|(_, value)| value.clone()));
+    let mut result = match cached {
+        Some(value) => value,
+        None => defaults(provider)?,
+    };
+    // Claude Code's names are fixed; the others list their models only when asked.
+    let listed = provider == "claude" || result["discovery"] == "available";
+    if !listed {
+        result["message"] = json!("Default uses the provider's own settings. Load models to choose another one.");
+    }
+    result["listed"] = json!(listed);
     result["remembered"] = remembered(env, provider);
     Ok(result)
 }
@@ -523,6 +542,14 @@ mod tests {
         assert!(resolve_with_capabilities(&env, &r, None, &caps).is_err(), "Haiku lists no effort levels");
 
         assert_eq!(capabilities(&env, "claude", false).unwrap()["remembered"], json!({"model":null,"effort":null}));
+        let passive = known(&env, "claude").unwrap();
+        assert_eq!((&passive["listed"], passive["models"].as_array().unwrap().len()), (&json!(true), 4));
+        let codex = known(&env, "codex").unwrap();
+        assert_eq!(
+            (&codex["listed"], &codex["models"]),
+            (&json!(false), &json!([])),
+            "Codex is not asked until requested"
+        );
         r.model = Some("fable".into());
         r.effort = Some("max".into());
         remember(&env, &r).unwrap();

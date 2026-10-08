@@ -245,12 +245,7 @@ export type Action =
 export interface Proposal {
   id: string;
   category:
-    | "reconnect"
-    | "migration"
-    | "orphan"
-    | "status"
-    | "space"
-    | "duplicate";
+    "reconnect" | "migration" | "orphan" | "status" | "space" | "duplicate";
   title: string;
   why: string;
   confidence: "high" | "med" | "low";

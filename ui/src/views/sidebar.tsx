@@ -19,7 +19,7 @@ export function Sidebar() {
     ],
     [
       "agents",
-      "Agent history",
+      "Agents",
       "history",
       snapshot.orphans.claude.length + snapshot.orphans.items.length,
     ],

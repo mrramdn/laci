@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, errorText } from "./api";
 import { Select } from "./select";
 import { useTerms } from "./terminal-api";
+import { Icon } from "./common";
 import { useApp } from "./store";
 import type { ConnectorState, TerminalInfo, TerminalTarget } from "./types";
 
@@ -20,6 +21,8 @@ export interface AgentCapabilities {
   customModel: boolean;
   installed: boolean;
   message: string;
+  /** False when the model list has not been asked from the provider yet. */
+  listed?: boolean;
   /** The model and effort last used to start this agent. */
   remembered?: { model: string | null; effort: string | null };
 }
@@ -36,12 +39,13 @@ export function agentDraft(
     effort: "",
   };
 }
+export const LAUNCHABLE_PROVIDERS = ["claude", "codex", "antigravity"];
 export function agentProviders(connectors: ConnectorState[]) {
   const providers = new Map<string, { value: string; label: string }>();
   for (const connector of connectors) {
     const provider = connector.provider ?? connector.id;
     if (
-      ["claude", "codex", "antigravity"].includes(provider) &&
+      LAUNCHABLE_PROVIDERS.includes(provider) &&
       connector.capabilities?.launch !== false &&
       !providers.has(provider)
     ) {
@@ -54,6 +58,35 @@ export function validateAgentDraft(draft: AgentDraft) {
   if (!draft.provider) throw new Error("Choose a connected agent first.");
   if (draft.model === "custom" && !draft.customModel.trim())
     throw new Error("Enter a custom model ID or choose Default.");
+  if (draft.model === "custom" && draft.effort)
+    throw new Error("A custom model uses the default effort.");
+}
+/** Effort levels the chosen model offers; with the Default model, the provider's own list. */
+export function effortsFor(caps: AgentCapabilities | undefined, model: string) {
+  if (!caps) return [];
+  if (model === "") return caps.defaultEfforts ?? [];
+  return caps.models.find((item) => item.id === model)?.efforts ?? [];
+}
+/** The remembered model and effort, as far as this provider still offers them. */
+function rememberedChoice(caps: AgentCapabilities) {
+  const saved = caps.remembered;
+  let model = "";
+  let customModel = "";
+  if (saved?.model) {
+    if (caps.models.some((item) => item.id === saved.model))
+      model = saved.model;
+    else if (caps.customModel) {
+      model = "custom";
+      customModel = saved.model;
+    }
+  }
+  const effort =
+    model !== "custom" &&
+    saved?.effort &&
+    effortsFor(caps, model).includes(saved.effort)
+      ? saved.effort
+      : "";
+  return { model, customModel, effort };
 }
 export function AgentFields({
   draft,
@@ -70,10 +103,14 @@ export function AgentFields({
   const [capabilities, setCapabilities] = useState<
     Record<string, AgentCapabilities>
   >({});
-  const [loading, setLoading] = useState(false);
+  const [loadingFor, setLoadingFor] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const pending = useRef(false);
+  const requests = useRef<Record<string, number>>({});
   const mounted = useRef(true);
+  const touched = useRef(false);
+  const applied = useRef("");
+  const latest = useRef({ draft, onChange });
+  latest.current = { draft, onChange };
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -81,37 +118,53 @@ export function AgentFields({
     };
   }, []);
   const providers = agentProviders(connectors);
-  const caps = capabilities[draft.provider];
-  const error = errors[draft.provider];
+  const provider = draft.provider;
+  const caps = capabilities[provider];
+  const error = errors[provider];
+  const loading = Boolean(loadingFor[provider]);
+  async function discover(name: string, refresh: boolean) {
+    const request = (requests.current[name] ?? 0) + 1;
+    requests.current[name] = request;
+    setLoadingFor((current) => ({ ...current, [name]: true }));
+    setErrors((current) => ({ ...current, [name]: "" }));
+    try {
+      const result = await api<AgentCapabilities>("agent/models", {
+        provider: name,
+        // Opening the form never starts the provider's program; only the button does.
+        ...(refresh ? { refresh: true } : { passive: true }),
+      });
+      if (mounted.current && requests.current[name] === request)
+        setCapabilities((current) => ({ ...current, [name]: result }));
+    } catch (failure) {
+      if (mounted.current && requests.current[name] === request)
+        setErrors((current) => ({ ...current, [name]: errorText(failure) }));
+    } finally {
+      if (mounted.current && requests.current[name] === request)
+        setLoadingFor((current) => ({ ...current, [name]: false }));
+    }
+  }
+  useEffect(() => {
+    touched.current = false;
+    applied.current = "";
+    if (provider) void discover(provider, false);
+  }, [provider]);
+  useEffect(() => {
+    if (!caps || touched.current || applied.current === provider) return;
+    applied.current = provider;
+    const current = latest.current.draft;
+    if (current.provider !== provider) return;
+    const choice = rememberedChoice(caps);
+    if (choice.model || choice.effort)
+      latest.current.onChange({ ...current, ...choice });
+  }, [caps, provider]);
   const missingModel = Boolean(
     draft.model &&
     (draft.model === "custom"
       ? !caps?.customModel
       : !caps?.models.some((model) => model.id === draft.model)),
   );
-  const efforts =
-    caps?.models.find((model) => model.id === draft.model)?.efforts ?? [];
-  async function discover() {
-    if (pending.current) return;
-    pending.current = true;
-    const provider = draft.provider;
-    setLoading(true);
-    setErrors((current) => ({ ...current, [provider]: "" }));
-    try {
-      const caps = await api<AgentCapabilities>("agent/models", {
-        provider,
-        refresh: true,
-      });
-      if (mounted.current)
-        setCapabilities((current) => ({ ...current, [provider]: caps }));
-    } catch (error) {
-      if (mounted.current)
-        setErrors((current) => ({ ...current, [provider]: errorText(error) }));
-    } finally {
-      pending.current = false;
-      if (mounted.current) setLoading(false);
-    }
-  }
+  const efforts = effortsFor(caps, draft.model);
+  const effortOff = !efforts.length && !draft.effort;
   return (
     <fieldset className="agent-fields" disabled={disabled}>
       <div className="row2">
@@ -184,7 +237,7 @@ export function AgentFields({
                 ? [
                     {
                       value: draft.model,
-                      label: `${draft.model === "custom" ? "Custom model ID" : draft.model} (${caps ? "unavailable" : "load models to verify"})`,
+                      label: `${draft.model === "custom" ? "Custom model ID" : draft.model} (${caps ? "unavailable" : "not verified yet"})`,
                       disabled: true,
                     },
                   ]
@@ -193,7 +246,10 @@ export function AgentFields({
                 ? [{ value: "custom", label: "Custom model ID…" }]
                 : []),
             ]}
-            onValueChange={(model) => onChange({ ...draft, model, effort: "" })}
+            onValueChange={(model) => {
+              touched.current = true;
+              onChange({ ...draft, model, effort: "" });
+            }}
           />
         </label>
         <label className="fld">
@@ -201,7 +257,7 @@ export function AgentFields({
           <Select
             label="Agent effort"
             value={draft.effort}
-            disabled={disabled || (!efforts.length && !draft.effort)}
+            disabled={disabled || effortOff}
             options={[
               { value: "", label: "Default — provider settings" },
               ...efforts.map((effort) => ({ value: effort, label: effort })),
@@ -215,8 +271,18 @@ export function AgentFields({
                   ]
                 : []),
             ]}
-            onValueChange={(effort) => onChange({ ...draft, effort })}
+            onValueChange={(effort) => {
+              touched.current = true;
+              onChange({ ...draft, effort });
+            }}
           />
+          {caps && effortOff ? (
+            <small className="agent-hint">
+              {draft.model === "custom"
+                ? "A custom model uses the default effort"
+                : "This model has no effort levels"}
+            </small>
+          ) : null}
         </label>
       </div>
       {draft.model === "custom" ? (
@@ -230,9 +296,10 @@ export function AgentFields({
             value={draft.customModel}
             maxLength={200}
             required
-            onChange={(event) =>
-              onChange({ ...draft, customModel: event.target.value })
-            }
+            onChange={(event) => {
+              touched.current = true;
+              onChange({ ...draft, customModel: event.target.value });
+            }}
           />
           <small>
             Uses a model available to your provider account. Effort stays at
@@ -240,22 +307,28 @@ export function AgentFields({
           </small>
         </label>
       ) : null}
-      <button
-        type="button"
-        className="btn"
-        disabled={loading || !draft.provider || disabled}
-        onClick={() => void discover()}
-      >
-        {loading
-          ? "Loading models…"
-          : caps
-            ? "Refresh models"
-            : "Load provider models"}
-      </button>
-      <p className="desc">
-        {caps?.message ??
-          "Default uses the provider's own settings. Load models only when you want an override."}
-      </p>
+      <div className="agent-status">
+        <p className="desc">
+          {loading && !caps
+            ? "Loading models…"
+            : (caps?.message ?? "Default uses the provider's own settings.")}
+        </p>
+        <button
+          type="button"
+          className="btn sm ghost"
+          aria-label="Refresh models"
+          title="Ask the provider for its current models"
+          disabled={loading || !draft.provider || disabled}
+          onClick={() => void discover(draft.provider, true)}
+        >
+          <Icon name="refresh" className="sm" />
+          {loading && caps
+            ? "Loading…"
+            : caps && !caps.listed
+              ? "Load models"
+              : "Refresh"}
+        </button>
+      </div>
       {!providers.length ? (
         <p className="err">
           Add an agent connector in Settings before launching.

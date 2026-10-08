@@ -145,6 +145,9 @@ impl AppState {
         match name {
             "agent/models" => {
                 let env = self.engine.lock().map_err(|e| e.to_string())?.service.env.clone();
+                if body["passive"] == true {
+                    return laci_core::launch::known(&env, string(body, "provider"));
+                }
                 return laci_core::launch::capabilities(
                     &env,
                     string(body, "provider"),

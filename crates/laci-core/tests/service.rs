@@ -828,3 +828,42 @@ fn health_lists_what_stands_behind_the_counts() {
     assert_eq!(health["release"]["since"], 2);
     assert!(service.request("health", &json!({"id":"/nowhere"})).is_err());
 }
+
+#[test]
+fn a_backup_leaves_a_trace_and_clears_the_warning_until_a_session_changes() {
+    let (_temp, env, project) = fixture();
+    config::save(&env, &json!({"roots":["~/project"],"presets":["claude"],"custom":[]})).unwrap();
+    let store = env.home.join(".claude/projects").join(laci_core::paths::enc(&project.to_string_lossy()));
+    let session = store.join("11111111-2222-3333-4444-555555555555.jsonl");
+    write(&session, &format!("{}\n", json!({"type":"user","cwd":project,"sessionId":"s1"})));
+    write(&store.join("memory/MEMORY.md"), "- note\n");
+    let mut service = loaded(&env, &project);
+    let warned = |snap: &Value| snap["warnings"].as_array().unwrap().iter().any(|w| w["code"] == "claude-cleanup");
+    let snap = service.snapshot().unwrap();
+    assert!(warned(&snap));
+    assert_eq!(snap["backup"], json!({"auto":false}));
+
+    assert_eq!(service.request("backup", &json!({"auto":true})).unwrap(), json!({"skipped":true}));
+    let done = service.request("backup", &json!({})).unwrap();
+    assert_eq!((&done["copied"], &done["sessions"], &done["files"]), (&json!(2), &json!(1), &json!(2)));
+    assert_eq!(done["dest"], "~/.local/share/laci/history");
+    let snap = done["snapshot"].clone();
+    assert!(!warned(&snap), "Nothing changed since the backup, so there is nothing to warn about");
+    assert_eq!((&snap["backup"]["pending"], &snap["backup"]["sessions"]), (&json!(0), &json!(1)));
+    let entry = &activity::read_log(&env, 10)[0];
+    assert_eq!(entry["title"], "Backed up 2 agent history files");
+    assert!(entry["detail"].as_str().unwrap().starts_with("1 session kept · "));
+
+    service.request("backup", &json!({})).unwrap();
+    assert_eq!(activity::read_log(&env, 10)[0]["title"], "Agent history backup is up to date");
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    write(&session, &format!("{}\n{}\n", json!({"type":"user","cwd":project,"sessionId":"s1"}), json!({"more":1})));
+    service.request("backup/auto", &json!({"on":true})).unwrap();
+    let snap = service.rescan().unwrap();
+    assert_eq!((&snap["backup"]["pending"], &snap["backup"]["auto"]), (&json!(1), &json!(true)));
+    let warning = snap["warnings"].as_array().unwrap().iter().find(|w| w["code"] == "claude-cleanup").unwrap();
+    assert!(warning["detail"].as_str().unwrap().ends_with("1 session has changed since the last backup."));
+    // An automatic run waits an hour after the last one, however much has changed.
+    assert_eq!(service.request("backup", &json!({"auto":true})).unwrap(), json!({"skipped":true}));
+}

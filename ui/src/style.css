@@ -848,7 +848,8 @@ kbd {
 }
 .item:hover .act,
 .item:focus-within .act,
-.item[aria-selected="true"] .act {
+.item[aria-selected="true"] .act,
+.item .act.always {
   opacity: 1;
 }
 .item.two {
@@ -2155,7 +2156,6 @@ textarea.notes:focus {
   border-collapse: collapse;
   font-size: 12px;
 }
-.readme td,
 .readme-note {
   display: flex;
   align-items: center;
@@ -2190,6 +2190,7 @@ textarea.notes:focus {
   background: var(--hover);
   color: var(--text);
 }
+.readme td,
 .readme th {
   border: 1px solid var(--border);
   padding: 4px 8px;
@@ -2954,9 +2955,17 @@ textarea.notes:focus {
 .session-title {
   flex: 1;
   min-width: 0;
-  padding: 3px 0;
+  width: 100%;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   text-align: left;
   font-size: 12.5px;
+  cursor: pointer;
+}
+.session-title:hover {
+  background: var(--hover);
 }
 .session-title > span,
 .session-title > small {

@@ -413,6 +413,7 @@ function Shortcuts() {
         ["Next / Prev row", ["↓", "↑"]],
         ["Open / Select", ["↵"]],
         ["Parent folder", ["⌫"]],
+        ["Next / Prev pane", ["F6", "Shift F6"]],
         ["Close / Dismiss", ["Esc"]],
       ],
     ],

@@ -1,11 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../common";
 import { useApp, readListing, setTheme, rescan } from "../store";
 import { base, cap, todayBadge, tilde, within } from "../helpers";
-import type { View } from "../types";
+import type { Listing, View } from "../types";
 export function Sidebar() {
   const s = useApp();
   const snapshot = s.snapshot!;
+  const [railOpen, setRailOpen] = useState(false);
+  const navRef = useRef<HTMLElement>(null);
   const hot = todayBadge(snapshot);
   const nav: [View, string, string, number][] = [
     ["today", "Today", "inbox", hot],
@@ -23,9 +25,42 @@ export function Sidebar() {
     ],
     ["log", "Log", "scroll", 0],
   ];
+  useEffect(() => {
+    if (!railOpen) return;
+    const away = (event: PointerEvent) => {
+      if (!navRef.current?.contains(event.target as Node)) setRailOpen(false);
+    };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, [railOpen]);
   return (
-    <nav id="side" className="side" aria-label="Sidebar">
+    <nav
+      id="side"
+      ref={navRef}
+      className={`side ${railOpen ? "rail-open" : ""}`}
+      aria-label="Sidebar"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !railOpen) return;
+        event.preventDefault();
+        setRailOpen(false);
+        navRef.current?.querySelector<HTMLElement>(".sb-rail-toggle")?.focus();
+      }}
+      onBlur={(event) => {
+        const next = event.relatedTarget as Node | null;
+        if (railOpen && next && !event.currentTarget.contains(next))
+          setRailOpen(false);
+      }}
+    >
       <div className="sb-top">
+        <button
+          className="icon-btn sb-rail-toggle"
+          title={railOpen ? "Close sidebar" : "Open sidebar"}
+          aria-label={railOpen ? "Close sidebar" : "Open sidebar"}
+          aria-expanded={railOpen}
+          onClick={() => setRailOpen(!railOpen)}
+        >
+          <Icon name="layers" />
+        </button>
         <span className="logo">
           <Icon name="archive" />
         </span>
@@ -52,6 +87,7 @@ export function Sidebar() {
         <button
           className="sb-search-bar"
           aria-label="Search projects and actions (Ctrl K)"
+          title="Search projects and actions (Ctrl K)"
           onClick={() => useApp.setState({ palette: true })}
         >
           <Icon name="search" className="sm" />
@@ -64,8 +100,12 @@ export function Sidebar() {
           <button
             className="sb-item"
             key={view}
+            title={label}
             aria-current={s.view === view ? "page" : undefined}
-            onClick={() => s.navigate(view)}
+            onClick={() => {
+              setRailOpen(false);
+              s.navigate(view);
+            }}
           >
             <Icon name={icon} />
             <span>{label}</span>
@@ -77,14 +117,7 @@ export function Sidebar() {
           </button>
         ))}
         <div className="sb-sec">Places</div>
-        <div className="tree">
-          {[
-            ...snapshot.roots,
-            ...(snapshot.roots.includes(snapshot.home) ? [] : [snapshot.home]),
-          ].map((path) => (
-            <TreeRow key={path} path={path} depth={0} />
-          ))}
-        </div>
+        <Tree onChoose={() => setRailOpen(false)} />
       </div>
       <div className="sb-foot">
         <button
@@ -111,8 +144,12 @@ export function Sidebar() {
         <div className="sb-row">
           <button
             className="sb-item"
+            title="Settings"
             aria-current={s.view === "settings" ? "page" : undefined}
-            onClick={() => s.navigate("settings")}
+            onClick={() => {
+              setRailOpen(false);
+              s.navigate("settings");
+            }}
           >
             <Icon name="gear" className="sm" />
             <span>Settings</span>
@@ -135,14 +172,153 @@ export function Sidebar() {
     </nav>
   );
 }
+function childDirs(listing: Listing | undefined, ancestors: string[]) {
+  return (listing?.entries ?? [])
+    .filter(
+      (e) =>
+        e.dir &&
+        !e.name.startsWith(".") &&
+        !e.link &&
+        !ancestors.includes(e.path),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+type TreeItem = {
+  path: string;
+  depth: number;
+  ancestors: string[];
+  expandable: boolean;
+};
+function Tree({ onChoose }: { onChoose: () => void }) {
+  const s = useApp();
+  const snapshot = s.snapshot!;
+  const [focusPath, setFocusPath] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const items: TreeItem[] = [];
+  const walk = (path: string, depth: number, ancestors: string[]) => {
+    const listing = s.listings[path];
+    const children = childDirs(listing, ancestors);
+    items.push({
+      path,
+      depth,
+      ancestors,
+      expandable: !(listing && !listing.error && !children.length),
+    });
+    if (s.tree.has(path))
+      for (const child of children)
+        walk(child.path, depth + 1, [...ancestors, path]);
+  };
+  for (const path of [
+    ...snapshot.roots,
+    ...(snapshot.roots.includes(snapshot.home) ? [] : [snapshot.home]),
+  ])
+    walk(path, 0, []);
+  const has = (path: string | null) => items.some((i) => i.path === path);
+  const active = has(focusPath)
+    ? focusPath
+    : s.view === "folder" && has(s.cwd)
+      ? s.cwd
+      : (items[0]?.path ?? null);
+  const focusItem = (path: string) => {
+    setFocusPath(path);
+    ref.current
+      ?.querySelectorAll<HTMLElement>('[role="treeitem"]')
+      .forEach((el) => {
+        if (el.dataset.path === path) el.focus();
+      });
+  };
+  const setOpen = (path: string, open: boolean) =>
+    useApp.setState((st) => {
+      const tree = new Set(st.tree);
+      if (open) tree.add(path);
+      else tree.delete(path);
+      return { tree };
+    });
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const row = (event.target as HTMLElement).closest<HTMLElement>(
+      '[role="treeitem"]',
+    );
+    const at = items.findIndex((i) => i.path === row?.dataset.path);
+    if (!row || at < 0) return;
+    const item = items[at];
+    const open = s.tree.has(item.path);
+    let go: string | undefined;
+    switch (event.key) {
+      case "ArrowDown":
+        go = items[at + 1]?.path ?? item.path;
+        break;
+      case "ArrowUp":
+        go = items[at - 1]?.path ?? item.path;
+        break;
+      case "Home":
+        go = items[0].path;
+        break;
+      case "End":
+        go = items[items.length - 1].path;
+        break;
+      case "ArrowRight":
+        if (!item.expandable) break;
+        if (!open) setOpen(item.path, true);
+        else if (items[at + 1]?.depth === item.depth + 1)
+          go = items[at + 1].path;
+        break;
+      case "ArrowLeft":
+        if (item.expandable && open) setOpen(item.path, false);
+        else go = item.ancestors[item.ancestors.length - 1];
+        break;
+      case "Enter":
+      case " ":
+        if (event.target !== row) return;
+        event.preventDefault();
+        onChoose();
+        s.cd(item.path);
+        return;
+      default:
+        return;
+    }
+    event.preventDefault();
+    if (go) focusItem(go);
+  };
+  return (
+    <div
+      className="tree"
+      role="tree"
+      aria-label="Places"
+      ref={ref}
+      onKeyDown={onKeyDown}
+      onFocus={(event) => {
+        const path = (event.target as HTMLElement).closest<HTMLElement>(
+          '[role="treeitem"]',
+        )?.dataset.path;
+        if (path) setFocusPath(path);
+      }}
+    >
+      {items.map((item) => (
+        <TreeRow
+          key={item.path}
+          path={item.path}
+          depth={item.depth}
+          expandable={item.expandable}
+          active={item.path === active}
+          onChoose={onChoose}
+        />
+      ))}
+    </div>
+  );
+}
 function TreeRow({
   path,
   depth,
-  ancestors = [],
+  expandable,
+  active,
+  onChoose,
 }: {
   path: string;
   depth: number;
-  ancestors?: string[];
+  expandable: boolean;
+  active: boolean;
+  onChoose: () => void;
 }) {
   const s = useApp();
   const snapshot = s.snapshot!;
@@ -154,15 +330,6 @@ function TreeRow({
   useEffect(() => {
     if (open) void readListing(path);
   }, [open, path, listing]);
-  const children = (listing?.entries ?? [])
-    .filter(
-      (e) =>
-        e.dir &&
-        !e.name.startsWith(".") &&
-        !e.link &&
-        !ancestors.includes(e.path),
-    )
-    .sort((a, b) => a.name.localeCompare(b.name));
   const count = Object.values(snapshot.nodes).filter(
     (n) => n.kind === "project" && within(n.path, path),
   ).length;
@@ -171,62 +338,61 @@ function TreeRow({
     : path === snapshot.home
       ? "Home"
       : tilde(path, snapshot.home);
+  const current = s.view === "folder" && s.cwd === path;
   return (
-    <>
-      <div
-        className="tree-row"
-        style={{ paddingLeft: depth * 14 }}
-        aria-current={
-          s.view === "folder" && s.cwd === path ? "true" : undefined
-        }
-      >
-        {listing && !listing.error && !children.length ? (
-          <span className="tw" />
-        ) : (
-          <button
-            className="tw"
-            aria-expanded={open}
-            aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
-            onClick={() =>
-              useApp.setState((st) => {
-                const tree = new Set(st.tree);
-                if (open) tree.delete(path);
-                else tree.add(path);
-                return { tree };
-              })
-            }
-          >
-            <Icon name="chev" />
-          </button>
-        )}
+    <div
+      className="tree-row"
+      role="treeitem"
+      data-path={path}
+      tabIndex={active ? 0 : -1}
+      aria-level={depth + 1}
+      aria-label={label}
+      aria-expanded={expandable ? open : undefined}
+      aria-selected={current}
+      style={{ paddingLeft: depth * 14 }}
+      aria-current={current ? "true" : undefined}
+    >
+      {expandable ? (
         <button
-          className="tl"
-          onClick={() => s.cd(path)}
-          title={unavailable?.reason}
+          className="tw"
+          tabIndex={-1}
+          aria-expanded={open}
+          aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
+          onClick={() =>
+            useApp.setState((st) => {
+              const tree = new Set(st.tree);
+              if (open) tree.delete(path);
+              else tree.add(path);
+              return { tree };
+            })
+          }
         >
-          <Icon
-            name={depth ? "folder" : path === snapshot.home ? "home" : "drive"}
-          />
-          <span className={!depth && path !== snapshot.home ? "mono" : ""}>
-            {label}
-          </span>
-          {unavailable ? (
-            <span className="faint root-offline">Unavailable</span>
-          ) : count ? (
-            <span className="n">{count}</span>
-          ) : null}
+          <Icon name="chev" />
         </button>
-      </div>
-      {open
-        ? children.map((child) => (
-            <TreeRow
-              key={child.path}
-              path={child.path}
-              depth={depth + 1}
-              ancestors={[...ancestors, path]}
-            />
-          ))
-        : null}
-    </>
+      ) : (
+        <span className="tw" />
+      )}
+      <button
+        className="tl"
+        tabIndex={-1}
+        onClick={() => {
+          onChoose();
+          s.cd(path);
+        }}
+        title={unavailable?.reason}
+      >
+        <Icon
+          name={depth ? "folder" : path === snapshot.home ? "home" : "drive"}
+        />
+        <span className={!depth && path !== snapshot.home ? "mono" : ""}>
+          {label}
+        </span>
+        {unavailable ? (
+          <span className="faint root-offline">Unavailable</span>
+        ) : count ? (
+          <span className="n">{count}</span>
+        ) : null}
+      </button>
+    </div>
   );
 }

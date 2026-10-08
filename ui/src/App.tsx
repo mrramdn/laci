@@ -22,6 +22,59 @@ import { restoreTerminals, toggleTerminal, useTerms } from "./terminal-api";
 import type { Apps, Change, RefreshStatus, Snapshot } from "./types";
 import type { CreationJob } from "./new-project";
 const TerminalPanel = lazy(() => import("./TerminalPanel"));
+const PANES: [string, string][] = [
+  ["sidebar", "#side"],
+  ["main", "#main"],
+  ["details", "#insp"],
+  ["terminal", ".term"],
+];
+const shown = (element: Element | null): element is HTMLElement =>
+  element instanceof HTMLElement &&
+  element.getClientRects().length > 0 &&
+  !element.closest("[hidden]");
+function paneTarget(name: string, pane: HTMLElement): HTMLElement | null {
+  const find = (...selectors: string[]) => {
+    for (const selector of selectors)
+      for (const element of pane.querySelectorAll<HTMLElement>(selector))
+        if (shown(element)) return element;
+    return null;
+  };
+  if (name === "sidebar")
+    return find(
+      '.sb-item[aria-current="page"]',
+      '.tree-row[tabindex="0"]',
+      ".sb-item",
+    );
+  if (name === "main")
+    return find(
+      '.item[aria-selected="true"][tabindex]',
+      ".item[tabindex]",
+      'button,a[href],input,select,textarea,[tabindex]:not([tabindex="-1"])',
+    );
+  if (name === "details")
+    return find(
+      '[role="tab"][aria-selected="true"]',
+      'button,a[href],input,select,textarea,[tabindex]:not([tabindex="-1"])',
+    );
+  return find(
+    ".term-host:not([hidden]) .xterm-helper-textarea",
+    '.ttab-select[aria-selected="true"]',
+    "button",
+  );
+}
+function nextPane(step: 1 | -1) {
+  const open = PANES.map(([name, selector]) => {
+    const pane = document.querySelector<HTMLElement>(selector);
+    return pane && shown(pane) ? { name, pane } : null;
+  }).filter((entry) => entry !== null);
+  if (!open.length) return;
+  const here = open.findIndex(({ pane }) =>
+    pane.contains(document.activeElement),
+  );
+  const at = here < 0 ? (step > 0 ? 0 : open.length - 1) : here + step;
+  const { name, pane } = open[(at + open.length) % open.length];
+  (paneTarget(name, pane) ?? pane).focus();
+}
 type LaciEvent =
   | { type: "snapshot" }
   | ({ type: "status" } & RefreshStatus)
@@ -120,6 +173,22 @@ export default function App() {
   useEffect(() => {
     const hotkey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
+      if (event.key === "F6" && !event.ctrlKey && !event.altKey) {
+        const state = useApp.getState();
+        const target = event.target as HTMLElement;
+        if (
+          state.modal ||
+          state.palette ||
+          state.working ||
+          selectIsOpen() ||
+          target.closest?.(".xterm")
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        nextPane(event.shiftKey ? -1 : 1);
+        return;
+      }
       const terminal =
         event.key === "F4" || (event.ctrlKey && event.key === "`");
       const palette =
@@ -206,6 +275,12 @@ export default function App() {
       window.removeEventListener("keydown", key);
     };
   }, []);
+  useEffect(() => {
+    for (const [name, selector] of PANES)
+      document
+        .querySelector<HTMLElement>(selector)
+        ?.setAttribute("data-pane", name);
+  });
   useEffect(() => {
     document.querySelector(".main .body")?.scrollTo(0, 0);
   }, [s.view, s.cwd, s.filter, s.tidyFilter, s.logFilter]);

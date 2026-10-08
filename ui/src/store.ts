@@ -14,7 +14,7 @@ import type {
   View,
 } from "./types";
 export type Theme = "system" | "light" | "dark";
-export type SortKey = "name" | "last" | "size" | "ai";
+export type SortKey = "name" | "last" | "size" | "ai" | "priority" | "deadline";
 export type Modal =
   | { kind: "shortcuts" | "connector" }
   | { kind: "new"; job?: CreationJob }

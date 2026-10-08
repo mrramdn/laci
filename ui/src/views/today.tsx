@@ -2,13 +2,22 @@ import {
   Icon,
   StatusGlyph,
   SeverityGlyph,
+  PriorityGlyph,
   Time,
   FixButton,
   Group,
   Expand,
 } from "../common";
 import { useApp, backup, run } from "../store";
-import { plural, recency, risksOf, sessionsOf, taskIdentity } from "../helpers";
+import {
+  deadlinesOf,
+  plural,
+  recency,
+  risksOf,
+  sessionsOf,
+  taskIdentity,
+} from "../helpers";
+import { DeadlinePill } from "../deadline";
 import { api } from "../api";
 import { requestResume } from "../session-ui";
 import type { Node } from "../types";
@@ -17,6 +26,16 @@ export function Today() {
   const snapshot = s.snapshot!;
   const all = Object.values(snapshot.nodes);
   const risks = risksOf(snapshot);
+  const deadlines = deadlinesOf(snapshot);
+  const selectedRow = (n: Node, key: string) =>
+    s.selectedRow === key || (s.selectedRow === null && s.selected === n.id);
+  const shortDate = (deadline?: string) => {
+    const [y, m, d] = (deadline ?? "").split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+    });
+  };
   const recent = all
     .filter((n) => n.kind === "project" && !n.archived)
     .sort(recency)
@@ -83,6 +102,13 @@ export function Today() {
         <span className="grow" />
         <div className="quick-stats" role="group" aria-label="Quick jump">
           {[
+            [
+              deadlines.length,
+              "due",
+              "calendar",
+              "sec-deadlines",
+              deadlines.some((d) => d.info.days <= 0) ? "bad" : "",
+            ],
             [risks.length, "at risk", "alert", "sec-risks", "bad"],
             [activeCount, "active", "play", "sec-recent", ""],
             [checks.length, "to-dos", "check", "sec-todos", ""],
@@ -118,6 +144,48 @@ export function Today() {
             </button>
           </div>
         ))}
+        {deadlines.length ? (
+          <Group
+            title="Deadlines"
+            icon="calendar"
+            count={deadlines.length}
+            hint="Overdue and the next 14 days"
+            order="Soonest first"
+            id="sec-deadlines"
+          >
+            {deadlines.map(({ n, info }) => (
+              <div
+                className="item"
+                key={n.id}
+                tabIndex={0}
+                data-id={n.id}
+                aria-selected={selectedRow(n, "deadline:" + n.id)}
+                onClick={() => s.select(n.id, "todo", "deadline:" + n.id)}
+              >
+                <SeverityGlyph
+                  severity={
+                    info.tone === "bad"
+                      ? "high"
+                      : info.tone === "warn"
+                        ? "med"
+                        : "low"
+                  }
+                />
+                <span className="name">{n.label}</span>
+                {n.meta.priority ? (
+                  <PriorityGlyph priority={n.meta.priority} />
+                ) : null}
+                <DeadlinePill deadline={n.meta.deadline} />
+                <span className="meta">
+                  <span className="mono">{shortDate(n.meta.deadline)}</span>
+                  <span className="mono">
+                    <Time at={n.lastActivity?.at} />
+                  </span>
+                </span>
+              </div>
+            ))}
+          </Group>
+        ) : null}
         <Group
           title="Could lose work"
           icon="alert"
@@ -126,34 +194,46 @@ export function Today() {
           order="Worst first, then most recent"
           id="sec-risks"
         >
-          {risks.slice(0, s.expanded.risks ? undefined : 8).map(({ n, i }) => (
-            <div
-              className="item"
-              key={`${n.id}:${i.code}`}
-              tabIndex={0}
-              data-id={n.id}
-              aria-selected={s.selected === n.id}
-              onClick={() => s.select(n.id)}
-            >
-              <SeverityGlyph severity={i.severity} />
-              <span className="name">{n.label}</span>
-              <span
-                className={`badge ${i.severity === "high" ? "danger" : "warn"}`}
+          {risks
+            .slice(0, s.expanded.risks ? undefined : 8)
+            .map(({ n, issues }) => (
+              <div
+                className="item"
+                key={n.id}
+                tabIndex={0}
+                data-id={n.id}
+                aria-selected={selectedRow(n, "risk:" + n.id)}
+                onClick={() => s.select(n.id, "health", "risk:" + n.id)}
               >
-                {i.title}
-              </span>
-              <span className="d" style={{ marginLeft: 6 }}>
-                {i.detail}
-              </span>
-              <span className="meta">
-                <FixButton node={n} code={i.code} className="act always" />
-                {n.archived ? <span className="pill">Archived</span> : null}
-                <span className="mono">
-                  <Time at={n.lastActivity?.at} />
+                <SeverityGlyph severity={issues[0].severity} />
+                <span className="name">{n.label}</span>
+                {n.meta.priority ? (
+                  <PriorityGlyph priority={n.meta.priority} />
+                ) : null}
+                {issues.map((i) => (
+                  <span
+                    className={`badge ${i.severity === "high" ? "danger" : "warn"}`}
+                    key={i.code}
+                  >
+                    {i.title}
+                  </span>
+                ))}
+                <span className="d" style={{ marginLeft: 6 }}>
+                  {issues[0].detail}
                 </span>
-              </span>
-            </div>
-          ))}
+                <span className="meta">
+                  <FixButton
+                    node={n}
+                    code={issues[0].code}
+                    className="act always"
+                  />
+                  {n.archived ? <span className="pill">Archived</span> : null}
+                  <span className="mono">
+                    <Time at={n.lastActivity?.at} />
+                  </span>
+                </span>
+              </div>
+            ))}
           {!risks.length ? (
             <div className="empty">
               No Git issues found in the scanned projects.
@@ -182,13 +262,23 @@ export function Today() {
                 key={n.id}
                 tabIndex={0}
                 data-id={n.id}
-                aria-selected={s.selected === n.id}
-                onClick={() => s.select(n.id)}
+                aria-selected={selectedRow(n, "recent:" + n.id)}
+                onClick={() =>
+                  s.select(
+                    n.id,
+                    sessionsOf(n, snapshot).length ? "agents" : "todo",
+                    "recent:" + n.id,
+                  )
+                }
               >
                 <StatusGlyph status={n.status.value} />
                 <div className="lines">
                   <div className="l1">
                     <span className="name">{n.label}</span>
+                    {n.meta.priority ? (
+                      <PriorityGlyph priority={n.meta.priority} />
+                    ) : null}
+                    <DeadlinePill deadline={n.meta.deadline} />
                     {n.git?.branch ? (
                       <span className={`pill ${n.git.dirty ? "warn" : ""}`}>
                         <Icon name="branch" className="sm" />
@@ -310,7 +400,10 @@ export function Today() {
                 key={`${n.id}:${f.file}`}
                 tabIndex={0}
                 data-id={n.id}
-                onClick={() => s.select(n.id, "todo")}
+                aria-selected={selectedRow(n, "todo:" + n.id + ":" + f.file)}
+                onClick={() =>
+                  s.select(n.id, "todo", "todo:" + n.id + ":" + f.file)
+                }
               >
                 <Icon name="file" />
                 <span className="name mono" style={{ fontWeight: 400 }}>

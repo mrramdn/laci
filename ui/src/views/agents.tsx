@@ -20,6 +20,7 @@ import { api } from "../api";
 import { agentProviders } from "../agent-launch";
 import type { AgentCapabilities } from "../agent-launch";
 import { SessionList } from "../session-ui";
+import { McpRow, loadMcp } from "../mcp-setup";
 import type { Change, ClaudeDir, ConnectorState, Suggestion } from "../types";
 
 const SESSION_LIMIT = 50;
@@ -77,6 +78,10 @@ export function AgentsView() {
   const usage = useMemo(() => {
     const map = new Map<string, { count: number; last: string }>();
     for (const session of sessions) {
+  const connectedIds = snapshot.connectors.map((c) => c.id).join(",");
+  useEffect(() => {
+    void loadMcp();
+  }, [connectedIds]);
       const entry = map.get(session.provider);
       if (entry) entry.count++;
       else map.set(session.provider, { count: 1, last: session.updatedAt });
@@ -212,6 +217,9 @@ export function AgentsView() {
                           modal: {
                             kind: "agent",
                             provider: card.provider,
+                {c?.capabilities?.mcp ? (
+                  <McpRow provider={card.provider} />
+                ) : null}
                             projectPath: "",
                           },
                         })

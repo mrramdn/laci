@@ -47,7 +47,7 @@ pub fn connectors(env: &Env, cfg: &Value) -> Vec<Value> {
         c["builtin"] = json!(false);
         c["about"] = json!(match (c["agent"].is_object(), c["link"]["kind"] == "none") {
             (true, true) => "Started from Laci; it keeps no history Laci reads",
-            (true, false) => "User-configured history store, started from Laci",
+            (true, false) => "Started from Laci, with the history store you described",
             _ => "User-configured history store",
         });
         if let Some(p) = c["link"]["dir"].as_str() {

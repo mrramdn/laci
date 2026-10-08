@@ -3155,6 +3155,8 @@ textarea.notes:focus {
   flex-wrap: wrap;
 }
 .agent-card .top .k {
+  /* A block, so a long name ends in an ellipsis instead of being cut mid-letter. */
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3179,9 +3181,6 @@ textarea.notes:focus {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-.agent-card > .foot {
-  margin-top: 4px;
-}
 .agent-mcp {
   display: flex;
   align-items: center;
@@ -3201,6 +3200,9 @@ textarea.notes:focus {
   white-space: pre-wrap;
   word-break: break-all;
   user-select: text;
+}
+.agent-card > .foot {
+  margin-top: 4px;
 }
 .agent-details,
 .more-fields,

@@ -15,6 +15,62 @@ pub fn string<'a>(value: &'a Value, key: &str) -> &'a str {
 pub fn array(value: &Value) -> Vec<Value> {
     value.as_array().cloned().unwrap_or_default()
 }
+/// App key, Settings label and built-in default.
+const APPS: [(&str, &str, &str); 3] =
+    [("terminal", "Terminal app", "kitty"), ("editor", "Editor", "code"), ("files", "File manager", "dolphin")];
+fn settings_detail(env: &Env, before: &Value, after: &Value) -> String {
+    let mut parts = vec![];
+    let roots = |c: &Value| -> Vec<String> {
+        array(&c["roots"])
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|s| paths::tilde(&paths::expand(s, &env.home), &env.home))
+            .collect()
+    };
+    let (old, new) = (roots(before), roots(after));
+    for (verb, list, other) in [("added", &new, &old), ("removed", &old, &new)] {
+        let names: Vec<_> = list.iter().filter(|r| !other.contains(r)).cloned().collect();
+        if !names.is_empty() {
+            parts.push(format!("Folders: {verb} {}", names.join(", ")));
+        }
+    }
+    for (key, label, fallback) in APPS {
+        let (a, b) =
+            (before["apps"][key].as_str().unwrap_or(fallback), after["apps"][key].as_str().unwrap_or(fallback));
+        if a != b {
+            parts.push(format!("{label}: {a} → {b}"));
+        }
+    }
+    let target = |c: &Value| if c["terminalTarget"] == "external" { "external" } else { "built-in" };
+    if target(before) != target(after) {
+        parts.push(format!("Terminal: {} → {}", target(before), target(after)));
+    }
+    let archive = |c: &Value| {
+        c["archiveDir"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(|s| paths::tilde(&paths::expand(s, &env.home), &env.home))
+    };
+    if archive(before) != archive(after) {
+        parts.push(format!("Archive folder: {}", archive(after).unwrap_or_else(|| "none".into())));
+    }
+    let catalog = agents::catalog(env);
+    let (old, new) = (array(&before["presets"]), array(&after["presets"]));
+    let tools: Vec<_> = new
+        .iter()
+        .filter(|p| !old.contains(p))
+        .map(|p| (p, "on"))
+        .chain(old.iter().filter(|p| !new.contains(p)).map(|p| (p, "off")))
+        .map(|(id, state)| {
+            let name = catalog.iter().find(|c| &c["id"] == id).map(|c| string(c, "name")).or(id.as_str());
+            format!("{} {state}", name.unwrap_or("Unknown"))
+        })
+        .collect();
+    if !tools.is_empty() {
+        parts.push(format!("AI tools: {}", tools.join(", ")));
+    }
+    parts.join(" · ")
+}
 pub fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
@@ -140,16 +196,17 @@ impl Service {
     }
     pub fn cache_snapshot(&self, snapshot: &Value) {
         let cached = json!({"home":self.env.home,"config":config::load(&self.env),"snapshot":snapshot});
+        let _ = files::private_dir(&self.env.cache_dir);
         let _ = files::replace(&self.env.cache_dir.join("snapshot-v2.json"), cached.to_string().as_bytes());
     }
     pub fn debug(&self, message: &str) {
         use std::io::Write;
-        let _ = fs::create_dir_all(&self.env.data_dir);
         let path = self.env.data_dir.join("laci.log");
-        if fs::metadata(&path).is_ok_and(|m| m.len() > 1_048_576) {
-            let _ = fs::rename(&path, path.with_extension("log.1"));
+        if sidecar::plain_path(&path).is_err() || files::private_dir(&self.env.data_dir).is_err() {
+            return;
         }
-        if let Ok(mut file) = fs::OpenOptions::new().append(true).create(true).open(path) {
+        files::rotate_private(&path, &path.with_extension("log.1"), 1_048_576);
+        if let Ok(mut file) = files::private_append(&path) {
             let _ = writeln!(file, "{} {message}", files::now());
         }
     }
@@ -221,15 +278,12 @@ impl Service {
     pub fn apps(&self) -> Value {
         let c = config::load(&self.env);
         let mut out = json!({});
-        for (key, var, fallback) in [
-            ("terminal", "LACI_TERMINAL", "kitty"),
-            ("editor", "LACI_EDITOR", "code"),
-            ("files", "LACI_FILES", "dolphin"),
-        ] {
+        for (key, _, fallback) in APPS {
             out[key] = json!(
-                std::env::var(var)
-                    .ok()
-                    .filter(|s| !s.is_empty())
+                self.env
+                    .app_overrides
+                    .get(key)
+                    .cloned()
                     .unwrap_or_else(|| c["apps"][key].as_str().unwrap_or(fallback).into())
             );
         }
@@ -307,7 +361,7 @@ impl Service {
                     if before != value {
                         activity::record(
                             &self.env,
-                            json!({"by":by,"title":format!("{} of {} {}",key,string(&node,"name"),if value.is_empty(){"cleared".into()}else{format!("set to {value}")}),"path":dir,"key":format!("meta:{}:{key}",dir.display()),"undo":{"type":"meta","key":key,"value":before}}),
+                            json!({"by":by,"title":format!("{} of {} {}",files::capitalize(key),string(&node,"name"),if value.is_empty(){"cleared".into()}else{format!("set to {value}")}),"path":dir,"key":format!("meta:{}:{key}",dir.display()),"undo":{"type":"meta","key":key,"value":before}}),
                         );
                     }
                     Ok(())
@@ -537,6 +591,15 @@ impl Service {
                         c["terminalTarget"] = target.clone();
                     }
                     c["presets"] = json!(presets);
+                    let mut apps = apps;
+                    for (key, _, _) in APPS {
+                        if self.env.app_overrides.get(key).is_some_and(|o| apps[key].as_str() == Some(o)) {
+                            match c["apps"].get(key) {
+                                Some(kept) => apps[key] = kept.clone(),
+                                None => drop(apps.as_object_mut().and_then(|a| a.remove(key))),
+                            }
+                        }
+                    }
                     c["apps"] = apps;
                     if let Some(archive_dir) = archive_dir {
                         c["archiveDir"] = archive_dir;
@@ -547,10 +610,13 @@ impl Service {
                     }
                     c["rootIdentities"] = config::root_identities(&self.env, &json!(locations), &c["rootIdentities"]);
                     config::save(&self.env, &c)?;
-                    activity::record(
-                        &self.env,
-                        json!({"by":by,"title":"Changed settings","key":"settings","undo":before}),
-                    );
+                    let detail = settings_detail(&self.env, &before, &c);
+                    if !detail.is_empty() {
+                        activity::record(
+                            &self.env,
+                            json!({"by":by,"title":"Changed settings","detail":detail,"key":"settings","undo":before}),
+                        );
+                    }
                     Ok(())
                 })?;
                 Ok(json!({}))
@@ -853,6 +919,20 @@ impl Service {
                 return Err("That file is gone".into());
             }
             detach("xdg-open", &[path.to_string_lossy().into_owned()], path.parent().unwrap_or(&self.env.home))?;
+        } else if what == "link" {
+            let node = self.place(id)?;
+            let project = paths::workspace_path(string(&node, "path"), &self.env)?;
+            let shown = match link_target(&project, string(b, "arg"))? {
+                LinkTarget::Open(file) => {
+                    detach("xdg-open", &[file.to_string_lossy().into_owned()], file.parent().unwrap_or(&project))?;
+                    false
+                }
+                LinkTarget::Show(folder) => {
+                    detach(string(&apps, "files"), &[folder.to_string_lossy().into_owned()], &folder)?;
+                    true
+                }
+            };
+            return Ok(json!({"ok":true,"shown":shown}));
         } else {
             let node = self.place(id)?;
             let cwd = paths::workspace_path(string(&node, "path"), &self.env)?;
@@ -865,6 +945,59 @@ impl Service {
         }
         Ok(json!({"ok":true}))
     }
+}
+/// Where a link in a project's README leads.
+#[derive(Debug, PartialEq)]
+pub enum LinkTarget {
+    /// A document inside the project, for the system's default viewer.
+    Open(PathBuf),
+    /// A folder for the file manager: the target itself, or the one holding a file that is not a document.
+    Show(PathBuf),
+}
+/// File types that only display. Whatever else a link names is shown in its folder, never started.
+const DOCUMENTS: [&str; 19] = [
+    "md", "markdown", "txt", "rst", "adoc", "pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "csv", "tsv", "json",
+    "yaml", "yml", "toml", "log",
+];
+fn percent_decoded(text: &str) -> Option<String> {
+    let mut out = Vec::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('%') {
+        out.extend_from_slice(&rest.as_bytes()[..at]);
+        out.push(u8::from_str_radix(rest.get(at + 1..at + 3)?, 16).ok()?);
+        rest = &rest[at + 3..];
+    }
+    out.extend_from_slice(rest.as_bytes());
+    String::from_utf8(out).ok()
+}
+/// A README is not trusted: its link text can promise one thing and name another. The target must be inside
+/// the project, also after links on disk are followed.
+pub fn link_target(project: &Path, href: &str) -> Result<LinkTarget> {
+    let outside = "That link leads outside this project";
+    let raw = href.split(['#', '?']).next().unwrap_or("");
+    let decoded = percent_decoded(raw).unwrap_or_else(|| raw.to_owned());
+    // Like on code hosts, a leading slash means the top of the project.
+    let relative = decoded.trim_start_matches('/');
+    if relative.is_empty() || relative.contains('\0') {
+        return Err("That link has no file to open".into());
+    }
+    let target = paths::normalize(&project.join(relative));
+    if !target.starts_with(project) {
+        return Err(outside.into());
+    }
+    let real = target.canonicalize().map_err(|_| "That file is gone".to_owned())?;
+    if !real.starts_with(project.canonicalize().map_err(|_| "That folder is gone".to_owned())?) {
+        return Err(outside.into());
+    }
+    let document =
+        real.extension().and_then(|e| e.to_str()).is_some_and(|e| DOCUMENTS.contains(&e.to_ascii_lowercase().as_str()));
+    Ok(if real.is_dir() {
+        LinkTarget::Show(real)
+    } else if document {
+        LinkTarget::Open(real)
+    } else {
+        LinkTarget::Show(real.parent().unwrap_or(project).to_owned())
+    })
 }
 pub fn installed_apps() -> Value {
     let path = crate::process::host_path();
@@ -919,20 +1052,6 @@ fn external_terminal(app: &str, cwd: &Path, cmd: Option<&str>, confirm: bool) ->
         "alacritty" => vec!["--working-directory".into(), d],
         "wezterm" => vec!["start".into(), "--cwd".into(), d],
         _ => Vec::new(),
-        } else if what == "link" {
-            let node = self.place(id)?;
-            let project = paths::workspace_path(string(&node, "path"), &self.env)?;
-            let shown = match link_target(&project, string(b, "arg"))? {
-                LinkTarget::Open(file) => {
-                    detach("xdg-open", &[file.to_string_lossy().into_owned()], file.parent().unwrap_or(&project))?;
-                    false
-                }
-                LinkTarget::Show(folder) => {
-                    detach(string(&apps, "files"), &[folder.to_string_lossy().into_owned()], &folder)?;
-                    true
-                }
-            };
-            return Ok(json!({"ok":true,"shown":shown}));
     };
     if let Some(cmd) = cmd {
         args.push(if app == "wezterm" || app == "gnome-terminal" { "--" } else { "-e" }.into());
@@ -944,57 +1063,4 @@ fn external_terminal(app: &str, cwd: &Path, cmd: Option<&str>, confirm: bool) ->
         args.extend(["bash".into(), "-lc".into(), script.into(), cmd.into()]);
     }
     detach(app, &args, cwd)
-}
-/// Where a link in a project's README leads.
-#[derive(Debug, PartialEq)]
-pub enum LinkTarget {
-    /// A document inside the project, for the system's default viewer.
-    Open(PathBuf),
-    /// A folder for the file manager: the target itself, or the one holding a file that is not a document.
-    Show(PathBuf),
-}
-/// File types that only display. Whatever else a link names is shown in its folder, never started.
-const DOCUMENTS: [&str; 19] = [
-    "md", "markdown", "txt", "rst", "adoc", "pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "csv", "tsv", "json",
-    "yaml", "yml", "toml", "log",
-];
-fn percent_decoded(text: &str) -> Option<String> {
-    let mut out = Vec::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find('%') {
-        out.extend_from_slice(&rest.as_bytes()[..at]);
-        out.push(u8::from_str_radix(rest.get(at + 1..at + 3)?, 16).ok()?);
-        rest = &rest[at + 3..];
-    }
-    out.extend_from_slice(rest.as_bytes());
-    String::from_utf8(out).ok()
-}
-/// A README is not trusted: its link text can promise one thing and name another. The target must be inside
-/// the project, also after links on disk are followed.
-pub fn link_target(project: &Path, href: &str) -> Result<LinkTarget> {
-    let outside = "That link leads outside this project";
-    let raw = href.split(['#', '?']).next().unwrap_or("");
-    let decoded = percent_decoded(raw).unwrap_or_else(|| raw.to_owned());
-    // Like on code hosts, a leading slash means the top of the project.
-    let relative = decoded.trim_start_matches('/');
-    if relative.is_empty() || relative.contains('\0') {
-        return Err("That link has no file to open".into());
-    }
-    let target = paths::normalize(&project.join(relative));
-    if !target.starts_with(project) {
-        return Err(outside.into());
-    }
-    let real = target.canonicalize().map_err(|_| "That file is gone".to_owned())?;
-    if !real.starts_with(project.canonicalize().map_err(|_| "That folder is gone".to_owned())?) {
-        return Err(outside.into());
-    }
-    let document =
-        real.extension().and_then(|e| e.to_str()).is_some_and(|e| DOCUMENTS.contains(&e.to_ascii_lowercase().as_str()));
-    Ok(if real.is_dir() {
-        LinkTarget::Show(real)
-    } else if document {
-        LinkTarget::Open(real)
-    } else {
-        LinkTarget::Show(real.parent().unwrap_or(project).to_owned())
-    })
 }

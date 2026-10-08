@@ -81,7 +81,7 @@ fn lock(env: &Env) -> Result<Lock> {
     use rustix::fs::{FlockOperation, flock};
     use std::os::unix::fs::MetadataExt;
     let path = data(env, "lock")?;
-    fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    files::private_dir(&env.data_dir)?;
     let busy = "Another laci window or agent is changing files right now. Try again in a moment.";
     for _ in 0..3 {
         match OpenOptions::new().write(true).read(true).create_new(true).open(&path) {

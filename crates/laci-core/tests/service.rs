@@ -653,3 +653,124 @@ fn legacy_summary_uses_connected_provider_and_requires_choice_when_ambiguous() {
     assert!(service.action(&node, "summary", "").unwrap_err().contains("Choose a connected agent"));
     assert!(service.action(&node, "summary", "antigravity").unwrap_err().contains("Choose a connected agent"));
 }
+
+#[cfg(unix)]
+fn mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+#[cfg(unix)]
+#[test]
+fn data_folder_and_logs_are_private_even_when_they_existed_wider() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_temp, env, project) = fixture();
+    let (activity_file, log) = (env.data_dir.join("activity.jsonl"), env.data_dir.join("laci.log"));
+    write(&activity_file, "");
+    write(&log, "");
+    for p in [&activity_file, &log] {
+        fs::set_permissions(p, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    fs::set_permissions(&env.data_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    activity::record(&env, json!({"by":"app","title":"Private entry"}));
+    Service::new(env.clone()).debug("hello");
+    assert_eq!((mode(&env.data_dir), mode(&activity_file), mode(&log)), (0o700, 0o600, 0o600));
+    fs::remove_dir_all(&env.data_dir).unwrap();
+    activity::record(&env, json!({"by":"app","title":"Fresh entry"}));
+    Service::new(env.clone()).debug("hello");
+    assert_eq!((mode(&env.data_dir), mode(&activity_file), mode(&log)), (0o700, 0o600, 0o600));
+    let mut service = loaded(&env, &project);
+    service.snapshot().unwrap();
+    assert_eq!(mode(&env.cache_dir), 0o700);
+}
+#[cfg(unix)]
+#[test]
+fn debug_does_not_write_through_a_linked_log() {
+    let (temp, env, _project) = fixture();
+    let target = temp.path().join("elsewhere.log");
+    write(&target, "keep\n");
+    fs::create_dir_all(&env.data_dir).unwrap();
+    std::os::unix::fs::symlink(&target, env.data_dir.join("laci.log")).unwrap();
+    Service::new(env.clone()).debug("secret");
+    assert_eq!(fs::read_to_string(&target).unwrap(), "keep\n");
+}
+#[test]
+fn one_run_app_overrides_are_not_saved_but_a_different_choice_is() {
+    let (_temp, mut env, project) = fixture();
+    config::save(&env, &json!({"roots":["~/project"],"presets":[],"custom":[],"apps":{"editor":"vim"}})).unwrap();
+    env.app_overrides.insert("editor", "zed".into());
+    env.app_overrides.insert("terminal", "foot".into());
+    let mut service = loaded(&env, &project);
+    let shown = service.request("setup/info", &json!({})).unwrap()["apps"].clone();
+    assert_eq!((shown["editor"].clone(), shown["terminal"].clone()), (json!("zed"), json!("foot")));
+    let save = |service: &mut Service, apps: Value| {
+        service.request("setup/save", &json!({"roots":["~/project"],"presets":[],"apps":apps})).unwrap();
+        config::load(&service.env)["apps"].clone()
+    };
+    let apps = save(&mut service, json!({"editor":"zed","terminal":"foot","files":"nautilus"}));
+    assert_eq!(apps, json!({"editor":"vim","files":"nautilus"}));
+    let apps = save(&mut service, json!({"editor":"helix","terminal":"foot","files":"nautilus"}));
+    assert_eq!(apps, json!({"editor":"helix","files":"nautilus"}));
+}
+#[test]
+fn log_titles_start_with_a_capital_and_settings_changes_say_what_changed() {
+    let (_temp, env, project) = fixture();
+    let mut service = loaded(&env, &project);
+    let id = project.to_str().unwrap();
+    service.request("meta", &json!({"id":id,"key":"status","value":"paused"})).unwrap();
+    service.request("meta", &json!({"id":id,"key":"status","value":"idle"})).unwrap();
+    let titles: Vec<_> =
+        activity::read_log(&env, 100).iter().map(|e| e["title"].as_str().unwrap().to_owned()).collect();
+    assert!(titles.contains(&"Status of demo set to paused".to_owned()), "{titles:?}");
+    assert!(titles.iter().all(|t| t.chars().next().unwrap().is_uppercase()));
+    let base = json!({"roots":["~/project"],"presets":[],"apps":{}});
+    service.request("setup/save", &base).unwrap();
+    assert!(activity::read_log(&env, 100).iter().all(|e| e["key"] != "settings"));
+    let mut next = base.clone();
+    next["presets"] = json!(["codex"]);
+    next["apps"] = json!({"editor":"zed"});
+    next["terminalTarget"] = json!("external");
+    service.request("setup/save", &next).unwrap();
+    let entry = activity::read_log(&env, 100).into_iter().find(|e| e["key"] == "settings").unwrap();
+    assert_eq!(entry["detail"], "Editor: code → zed · Terminal: built-in → external · AI tools: Codex on");
+}
+
+#[cfg(unix)]
+#[test]
+fn readme_links_stay_inside_the_project_and_only_documents_open() {
+    use laci_core::service::{LinkTarget, link_target};
+    let (temp, env, project) = fixture();
+    let project = project.canonicalize().unwrap();
+    write(&project.join("docs/Set Up.md"), "# guide\n");
+    write(&project.join("docs/install.sh"), "#!/bin/sh\n");
+    write(&project.join("LICENSE"), "MIT\n");
+    write(&env.home.join("private.md"), "not part of the project\n");
+    write(&temp.path().join("outside.md"), "not under home\n");
+    std::os::unix::fs::symlink(env.home.join("private.md"), project.join("docs/shortcut.md")).unwrap();
+    let target = |href: &str| link_target(&project, href);
+
+    assert_eq!(target("docs/Set%20Up.md#first-run"), Ok(LinkTarget::Open(project.join("docs/Set Up.md"))));
+    assert_eq!(target("/docs/Set Up.md?plain=1"), Ok(LinkTarget::Open(project.join("docs/Set Up.md"))));
+    assert_eq!(target("./docs/../docs"), Ok(LinkTarget::Show(project.join("docs"))));
+    // A script or a file with no type is shown in its folder, never handed to the system opener.
+    assert_eq!(target("docs/install.sh"), Ok(LinkTarget::Show(project.join("docs"))));
+    assert_eq!(target("LICENSE"), Ok(LinkTarget::Show(project.clone())));
+
+    for outside in ["../../private.md", "docs/../../../private.md", "..%2F..%2Fprivate.md", "docs/shortcut.md"] {
+        assert_eq!(target(outside).unwrap_err(), "That link leads outside this project", "{outside}");
+    }
+    assert_eq!(target("docs/missing.md").unwrap_err(), "That file is gone");
+    assert_eq!(target("#top").unwrap_err(), "That link has no file to open");
+
+    let mut service = loaded(&env, &project);
+    let opened = |service: &mut Service, url: &str| service.request("open/url", &json!({"url":url}));
+    for refused in ["file:///etc/hostname", "javascript:alert(1)", "ftp://example.test/x", "vscode://file/x", ""] {
+        assert_eq!(opened(&mut service, refused).unwrap_err(), "Only web and mail addresses can be opened");
+    }
+    let escaped = service.request("open", &json!({"id":project,"what":"link","arg":"../../private.md"}));
+    assert_eq!(escaped.unwrap_err(), "That link leads outside this project");
+}
+#[test]
+fn a_badge_leaves_nothing_behind_in_a_summary() {
+    let line = "Shell config. [![build](https://img.example/b.svg)](https://ci.example) See the [docs](docs/a.md).";
+    assert_eq!(readers::strip_md(line), "Shell config. See the docs.");
+}

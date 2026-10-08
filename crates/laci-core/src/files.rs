@@ -81,6 +81,55 @@ pub fn size(path: &Path) -> u64 {
         .sum()
 }
 
+pub fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
+}
+/// Set owner-only permissions on an existing path (Unix); other platforms keep their defaults.
+pub fn restrict(path: &Path, mode: u32) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if fs::metadata(path)?.permissions().mode() & 0o777 != mode {
+            fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (path, mode);
+    Ok(())
+}
+/// Create one of Laci's own folders as 0700, or tighten an existing one.
+pub fn private_dir(path: &Path) -> crate::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    match builder.create(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Err(e.to_string()),
+        _ => {}
+    }
+    restrict(path, 0o700).map_err(|e| e.to_string())
+}
+/// Open a log for appending as 0600, tightening a file that already has wider permissions.
+pub fn private_append(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.append(true).create(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let file = options.open(path)?;
+    restrict(path, 0o600)?;
+    Ok(file)
+}
+/// Rotate an oversized log, tightening it first so the rotated copy is private too.
+pub fn rotate_private(path: &Path, to: &Path, limit: u64) {
+    if fs::metadata(path).is_ok_and(|m| m.len() > limit) {
+        let _ = restrict(path, 0o600);
+        let _ = fs::rename(path, to);
+    }
+}
+
 /// A private temporary inode prevents following a pre-created temporary-file symlink.
 pub fn replace(path: &Path, contents: &[u8]) -> crate::Result<()> {
     let parent = path.parent().ok_or("File has no parent")?;

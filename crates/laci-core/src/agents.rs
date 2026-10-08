@@ -203,6 +203,7 @@ impl Cache {
     fn save(mut self, env: &Env) {
         self.values.retain(|k, _| self.seen.contains(k));
         if let Ok(text) = serde_json::to_vec(&self.values) {
+            let _ = files::private_dir(&env.cache_dir);
             let _ = files::replace(&env.cache_dir.join("v4-agent-facts.json"), &text);
         }
     }

@@ -12,7 +12,7 @@ import {
   allSessions,
   groupSessions,
   plural,
-  PROVIDER_NAMES,
+  providerName,
   sessionKey,
   tilde,
 } from "./helpers";
@@ -70,10 +70,11 @@ function SessionRow({
   projectPath?: string;
   projectOf?: (session: Session) => Node | undefined;
 }) {
-  const home = useApp((state) => state.snapshot!.home);
+  const snapshot = useApp((state) => state.snapshot!);
+  const home = snapshot.home;
   const [expanded, setExpanded] = useState(false);
   const { session, children } = group;
-  const provider = PROVIDER_NAMES[session.provider] ?? session.provider;
+  const provider = providerName(snapshot, session.provider);
   const node = projectOf?.(session);
   const place = node
     ? node.label
@@ -174,7 +175,7 @@ function ProjectPicker({ provider }: { provider?: string }) {
   return (
     <DialogFrame
       title="Choose a project"
-      description={`${PROVIDER_NAMES[provider ?? ""] ?? "The agent"} starts in the project you pick.`}
+      description={`${providerName(snapshot, provider) || "The agent"} starts in the project you pick.`}
       footer={
         <>
           <span className="grow" />
@@ -273,7 +274,7 @@ function StartDialog({
           useApp.setState({ modal: null });
           toast(
             request.sessionId ? "Session resumed" : "Agent started",
-            PROVIDER_NAMES[draft.provider] ?? draft.provider,
+            providerName(s.snapshot, draft.provider),
           );
         } finally {
           setSaving(false);
@@ -287,7 +288,7 @@ function StartDialog({
     <DialogFrame
       title={
         request.sessionId
-          ? `Resume ${PROVIDER_NAMES[request.provider ?? ""] ?? request.provider}`
+          ? `Resume ${providerName(s.snapshot, request.provider)}`
           : "Start an agent"
       }
       description={
@@ -342,8 +343,8 @@ function StartDialog({
         />
       ) : (
         <p>
-          No connected agent can launch a session. Add Claude Code, Codex or
-          Antigravity in Settings.
+          No connected agent can start a session. Connect one on the Agents
+          page.
         </p>
       )}
     </DialogFrame>
@@ -367,7 +368,7 @@ export function SessionDialog({
       title={session?.title ?? "Session unavailable"}
       description={
         session
-          ? (PROVIDER_NAMES[session.provider] ?? session.provider)
+          ? providerName(snapshot, session.provider)
           : "This history entry is no longer in the current scan."
       }
       footer={

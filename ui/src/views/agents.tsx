@@ -10,14 +10,14 @@ import {
   date,
   groupSessions,
   plural,
-  PROVIDER_NAMES,
+  providerName,
   sessionKey,
   sessionsOf,
   tilde,
   counted,
 } from "../helpers";
 import { api } from "../api";
-import { agentProviders, LAUNCHABLE_PROVIDERS } from "../agent-launch";
+import { agentProviders } from "../agent-launch";
 import type { AgentCapabilities } from "../agent-launch";
 import { SessionList } from "../session-ui";
 import type { Change, ClaudeDir, ConnectorState, Suggestion } from "../types";
@@ -56,12 +56,10 @@ export function AgentsView() {
       suggestion: x as Suggestion | undefined,
     })),
   ];
+  // Whether its program is installed is worth showing before an agent is connected, too.
   const wanted = [
-    ...new Set(
-      cards
-        .map((card) => card.provider)
-        .filter((id) => LAUNCHABLE_PROVIDERS.includes(id)),
-    ),
+    ...launchable.map((item) => item.value),
+    ...snapshot.suggestions.filter((x) => x.launch).map((x) => x.id),
   ].join(",");
   const [caps, setCaps] = useState<Record<string, AgentCapabilities>>({});
   useEffect(() => {
@@ -315,7 +313,7 @@ function SessionsSection() {
         <div className="showbar" role="group" aria-label="Agent">
           {chip("All agents", agent === "all", () => setAgent("all"))}
           {providers.map((provider) =>
-            chip(PROVIDER_NAMES[provider] ?? provider, agent === provider, () =>
+            chip(providerName(snapshot, provider), agent === provider, () =>
               setAgent(provider),
             ),
           )}

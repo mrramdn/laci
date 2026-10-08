@@ -108,6 +108,9 @@ export interface ClaudeDir {
 }
 
 export interface Session {
+  /** Set by the engine; names the entry in requests such as `backup/restore`. */
+  id?: string;
+  connector?: string;
   provider: string;
   sessionId: string;
   title: string;
@@ -118,6 +121,10 @@ export interface Session {
   updatedAt: string;
   resumeCapability: "supported" | "history-only";
   file: string;
+  /** The tool deleted this session; `file` is the copy in Laci's backup. */
+  backup?: boolean;
+  /** Where a restore puts the copy back. */
+  restoreTo?: string;
 }
 
 /** How a connector finds the project a piece of agent history belongs to. */
@@ -129,7 +136,24 @@ export type Link =
   /** Lives inside the project folder itself, at `path`. Travels with the folder for free. */
   | { kind: "inside"; path: string }
   /** Files under `dir` that mention project paths in their text (plans, notes). */
-  | { kind: "mentions"; dir: string; ext: string };
+  | { kind: "mentions"; dir: string; ext: string }
+  /** A tool Laci only starts: it keeps no history Laci reads. */
+  | { kind: "none" };
+
+/** How a tool the user described is started. Each list is one argument per element. */
+export interface AgentSpec {
+  command: string;
+  /** Holds `{prompt}` where the first prompt goes. */
+  prompt?: string[];
+  /** Picks up the tool's most recent conversation in the folder. */
+  continue?: string[];
+  cwd?: string[];
+  model?: string[];
+  models?: { id: string; label?: string }[];
+  effort?: string[];
+  efforts?: string[];
+  mcp?: { file: string; key: string; add?: string[]; remove?: string[] };
+}
 
 export interface ConnectorSpec {
   id: string;
@@ -145,7 +169,15 @@ export interface ConnectorState extends ConnectorSpec {
     resume: boolean;
     titles: boolean;
     modelDiscovery: string;
+    /** Can pick up its most recent conversation in a folder. */
+    continue?: boolean;
+    /** Keeps MCP servers Laci can register itself with. */
+    mcp?: boolean;
   };
+  /** The program that starts it, when Laci can start it. */
+  command?: string;
+  /** Present on a tool the user described as startable. */
+  agent?: AgentSpec;
   /** From laci's catalog, as opposed to one the user described. */
   builtin: boolean;
   /** One line on what it keeps, for the card. */
@@ -165,6 +197,8 @@ export interface Suggestion {
   about: string;
   where: string;
   found: boolean;
+  /** Laci can start it once it is connected. */
+  launch?: boolean;
   /** e.g. "12 MB" or "in 3 projects", when found. */
   detail?: string;
 }
@@ -302,6 +336,29 @@ export interface Backup {
   dest?: string;
   /** Sessions that changed after `at`. */
   pending?: number;
+}
+/** Whether an agent knows Laci's MCP server, and how it is added. From the `agent/mcp` request. */
+export interface McpStatus {
+  provider: string;
+  name: string;
+  supported: boolean;
+  /** `other`: a different program is registered under Laci's name. `off`: registered but switched off. */
+  state: "missing" | "registered" | "other" | "off";
+  /** The agent's settings file, with `~` for home. */
+  file: string;
+  /** This Laci's program, the one that gets registered. */
+  laci: string;
+  /** The agent's own program is on PATH. */
+  installed: boolean;
+  command: string;
+  /** What is registered now, as a command line. */
+  current?: string;
+  /** `command`: the agent's own program makes the change. `file`: Laci edits the settings file. */
+  how: "command" | "file";
+  add?: string;
+  remove?: string;
+  /** For `file`: the JSON that gets merged in. */
+  snippet?: string;
 }
 export interface Commit {
   hash: string;

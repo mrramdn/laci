@@ -39,16 +39,12 @@ export function agentDraft(
     effort: "",
   };
 }
-export const LAUNCHABLE_PROVIDERS = ["claude", "codex", "antigravity"];
+/** The connected agents Laci can start, as the engine reports them. */
 export function agentProviders(connectors: ConnectorState[]) {
   const providers = new Map<string, { value: string; label: string }>();
   for (const connector of connectors) {
     const provider = connector.provider ?? connector.id;
-    if (
-      LAUNCHABLE_PROVIDERS.includes(provider) &&
-      connector.capabilities?.launch !== false &&
-      !providers.has(provider)
-    ) {
+    if (connector.capabilities?.launch === true && !providers.has(provider)) {
       providers.set(provider, { value: provider, label: connector.name });
     }
   }

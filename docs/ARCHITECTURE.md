@@ -21,6 +21,7 @@ PTY sessions belong to the Rust process. Each tab has its shell, input writer, r
 | `~/.local/share/laci/journal/` | v1 move/rewrite/metadata steps and completion state |
 | `~/.local/share/laci/backup/` | Original rewritten bytes and timestamps for undo |
 | `~/.local/share/laci/activity.jsonl` | Existing Log entries, supersession keys and undo records |
+| `~/.local/share/laci/mcp-backups/` | Copy of an agent's settings file, taken before Laci changes its MCP setup |
 | `~/.local/share/laci/lock` | Cross-process PID lock compatible with v1 |
 | `~/.cache/laci/` | Disposable parser/snapshot caches; v2 cache names are separate |
 
@@ -50,13 +51,19 @@ The desktop creates one local window and uses Tauri IPC with a local-content pol
 
 `laci mcp` serves the 14 compatible v1 tool names plus `delete_project` over stdio without starting GTK or a window. Read calls reuse a recent snapshot. Move/archive/Trash/Tidy/create/undo calls return a preview until `confirm: true` is supplied. Arguments a tool does not list are rejected. Confirmed destructive operations refresh the scan and use the same engine as the desktop.
 
+## Providers and MCP setup
+
+`providers.rs` holds one description per agent Laci can start: its program, argument templates, models, effort levels and MCP settings. The built-ins are Claude Code, Codex and Antigravity. The user's own tools from `config.json` are read beside them.
+
+`mcp_setup.rs` tells whether an agent knows Laci's MCP server, and adds or removes it. Reading is passive. A change runs the agent's own command, or edits its JSON settings file after copying that file to the backup folder.
+
 ## Session launch and creation
 
 Sessions normalize provider, UUID, title provenance, cwd, parent, source kind, update time and resume capability separately from the store/file identity. Codex metadata uses session/turn cwd, not tool-call paths. Title-index changes invalidate the title cache. Antigravity's shared last-conversation index is read-only and excluded from relocation and cleanup plans.
 
 Transcript head parsing is bounded to 8 MiB and 20,000 records. A bounded recent window updates display/resume metadata when the head is incomplete, preserving identity, parent and first-message facts. Latest cwd is separate from the complete owning-cwd set. Parse/read/traversal failures and bounds mark ownership incomplete, including Claude folder aggregates; a tail window never proves cleanup ownership. The cache schema was advanced so earlier incomplete facts cannot authorize cleanup.
 
-The launch resolver accepts a provider, optional session ID, project path, prompt, model, effort and terminal target. IPC resolves session membership from the snapshot and verifies an active connector. Internal PTYs receive executable/argv/cwd directly; external terminals use the same resolved arguments with quoted transport boundaries. Explicit model discovery is cached and does not start a conversation. Unsupported overrides fail without silently selecting another model or provider.
+The launch resolver (`launch.rs`) accepts a provider, optional session ID, project path, prompt, model, effort and terminal target. It builds each command from the provider's description: one argument per template element, and no shell. IPC resolves session membership from the snapshot and verifies an active connector. Internal PTYs receive executable/argv/cwd directly; external terminals use the same resolved arguments with quoted transport boundaries. Explicit model discovery is cached and does not start a conversation. Unsupported overrides fail without silently selecting another model or provider.
 
 Desktop creation jobs run outside the snapshot mutex. They serialize filesystem creation through the existing process lock, bound output in memory, and fence mutations and stale snapshots from start through completion, failure or cancellation. Generator cancellation signals only its owned process group and reaps it before shutdown. Failed scaffolds stay on disk. Metadata, Git initialization and optional agent launch follow successful generation. Retrying a failed agent launch never repeats creation or remote operations.
 

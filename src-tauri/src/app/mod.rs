@@ -133,6 +133,8 @@ impl AppState {
             (engine.service.env.clone(), request, session, engine.service.apps())
         };
         let command = laci_core::launch::resolve(&env, &request, session.as_ref())?;
+        // A choice that could not be saved must not stop the agent from starting.
+        let _ = laci_core::launch::remember(&env, &request);
         if command.target == "external" {
             laci_core::launch::external(string(&apps, "terminal"), &command)?;
             return Ok(json!({"target":"external"}));

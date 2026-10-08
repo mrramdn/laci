@@ -3181,6 +3181,26 @@ textarea.notes:focus {
 .agent-card > .foot {
   margin-top: 4px;
 }
+.agent-mcp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.agent-mcp > .btn {
+  margin-left: auto;
+}
+.mcp-code {
+  margin: 6px 0;
+  padding: 8px 10px;
+  font: 11.5px var(--mono);
+  background: var(--subtle);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
 .agent-details,
 .more-fields,
 .advanced {

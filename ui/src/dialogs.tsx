@@ -13,6 +13,7 @@ import { plural, tilde } from "./helpers";
 import { Icon, Ops, restoreFocus, SeverityGlyph } from "./common";
 import { closeTerminal, useTerms } from "./terminal-api";
 import { AgentDialog, SessionDialog } from "./session-ui";
+import { McpDialog } from "./mcp-setup";
 import { Select, SelectPortal, selectIsOpen } from "./select";
 import type { ArchivePlan, Change, DeletePlan, Link } from "./types";
 const NewProject = lazy(() =>
@@ -251,6 +252,8 @@ export function Dialogs() {
       key={`${modal.provider}:${modal.sessionId}`}
       request={modal}
     />
+  ) : modal?.kind === "mcp" ? (
+    <McpDialog key={modal.provider} provider={modal.provider} />
   ) : null;
 }
 function OrphanHistory({ id }: { id: string }) {

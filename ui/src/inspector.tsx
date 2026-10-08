@@ -38,6 +38,7 @@ import {
 } from "./common";
 import { Select } from "./select";
 import { TerminalButton } from "./terminal-controls";
+import { agentProviders } from "./agent-launch";
 import { SessionList, requestResume } from "./session-ui";
 import { openTerminal } from "./terminal-api";
 import type { Commit, Health, Node, Snapshot, Task } from "./types";
@@ -1080,8 +1081,25 @@ function AgentsTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
     )
     .sort((a, b) => b.at.localeCompare(a.at)))
     groups.set(item.connector, [...(groups.get(item.connector) ?? []), item]);
+  const canStart =
+    n.kind === "project" &&
+    !n.archived &&
+    agentProviders(snapshot.connectors).length > 0;
   return (
     <>
+      {canStart ? (
+        <button
+          className="btn sm start-agent"
+          onClick={() =>
+            useApp.setState({
+              modal: { kind: "agent", projectPath: n.id },
+            })
+          }
+        >
+          <Icon name="play" className="sm" />
+          Start agent
+        </button>
+      ) : null}
       {!sessions.length && !n.agents.items.length ? (
         <p className="muted" style={{ marginTop: 14 }}>
           No agent has worked in this folder, as far as the logs show.

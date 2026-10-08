@@ -39,7 +39,7 @@ export function Palette() {
   const actions = [
     ["view:today", "Open Today", "inbox"],
     ["view:tidy", "Open Tidy up", "sparkles"],
-    ["view:agents", "Open Agent history", "history"],
+    ["view:agents", "Open Agents", "history"],
     ["view:log", "Open Log", "scroll"],
     ["new", "New project", "plus"],
     ["shortcuts", "Keyboard shortcuts", "keyboard"],

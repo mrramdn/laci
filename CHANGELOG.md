@@ -4,6 +4,29 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-08
+
+Today, Health, backup and agent management, reworked after the 2.0.0 audit.
+
+### Added
+
+- **Deadlines on Today.** Overdue projects and the next 14 days, soonest first, with priority. The Today badge in the sidebar counts overdue and due-today projects.
+- **Priority and deadline everywhere.** In Today rows, the Browse name column and the palette. Browse can sort by priority or deadline and filter on "Has deadline" and "High priority".
+- **Health tab details.** Each check lists what stands behind its number: the changed files, the commits not pushed, the stashes. New Release line (declared version, last tag, commits since) and Recent commits. The commit chart spans the project's real age instead of a fixed 26 weeks.
+- **Backup you can see.** A backup is logged, Today shows when it last ran and how many sessions it keeps, and **Open backup folder** opens it. The retention warning goes away while the backup is current. Optional automatic backup, at most hourly.
+- **Agents page.** One card per agent with connected and installed state, sessions, the model and effort it starts with, and **Start…**. One searchable session list replaces five separate lists. Storage and cleanup moved into its own collapsed section.
+- **Start agent** button on a project's Agents tab.
+- F6 and Shift+F6 move between the sidebar, the list, the details panel and the terminal.
+
+### Changed
+
+- "Could lose work" lists each project once, with every issue as a chip. Clicking a row highlights only that row.
+- Each Today list opens the matching tab: a risk opens Health, a recent project opens Agents (or To-do), a deadline opens To-do.
+- The start dialog has Claude Code's models and efforts ready when it opens (Fable, Opus, Sonnet and Haiku, effort up to max), remembers the last model and effort per agent, and allows an effort with the default model. Codex and Antigravity are still asked for their models only when you press **Load models**.
+- At half-screen widths the sidebar becomes an icon rail and the details panel sits beside the list instead of covering it.
+- The folder tree is one Tab stop; arrow keys move inside it.
+- "Agent history" is now "Agents". "Add a connector" is "Add another AI tool", with known tools first and the technical form under "Something else".
+
 ## [2.0.1] - 2026-10-08
 
 Fixes and hardening found in an audit of 2.0.0. No data format changes.

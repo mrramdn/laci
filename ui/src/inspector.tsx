@@ -52,7 +52,6 @@ export function Inspector({ node: n }: { node: Node }) {
   );
   const parent = n.parent ? snapshot.nodes[n.parent] : null;
   const git = n.git;
-  const remote = git?.remotes[0];
   const isProject = n.kind === "project";
   const tabs: [string, string, number][] = [
     ["health", "Health", 0],
@@ -262,11 +261,11 @@ export function Inspector({ node: n }: { node: Node }) {
           </dd>
           {git ? (
             <>
-              <dt>Remote</dt>
-              <dd>
-                <span className="pval">
-                  {remote ? (
-                    <>
+              <dt>{git.remotes.length > 1 ? "Remotes" : "Remote"}</dt>
+              <dd className="remotes">
+                {git.remotes.length ? (
+                  git.remotes.map((remote) => (
+                    <span className="pval" key={remote.name}>
                       <Icon name="link" className="sm" />
                       {remote.web ? (
                         <a
@@ -281,13 +280,18 @@ export function Inspector({ node: n }: { node: Node }) {
                       ) : (
                         <span className="mono">{remote.url}</span>
                       )}
-                    </>
-                  ) : (
+                      {git.remotes.length > 1 ? (
+                        <span className="faint"> · {remote.name}</span>
+                      ) : null}
+                    </span>
+                  ))
+                ) : (
+                  <span className="pval">
                     <span style={{ color: "var(--red)" }}>
                       None · only on this disk
                     </span>
-                  )}
-                </span>
+                  </span>
+                )}
               </dd>
               <dt>Branch</dt>
               <dd>

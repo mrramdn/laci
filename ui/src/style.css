@@ -3534,3 +3534,6 @@ textarea.notes:focus {
   min-width: 120px;
   height: 26px;
 }
+.remotes > .pval {
+  display: flex;
+}

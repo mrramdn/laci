@@ -398,7 +398,7 @@ fn readme(dir: &Path) -> Option<Value> {
         .collect();
     Some(
         json!({"file":file.file_name().to_string_lossy(),"title":title,"weakTitle":title.len()<3||re!(r"(?i)^(readme|project|app|frontend|backend|docs?)$").is_match(&title),
-        "tagline":tagline,"template":re!(r"(?i)create-next-app|this template provides|getting started with create react app|react \+ typescript \+ vite|a new flutter project|astro starter kit").is_match(&raw),
+        "tagline":tagline,"template":re!(r"(?i)create-next-app|this template provides|getting started with create react app|react \+ typescript \+ vite|a new flutter project|astro starter kit|framework typescript starter repository|nest is an mit-licensed open source project|this template should help get you started developing with vue|everything you need to build a svelte project|laravel is a web application framework with expressive|this is an \[expo\]\(https://expo\.dev\) project|look at the \[nuxt documentation").is_match(&raw),
         "links":links,"sections":sections,"images":raw.matches("![").count()+raw.matches("<img").count(),"raw":raw}),
     )
 }
@@ -774,6 +774,17 @@ pub fn project(env: &Env, dir: &Path) -> Result<Value> {
 mod tests {
     use super::{people, tasks};
 
+    #[test]
+    fn a_framework_starter_readme_gives_no_summary() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("README.md"),
+            "<p align=\"center\">Nest</p>\n\nNest is an MIT-licensed open source project. It can grow thanks to the sponsors.\n\n## Description\n\n[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.\n",
+        )
+        .unwrap();
+        let readme = super::readme(dir.path()).unwrap();
+        assert_eq!(readme["template"], true);
+    }
     #[test]
     fn a_checkbox_with_nothing_to_do_is_not_a_task() {
         let dir = tempfile::tempdir().unwrap();

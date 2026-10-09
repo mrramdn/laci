@@ -275,7 +275,7 @@ export function Settings({ first = false }: { first?: boolean }) {
                 <span>{c.name}</span>
                 <span className="sub">{c.about}</span>
                 <span className={`r ${c.found ? "ok" : ""}`}>
-                  {c.found ? "found on this PC" : "not found"}
+                  {c.found ? "found on this PC" : "no history here yet"}
                 </span>
               </label>
             ))}

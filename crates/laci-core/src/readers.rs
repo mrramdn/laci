@@ -133,7 +133,11 @@ pub fn tasks(dir: &Path) -> Value {
             }
             let heading = headings.iter().rev().take(2).rev().map(|(_, s)| s.as_str()).collect::<Vec<_>>().join(" › ");
             if let Some(c) = re!(r"^\s*[-*+]\s+\[([ xX])\]\s+(.+)").captures(line) {
-                found.push(json!({"text":strip_md(&c[2]),"done":&c[1]!=" ","kind":"check","file":name,"line":index+1,"section":heading}));
+                let text = strip_md(&c[2]);
+                // A placeholder such as "- [ ] —" or "- [ ] ..." says nothing to do.
+                if text.chars().any(char::is_alphanumeric) {
+                    found.push(json!({"text":text,"done":&c[1]!=" ","kind":"check","file":name,"line":index+1,"section":heading}));
+                }
             } else if todo > 0
                 && re!(r"(?i)handoff|todo|next").is_match(&name)
                 && let Some(c) = re!(r"^\s{0,3}(?:[-*+]|\d+[.)])\s+(.+)").captures(line)
@@ -768,7 +772,22 @@ pub fn project(env: &Env, dir: &Path) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::people;
+    use super::{people, tasks};
+
+    #[test]
+    fn a_checkbox_with_nothing_to_do_is_not_a_task() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("TODO.md"),
+            "- [ ]\n- [ ]   \n- [ ] **\n- [ ] —\n- [ ] ...\n- [ ] Ship the release\n",
+        )
+        .unwrap();
+        let found = tasks(dir.path());
+        let items = found["tasks"].as_array().unwrap();
+        assert_eq!(items.len(), 1, "{items:?}");
+        assert_eq!(items[0]["text"], "Ship the release");
+        assert_eq!(items[0]["done"], false);
+    }
 
     #[test]
     fn one_person_under_several_names_counts_once() {

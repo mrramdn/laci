@@ -4,9 +4,36 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-09
+
+Sessions you can sort out, and fewer false alarms.
+
+### Added
+
+- **Sessions as conversations.** The session list counts and shows conversations: subagent logs and the stubs `/resume` leaves fold into the conversation they belong to. Sessions are grouped by project, newest first, with chats outside projects in one closed group, and chats of a couple of prompts that changed no file fold into one row.
+- **What a session was about.** Each row says how many prompts it had, how many files it changed, the time spent in it, its size and its pull requests. Its details show the first and last prompt and the agent's last reply. Untitled sessions take their first prompt as title.
+- **Delete and keep sessions.** Select sessions and delete them: they move, with their subagent logs and Laci's backup copy, to Laci's quarantine, and Undo in the Log puts them back. Kept sessions are never offered for cleanup. Filters for short chats, older than 30 days, outside projects, kept and backup-only sessions.
+- **Laci's own storage.** Storage and cleanup lists what Laci keeps itself and frees the quarantine, undo copies of moves older than a week, and files left by Laci 1.
+- **Mute a check** for one project from its Health tab. Muted checks are listed there and counted nowhere else.
+- **Dismiss a Tidy up suggestion** for 90 days, and ask for it again.
+- **Move build output to Trash** from a project's size line.
+- **Search** sessions and to-dos from the palette, and the Log by text, with a *Can undo* filter.
+- **Places at half-screen width.** The folder tree opens from a button on the icon rail.
+
+### Changed
+
+- **Diverged branches.** A branch that is both ahead and behind is one *Diverged* check, listed under Could lose work, without Push or Pull.
+- **Archive suggestions** skip projects with uncommitted, unpushed, diverged or stashed work.
+- **Less work while an agent runs.** A session log that only grew is read from where the last read stopped, and agent history is read at most every 15 seconds while a log keeps changing.
+- Sidebar badges say what they count; archive suggestions say why on their row; a project lists every remote.
+
 ### Fixed
 
 - **Author count.** A project's "authors" counts people, not spellings: commits under several names with one address, or made through GitHub with its `noreply` address, count as one person.
+- A checkbox with nothing to do in it, such as `- [ ] —`, is no longer a to-do.
+- Framework starter READMEs (NestJS, Vue, Svelte, Laravel, Expo, Nuxt) no longer give a project its summary.
+- Clicking a session row always opens its details; its columns line up from row to row.
+- Settings says an agent has no history yet instead of "not found" when only its history folder is missing. Browse column headers share one style.
 
 ## [2.2.0] - 2026-10-08
 

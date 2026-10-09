@@ -82,6 +82,9 @@ fn steps(env: &Env, j: &Value) -> Value {
     for e in entries.iter().filter(|e| e["kind"] == "trash") {
         out.push(json!({"kind":"delete","label":"Moved to the trash","from":tilde(&e["path"])}));
     }
+    for e in entries.iter().filter(|e| e["kind"] == "cleared") {
+        out.push(json!({"kind":"delete","label":"Deleted build output","from":tilde(&e["path"])}));
+    }
     for e in entries.iter().filter(|e| e["kind"] == "file") {
         let path = Path::new(e["path"].as_str().unwrap_or(""));
         if path.file_name().is_some_and(|n| n == "exclude") {

@@ -423,6 +423,20 @@ impl<'a> Tx<'a> {
             json!(format!("{:x}", Sha256::digest(after)));
         self.save()
     }
+    /// Deletes dependencies or build output for good. They are rebuilt by the next install or build, and
+    /// moving them to the Trash would free nothing while the Trash is on the same disk.
+    fn clear(&mut self, path: &Path) -> Result<()> {
+        sidecar::plain_path(path)?;
+        let Ok(meta) = fs::symlink_metadata(path) else { return Ok(()) };
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !meta.is_dir() || !files::HEAVY.contains(&name) {
+            return Err(format!("{} is not build output", paths::tilde(path, &self.env.home)));
+        }
+        guard(&[path.to_owned()])?;
+        let bytes = files::size(path);
+        self.log(json!({"kind":"cleared","path":path,"bytes":bytes}))?;
+        fs::remove_dir_all(path).map_err(|e| e.to_string())
+    }
     fn trash(&mut self, path: &Path) -> Result<()> {
         sidecar::plain_path(path)?;
         if !exists(path) {
@@ -483,7 +497,7 @@ fn validate_entries(env: &Env, entries: &[Value]) -> Result<()> {
             Some("rewrite") => &["path", "backup"],
             Some("file") if e["existed"].as_bool() == Some(true) => &["path", "backup"],
             Some("file") if e["existed"].as_bool() == Some(false) => &["path"],
-            Some("mkdir" | "rmdir" | "trash") => &["path"],
+            Some("mkdir" | "rmdir" | "trash" | "cleared") => &["path"],
             _ => return Err("Unknown or incomplete journal entry".into()),
         };
         for key in required {
@@ -550,7 +564,8 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
             "rmdir" => {
                 fs::create_dir_all(journal_path(env, e, "path")?).map_err(|e| e.to_string())?;
             }
-            "trash" => {} // The system trash owns recovery, as in v1.
+            "trash" => {}   // The system trash owns recovery, as in v1.
+            "cleared" => {} // Build output comes back with the next install or build.
             _ => return Err("Unknown journal entry".into()),
         }
     }
@@ -580,6 +595,14 @@ pub fn can_undo(journal: &Value) -> bool {
 
 pub fn recovery(journal: &Value) -> Option<&'static str> {
     let trashed = journal["entries"].as_array().into_iter().flatten().any(|e| e["kind"] == "trash");
+    let cleared = journal["entries"].as_array().into_iter().flatten().any(|e| e["kind"] == "cleared");
+    if cleared && !trashed {
+        return Some(if can_undo(journal) {
+            "Undo restores moves and edits; deleted build output comes back with the next install or build."
+        } else {
+            "Deleted build output comes back with the next install or build."
+        });
+    }
     trashed.then(|| {
         if can_undo(journal) {
             "Laci Undo restores moves and edits only. Restore trashed files separately through system Trash."
@@ -768,7 +791,7 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
                 {
                     return Err("Invalid heavy folder".into());
                 }
-                tx.trash(&path(env, &dest.join(raw).to_string_lossy())?)?;
+                tx.clear(&path(env, &dest.join(raw).to_string_lossy())?)?;
             }
         }
         Ok(())
@@ -882,6 +905,11 @@ fn apply_action_checked(
             "trash" => {
                 for p in a["paths"].as_array().ok_or("Missing paths")? {
                     tx.trash(&value_path(env, p)?)?;
+                }
+            }
+            "clear" => {
+                for p in a["paths"].as_array().ok_or("Missing paths")? {
+                    tx.clear(&value_path(env, p)?)?;
                 }
             }
             _ => return Err("Unknown action".into()),

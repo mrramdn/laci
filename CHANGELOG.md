@@ -4,6 +4,12 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-10-09
+
+### Fixed
+
+- **Freeing build output frees space.** "Delete build output…", Tidy up's *Free space* and the archive option delete dependencies and build output for good instead of moving them to the Trash, which kept the space taken while the Trash is on the same disk. They come back with the next install or build. A build folder that is a link to another disk is left alone.
+
 ## [2.3.0] - 2026-10-09
 
 Sessions you can sort out, and fewer false alarms.

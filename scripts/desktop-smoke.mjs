@@ -3101,7 +3101,7 @@ try {
         await key("\uE00C");
       });
 
-      await check("Heavy archive preview explains trash behavior", async () => {
+      await check("Heavy archive preview says build output is deleted", async () => {
         const heavyProject = Object.values((await snapshot()).nodes).find(
           (node) =>
             !node.archived && node.size?.reclaimable && node.archivePlan,
@@ -3111,11 +3111,11 @@ try {
         await click(".insp .iacts button", "Archive", true);
         await click(".dialog .ops input[type=checkbox]");
         await wait("selected cleanup copy", () =>
-          textContains(".dialog .df", "remain in the system trash"),
+          textContains(".dialog .df", "come back with the next install or build"),
         );
         await click(".dialog .ops input[type=checkbox]");
         assert.equal(
-          await textContains(".dialog .df", "remain in the system trash"),
+          await textContains(".dialog .df", "come back with the next install or build"),
           false,
         );
         await click(".dialog button", "Cancel", true);

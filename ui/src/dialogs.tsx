@@ -552,7 +552,7 @@ function Archive({ id }: { id: string }) {
           ) : (
             <p>
               {heavy
-                ? "Written to an undo journal first. Undo puts the folder and its history back; deleted dependencies and build output remain in the system trash."
+                ? "Written to an undo journal first. Undo puts the folder and its history back; deleted dependencies and build output come back with the next install or build."
                 : "Written to an undo journal first. Undo puts the folder and its history back."}
             </p>
           )}
@@ -641,23 +641,23 @@ function CleanProject({ id }: { id: string }) {
         try {
           const change = await api<Change>("clean", { id });
           if (useApp.getState().modal === modal) close();
-          changed(change, `Moved build output of ${n.name} to Trash`);
+          changed(change, `Deleted the build output of ${n.name}`);
         } finally {
           setSaving(false);
         }
       },
-      `Cleaning ${n.name}…`,
+      `Deleting build output of ${n.name}…`,
       { history: true, onError: (e) => setError(errorText(e)) },
     );
   }
   return (
     <DialogFrame
-      title={`Move build output of ${n.name} to Trash?`}
+      title={`Delete the build output of ${n.name}?`}
       description={
         <>
-          Moves {parts.map((p) => p.path).join(", ")} (
-          {bytes(n.size!.reclaimable)}) to the system Trash. A fresh build
-          brings them back.
+          Deletes {parts.map((p) => p.path).join(", ")} for good, freeing{" "}
+          {bytes(n.size!.reclaimable)}. The next install or build brings them
+          back. They don't go to the Trash, which would keep the space taken.
         </>
       }
       footer={
@@ -671,11 +671,11 @@ function CleanProject({ id }: { id: string }) {
             Cancel
           </button>
           <button
-            className="btn primary"
+            className="btn danger"
             disabled={saving || s.historyPending}
             onClick={() => void clean()}
           >
-            {saving ? "Moving…" : "Move to Trash"}
+            {saving ? "Deleting…" : "Delete"}
           </button>
         </>
       }

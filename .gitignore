@@ -1,7 +1,7 @@
 node_modules/
 prototype/dist/
 sandbox-home/
-target/
+target
 ui/dist/
 ui/*.tsbuildinfo
 src-tauri/gen/

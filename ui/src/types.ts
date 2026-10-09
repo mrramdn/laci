@@ -144,6 +144,8 @@ export interface Session {
   lastReply?: string;
   startedAt?: string;
   endedAt?: string;
+  /** Time between its records, leaving out pauses of more than half an hour. */
+  activeSeconds?: number;
   model?: string;
   prs?: { number: number | string; url: string }[];
   /** Claude Code left this stub when the conversation was resumed under this other session id. */

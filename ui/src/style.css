@@ -3286,7 +3286,9 @@ textarea.notes:focus {
   flex: none;
   transition: transform 0.12s;
 }
-.storage-toggle .i.open {
+.storage-toggle .i.open,
+.session-block-h .i.open,
+.short-fold .i.open {
   transform: rotate(90deg);
 }
 .agent-storage-actions {
@@ -3536,4 +3538,23 @@ textarea.notes:focus {
 }
 .remotes > .pval {
   display: flex;
+}
+.remotes > .pval a {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remotes .remote-name {
+  flex: none;
+  min-width: 42px;
+}
+.session-block-h .i,
+.short-fold .i {
+  transition: transform 0.12s;
+}
+.session-details .prs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }

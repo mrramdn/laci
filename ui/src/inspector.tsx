@@ -267,6 +267,9 @@ export function Inspector({ node: n }: { node: Node }) {
                   git.remotes.map((remote) => (
                     <span className="pval" key={remote.name}>
                       <Icon name="link" className="sm" />
+                      {git.remotes.length > 1 ? (
+                        <span className="faint remote-name">{remote.name}</span>
+                      ) : null}
                       {remote.web ? (
                         <a
                           href={remote.web}
@@ -280,9 +283,6 @@ export function Inspector({ node: n }: { node: Node }) {
                       ) : (
                         <span className="mono">{remote.url}</span>
                       )}
-                      {git.remotes.length > 1 ? (
-                        <span className="faint"> · {remote.name}</span>
-                      ) : null}
                     </span>
                   ))
                 ) : (

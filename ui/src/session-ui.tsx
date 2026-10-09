@@ -14,7 +14,7 @@ import {
   conversationKey,
   conversations,
   deletable,
-  length,
+  duration,
   plural,
   providerName,
   sessionKey,
@@ -140,7 +140,7 @@ function summary(c: Conversation) {
     c.filesChanged
       ? `${c.filesChanged} ${c.filesChanged === 1 ? "file" : "files"} changed`
       : "",
-    length(c.startedAt, c.updatedAt),
+    duration(c.activeSeconds),
     c.bytes ? bytes(c.bytes) : "",
     ...(c.session.prs ?? []).slice(0, 2).map((pr) => `PR #${pr.number}`),
   ].filter(Boolean);
@@ -556,10 +556,6 @@ export function SessionDialog({
         sessionsOf(n, snapshot).includes(session),
       )
     : undefined;
-  const lines =
-    session?.linesAdded || session?.linesRemoved
-      ? ` · +${session.linesAdded ?? 0} −${session.linesRemoved ?? 0} lines`
-      : "";
   const main = c?.session === session ? c : undefined;
   return (
     <DialogFrame
@@ -657,7 +653,6 @@ export function SessionDialog({
                       : plural(main.prompts, "prompt"),
                     `${main.filesChanged} ${main.filesChanged === 1 ? "file" : "files"} changed`,
                   ].join(" · ")}
-                  {lines}
                 </dd>
                 <dt>When</dt>
                 <dd>
@@ -667,8 +662,8 @@ export function SessionDialog({
                     </>
                   ) : null}
                   <Time at={main.updatedAt} long />
-                  {length(main.startedAt, main.updatedAt)
-                    ? ` · ${length(main.startedAt, main.updatedAt)}`
+                  {duration(main.activeSeconds)
+                    ? ` · ${duration(main.activeSeconds)} in it`
                     : ""}
                 </dd>
                 <dt>Size</dt>
@@ -691,7 +686,7 @@ export function SessionDialog({
             {session.prs?.length ? (
               <>
                 <dt>Pull requests</dt>
-                <dd>
+                <dd className="prs">
                   {session.prs.map((pr) => (
                     <button
                       key={pr.url}
@@ -805,9 +800,10 @@ export function DeleteSessions({ files }: { files: string[] }) {
         <>
           {bytes(size)}
           {extra ? `, with ${plural(extra, "earlier session")}` : ""}
-          {subagents ? ` and ${plural(subagents, "subagent log")}` : ""}. They
-          move to Laci's quarantine; Undo in the Log puts them back until you
-          free that space under Storage.
+          {subagents ? ` and ${plural(subagents, "subagent log")}` : ""}.{" "}
+          {ready.length === 1 ? "It moves" : "They move"} to Laci's quarantine;
+          Undo in the Log puts {ready.length === 1 ? "it" : "them"} back until
+          you free that space under Storage.
         </>
       }
       dismissible={!saving}

@@ -249,6 +249,8 @@ export interface Conversation {
   bytes: number;
   startedAt?: string;
   updatedAt: string;
+  /** Time spent in it, all parts together; pauses of over half an hour left out. */
+  activeSeconds?: number;
   /** A couple of prompts and no file changed: folded away in lists, and first in line for cleanup. */
   short: boolean;
 }
@@ -321,6 +323,9 @@ export function conversations(
       bytes: all.reduce((n, g) => n + size(g), 0),
       startedAt: started,
       updatedAt: session.updatedAt,
+      activeSeconds: all.some((g) => g.session.activeSeconds !== undefined)
+        ? all.reduce((n, g) => n + (g.session.activeSeconds ?? 0), 0)
+        : undefined,
       short:
         prompts !== undefined &&
         prompts <= SHORT_PROMPTS &&
@@ -342,16 +347,12 @@ export function deletable(c: Conversation, now = Date.now()) {
       now - Date.parse(s.updatedAt) > 2 * 60 * 1000,
   );
 }
-/** How long a conversation went on, from its first record to its last: "2 h 10 min", "4 min". */
-export function length(startedAt?: string, endedAt?: string) {
-  if (!startedAt || !endedAt) return "";
-  const minutes = Math.round(
-    (Date.parse(endedAt) - Date.parse(startedAt)) / 60000,
-  );
-  if (!Number.isFinite(minutes) || minutes < 1) return "";
+/** Time spent, as people say it: "2 h 10 min", "4 min". Nothing under a minute. */
+export function duration(seconds?: number) {
+  const minutes = Math.round((seconds ?? 0) / 60);
+  if (minutes < 1) return "";
   if (minutes < 60) return `${minutes} min`;
   const hours = Math.floor(minutes / 60);
-  if (hours >= 48) return `${Math.round(hours / 24)} days`;
   return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
 }
 export const RISK = new Set([

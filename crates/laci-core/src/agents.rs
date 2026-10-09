@@ -363,7 +363,15 @@ fn spoken(text: &str) -> Option<String> {
     {
         return None;
     }
-    Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
+    // Text the user pasted arrives wrapped in a tag; what they wrote is inside it.
+    let text = re_pasted().replace_all(text, " ");
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!text.is_empty()).then_some(text)
+}
+fn re_pasted() -> &'static Regex {
+    static PASTED: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"</?pasted_content[^>]*>").expect("pasted content pattern"));
+    &PASTED
 }
 fn concise(text: &str) -> Option<String> {
     spoken(text).map(|text| text.chars().take(120).collect())
@@ -386,12 +394,14 @@ fn message_text(content: &Value) -> Option<String> {
         .find_map(|v| v["text"].as_str().and_then(spoken))
 }
 const EXCERPT: usize = 400;
+/// The longest pause between two records that still counts as time spent in a session.
+const ACTIVE_GAP: i64 = 30 * 60;
 /// Files one session changed are remembered up to this many, to count each once.
 const CHANGED_FILES: usize = 400;
 /// One pass reads at most this much; a longer log carries on at the next refresh.
 const PASS_BYTES: u64 = 256 * 1024 * 1024;
 /// Bumped when the facts a pass collects change, so older cached passes are read again from the start.
-const READER: u64 = 1;
+const READER: u64 = 3;
 /// The bytes just before where the last pass stopped, to tell a log that only grew from one rewritten.
 fn probe(file: &mut fs::File, offset: u64) -> Option<String> {
     let start = offset.saturating_sub(256);
@@ -510,6 +520,14 @@ fn read_record(
     if let Some(at) = v["timestamp"].as_str().filter(|at| !at.is_empty()) {
         if facts["startedAt"].is_null() {
             facts["startedAt"] = json!(at);
+        }
+        // Time spent in it: gaps of more than half an hour are time away, not work.
+        let parse = |at: &str| chrono::DateTime::parse_from_rfc3339(at).ok();
+        if let (Some(before), Some(now)) = (facts["endedAt"].as_str().and_then(parse), parse(at)) {
+            let gap = (now - before).num_seconds();
+            if (0..=ACTIVE_GAP).contains(&gap) {
+                facts["activeSeconds"] = json!(facts["activeSeconds"].as_i64().unwrap_or(0) + gap);
+            }
         }
         facts["endedAt"] = json!(at);
     }
@@ -711,8 +729,9 @@ fn normalized_session(provider: &str, file: &Path, facts: &Value, fallback_id: O
     session
 }
 /// What a session was about, as far as its log tells.
-const SUMMARY: [&str; 12] = [
+const SUMMARY: [&str; 13] = [
     "prompts",
+    "activeSeconds",
     "filesChanged",
     "firstPrompt",
     "lastPrompt",
@@ -1223,7 +1242,7 @@ mod tests {
             &log,
             &[
                 json!({"type":"user","isMeta":true,"sessionId":ID,"cwd":"/p","message":{"role":"user","content":"<local-command-caveat>x"}}),
-                json!({"type":"user","sessionId":ID,"cwd":"/p","timestamp":"2026-10-09T01:00:00Z","message":{"role":"user","content":"Fix the login page"}}),
+                json!({"type":"user","sessionId":ID,"cwd":"/p","timestamp":"2026-10-09T01:00:00Z","message":{"role":"user","content":"<pasted_content id=\"4a3b\">\nFix the login page\n</pasted_content>"}}),
                 json!({"type":"assistant","sessionId":ID,"cwd":"/p","timestamp":"2026-10-09T01:00:05Z","message":{"model":"claude-opus-5-5","content":[{"type":"text","text":"Looking at it."},{"type":"tool_use","name":"Edit","input":{"file_path":"/p/login.tsx"}},{"type":"tool_use","name":"Edit","input":{"file_path":"/p/login.tsx"}},{"type":"tool_use","name":"Write","input":{"file_path":"/p/test.ts"}}]}}),
                 json!({"type":"user","sessionId":ID,"cwd":"/p","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}),
                 json!({"type":"assistant","sessionId":ID,"cwd":"/p","message":{"model":"<synthetic>","content":[{"type":"text","text":"Done: the form submits again."}]}}),
@@ -1243,6 +1262,7 @@ mod tests {
         assert_eq!(facts["model"], "claude-opus-5-5");
         assert_eq!(facts["startedAt"], "2026-10-09T01:00:00Z");
         assert_eq!(facts["endedAt"], "2026-10-09T02:30:00Z");
+        assert_eq!(facts["activeSeconds"], 5, "the 90 minutes away do not count");
         assert_eq!(facts["prs"], json!([{"number":4,"url":"https://github.com/a/b/pull/4"}]));
         let session = normalized_session("claude", &log, &facts, None);
         assert_eq!(session["prompts"], 2);

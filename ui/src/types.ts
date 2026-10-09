@@ -33,6 +33,8 @@ export interface Meta {
   deadline?: string;
   client?: string;
   tags?: string[];
+  /** Muted check codes, comma separated. */
+  quiet?: string;
 }
 
 export interface Remote {

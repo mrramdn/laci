@@ -22,7 +22,8 @@ import {
   plural,
   sessionsOf,
   hasSessionFile,
-  groupSessions,
+  liveIssues,
+  conversations,
   taskIdentity,
   tilde,
 } from "./helpers";
@@ -37,7 +38,7 @@ import {
   Time,
 } from "./common";
 import { Select } from "./select";
-import { TerminalButton } from "./terminal-controls";
+import { TerminalButton, launchShell } from "./terminal-controls";
 import { agentProviders } from "./agent-launch";
 import { SessionList, requestResume } from "./session-ui";
 import { openTerminal } from "./terminal-api";
@@ -348,12 +349,31 @@ export function Inspector({ node: n }: { node: Node }) {
                     {bytes(n.size.total)}
                     {n.size.reclaimable ? (
                       <span className="faint">
-                        {" "}
-                        · {bytes(n.size.reclaimable)} reclaimable
+                        , of which {bytes(n.size.reclaimable)} is build output (
+                        {n.size.parts
+                          .slice(0, 2)
+                          .map((p) => p.path)
+                          .join(", ")}
+                        {n.size.parts.length > 2
+                          ? ` and ${n.size.parts.length - 2} more`
+                          : ""}
+                        )
                       </span>
                     ) : null}
                   </span>
                 </span>
+                {isProject && n.size.reclaimable > 50e6 ? (
+                  <button
+                    className="btn sm"
+                    style={{ marginTop: 6 }}
+                    disabled={s.historyPending}
+                    onClick={() =>
+                      useApp.setState({ modal: { kind: "clean", id: n.id } })
+                    }
+                  >
+                    Move build output to Trash…
+                  </button>
+                ) : null}
               </dd>
             </>
           ) : null}
@@ -499,16 +519,28 @@ function useHealth(n: Node) {
 function HealthTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
   const loaded = useHealth(n);
   const health = loaded?.health;
-  const issues =
+  const all =
     n.kind === "project"
       ? n.issues
       : descendants(n, snapshot)
           .filter((d) => d.kind === "project")
           .flatMap((d) =>
-            d.issues
+            liveIssues(d)
               .filter((i) => i.severity === "high")
               .map((i) => ({ ...i, title: `${d.label}: ${i.title}` })),
           );
+  const issues = all.filter((i) => !i.muted);
+  const muted = all.filter((i) => i.muted);
+  // Keep codes that are muted but not raised right now, so muting one check never drops another.
+  const quiet = (n.meta.quiet ?? "").split(",").filter(Boolean);
+  const mute = (code: string, on: boolean) =>
+    void run(async () => {
+      const rest = quiet.filter((c) => c !== code);
+      const value = (on ? [...rest, code] : rest).join(",");
+      useApp
+        .getState()
+        .patch(await api<Node>("meta", { id: n.id, key: "quiet", value }));
+    });
   const git = n.git;
   const stack = n.stack;
   const weeks = git?.firstCommitAt
@@ -567,6 +599,19 @@ function HealthTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
           render={(c) => <CommitRow commit={c} />}
         />
       );
+    if (code === "diverged" && health.unpushed.length)
+      return (
+        <>
+          <HealthList
+            items={health.unpushed}
+            render={(c) => <CommitRow commit={c} />}
+          />
+          <p className="faint hnote">
+            {plural(git?.behind ?? 0, "commit")} on the remote{" "}
+            {git?.behind === 1 ? "isn't" : "aren't"} here yet.
+          </p>
+        </>
+      );
     if (code === "stash" && health.stashes.length)
       return (
         <HealthList
@@ -601,9 +646,34 @@ function HealthTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
                   {details(issue.code)}
                 </Fragment>
               ) : null}
+              {issue.code === "diverged" ? (
+                <button
+                  className="btn sm"
+                  style={{ marginTop: 6 }}
+                  onClick={() =>
+                    launchShell(n.path, useApp.getState().terminalTarget)
+                  }
+                >
+                  <Icon name="terminal" className="sm" />
+                  Open terminal here
+                </button>
+              ) : null}
             </div>
             {n.kind === "project" ? (
-              <FixButton node={n} code={issue.code} />
+              <>
+                <FixButton node={n} code={issue.code} />
+                {/* A deadline is changed or cleared, not muted. */}
+                {issue.code === "overdue" ||
+                issue.code === "due-soon" ? null : (
+                  <button
+                    className="btn ghost sm"
+                    title="Stop counting this check for this project"
+                    onClick={() => mute(issue.code, true)}
+                  >
+                    Mute
+                  </button>
+                )}
+              </>
             ) : null}
           </div>
         ))
@@ -632,6 +702,26 @@ function HealthTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
           </div>
         </div>
       )}
+      {muted.length ? (
+        <>
+          <div className="sec-t">Muted</div>
+          {muted.map((issue) => (
+            <div className="issue" key={issue.code} style={{ opacity: 0.6 }}>
+              <SeverityGlyph severity={issue.severity} />
+              <div className="txt">
+                <p>{issue.title}</p>
+                {issue.detail ? <p className="d">{issue.detail}</p> : null}
+              </div>
+              <button
+                className="btn ghost sm"
+                onClick={() => mute(issue.code, false)}
+              >
+                Unmute
+              </button>
+            </div>
+          ))}
+        </>
+      ) : null}
       {loaded?.failed ? (
         <p className="faint hnote">Details unavailable</p>
       ) : null}
@@ -1068,7 +1158,7 @@ function Notes({ node }: { node: Node }) {
 function AgentsTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
   const expanded = useApp((s) => s.expanded);
   const sessions = sessionsOf(n, snapshot);
-  const sessionGroups = groupSessions(sessions);
+  const sessionGroups = conversations(sessions).filter((c) => !c.short);
   const memory = n.agents.claude.flatMap(
     (id) => snapshot.claude[id]?.memory ?? [],
   );
@@ -1110,7 +1200,7 @@ function AgentsTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
           <div className="sec-t">
             Sessions <span className="grow" />
             <span className="faint" style={{ fontWeight: 400 }}>
-              {plural(sessions.length, "session")}
+              {plural(conversations(sessions).length, "session")}
             </span>
           </div>
           <SessionList

@@ -359,6 +359,7 @@ export const RISK = new Set([
   "no-remote",
   "dirty",
   "unpushed",
+  "diverged",
   "stash",
   "no-git",
 ]);
@@ -373,11 +374,13 @@ export const priorityRank = (priority?: string) =>
   PRIORITY_RANK[priority ?? "none"] ?? PRIORITY_RANK.none;
 export const byPriority = (a: Node, b: Node) =>
   priorityRank(a.meta.priority) - priorityRank(b.meta.priority);
+/** The checks that count: muted ones are listed in the inspector but never counted. */
+export const liveIssues = (n: Node) => n.issues.filter((i) => !i.muted);
 export function risksOf(snapshot: Snapshot) {
   return Object.values(snapshot.nodes)
     .map((n) => ({
       n,
-      issues: n.issues
+      issues: liveIssues(n)
         .filter((i) => RISK.has(i.code))
         .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]),
     }))

@@ -25,6 +25,7 @@ import type { AgentCapabilities } from "../agent-launch";
 import { ConversationRows, keepSessions } from "../session-ui";
 import type { Selection } from "../session-ui";
 import { McpRow, loadMcp } from "../mcp-setup";
+import { LaciStorage } from "../storage";
 import type {
   Change,
   ClaudeDir,
@@ -759,6 +760,7 @@ function StorageBody() {
           </div>
         ) : null}
       </Group>
+      <LaciStorage />
       {snapshot.unmatched.length ? (
         <Group
           title="Not matched"

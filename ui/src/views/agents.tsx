@@ -7,8 +7,10 @@ import {
   allSessions,
   base,
   bytes,
+  conversationKey,
+  conversations,
   date,
-  groupSessions,
+  deletable,
   plural,
   providerName,
   sessionKey,
@@ -16,12 +18,21 @@ import {
   tilde,
   counted,
 } from "../helpers";
+import type { Conversation } from "../helpers";
 import { api } from "../api";
 import { agentProviders } from "../agent-launch";
 import type { AgentCapabilities } from "../agent-launch";
-import { SessionList } from "../session-ui";
+import { ConversationRows, keepSessions } from "../session-ui";
+import type { Selection } from "../session-ui";
 import { McpRow, loadMcp } from "../mcp-setup";
-import type { Change, ClaudeDir, ConnectorState, Suggestion } from "../types";
+import type {
+  Change,
+  ClaudeDir,
+  ConnectorState,
+  Node,
+  Session,
+  Suggestion,
+} from "../types";
 
 const SESSION_LIMIT = 50;
 const STORAGE = "agents:storage";
@@ -84,10 +95,10 @@ export function AgentsView() {
   }, [connectedIds]);
   const usage = useMemo(() => {
     const map = new Map<string, { count: number; last: string }>();
-    for (const session of sessions) {
-      const entry = map.get(session.provider);
+    for (const c of conversations(sessions)) {
+      const entry = map.get(c.session.provider);
       if (entry) entry.count++;
-      else map.set(session.provider, { count: 1, last: session.updatedAt });
+      else map.set(c.session.provider, { count: 1, last: c.updatedAt });
     }
     return map;
   }, [sessions]);
@@ -122,7 +133,7 @@ export function AgentsView() {
     >
       <Icon name="plus" />
       <span>Add another AI tool</span>
-      <small className="faint">Another AI tool you use</small>
+      <small className="faint">One Laci doesn't know yet</small>
     </button>
   );
   return (
@@ -289,18 +300,17 @@ export function AgentsView() {
   );
 }
 
+const DAY = 86_400_000;
+type Show = "all" | "short" | "old" | "outside" | "kept" | "backup";
 function SessionsSection() {
   const s = useApp();
   const snapshot = s.snapshot!;
   const all = allSessions(snapshot);
   const [query, setQuery] = useState("");
   const [agent, setAgent] = useState("all");
-  const [resumable, setResumable] = useState(false);
-  const [backupOnly, setBackupOnly] = useState(false);
-  // Once the last of them is restored the chip goes, and so must its filter.
-  const anyInBackup = all.some((session) => session.backup);
-  const inBackup = backupOnly && anyInBackup;
-  const [scope, setScope] = useState<"all" | "in" | "out">("all");
+  const [show, setShow] = useState<Show>("all");
+  const [flat, setFlat] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   const owners = useMemo(() => {
     const map = new Map<string, (typeof snapshot.nodes)[string]>();
     for (const node of Object.values(snapshot.nodes))
@@ -308,70 +318,278 @@ function SessionsSection() {
         map.set(sessionKey(session), node);
     return map;
   }, [snapshot]);
-  const providers = [...new Set(all.map((session) => session.provider))];
+  const list = useMemo(() => conversations(all), [all]);
+  const providers = [...new Set(list.map((c) => c.session.provider))];
+  const anyInBackup = list.some((c) => c.session.backup);
+  // A filter whose last entry went away falls back to everything, so the list never strands empty.
+  const current: Show = show === "backup" && !anyInBackup ? "all" : show;
   const needle = query.trim().toLowerCase();
-  const shown = all.filter((session) => {
-    const node = owners.get(sessionKey(session));
-    if (agent !== "all" && session.provider !== agent) return false;
-    if (resumable && session.resumeCapability !== "supported") return false;
-    if (inBackup && !session.backup) return false;
-    if (scope === "in" && !node) return false;
-    if (scope === "out" && node) return false;
+  const now = Date.now();
+  const shown = list.filter((c) => {
+    const node = owners.get(sessionKey(c.session));
+    if (agent !== "all" && c.session.provider !== agent) return false;
+    if (current === "short" && !c.short) return false;
+    if (current === "old" && now - Date.parse(c.updatedAt) < 30 * DAY)
+      return false;
+    if (current === "outside" && node) return false;
+    if (current === "kept" && !c.session.kept) return false;
+    if (current === "backup" && !c.session.backup) return false;
     if (!needle) return true;
-    return [session.title, node?.label, node?.path, session.cwd].some((text) =>
-      text?.toLowerCase().includes(needle),
-    );
+    return [
+      c.title,
+      c.session.firstPrompt,
+      c.session.lastPrompt,
+      node?.label,
+      node?.path,
+      c.session.cwd,
+    ].some((text) => text?.toLowerCase().includes(needle));
   });
-  const rows = groupSessions(shown).length;
+  const projectOf = (session: Session) => owners.get(sessionKey(session));
+  const groups = useMemo(() => {
+    const map = new Map<string, { node?: Node; items: Conversation[] }>();
+    for (const c of shown) {
+      const node = owners.get(sessionKey(c.session));
+      const key = node?.id ?? "";
+      const group = map.get(key) ?? { node, items: [] };
+      group.items.push(c);
+      map.set(key, group);
+    }
+    // Projects by their newest conversation; chats outside projects last.
+    return [...map.values()].sort((a, b) =>
+      !a.node !== !b.node
+        ? Number(!a.node) - Number(!b.node)
+        : b.items[0].updatedAt.localeCompare(a.items[0].updatedAt),
+    );
+  }, [shown, owners]);
+  const chosen = list.filter((c) => picked.has(conversationKey(c)));
+  const selection: Selection = {
+    has: (c) => picked.has(conversationKey(c)),
+    toggle: (c) =>
+      setPicked((current) => {
+        const next = new Set(current);
+        const key = conversationKey(c);
+        if (!next.delete(key)) next.add(key);
+        return next;
+      }),
+  };
+  const selectable = shown.filter((c) => deletable(c));
+  const allPicked =
+    selectable.length > 0 &&
+    selectable.every((c) => picked.has(conversationKey(c)));
   const chip = (label: string, on: boolean, click: () => void) => (
     <button className="chipf" key={label} aria-pressed={on} onClick={click}>
       {label}
     </button>
   );
+  const shortCount = list.filter((c) => c.short).length;
   return (
-    <Group title="Sessions" count={all.length}>
+    <Group
+      title="Sessions"
+      count={list.length}
+      hint={
+        shortCount
+          ? `${plural(shortCount, "short chat")} folded away`
+          : undefined
+      }
+    >
       <div className="agent-filters">
         <input
           className="inp"
           type="search"
           name="sessionSearch"
           aria-label="Search sessions"
-          placeholder="Search by title or project"
+          placeholder="Search titles, prompts and projects"
           autoComplete="off"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <div className="showbar" role="group" aria-label="Agent">
-          {chip("All agents", agent === "all", () => setAgent("all"))}
-          {providers.map((provider) =>
-            chip(providerName(snapshot, provider), agent === provider, () =>
-              setAgent(provider),
-            ),
+        <div className="showbar" role="group" aria-label="Arrange">
+          {chip("By project", !flat, () => setFlat(false))}
+          {chip("Newest first", flat, () => setFlat(true))}
+        </div>
+        {providers.length > 1 ? (
+          <div className="showbar" role="group" aria-label="Agent">
+            {chip("All agents", agent === "all", () => setAgent("all"))}
+            {providers.map((provider) =>
+              chip(providerName(snapshot, provider), agent === provider, () =>
+                setAgent(provider),
+              ),
+            )}
+          </div>
+        ) : null}
+        <div className="showbar" role="group" aria-label="Show">
+          {chip("All", current === "all", () => setShow("all"))}
+          {chip("Short chats", current === "short", () => setShow("short"))}
+          {chip("Older than 30 days", current === "old", () => setShow("old"))}
+          {chip("Outside projects", current === "outside", () =>
+            setShow("outside"),
           )}
+          {list.some((c) => c.session.kept)
+            ? chip("Kept", current === "kept", () => setShow("kept"))
+            : null}
+          {anyInBackup
+            ? chip("In backup only", current === "backup", () =>
+                setShow("backup"),
+              )
+            : null}
         </div>
-        <div className="showbar" role="group" aria-label="Scope">
-          {chip("All", scope === "all", () => setScope("all"))}
-          {chip("In projects", scope === "in", () => setScope("in"))}
-          {chip("Outside projects", scope === "out", () => setScope("out"))}
-        </div>
-        {chip("Resumable", resumable, () => setResumable(!resumable))}
-        {anyInBackup
-          ? chip("In backup only", inBackup, () => setBackupOnly(!inBackup))
-          : null}
       </div>
-      {shown.length ? (
-        <>
-          <SessionList
-            sessions={shown}
-            limit={s.expanded[MORE] ? undefined : SESSION_LIMIT}
-            projectOf={(session) => owners.get(sessionKey(session))}
+      <div className={`session-bulk${chosen.length ? " on" : ""}`}>
+        <label className="pick-all">
+          <input
+            type="checkbox"
+            className="cb"
+            checked={allPicked}
+            disabled={!selectable.length}
+            onChange={() =>
+              setPicked(
+                allPicked
+                  ? new Set()
+                  : new Set(selectable.map((c) => conversationKey(c))),
+              )
+            }
           />
-          {rows > SESSION_LIMIT ? <Expand name={MORE} count={rows} /> : null}
+          {chosen.length
+            ? `${plural(chosen.length, "session")} selected · ${bytes(chosen.reduce((n, c) => n + c.bytes, 0))}`
+            : `Select all ${selectable.length} shown`}
+        </label>
+        {chosen.length ? (
+          <>
+            <button
+              className="btn sm ghost"
+              disabled={s.historyPending}
+              onClick={() => {
+                keepSessions(chosen, true);
+                setPicked(new Set());
+              }}
+            >
+              <Icon name="keep" className="sm" />
+              Keep
+            </button>
+            <button
+              className="btn sm danger"
+              disabled={s.historyPending}
+              onClick={() => {
+                useApp.setState({
+                  modal: {
+                    kind: "session-delete",
+                    files: chosen.map((c) => c.session.file),
+                  },
+                });
+                setPicked(new Set());
+              }}
+            >
+              <Icon name="delete" className="sm" />
+              Delete…
+            </button>
+            <button
+              className="btn sm ghost"
+              onClick={() => setPicked(new Set())}
+            >
+              Clear
+            </button>
+          </>
+        ) : null}
+      </div>
+      {!shown.length ? (
+        <div className="empty">No sessions match</div>
+      ) : flat ? (
+        <>
+          <ConversationRows
+            items={shown}
+            projectOf={projectOf}
+            selection={selection}
+            limit={s.expanded[MORE] ? undefined : SESSION_LIMIT}
+            fold={current !== "short"}
+          />
+          {shown.length > SESSION_LIMIT ? (
+            <Expand name={MORE} count={shown.length} />
+          ) : null}
         </>
       ) : (
-        <div className="empty">No sessions match</div>
+        groups.map(({ node, items }) => (
+          <SessionGroupBlock
+            key={node?.id ?? "outside"}
+            node={node}
+            items={items}
+            selection={selection}
+            fold={current !== "short"}
+          />
+        ))
       )}
     </Group>
+  );
+}
+
+const GROUP_LIMIT = 5;
+function SessionGroupBlock({
+  node,
+  items,
+  selection,
+  fold,
+}: {
+  node?: Node;
+  items: Conversation[];
+  selection: Selection;
+  fold: boolean;
+}) {
+  const s = useApp();
+  const key = `agents:group:${node?.id ?? "outside"}`;
+  // Chats outside projects are mostly quick questions: closed until asked for.
+  const open = node ? !s.expanded[key] : !!s.expanded[key];
+  const all = !!s.expanded[`${key}:all`];
+  const shownRows = fold ? items.filter((c) => !c.short).length : items.length;
+  return (
+    <section className="session-block">
+      <div className="session-block-h">
+        <button
+          className="linkbtn toggle"
+          aria-expanded={open}
+          onClick={() => toggleExpanded(key)}
+        >
+          <Icon name="chev" className={`sm ${open ? "open" : ""}`} />
+          {node ? (
+            <KindIcon node={node} />
+          ) : (
+            <Icon name="home" className="sm" />
+          )}
+          <b>{node ? node.label : "Outside projects"}</b>
+        </button>
+        <span className="faint">
+          {plural(items.length, "session")} ·{" "}
+          {bytes(items.reduce((n, c) => n + c.bytes, 0))}
+        </span>
+        <span className="grow" />
+        {node ? (
+          <button
+            className="btn sm ghost"
+            onClick={() => s.select(node.id, "agents")}
+          >
+            Open project
+          </button>
+        ) : null}
+      </div>
+      {open ? (
+        <>
+          <ConversationRows
+            items={items}
+            projectPath={node?.id}
+            projectOf={node ? undefined : () => undefined}
+            selection={selection}
+            fold={fold}
+            limit={all ? undefined : GROUP_LIMIT}
+          />
+          {shownRows > GROUP_LIMIT ? (
+            <button
+              className="more"
+              onClick={() => toggleExpanded(`${key}:all`)}
+            >
+              {all ? "Show fewer" : `Show all ${shownRows}`}
+            </button>
+          ) : null}
+        </>
+      ) : null}
+    </section>
   );
 }
 

@@ -3353,3 +3353,157 @@ textarea.notes:focus {
   content-visibility: auto;
   contain-intrinsic-size: auto 48px;
 }
+
+/* Sessions as conversations: one line each, columns aligned from row to row. */
+.sess .kept {
+  flex: none;
+  width: 16px;
+  color: var(--muted);
+}
+.sess > .pill {
+  flex: none;
+  width: 92px;
+  justify-content: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sess > .m {
+  flex: none;
+  width: 64px;
+  text-align: right;
+}
+.sess .sess-act {
+  flex: none;
+  width: 72px;
+  display: flex;
+  justify-content: flex-end;
+}
+.sess .sess-pick {
+  flex: none;
+}
+.sess.child .session-title.static {
+  cursor: default;
+}
+.sess.child .session-title.static:hover {
+  background: transparent;
+}
+.short-fold {
+  width: calc(100% + 16px);
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+.short-fold .session-title {
+  pointer-events: none;
+}
+.short-chats {
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+.session-block {
+  padding: 0 16px 6px;
+}
+.session-block + .session-block {
+  border-top: 1px solid var(--border);
+}
+.session-block-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  font-size: 12.5px;
+}
+.session-block-h .toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  text-decoration: none;
+}
+.session-block-h .faint {
+  font-size: 11.5px;
+}
+.session-block > .more {
+  margin: 4px 0 6px;
+}
+.session-bulk {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+.session-bulk.on {
+  color: var(--text);
+  background: var(--subtle);
+}
+.session-bulk .pick-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+}
+.said {
+  margin-top: 12px;
+}
+.said-k {
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.said blockquote {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--border);
+  background: var(--subtle);
+  border-radius: 0 6px 6px 0;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow: auto;
+}
+.session-more {
+  margin-top: 14px;
+  font-size: 12px;
+}
+.session-more > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.delete-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.delete-list li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.delete-list li b,
+.delete-list li small {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.delete-list li small {
+  color: var(--muted);
+  font-size: 11px;
+}
+@media (max-width: 1240px) {
+  .sess > .pill {
+    display: none;
+  }
+}

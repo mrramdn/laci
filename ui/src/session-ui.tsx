@@ -10,14 +10,19 @@ import { DialogFrame } from "./dialogs";
 import { Icon, Time } from "./common";
 import {
   allSessions,
-  groupSessions,
+  bytes,
+  conversationKey,
+  conversations,
+  deletable,
+  length,
   plural,
   providerName,
   sessionKey,
+  sessionsOf,
   tilde,
 } from "./helpers";
-import type { SessionGroup } from "./helpers";
-import { changed, run, toast, useApp } from "./store";
+import type { Conversation, SessionGroup } from "./helpers";
+import { changed, run, toast, urlOpen, useApp } from "./store";
 import type { Modal } from "./store";
 import type { Change, Node, Session } from "./types";
 
@@ -48,6 +53,11 @@ export function restoreSession(session: Session) {
   );
 }
 
+export interface Selection {
+  has: (c: Conversation) => boolean;
+  toggle: (c: Conversation) => void;
+}
+/** Sessions of one place, as conversations: newest first, short chats folded into one row. */
 export function SessionList({
   sessions,
   projectPath,
@@ -57,39 +67,100 @@ export function SessionList({
   sessions: Session[];
   projectPath?: string;
   limit?: number;
-  /** Lists that mix projects: shows each session's project and opens it on click. */
+  /** Lists that mix projects: shows each session's project. */
   projectOf?: (session: Session) => Node | undefined;
 }) {
   return (
+    <ConversationRows
+      items={conversations(sessions)}
+      projectPath={projectPath}
+      limit={limit}
+      projectOf={projectOf}
+      fold
+    />
+  );
+}
+export function ConversationRows({
+  items,
+  projectPath,
+  limit,
+  projectOf,
+  selection,
+  fold,
+}: {
+  items: Conversation[];
+  projectPath?: string;
+  limit?: number;
+  projectOf?: (session: Session) => Node | undefined;
+  selection?: Selection;
+  /** Fold short chats into one row at the end. */
+  fold?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const main = fold ? items.filter((c) => !c.short) : items;
+  const short = fold ? items.filter((c) => c.short) : [];
+  const row = (c: Conversation) => (
+    <ConversationRow
+      key={conversationKey(c)}
+      c={c}
+      projectPath={projectPath}
+      projectOf={projectOf}
+      selection={selection}
+    />
+  );
+  return (
     <div className="sessions">
-      {groupSessions(sessions)
-        .slice(0, limit)
-        .map((group) => (
-          <SessionRow
-            key={sessionKey(group.session)}
-            group={group}
-            projectPath={projectPath}
-            projectOf={projectOf}
-          />
-        ))}
+      {main.slice(0, limit).map(row)}
+      {short.length && (limit === undefined || main.length < limit) ? (
+        <>
+          <button
+            className="sess short-fold"
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
+          >
+            <Icon name="chev" className={`sm ${open ? "open" : ""}`} />
+            <span className="session-title">
+              <span>{plural(short.length, "short chat")}</span>
+              <small>
+                A couple of prompts each, no file changed ·{" "}
+                {bytes(short.reduce((n, c) => n + c.bytes, 0))}
+              </small>
+            </span>
+          </button>
+          {open ? <div className="short-chats">{short.map(row)}</div> : null}
+        </>
+      ) : null}
     </div>
   );
 }
-function SessionRow({
-  group,
+/** "24 prompts · 11 files changed · 3 h · 47 MB": what a conversation was, in one line. */
+function summary(c: Conversation) {
+  return [
+    c.prompts === undefined ? "" : plural(c.prompts, "prompt"),
+    c.filesChanged
+      ? `${c.filesChanged} ${c.filesChanged === 1 ? "file" : "files"} changed`
+      : "",
+    length(c.startedAt, c.updatedAt),
+    c.bytes ? bytes(c.bytes) : "",
+    ...(c.session.prs ?? []).slice(0, 2).map((pr) => `PR #${pr.number}`),
+  ].filter(Boolean);
+}
+function ConversationRow({
+  c,
   projectPath,
   projectOf,
+  selection,
 }: {
-  group: SessionGroup;
+  c: Conversation;
   projectPath?: string;
   projectOf?: (session: Session) => Node | undefined;
+  selection?: Selection;
 }) {
   const snapshot = useApp((state) => state.snapshot!);
   const home = snapshot.home;
   const historyPending = useApp((state) => state.historyPending);
   const [expanded, setExpanded] = useState(false);
-  const { session, children } = group;
-  const provider = providerName(snapshot, session.provider);
+  const { session, children } = c;
   const node = projectOf?.(session);
   const place = node
     ? node.label
@@ -98,63 +169,86 @@ function SessionRow({
         ? "Home"
         : tilde(session.cwd, home)
       : "No folder recorded";
+  const can = deletable(c);
   return (
     <div className="session-group">
-      <div className="sess">
+      <div className={`sess${c.short ? " is-short" : ""}`}>
+        {selection ? (
+          <input
+            type="checkbox"
+            className="cb sess-pick"
+            aria-label={`Select ${c.title}`}
+            title={
+              can
+                ? undefined
+                : session.kept
+                  ? "Kept: cleanup leaves it alone"
+                  : "Laci can't delete this one"
+            }
+            disabled={!can}
+            checked={selection.has(c)}
+            onChange={() => selection.toggle(c)}
+          />
+        ) : null}
         <Icon name="bot" className="sm" />
         <button
           className="session-title"
-          title={session.title}
+          title={c.title}
           onClick={() =>
-            node
-              ? useApp.getState().select(node.id, "agents")
-              : useApp.setState({
-                  modal: {
-                    kind: "session",
-                    provider: session.provider,
-                    sessionId: session.sessionId,
-                    file: session.file,
-                    projectPath,
-                  },
-                })
+            useApp.setState({
+              modal: {
+                kind: "session",
+                provider: session.provider,
+                sessionId: session.sessionId,
+                file: session.file,
+                projectPath,
+              },
+            })
           }
         >
-          <span>{session.title}</span>
+          <span>{c.title}</span>
           <small>
-            {projectOf ? place : provider}
-            {session.sourceKind === "subagent" ? " · Child session" : ""}
-            {session.backup
-              ? " · In backup only"
-              : session.resumeCapability !== "supported"
-                ? " · History only"
-                : ""}
+            {[
+              ...(projectOf ? [place] : []),
+              ...summary(c),
+              ...(session.backup
+                ? ["In backup only"]
+                : session.resumeCapability !== "supported"
+                  ? ["History only"]
+                  : []),
+            ].join(" · ")}
           </small>
-          {!projectOf && !projectPath && session.cwd ? (
-            <small className="mono">{tilde(session.cwd, home)}</small>
-          ) : null}
         </button>
-        {projectOf ? <span className="pill">{provider}</span> : null}
-        <span className="m">
-          <Time at={session.updatedAt} />
+        <span
+          className="kept"
+          title={session.kept ? "Kept: cleanup leaves it alone" : undefined}
+        >
+          {session.kept ? <Icon name="keep" className="sm" /> : null}
         </span>
-        {session.backup ? (
-          <button
-            className="btn sm act always"
-            title="Put this session back where its tool keeps it"
-            disabled={historyPending}
-            onClick={() => restoreSession(session)}
-          >
-            Restore
-          </button>
-        ) : session.resumeCapability === "supported" &&
-          (projectPath ?? session.cwd) ? (
-          <button
-            className="btn sm act"
-            onClick={() => requestResume(session, projectPath)}
-          >
-            Resume
-          </button>
-        ) : null}
+        <span className="pill">{providerName(snapshot, session.provider)}</span>
+        <span className="m">
+          <Time at={c.updatedAt} />
+        </span>
+        <span className="sess-act">
+          {session.backup ? (
+            <button
+              className="btn sm act always"
+              title="Put this session back where its tool keeps it"
+              disabled={historyPending}
+              onClick={() => restoreSession(session)}
+            >
+              Restore
+            </button>
+          ) : session.resumeCapability === "supported" &&
+            (projectPath ?? session.cwd) ? (
+            <button
+              className="btn sm act"
+              onClick={() => requestResume(session, projectPath)}
+            >
+              Resume
+            </button>
+          ) : null}
+        </span>
       </div>
       {children.length ? (
         <>
@@ -164,23 +258,69 @@ function SessionRow({
             onClick={() => setExpanded(!expanded)}
           >
             {expanded ? "Hide" : "Show"}{" "}
-            {plural(children.length, "child session")}
+            {plural(children.length, "subagent log")}
           </button>
           {expanded ? (
             <div className="session-children">
               {children.map((child) => (
-                <SessionRow
-                  key={sessionKey(child.session)}
-                  group={child}
-                  projectPath={projectPath}
-                  projectOf={projectOf}
-                />
+                <ChildRow key={sessionKey(child.session)} group={child} />
               ))}
             </div>
           ) : null}
         </>
       ) : null}
     </div>
+  );
+}
+/** A subagent's log: read-only history inside its conversation. */
+function ChildRow({ group }: { group: SessionGroup }) {
+  const { session } = group;
+  return (
+    <>
+      <div className="sess child">
+        <Icon name="bot" className="sm" />
+        <span className="session-title static">
+          <span>{session.title}</span>
+          <small>
+            {[
+              session.prompts === undefined
+                ? ""
+                : plural(session.prompts, "prompt"),
+              session.bytes ? bytes(session.bytes) : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </small>
+        </span>
+        <span className="m">
+          <Time at={session.updatedAt} />
+        </span>
+      </div>
+      {group.children.map((child) => (
+        <ChildRow key={sessionKey(child.session)} group={child} />
+      ))}
+    </>
+  );
+}
+export function keepSessions(list: Conversation[], keep: boolean) {
+  const sessions = list.flatMap((c) =>
+    [c.session, ...c.parts].map((s) => ({
+      provider: s.provider,
+      sessionId: s.sessionId,
+    })),
+  );
+  void run(
+    async () => {
+      await api("session/keep", { sessions, keep });
+      toast(
+        keep
+          ? `Keeping ${list.length === 1 ? "this session" : plural(list.length, "session")}`
+          : `No longer keeping ${list.length === 1 ? "this session" : plural(list.length, "session")}`,
+        keep ? "Cleanup leaves it alone." : "",
+      );
+    },
+    keep ? "Keeping…" : "Updating…",
+    { history: true },
   );
 }
 
@@ -380,30 +520,100 @@ function StartDialog({
   );
 }
 
+function Said({ label, text }: { label: string; text?: string }) {
+  return text ? (
+    <div className="said">
+      <div className="said-k">{label}</div>
+      <blockquote>{text}</blockquote>
+    </div>
+  ) : null;
+}
 export function SessionDialog({
   request,
 }: {
   request: Extract<NonNullable<Modal>, { kind: "session" }>;
 }) {
   const snapshot = useApp((s) => s.snapshot!);
-  const session = allSessions(snapshot).find(
+  const historyPending = useApp((s) => s.historyPending);
+  const all = allSessions(snapshot);
+  const session = all.find(
     (item) =>
       item.provider === request.provider &&
       item.sessionId === request.sessionId &&
       item.file === request.file,
   );
-  const historyPending = useApp((s) => s.historyPending);
+  // The conversation this session is part of: its own row, or the one it continued in.
+  const c = session
+    ? conversations(all).find(
+        (c) =>
+          c.session === session ||
+          c.parts.includes(session) ||
+          c.children.some((g) => g.session === session),
+      )
+    : undefined;
+  const node = session
+    ? Object.values(snapshot.nodes).find((n) =>
+        sessionsOf(n, snapshot).includes(session),
+      )
+    : undefined;
+  const lines =
+    session?.linesAdded || session?.linesRemoved
+      ? ` · +${session.linesAdded ?? 0} −${session.linesRemoved ?? 0} lines`
+      : "";
+  const main = c?.session === session ? c : undefined;
   return (
     <DialogFrame
-      title={session?.title ?? "Session unavailable"}
+      title={main?.title ?? session?.title ?? "Session unavailable"}
       description={
         session
-          ? providerName(snapshot, session.provider)
+          ? [
+              providerName(snapshot, session.provider),
+              session.model,
+              node?.label ??
+                (session.cwd ? tilde(session.cwd, snapshot.home) : ""),
+            ]
+              .filter(Boolean)
+              .join(" · ")
           : "This history entry is no longer in the current scan."
       }
       footer={
         <>
+          {main && !session!.backup ? (
+            <button
+              className="btn ghost"
+              disabled={historyPending}
+              onClick={() => keepSessions([main], !session!.kept)}
+            >
+              <Icon name="keep" className="sm" />
+              {session!.kept ? "Don't keep" : "Keep"}
+            </button>
+          ) : null}
+          {main && deletable(main) ? (
+            <button
+              className="btn ghost"
+              disabled={historyPending}
+              onClick={() =>
+                useApp.setState({
+                  modal: { kind: "session-delete", files: [session!.file] },
+                })
+              }
+            >
+              <Icon name="delete" className="sm" />
+              Delete…
+            </button>
+          ) : null}
           <span className="grow" />
+          {node && request.projectPath !== node.id ? (
+            <button
+              className="btn"
+              onClick={() => {
+                useApp.setState({ modal: null });
+                useApp.getState().select(node.id, "agents");
+              }}
+            >
+              Open {node.label}
+            </button>
+          ) : null}
           <button
             className="btn"
             onClick={() => useApp.setState({ modal: null })}
@@ -435,47 +645,214 @@ export function SessionDialog({
       }
     >
       {session ? (
-        <dl className="kv session-details">
-          <dt>Folder</dt>
-          <dd className="mono">
-            {session.cwd ? tilde(session.cwd, snapshot.home) : "Not recorded"}
-          </dd>
-          <dt>Session ID</dt>
-          <dd className="mono">{session.sessionId || "Not recorded"}</dd>
-          <dt>Updated</dt>
-          <dd>
-            <Time at={session.updatedAt} long />
-          </dd>
-          <dt>Title source</dt>
-          <dd>
-            {session.titleSource === "index"
-              ? "Provider title index"
-              : session.titleSource === "first-message"
-                ? "First user message"
-                : session.titleSource === "provider"
-                  ? "Provider metadata"
-                  : "Untitled fallback"}
-          </dd>
-          <dt>{session.backup ? "Backup copy" : "History file"}</dt>
-          <dd className="mono">{tilde(session.file, snapshot.home)}</dd>
-          {session.parentId ? (
-            <>
-              <dt>Parent session</dt>
-              <dd className="mono">{session.parentId}</dd>
-            </>
+        <>
+          <dl className="kv session-details">
+            {main ? (
+              <>
+                <dt>In it</dt>
+                <dd>
+                  {[
+                    main.prompts === undefined
+                      ? "Not recorded"
+                      : plural(main.prompts, "prompt"),
+                    `${main.filesChanged} ${main.filesChanged === 1 ? "file" : "files"} changed`,
+                  ].join(" · ")}
+                  {lines}
+                </dd>
+                <dt>When</dt>
+                <dd>
+                  {main.startedAt ? (
+                    <>
+                      <Time at={main.startedAt} long /> to{" "}
+                    </>
+                  ) : null}
+                  <Time at={main.updatedAt} long />
+                  {length(main.startedAt, main.updatedAt)
+                    ? ` · ${length(main.startedAt, main.updatedAt)}`
+                    : ""}
+                </dd>
+                <dt>Size</dt>
+                <dd>
+                  {bytes(main.bytes)}
+                  {main.children.length
+                    ? ` with ${plural(main.children.length, "subagent log")}`
+                    : ""}
+                  {main.parts.length
+                    ? ` · continues ${plural(main.parts.length, "earlier session")}`
+                    : ""}
+                </dd>
+              </>
+            ) : (
+              <>
+                <dt>Part of</dt>
+                <dd>{c?.title ?? "Not found"}</dd>
+              </>
+            )}
+            {session.prs?.length ? (
+              <>
+                <dt>Pull requests</dt>
+                <dd>
+                  {session.prs.map((pr) => (
+                    <button
+                      key={pr.url}
+                      className="linkbtn"
+                      onClick={() => urlOpen(pr.url)}
+                    >
+                      #{pr.number}
+                    </button>
+                  ))}
+                </dd>
+              </>
+            ) : null}
+          </dl>
+          <Said
+            label="First prompt"
+            text={main?.parts.at(-1)?.firstPrompt ?? session.firstPrompt}
+          />
+          {session.lastPrompt !== session.firstPrompt ? (
+            <Said label="Last prompt" text={session.lastPrompt} />
           ) : null}
-          <dt>Resume</dt>
-          <dd>
-            {session.backup
-              ? "Restore it first; a copy cannot be resumed"
-              : session.resumeCapability === "supported"
-                ? session.cwd || request.projectPath
-                  ? "Available after the folder is checked"
-                  : "Folder not recorded"
-                : "History only; this entry cannot be resumed"}
-          </dd>
-        </dl>
+          <Said label="Last reply" text={session.lastReply} />
+          <details className="session-more">
+            <summary>Files and ID</summary>
+            <dl className="kv session-details">
+              <dt>Folder</dt>
+              <dd className="mono">
+                {session.cwd
+                  ? tilde(session.cwd, snapshot.home)
+                  : "Not recorded"}
+              </dd>
+              <dt>Session ID</dt>
+              <dd className="mono">{session.sessionId || "Not recorded"}</dd>
+              <dt>{session.backup ? "Backup copy" : "History file"}</dt>
+              <dd className="mono">{tilde(session.file, snapshot.home)}</dd>
+              <dt>Title</dt>
+              <dd>
+                {session.titleSource === "index"
+                  ? "From the agent's title index"
+                  : session.titleSource === "first-message"
+                    ? "Your first prompt"
+                    : session.titleSource === "provider"
+                      ? "Named by the agent"
+                      : "No title recorded"}
+              </dd>
+              <dt>Resume</dt>
+              <dd>
+                {session.backup
+                  ? "Restore it first; a copy cannot be resumed"
+                  : session.resumeCapability === "supported"
+                    ? session.cwd || request.projectPath
+                      ? "Yes, in its folder"
+                      : "Its folder is not recorded"
+                    : "History only; this entry cannot be resumed"}
+              </dd>
+            </dl>
+          </details>
+        </>
       ) : null}
+    </DialogFrame>
+  );
+}
+/** Confirms deleting conversations: each with its earlier parts and subagent logs. */
+export function DeleteSessions({ files }: { files: string[] }) {
+  const snapshot = useApp((s) => s.snapshot!);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const chosen = conversations(allSessions(snapshot)).filter((c) =>
+    files.includes(c.session.file),
+  );
+  const ready = chosen.filter((c) => deletable(c));
+  const left = chosen.length - ready.length;
+  const size = ready.reduce((n, c) => n + c.bytes, 0);
+  const extra = ready.reduce((n, c) => n + c.parts.length, 0);
+  const subagents = ready.reduce((n, c) => n + c.children.length, 0);
+  async function remove() {
+    await run(
+      async () => {
+        setSaving(true);
+        setError("");
+        try {
+          const change = await api<Change>("session/delete", {
+            files: ready.flatMap((c) => [
+              c.session.file,
+              ...c.parts.map((p) => p.file),
+            ]),
+          });
+          useApp.setState({ modal: null });
+          changed(
+            change,
+            ready.length === 1
+              ? "Session deleted"
+              : `${plural(ready.length, "session")} deleted`,
+            `${bytes(size)} moved to Laci's quarantine`,
+          );
+        } finally {
+          setSaving(false);
+        }
+      },
+      "Deleting sessions…",
+      { history: true, onError: (e) => setError(errorText(e)) },
+    );
+  }
+  return (
+    <DialogFrame
+      title={
+        ready.length === 1
+          ? "Delete this session?"
+          : `Delete ${plural(ready.length, "session")}?`
+      }
+      description={
+        <>
+          {bytes(size)}
+          {extra ? `, with ${plural(extra, "earlier session")}` : ""}
+          {subagents ? ` and ${plural(subagents, "subagent log")}` : ""}. They
+          move to Laci's quarantine; Undo in the Log puts them back until you
+          free that space under Storage.
+        </>
+      }
+      dismissible={!saving}
+      footer={
+        <>
+          {error ? (
+            <p className="err" role="alert">
+              {error}
+            </p>
+          ) : left ? (
+            <p>
+              {plural(left, "session")} stay: kept, in use, or not Laci's to
+              delete.
+            </p>
+          ) : (
+            <span className="grow" />
+          )}
+          <button
+            className="btn"
+            disabled={saving}
+            onClick={() => useApp.setState({ modal: null })}
+          >
+            Cancel
+          </button>
+          <button
+            className="btn danger"
+            disabled={saving || !ready.length}
+            onClick={() => void remove()}
+          >
+            {saving ? "Deleting…" : "Delete"}
+          </button>
+        </>
+      }
+    >
+      <ul className="delete-list">
+        {ready.slice(0, 6).map((c) => (
+          <li key={conversationKey(c)}>
+            <b>{c.title}</b>
+            <small>{summary(c).join(" · ")}</small>
+          </li>
+        ))}
+        {ready.length > 6 ? (
+          <li className="faint">And {ready.length - 6} more</li>
+        ) : null}
+      </ul>
     </DialogFrame>
   );
 }

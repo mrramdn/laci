@@ -35,6 +35,8 @@ export type Modal =
       file: string;
       projectPath?: string;
     }
+  /** Delete the conversations whose newest session is one of `files`. */
+  | { kind: "session-delete"; files: string[] }
   | null;
 interface Toast {
   title: string;

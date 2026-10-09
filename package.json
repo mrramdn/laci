@@ -1,6 +1,6 @@
 {
   "name": "laci",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "private": true,
   "description": "A file manager that knows which folders are projects, and keeps their agent history attached when they move.",
   "type": "module",

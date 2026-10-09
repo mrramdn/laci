@@ -1129,3 +1129,23 @@ fn a_muted_check_is_marked_and_named_in_the_log() {
     assert_eq!(activity::read_log(&env, 5)[0]["title"], "Muted “Not under version control” on demo");
     assert!(service.request("meta", &json!({"id":id,"key":"quiet","value":"No Git!"})).is_err());
 }
+
+#[test]
+fn build_output_is_deleted_for_good_and_a_linked_build_folder_is_left_alone() {
+    let (_temp, env, project) = fixture();
+    write(&project.join("node_modules/pkg/index.js"), &"x".repeat(1_500_000));
+    let elsewhere = env.home.join("elsewhere/target");
+    write(&elsewhere.join("debug/app"), &"x".repeat(1_500_000));
+    std::os::unix::fs::symlink(&elsewhere, project.join("target")).unwrap();
+    let mut service = loaded(&env, &project);
+    let id = project.to_str().unwrap();
+    let parts = service.snapshot().unwrap()["nodes"][id]["size"]["parts"].clone();
+    assert_eq!(parts.as_array().unwrap().len(), 1, "a linked build folder is not this project's: {parts}");
+    let done = service.request("clean", &json!({"id":id})).unwrap();
+    assert_eq!(done["journal"]["title"], "Deleted the build output of demo");
+    assert!(!project.join("node_modules").exists(), "deleted, not moved to the Trash");
+    assert!(elsewhere.join("debug/app").exists() && project.join("target").is_symlink());
+    let entry = activity::read_log(&env, 5).into_iter().find(|e| e["journal"] == done["journal"]["id"]).unwrap();
+    assert_eq!(entry["canUndo"], false);
+    assert_eq!(entry["detail"], "Deleted build output comes back with the next install or build.");
+}

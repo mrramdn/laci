@@ -360,7 +360,7 @@ impl Service {
         let refresh = match name {
             "archive" | "delete" | "move" | "undo" | "log/undo" | "setup/save" | "new" => Refresh::full(),
             "connector/add" | "connector/remove" => Refresh { watches: true, ..Refresh::agents() },
-            "apply" if matches!(apply_kind.as_deref(), Some("archive" | "trash")) => Refresh::full(),
+            "apply" if matches!(apply_kind.as_deref(), Some("archive" | "trash" | "clear")) => Refresh::full(),
             "apply" => Refresh { watches: true, ..Refresh::agents() },
             // The warning and the backup line on Today come from the agent pass.
             "backup" if value["skipped"] != true => Refresh::agents(),
@@ -614,8 +614,8 @@ impl Service {
                 if parts.is_empty() {
                     return Err("Nothing to clean in this project".into());
                 }
-                let title = format!("Moved the build output of {} to the trash", string(&node, "name"));
-                let j = ops::apply_action(&self.env, &snap, &title, &json!({"type":"trash","paths":parts}))?;
+                let title = format!("Deleted the build output of {}", string(&node, "name"));
+                let j = ops::apply_action(&self.env, &snap, &title, &json!({"type":"clear","paths":parts}))?;
                 self.journaled(j, node["path"].as_str(), by)
             }
             "undo" => {

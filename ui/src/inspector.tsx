@@ -375,7 +375,7 @@ export function Inspector({ node: n }: { node: Node }) {
                       useApp.setState({ modal: { kind: "clean", id: n.id } })
                     }
                   >
-                    Move build output to Trash…
+                    Delete build output…
                   </button>
                 ) : null}
               </dd>

@@ -64,7 +64,7 @@ Every folder and file, like Dolphin or Finder, with projects marked by their sta
 
 ### Projects and details
 
-Select a project to see its summary, status, priority, deadline, remotes, branch, stack and size. When build output (such as `target` or `node_modules`) takes much of the size, **Move build output to Trash…** clears it. The panel has four tabs:
+Select a project to see its summary, status, priority, deadline, remotes, branch, stack and size. When build output (such as `target` or `node_modules`) takes much of the size, **Delete build output…** frees it for good; the next install or build brings it back. It is not moved to the Trash, which would keep the space taken. The panel has four tabs:
 
 - **Health**: checks with what stands behind them (the changed files, the commits not pushed, the stashes), a release line (declared version, last tag, commits since), recent commits and a commit chart. Any check except a deadline can be muted for that project: it stays listed under *Muted* and is counted nowhere else. Muted checks are kept in the project's `.laci.md`.
 - **To-do**: next steps and notes.
@@ -324,12 +324,12 @@ laci adds `.laci.md` to the repo's `.git/info/exclude` (not `.gitignore`), so it
 | Status, priority, deadline, to-dos, notes | Written to `.laci.md` in the project |
 | Ticking a checkbox | Changes that line in the file it came from, for example `NOTES.md` |
 | Archive, move, reconnect, finish a move | Moves folders, renames agent history folders, rewrites the folder path in agent logs (keeping each log's time) |
-| Free space | Sends `node_modules`, `.next` and similar folders to the system trash |
+| Free space | Deletes `node_modules`, `.next` and similar folders for good; an install or build brings them back |
 | Back up logs | Copies agent logs to `~/.local/share/laci/history` |
 | New project | Makes the folder; creates a remote repo only if you pick one |
 
 - **Undo.** Every move and rewrite is written to `~/.local/share/laci/journal/` *before* it happens. Rewritten files are kept in `~/.local/share/laci/backup/`. Undo restores them byte for byte. If a step fails midway, laci rolls back what it already did.
-- **Archive and trash recovery.** Undoing an archive restores the saved `.laci.md` in full and can replace edits made while archived. Recover trashed dependencies or orphan history from system Trash; journal Undo does not restore them. Pure Trash actions have no Laci Undo. Mixed actions explain which moves or edits Undo can restore.
+- **Archive and trash recovery.** Undoing an archive restores the saved `.laci.md` in full and can replace edits made while archived. Recover trashed orphan history from system Trash; journal Undo does not restore it. Deleted dependencies and build output come back with the next install or build. Pure Trash actions have no Laci Undo. Mixed actions explain which moves or edits Undo can restore.
 - **Log.** Every change is also listed in `~/.local/share/laci/activity.jsonl`, which the Log page reads. Undo from the Log goes through the same checks as the app, and stays inside home or explicitly selected workspace folders.
 - **Busy folders are refused.** If a running process (a `claude` session, a dev server) has its working directory inside a folder, laci won't move it.
 - **One change at a time.** A lock file keeps the app and agents from changing files at once.

@@ -2800,6 +2800,10 @@ textarea.notes:focus {
 .tree-row:focus-visible {
   outline-offset: -2px;
 }
+.sb-places,
+.places-panel {
+  display: none;
+}
 
 @media (max-width: 1240px) {
   .app {
@@ -2836,8 +2840,26 @@ textarea.notes:focus {
   .side:not(.rail-open) .sb-search-bar span,
   .side:not(.rail-open) .sb-search-bar kbd,
   .side:not(.rail-open) .sb-sec,
-  .side:not(.rail-open) .tree {
+  .side:not(.rail-open) .sb-scroll .tree {
     display: none;
+  }
+  .side:not(.rail-open) .sb-places {
+    display: flex;
+  }
+  .side:not(.rail-open) .places-panel {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 100%;
+    width: 260px;
+    max-height: 100%;
+    overflow: auto;
+    padding: 8px;
+    background: var(--sidebar);
+    border: 1px solid var(--border);
+    border-left: 0;
+    border-radius: 0 8px 8px 0;
+    box-shadow: var(--shadow-lg);
   }
   .side:not(.rail-open) .sb-search-wrap {
     padding: 8px 8px 4px;
@@ -3506,4 +3528,10 @@ textarea.notes:focus {
   .sess > .pill {
     display: none;
   }
+}
+.filterbar .log-search {
+  flex: 0 1 240px;
+  width: auto;
+  min-width: 120px;
+  height: 26px;
 }

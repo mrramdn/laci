@@ -1,6 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useApp, rescan, setTheme } from "./store";
-import { ago, days, tilde } from "./helpers";
+import {
+  ago,
+  allSessions,
+  days,
+  providerName,
+  sessionKey,
+  sessionsOf,
+  tilde,
+} from "./helpers";
 import { Icon, KindIcon, PriorityGlyph, restoreFocus } from "./common";
 import { DeadlinePill } from "./deadline";
 import type { Node, View } from "./types";
@@ -33,9 +41,79 @@ export function Palette() {
       label: n.label,
       sub: tilde(n.path, snapshot.home),
       icon: "",
+      project: "",
       node: n as Node | null,
       acc: ago(n.lastActivity?.at),
     }));
+  const found = (
+    id: string,
+    section: string,
+    label: string,
+    sub: string,
+    icon: string,
+    acc: string,
+    project = "",
+  ) => ({
+    id,
+    section,
+    label,
+    sub,
+    icon,
+    acc,
+    project,
+    node: null as Node | null,
+  });
+  // Sessions and to-dos only turn up for a typed query.
+  const sessionHits = terms.length
+    ? (() => {
+        const owner = new Map<string, Node>();
+        for (const n of Object.values(snapshot.nodes))
+          for (const session of sessionsOf(n, snapshot))
+            owner.set(sessionKey(session), n);
+        return allSessions(snapshot)
+          .filter(
+            (session) =>
+              session.sourceKind !== "subagent" &&
+              matches(`${session.title} ${session.firstPrompt ?? ""}`),
+          )
+          .slice(0, 5)
+          .map((session) => {
+            const n = owner.get(sessionKey(session));
+            return found(
+              "session:" + sessionKey(session),
+              "Sessions",
+              session.title,
+              `${providerName(snapshot, session.provider)} · ${
+                n ? n.label : tilde(session.cwd ?? "", snapshot.home)
+              }`,
+              "history",
+              ago(session.updatedAt),
+            );
+          });
+      })()
+    : [];
+  const todoHits = terms.length
+    ? Object.values(snapshot.nodes)
+        .filter((n) => n.kind === "project" && !n.archived)
+        .flatMap((n) =>
+          n.tasks
+            .filter((t) => t.kind === "check" && !t.done)
+            .map((t) => ({ n, t })),
+        )
+        .filter(({ n, t }) => matches(`${t.text} ${n.label}`))
+        .slice(0, 5)
+        .map(({ n, t }) =>
+          found(
+            `todo:${n.id}:${t.file}:${t.line}`,
+            "To-dos",
+            t.text,
+            n.label,
+            "check",
+            "",
+            n.id,
+          ),
+        )
+    : [];
   const actions = [
     ["view:today", "Open Today", "inbox"],
     ["view:tidy", "Open Tidy up", "sparkles"],
@@ -54,12 +132,15 @@ export function Palette() {
       icon,
       sub: "",
       section: "Actions",
+      project: "",
       node: null as Node | null,
       acc: "",
     }));
   const items = [
     ...hits.filter((i) => i.section === "Projects"),
     ...hits.filter((i) => i.section === "Folders"),
+    ...sessionHits,
+    ...todoHits,
     ...actions,
   ];
   const index = Math.min(selected, Math.max(0, items.length - 1));
@@ -72,6 +153,24 @@ export function Palette() {
         if (["settings", "log"].includes(s.view)) s.navigate("today");
         s.select(n.id);
       }
+    } else if (id.startsWith("session:")) {
+      const session = allSessions(snapshot).find(
+        (x) => "session:" + sessionKey(x) === id,
+      );
+      if (session)
+        useApp.setState({
+          modal: {
+            kind: "session",
+            provider: session.provider,
+            sessionId: session.sessionId,
+            file: session.file,
+          },
+        });
+    } else if (id.startsWith("todo:")) {
+      const nodeId = items.find((i) => i.id === id)?.project;
+      if (!nodeId) return;
+      if (["settings", "log"].includes(s.view)) s.navigate("today");
+      s.select(nodeId, "todo");
     } else if (id.startsWith("view:")) s.navigate(id.slice(5) as View);
     else if (id === "new") useApp.setState({ modal: { kind: "new" } });
     else if (id === "shortcuts")
@@ -134,7 +233,7 @@ export function Palette() {
               setQuery(e.target.value);
               setSelected(0);
             }}
-            placeholder="Search projects, folders, actions…"
+            placeholder="Search projects, sessions, to-dos, actions…"
             autoComplete="off"
             aria-label="Search"
             role="combobox"

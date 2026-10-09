@@ -4,6 +4,10 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+### Fixed
+
+- **Author count.** A project's "authors" counts people, not spellings: commits under several names with one address, or made through GitHub with its `noreply` address, count as one person.
+
 ## [2.2.0] - 2026-10-08
 
 Laci works with any agent, not only Claude Code.

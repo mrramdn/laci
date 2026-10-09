@@ -225,9 +225,44 @@ pub fn git_info(dir: &Path) -> Option<Value> {
         "lastCommitAt":utc(last.next().unwrap_or("")),"lastSubject":last.next().unwrap_or(""),"branch":repo.read(&["branch","--show-current"]),
         "remotes":remotes,"upstream":upstream,"dirty":status.iter().filter(|l|!l.starts_with("##")&&!l.is_empty()&&*l!=SIDECAR_UNTRACKED).count(),
         "ahead":number("ahead"),"behind":number("behind"),"stashes":repo.read(&["stash","list"]).lines().count(),"weekly":weekly,
-        "authors":repo.read(&["shortlog","-sne","HEAD"]).lines().count(),
+        "authors":people(&repo.read(&["shortlog","-sne","HEAD"])),
         "worktree":dir.join(".git").is_file()}),
     )
+}
+/// How many people wrote the commits in `git shortlog -sne` output. One person often commits under
+/// several names and addresses: identities that share an address are one person, and so is a GitHub
+/// `noreply` address whose account name is a name another identity uses.
+fn people(shortlog: &str) -> usize {
+    let identities: Vec<(String, String)> = shortlog
+        .lines()
+        .filter_map(|line| {
+            let identity = line.split_once('\t').map_or(line, |(_, rest)| rest).trim();
+            let (name, email) = match identity.rsplit_once('<') {
+                Some((name, email)) => (name.trim(), email.trim_end_matches('>').trim()),
+                None => (identity, ""),
+            };
+            (!name.is_empty() || !email.is_empty()).then(|| (name.to_lowercase(), email.to_lowercase()))
+        })
+        .collect();
+    let account = |email: &str| {
+        let user = email.strip_suffix("@users.noreply.github.com")?;
+        Some(user.rsplit_once('+').map_or(user, |(_, login)| login).to_string())
+    };
+    let mut group: Vec<usize> = (0..identities.len()).collect();
+    for (i, (name, email)) in identities.iter().enumerate() {
+        for (j, (other, address)) in identities.iter().enumerate().take(i) {
+            let same = (!email.is_empty() && email == address)
+                || account(email).is_some_and(|login| login == *other)
+                || account(address).is_some_and(|login| login == *name);
+            if same {
+                let (from, to) = (group[i], group[j]);
+                group.iter_mut().filter(|g| **g == from).for_each(|g| *g = to);
+            }
+        }
+    }
+    group.sort_unstable();
+    group.dedup();
+    group.len()
 }
 /// The version a project declares for itself, and the file that says so.
 fn manifest_version(dir: &Path) -> Option<(String, &'static str)> {
@@ -729,4 +764,35 @@ pub fn project(env: &Env, dir: &Path) -> Result<Value> {
     parts.truncate(4);
     node["size"] = json!({"total":files::size(dir),"reclaimable":reclaimable,"parts":parts});
     Ok(node)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::people;
+
+    #[test]
+    fn one_person_under_several_names_counts_once() {
+        let one = "    62\tmrramdn <rifki@example.com>\n     5\tMuhamad Rifki <113714338+mrramdn@users.noreply.github.com>\n     1\tMuhamad Rifki <rifki@example.com>\n";
+        assert_eq!(people(one), 1);
+        assert_eq!(
+            people(
+                "     6\tmrramdn <mrramdn@users.noreply.github.com>\n     1\tRifki <RIFKI@example.com>\n    56\tmrramdn <rifki@example.com>\n"
+            ),
+            1
+        );
+        assert_eq!(people("     8\trifkii <a@example.com>\n     7\tmrramdn <a@example.com>\n"), 1);
+    }
+
+    #[test]
+    fn different_people_stay_apart() {
+        let two = "     3\tAda <ada@example.com>\n     2\tAda <other@example.com>\n";
+        assert_eq!(people(two), 2);
+        assert_eq!(
+            people(
+                "     3\tAda <ada@example.com>\n     2\tBob <7+bob@users.noreply.github.com>\n     1\tNo Address <>\n"
+            ),
+            3
+        );
+        assert_eq!(people(""), 0);
+    }
 }

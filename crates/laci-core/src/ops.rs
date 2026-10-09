@@ -45,7 +45,7 @@ fn journal_path(env: &Env, entry: &Value, key: &str) -> Result<PathBuf> {
     checked
 }
 
-fn data(env: &Env, name: &str) -> Result<PathBuf> {
+pub(crate) fn data(env: &Env, name: &str) -> Result<PathBuf> {
     let path = paths::home_path(&env.data_dir.join(name).to_string_lossy(), env)?;
     sidecar::plain_path(&path)?;
     Ok(path)
@@ -564,17 +564,18 @@ fn restore(src: &Path, dest: &Path) -> Result<()> {
     files::replace(dest, &bytes)?;
     preserve(&meta, dest)
 }
-fn read_journal(path: &Path) -> Result<Value> {
+pub(crate) fn read_journal(path: &Path) -> Result<Value> {
     sidecar::plain_path(path)?;
     let file = File::open(path).map_err(|e| e.to_string())?;
     serde_json::from_reader(std::io::BufReader::new(file)).map_err(|e| e.to_string())
 }
 pub fn can_undo(journal: &Value) -> bool {
-    journal["entries"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .any(|e| matches!(e["kind"].as_str(), Some("move" | "rewrite" | "file" | "rmdir")))
+    journal["copiesRemoved"] != true
+        && journal["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|e| matches!(e["kind"].as_str(), Some("move" | "rewrite" | "file" | "rmdir")))
 }
 
 pub fn recovery(journal: &Value) -> Option<&'static str> {
@@ -611,6 +612,9 @@ pub(crate) fn undo_unlocked(env: &Env, id: &str) -> Result<Value> {
     let mut journal = read_journal(&file)?;
     if journal["state"] != "applied" {
         return Err(format!("This change is {}, nothing to undo", journal["state"].as_str().unwrap_or("invalid")));
+    }
+    if journal["copiesRemoved"] == true {
+        return Err("The copies this undo needs were removed to free space".into());
     }
     if !can_undo(&journal) {
         return Err("Restore these files through system Trash; there is no Laci Undo".into());
@@ -973,6 +977,86 @@ pub fn restore_backup(env: &Env, snap: &Value, id: &str) -> Result<Value> {
         files::replace(&target, &content)?;
         // The file keeps today's date on purpose: a tool that deletes old logs would remove it again at once.
         Ok(json!({"restored":target,"title":session["title"],"provider":session["provider"]}))
+    })
+}
+/// Moves the sessions the user chose out of their tool's history and into Laci's quarantine, in one
+/// journal, so Undo in the Log puts them back. `files` name sessions of the current scan; the rest is
+/// checked again here: only whole Claude Code and Codex sessions, never one that is kept, still being
+/// written, or only a copy in the backup.
+pub fn delete_sessions(env: &Env, snap: &Value, files: &[String]) -> Result<Value> {
+    if files.is_empty() {
+        return Err("Choose at least one session".into());
+    }
+    let kept = crate::agents::kept(env);
+    let mut plan = Vec::new();
+    for file in files {
+        let session = snap["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|s| s["file"].as_str() == Some(file.as_str()) && s["backup"] != true)
+            .ok_or("A session is no longer in the list. Refresh history and try again.")?;
+        let title = session["title"].as_str().unwrap_or("This session");
+        let provider = session["provider"].as_str().unwrap_or("");
+        if !matches!(provider, "claude" | "codex")
+            || session["cleanupCapability"] == "unsupported"
+            || session["sourceKind"] == "subagent"
+        {
+            return Err(format!("“{title}” can't be deleted from Laci"));
+        }
+        if kept.contains(&crate::agents::kept_key(session)) {
+            return Err(format!("“{title}” is kept. Unkeep it first."));
+        }
+        let connector = snap["connectors"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|c| c["id"] == session["connector"])
+            .ok_or("Connect this agent before deleting its sessions")?;
+        let id =
+            connector["id"].as_str().filter(|id| !id.is_empty() && !id.contains(['/', '.'])).ok_or("Unknown agent")?;
+        let store = value_path(env, &connector["link"]["dir"])?;
+        let source = value_path(env, &session["file"])?;
+        let relative = source
+            .strip_prefix(&store)
+            .map_err(|_| format!("“{title}” is not in its agent's history folder"))?
+            .to_owned();
+        if relative.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+            return Err("Bad session path".into());
+        }
+        let meta = fs::symlink_metadata(&source).map_err(|_| format!("“{title}” is already gone"))?;
+        if !meta.is_file() {
+            return Err(format!("“{title}” is not a plain file"));
+        }
+        let recent = meta.modified().ok().and_then(|m| m.elapsed().ok()).is_none_or(|age| age.as_secs() < 120);
+        if recent {
+            return Err(format!("“{title}” is still being written. Close it first, or try again in two minutes."));
+        }
+        plan.push((id.to_owned(), provider == "claude", store, relative, title.to_owned()));
+    }
+    let title = match plan.as_slice() {
+        [(.., one)] => format!("Deleted the session “{one}”"),
+        _ => format!("Deleted {} sessions", plan.len()),
+    };
+    transact(env, &title, |tx| {
+        let id = tx.journal["id"].as_str().unwrap_or("removed").to_owned();
+        let removed = data(env, "orphans")?.join("sessions").join(&id);
+        let history = data(env, "history")?;
+        for (connector, claude, store, relative, _) in &plan {
+            let source = store.join(relative);
+            tx.move_to(&source, &removed.join(connector).join(relative))?;
+            // Claude Code keeps a session's subagent logs and tool output in a folder named after it.
+            let folder = source.with_extension("");
+            if *claude && fs::symlink_metadata(&folder).is_ok_and(|m| m.is_dir()) {
+                tx.move_to(&folder, &removed.join(connector).join(relative.with_extension("")))?;
+            }
+            // Otherwise the backup's copy would bring it straight back as "In backup only".
+            let copy = history.join(connector).join(relative);
+            if fs::symlink_metadata(&copy).is_ok_and(|m| m.is_file()) {
+                tx.move_to(&copy, &removed.join("backup").join(connector).join(relative))?;
+            }
+        }
+        Ok(())
     })
 }
 const BACKUP_STATE: &str = "backup.json";

@@ -83,6 +83,15 @@ pub fn set_meta(dir: &Path, key: &str, value: &str) -> Result<()> {
         "priority" => ["", "high", "medium", "low"].contains(&value),
         "deadline" => value.is_empty() || Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap().is_match(value),
         "client" => value.chars().count() <= 80 && !value.contains(['\n', '\r']),
+        // Checks muted for this project: issue codes, comma separated.
+        "quiet" => {
+            value.len() <= 200
+                && value
+                    .split(',')
+                    .map(str::trim)
+                    .all(|code| !code.is_empty() && code.bytes().all(|b| b.is_ascii_lowercase() || b == b'-'))
+                || value.is_empty()
+        }
         _ => false,
     };
     if !valid {

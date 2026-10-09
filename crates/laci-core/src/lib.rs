@@ -18,5 +18,6 @@ pub mod readers;
 pub mod scan;
 pub mod service;
 pub mod sidecar;
+pub mod storage;
 
 pub type Result<T> = std::result::Result<T, String>;

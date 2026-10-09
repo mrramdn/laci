@@ -502,7 +502,11 @@ fn link(
             }
         }
     }
-    let sessions: usize = claude.iter().map(|(_, c)| array(&c["sessions"]).len()).sum();
+    // Conversations, not the logs of the subagents that ran inside them.
+    let sessions: usize = claude
+        .iter()
+        .map(|(_, c)| array(&c["sessions"]).iter().filter(|s| s["sourceKind"] != "subagent").count())
+        .sum();
     let states: Vec<_> = on
         .iter()
         .map(|c| {
@@ -534,7 +538,11 @@ fn link(
                 }
             });
             if c["id"] == "claude" {
-                state["about"] = json!(format!("{} project folders · {sessions} sessions", claude.len()));
+                state["about"] = json!(format!(
+                    "{} · {}",
+                    count(claude.len() as u64, "project folder", "project folders"),
+                    count(sessions as u64, "session", "sessions")
+                ));
             }
             state
         })
@@ -759,6 +767,22 @@ fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
                     (n["archived"] == true).then(|| "Archived with work that was never committed".into()),
                 ));
             }
+            let diverged = u(g, "ahead") > 0 && u(g, "behind") > 0;
+            if diverged {
+                out.push(issue(
+                    "diverged",
+                    "med",
+                    format!(
+                        "Diverged from {}",
+                        if string(g, "upstream").is_empty() { "its remote" } else { string(g, "upstream") }
+                    ),
+                    Some(format!(
+                        "{} here and {} there; push or pull alone won't fix it",
+                        count(u(g, "ahead"), "commit", "commits"),
+                        count(u(g, "behind"), "commit", "commits")
+                    )),
+                ));
+            }
             for (key, code, sev, (one, many), detail) in [
                 (
                     "ahead",
@@ -776,7 +800,7 @@ fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
                 ),
                 ("behind", "behind", "low", ("commit behind remote", "commits behind remote"), None),
             ] {
-                if u(g, key) > 0 {
+                if u(g, key) > 0 && !(diverged && matches!(code, "unpushed" | "behind")) {
                     out.push(issue(code, sev, count(u(g, key), one, many), detail));
                 }
             }
@@ -855,6 +879,13 @@ fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
         Some("med") => 1,
         _ => 2,
     });
+    // Checks the user muted for this project stay listed, marked, so they can be unmuted again.
+    let quiet: Vec<&str> = n["meta"]["quiet"].as_str().unwrap_or("").split(',').map(str::trim).collect();
+    for i in &mut out {
+        if quiet.contains(&i["code"].as_str().unwrap_or("")) {
+            i["muted"] = json!(true);
+        }
+    }
     out
 }
 
@@ -1019,7 +1050,30 @@ fn plan(env: &Env, snapshot: &mut Value) {
             Err(error) => json!({"error":error,"ops":[],"checks":[]}),
         };
     }
-    snapshot["proposals"] = json!(proposals(env, snapshot));
+    let dismissed = dismissed(env);
+    let (hidden, shown): (Vec<_>, Vec<_>) = proposals(env, snapshot)
+        .into_iter()
+        .partition(|p| p["id"].as_str().is_some_and(|id| dismissed.contains_key(id)));
+    snapshot["proposals"] = json!(shown);
+    snapshot["dismissed"] = json!(
+        hidden
+            .iter()
+            .map(|p| json!({"id":p["id"],"title":p["title"],"at":dismissed[string(p,"id")]}))
+            .collect::<Vec<_>>()
+    );
+}
+/// How long a dismissed suggestion stays hidden before Tidy up may offer it again.
+const DISMISS_DAYS: f64 = 90.0;
+/// Suggestions the user dismissed, by id, with the date they did.
+pub fn dismissed(env: &Env) -> BTreeMap<String, String> {
+    config::load(env)["dismissed"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(id, at)| {
+            at.as_str().filter(|at| files::age(at) < DISMISS_DAYS).map(|at| (id.clone(), at.to_owned()))
+        })
+        .collect()
 }
 
 fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
@@ -1112,10 +1166,15 @@ fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
         out.push(json!({"id":format!("orphan:{id}:{}",cwd.unwrap_or(string(first,"file"))),"category":"orphan","title":format!("{} {} {} for deleted {name}",list.len(),string(c,"name"),if list.len()==1{unit.to_owned()}else{format!("{unit}s")}),"why":format!("{} no longer exists. Last used {}.",cwd.map(|p|paths::tilde(Path::new(p),&env.home)).unwrap_or_else(||"Its folder".into()),string(first,"at").get(..10).unwrap_or("unknown")),"confidence":"med","ops":list.iter().map(|x|json!({"kind":"move","label":"Quarantine (restorable)","from":paths::tilde(Path::new(string(x,"file")),&env.home),"to":paths::tilde(&quarantine.join(id),&env.home)})).collect::<Vec<_>>(),"action":{"type":"quarantine","moves":list.iter().map(|x|json!({"from":x["file"],"to":Path::new(id).join(Path::new(string(x,"file")).strip_prefix(store).unwrap_or_else(|_|Path::new(string(x,"file")).file_name().map(Path::new).unwrap_or(Path::new("history"))))})).collect::<Vec<_>>()}}));
     }
     for n in &nodes {
+        // Work that is not committed or not pushed is dealt with first; Today lists it as at risk.
+        let unfinished = array(&n["issues"]).iter().any(|i| {
+            i["muted"] != true && matches!(i["code"].as_str(), Some("dirty" | "unpushed" | "diverged" | "stash"))
+        });
         if n["kind"] == "project"
             && n["archived"] != true
             && n["status"]["value"] == "dormant"
             && n["archivePlan"]["dest"].is_string()
+            && !unfinished
         {
             let age = files::age(string(&n["lastActivity"], "at"));
             out.push(json!({"id":format!("archive:{}",string(n,"id")),"category":"status","title":format!("Archive {}?",string(n,"label")),"why":if age.is_finite(){format!("No commits, file changes or agent sessions for {} days.",age as u64)}else{"No recorded commits, file changes or agent sessions.".into()},"confidence":"med","nodeId":n["id"],"ops":n["archivePlan"]["ops"],"action":{"type":"archive","nodeId":n["id"]}}));
@@ -1164,6 +1223,33 @@ mod tests {
     fn write(path: &Path, text: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, text).unwrap();
+    }
+    #[test]
+    fn a_diverged_branch_is_one_check_without_push_or_pull_and_holds_back_archiving() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let node = |ahead: u64, behind: u64, quiet: &str| {
+            json!({"kind":"project","type":"code","meta":{"quiet":quiet},"readme":{},"agents":{"claude":[]},"taskFiles":[],
+                "git":{"commits":9,"remotes":["origin"],"upstream":"gitlab/main","ahead":ahead,"behind":behind,"dirty":0,"stashes":0}})
+        };
+        let codes =
+            |n: &Value| issues(&env, n, &json!({})).iter().map(|i| string(i, "code").to_owned()).collect::<Vec<_>>();
+        assert_eq!(codes(&node(40, 40, "")), ["diverged"]);
+        assert_eq!(codes(&node(2, 0, "")), ["unpushed"]);
+        assert_eq!(codes(&node(0, 3, "")), ["behind"]);
+        let both = issues(&env, &node(40, 40, "diverged"), &json!({}));
+        assert_eq!(both[0]["title"], "Diverged from gitlab/main");
+        assert_eq!(both[0]["detail"], "40 commits here and 40 commits there; push or pull alone won't fix it");
+        assert_eq!(both[0]["muted"], true);
+
+        let dormant = |id: &str, codes: &[&str]| {
+            json!({"id":id,"label":id,"kind":"project","status":{"value":"dormant"},"archivePlan":{"dest":"/archive","ops":[]},
+                "issues":codes.iter().map(|c| json!({"code":c})).collect::<Vec<_>>(),"size":{}})
+        };
+        let snapshot = json!({"nodes":{"a":dormant("a",&["no-remote"]),"b":dormant("b",&["dirty"]),"c":dormant("c",&["diverged"])},
+            "claude":{},"items":{},"orphans":{"claude":[],"items":[]},"connectors":[]});
+        let offered: Vec<_> = proposals(&env, &snapshot).iter().map(|p| string(p, "id").to_owned()).collect();
+        assert_eq!(offered, ["archive:a"], "unfinished work is dealt with before archiving");
     }
     #[test]
     fn agent_refresh_reuses_metadata_and_discovers_new_agent_only_projects() {
@@ -1264,7 +1350,7 @@ mod tests {
                 .iter()
                 .any(|o| o["kind"] == "keep" && string(o, "detail").contains(".aider.chat.history.md"))
         );
-        assert!(env.cache_dir.join("v4-agent-facts.json").exists());
+        assert!(env.cache_dir.join("v5-agent-facts.json").exists());
     }
     #[test]
     fn metadata_edits_leave_source_activity_unchanged_and_keep_stable_id() {

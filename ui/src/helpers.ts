@@ -190,7 +190,7 @@ export function counted(id: string, snapshot: Snapshot) {
 }
 export function agentCount(node: Node, snapshot: Snapshot) {
   return (
-    sessionsOf(node, snapshot).length +
+    conversations(sessionsOf(node, snapshot)).length +
     node.agents.items.filter(
       (id) =>
         counted(id, snapshot) &&
@@ -234,11 +234,133 @@ export function groupSessions(sessions: Session[]): SessionGroup[] {
   }
   return roots;
 }
+/** One conversation as the user had it: its newest session, the stubs `/resume` left behind, and the
+ * logs of the subagents that ran inside it. Lists and counts show conversations, not log files. */
+export interface Conversation {
+  session: Session;
+  /** Earlier sessions that continued in this one, newest first. */
+  parts: Session[];
+  /** Subagent logs, nested the way `groupSessions` nests them. */
+  children: SessionGroup[];
+  title: string;
+  /** Unknown when a log does not say (Antigravity, backups of old formats). */
+  prompts?: number;
+  filesChanged: number;
+  bytes: number;
+  startedAt?: string;
+  updatedAt: string;
+  /** Time spent in it, all parts together; pauses of over half an hour left out. */
+  activeSeconds?: number;
+  /** A couple of prompts and no file changed: folded away in lists, and first in line for cleanup. */
+  short: boolean;
+}
+const SHORT_PROMPTS = 2;
+/** A session still being written is never short: it may be the one the user is in right now. */
+const SETTLING_MS = 30 * 60 * 1000;
+export const conversationKey = (c: Conversation) => sessionKey(c.session);
+export function conversations(
+  sessions: Session[],
+  now = Date.now(),
+): Conversation[] {
+  const groups = groupSessions(sessions);
+  const byId = new Map(
+    groups.map((g) => [`${g.session.provider}:${g.session.sessionId}`, g]),
+  );
+  // A stub belongs to the conversation it continued in; a broken or circular chain leaves it alone.
+  const home = (group: SessionGroup) => {
+    let cursor = group;
+    const seen = new Set([group]);
+    while (cursor.session.continuedIn) {
+      const next = byId.get(
+        `${cursor.session.provider}:${cursor.session.continuedIn}`,
+      );
+      if (!next || seen.has(next)) break;
+      seen.add(next);
+      cursor = next;
+    }
+    return cursor;
+  };
+  const parts = new Map<SessionGroup, SessionGroup[]>();
+  const roots: SessionGroup[] = [];
+  for (const group of groups) {
+    const target = home(group);
+    if (target === group) roots.push(group);
+    else parts.set(target, [...(parts.get(target) ?? []), group]);
+  }
+  const size = (g: SessionGroup): number =>
+    (g.session.bytes ?? 0) + g.children.reduce((n, c) => n + size(c), 0);
+  return roots.map((root) => {
+    const earlier = (parts.get(root) ?? []).sort((a, b) =>
+      b.session.updatedAt.localeCompare(a.session.updatedAt),
+    );
+    const all = [root, ...earlier];
+    const known = all.every((g) => g.session.prompts !== undefined);
+    const prompts = known
+      ? all.reduce((n, g) => n + (g.session.prompts ?? 0), 0)
+      : undefined;
+    const filesChanged = all.reduce(
+      (n, g) => n + (g.session.filesChanged ?? 0),
+      0,
+    );
+    const titled =
+      all.find((g) => g.session.titleSource !== "fallback") ?? root;
+    const { session } = root;
+    const started = all
+      .map((g) => g.session.startedAt)
+      .filter((at): at is string => !!at)
+      .sort()[0];
+    const settling = now - Date.parse(session.updatedAt) < SETTLING_MS;
+    return {
+      session,
+      parts: earlier.map((g) => g.session),
+      children: all.flatMap((g) => g.children),
+      title:
+        titled.session.titleSource === "fallback" && prompts === 0
+          ? "Empty session"
+          : titled.session.title,
+      prompts,
+      filesChanged,
+      bytes: all.reduce((n, g) => n + size(g), 0),
+      startedAt: started,
+      updatedAt: session.updatedAt,
+      activeSeconds: all.some((g) => g.session.activeSeconds !== undefined)
+        ? all.reduce((n, g) => n + (g.session.activeSeconds ?? 0), 0)
+        : undefined,
+      short:
+        prompts !== undefined &&
+        prompts <= SHORT_PROMPTS &&
+        filesChanged === 0 &&
+        !all.some((g) => g.session.kept) &&
+        !session.backup &&
+        !settling,
+    };
+  });
+}
+/** Whether Laci can delete it: whole Claude Code and Codex sessions that are not kept or in use. */
+export function deletable(c: Conversation, now = Date.now()) {
+  return [c.session, ...c.parts].every(
+    (s) =>
+      (s.provider === "claude" || s.provider === "codex") &&
+      !s.backup &&
+      !s.kept &&
+      s.cleanupCapability !== "unsupported" &&
+      now - Date.parse(s.updatedAt) > 2 * 60 * 1000,
+  );
+}
+/** Time spent, as people say it: "2 h 10 min", "4 min". Nothing under a minute. */
+export function duration(seconds?: number) {
+  const minutes = Math.round((seconds ?? 0) / 60);
+  if (minutes < 1) return "";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
+}
 export const RISK = new Set([
   "no-commits",
   "no-remote",
   "dirty",
   "unpushed",
+  "diverged",
   "stash",
   "no-git",
 ]);
@@ -253,11 +375,13 @@ export const priorityRank = (priority?: string) =>
   PRIORITY_RANK[priority ?? "none"] ?? PRIORITY_RANK.none;
 export const byPriority = (a: Node, b: Node) =>
   priorityRank(a.meta.priority) - priorityRank(b.meta.priority);
+/** The checks that count: muted ones are listed in the inspector but never counted. */
+export const liveIssues = (n: Node) => n.issues.filter((i) => !i.muted);
 export function risksOf(snapshot: Snapshot) {
   return Object.values(snapshot.nodes)
     .map((n) => ({
       n,
-      issues: n.issues
+      issues: liveIssues(n)
         .filter((i) => RISK.has(i.code))
         .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]),
     }))

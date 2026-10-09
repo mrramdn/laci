@@ -9,10 +9,10 @@ import {
 import type { ReactNode } from "react";
 import { api, errorText } from "./api";
 import { useApp, changed, run, selectWhenReady } from "./store";
-import { plural, tilde } from "./helpers";
+import { bytes, plural, tilde } from "./helpers";
 import { Icon, Ops, restoreFocus, SeverityGlyph } from "./common";
 import { closeTerminal, useTerms } from "./terminal-api";
-import { AgentDialog, SessionDialog } from "./session-ui";
+import { AgentDialog, DeleteSessions, SessionDialog } from "./session-ui";
 import { McpDialog } from "./mcp-setup";
 import { Select, SelectPortal, selectIsOpen } from "./select";
 import type { ArchivePlan, Change, DeletePlan, Link } from "./types";
@@ -217,6 +217,8 @@ export function Dialogs() {
     <Archive key={modal.id} id={modal.id} />
   ) : modal?.kind === "delete" ? (
     <DeleteProject key={modal.id} id={modal.id} />
+  ) : modal?.kind === "clean" ? (
+    <CleanProject key={modal.id} id={modal.id} />
   ) : modal?.kind === "new" ? (
     <Suspense
       fallback={
@@ -252,6 +254,8 @@ export function Dialogs() {
       key={`${modal.provider}:${modal.sessionId}`}
       request={modal}
     />
+  ) : modal?.kind === "session-delete" ? (
+    <DeleteSessions key={modal.files.join("\n")} files={modal.files} />
   ) : modal?.kind === "mcp" ? (
     <McpDialog key={modal.provider} provider={modal.provider} />
   ) : null;
@@ -618,6 +622,72 @@ function Archive({ id }: { id: string }) {
           <Ops key={plan.dest} ops={plan.ops} optional onHeavy={setHeavy} />
         </>
       ) : null}
+    </DialogFrame>
+  );
+}
+function CleanProject({ id }: { id: string }) {
+  const s = useApp();
+  const n = s.snapshot!.nodes[id];
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  if (!n?.size) return null;
+  const parts = n.size.parts;
+  async function clean() {
+    await run(
+      async () => {
+        setSaving(true);
+        setError("");
+        const modal = useApp.getState().modal;
+        try {
+          const change = await api<Change>("clean", { id });
+          if (useApp.getState().modal === modal) close();
+          changed(change, `Moved build output of ${n.name} to Trash`);
+        } finally {
+          setSaving(false);
+        }
+      },
+      `Cleaning ${n.name}…`,
+      { history: true, onError: (e) => setError(errorText(e)) },
+    );
+  }
+  return (
+    <DialogFrame
+      title={`Move build output of ${n.name} to Trash?`}
+      description={
+        <>
+          Moves {parts.map((p) => p.path).join(", ")} (
+          {bytes(n.size!.reclaimable)}) to the system Trash. A fresh build
+          brings them back.
+        </>
+      }
+      footer={
+        <>
+          {error ? (
+            <p className="err" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <button className="btn" disabled={saving} onClick={close}>
+            Cancel
+          </button>
+          <button
+            className="btn primary"
+            disabled={saving || s.historyPending}
+            onClick={() => void clean()}
+          >
+            {saving ? "Moving…" : "Move to Trash"}
+          </button>
+        </>
+      }
+    >
+      <ul className="hlist">
+        {parts.map((p) => (
+          <li key={p.path}>
+            <span className="mono nm">{p.path}</span>
+            <span className="faint w">{bytes(p.bytes)}</span>
+          </li>
+        ))}
+      </ul>
     </DialogFrame>
   );
 }

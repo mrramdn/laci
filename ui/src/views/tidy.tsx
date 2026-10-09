@@ -1,5 +1,5 @@
 import { Icon, Group, Ops } from "../common";
-import { useApp, run, changed, toggleExpanded } from "../store";
+import { useApp, run, changed, toast, toggleExpanded } from "../store";
 import { cap, plural } from "../helpers";
 import { api } from "../api";
 import type { Change } from "../types";
@@ -23,6 +23,11 @@ const CATS: Record<string, [string, string, string]> = {
   orphan: ["Orphaned", "unlink", "History for folders that no longer exist"],
   status: ["Archive", "archive", "Projects with no activity for a long time"],
 };
+const dismiss = (id: string, undo = false) =>
+  void run(async () => {
+    await api("proposal/dismiss", { id, ...(undo ? { undo } : {}) });
+    toast(undo ? "Suggestion is back" : "Suggestion dismissed");
+  });
 export function Tidy() {
   const s = useApp();
   const snapshot = s.snapshot!;
@@ -113,6 +118,14 @@ export function Tidy() {
                         }}
                       >
                         {p.title}
+                        {p.category === "status" ? (
+                          <span
+                            className="faint"
+                            style={{ display: "block", fontWeight: 400 }}
+                          >
+                            {p.why}
+                          </span>
+                        ) : null}
                       </span>
                       <span className="meta">
                         <span className={`conf ${p.confidence}`}>
@@ -182,6 +195,12 @@ export function Tidy() {
                               Move to Trash…
                             </button>
                           ) : null}
+                          <button
+                            className="btn sm ghost"
+                            onClick={() => dismiss(p.id)}
+                          >
+                            Dismiss
+                          </button>
                           {p.nodeId && snapshot.nodes[p.nodeId] ? (
                             <>
                               <span className="grow" />
@@ -207,6 +226,35 @@ export function Tidy() {
           <div className="empty">
             {s.historyPending ? "Updating…" : "Nothing to tidy here."}
           </div>
+        ) : null}
+        {snapshot.dismissed?.length ? (
+          <section className="group">
+            <button
+              className="more"
+              aria-expanded={!!s.expanded.dismissed}
+              onClick={() => toggleExpanded("dismissed")}
+            >
+              {snapshot.dismissed.length} dismissed
+            </button>
+            {s.expanded.dismissed
+              ? snapshot.dismissed.map((d) => (
+                  <div className="item" key={d.id}>
+                    <span
+                      className="name"
+                      style={{ maxWidth: "none", flex: 1 }}
+                    >
+                      {d.title}
+                    </span>
+                    <button
+                      className="btn sm ghost"
+                      onClick={() => dismiss(d.id, true)}
+                    >
+                      Suggest again
+                    </button>
+                  </div>
+                ))
+              : null}
+          </section>
         ) : null}
       </div>
     </>

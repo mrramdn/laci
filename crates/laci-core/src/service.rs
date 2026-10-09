@@ -1,5 +1,5 @@
 //! Application actions shared by IPC and MCP.
-use crate::{Result, activity, agents, config, create, env::Env, files, ops, paths, readers, scan, sidecar};
+use crate::{Result, activity, agents, config, create, env::Env, files, ops, paths, readers, scan, sidecar, storage};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -149,6 +149,11 @@ pub fn mutates(name: &str) -> bool {
             | "connector/add"
             | "connector/remove"
             | "backup/restore"
+            | "session/delete"
+            | "session/keep"
+            | "storage/free"
+            | "proposal/dismiss"
+            | "clean"
     )
 }
 
@@ -166,7 +171,29 @@ pub fn changes_history(name: &str) -> bool {
             | "connector/add"
             | "connector/remove"
             | "backup/restore"
+            | "session/delete"
+            | "storage/free"
     )
+}
+
+/// A check's name as the user sees it, for Log titles.
+fn issue_name(code: &str) -> &str {
+    match code {
+        "no-remote" => "No remote",
+        "no-commits" => "No commits yet",
+        "dirty" => "Uncommitted changes",
+        "unpushed" => "Commits not pushed",
+        "diverged" => "Diverged",
+        "behind" => "Behind remote",
+        "stash" => "Forgotten stash",
+        "no-git" => "Not under version control",
+        "no-readme" => "No README",
+        "template-readme" => "Template README",
+        "stale-cwd" => "Old path in agent logs",
+        "stalled" => "Stalled",
+        "old-handoff" => "Old handoff",
+        other => other,
+    }
 }
 
 pub struct Service {
@@ -337,7 +364,10 @@ impl Service {
             "apply" => Refresh { watches: true, ..Refresh::agents() },
             // The warning and the backup line on Today come from the agent pass.
             "backup" if value["skipped"] != true => Refresh::agents(),
-            "backup/auto" | "backup/restore" => Refresh::agents(),
+            "backup/auto" | "backup/restore" | "session/keep" => Refresh::agents(),
+            "session/delete" | "storage/free" => Refresh { watches: true, ..Refresh::agents() },
+            "proposal/dismiss" => Refresh::agents(),
+            "clean" => Refresh::full(),
             _ => Refresh::default(),
         };
         if changes_history(name)
@@ -364,9 +394,27 @@ impl Service {
                     let before = latest["meta"][key].as_str().unwrap_or("");
                     sidecar::set_meta(&dir, key, value)?;
                     if before != value {
+                        let name = string(&node, "name");
+                        let title = if key == "quiet" {
+                            let codes = |text: &str| -> BTreeSet<String> {
+                                text.split(',').map(str::trim).filter(|c| !c.is_empty()).map(str::to_owned).collect()
+                            };
+                            let (was, now) = (codes(before), codes(value));
+                            match (now.difference(&was).next(), was.difference(&now).next()) {
+                                (Some(code), _) => format!("Muted “{}” on {name}", issue_name(code)),
+                                (None, Some(code)) => format!("Unmuted “{}” on {name}", issue_name(code)),
+                                _ => format!("Changed muted checks of {name}"),
+                            }
+                        } else {
+                            format!(
+                                "{} of {name} {}",
+                                files::capitalize(key),
+                                if value.is_empty() { "cleared".into() } else { format!("set to {value}") }
+                            )
+                        };
                         activity::record(
                             &self.env,
-                            json!({"by":by,"title":format!("{} of {} {}",files::capitalize(key),string(&node,"name"),if value.is_empty(){"cleared".into()}else{format!("set to {value}")}),"path":dir,"key":format!("meta:{}:{key}",dir.display()),"undo":{"type":"meta","key":key,"value":before}}),
+                            json!({"by":by,"title":title,"path":dir,"key":format!("meta:{}:{key}",dir.display()),"undo":{"type":"meta","key":key,"value":before}}),
                         );
                     }
                     Ok(())
@@ -520,6 +568,56 @@ impl Service {
                 let j = ops::apply_proposal(&self.env, &snap, &p, b["recovery"].as_str().unwrap_or("quarantine"))?;
                 self.journaled(j, p["nodeId"].as_str(), by)
             }
+            "proposal/dismiss" => {
+                let back = b["undo"] == true;
+                let snap = self.snapshot()?;
+                let title = if back {
+                    array(&snap["dismissed"])
+                        .into_iter()
+                        .find(|p| p["id"] == id)
+                        .map(|p| string(&p, "title").to_owned())
+                } else {
+                    array(&snap["proposals"])
+                        .into_iter()
+                        .find(|p| p["id"] == id)
+                        .map(|p| string(&p, "title").to_owned())
+                }
+                .ok_or("That suggestion is gone")?;
+                ops::with_lock(&self.env, || {
+                    let mut c = config::load(&self.env);
+                    if !c["dismissed"].is_object() {
+                        c["dismissed"] = json!({});
+                    }
+                    let list = c["dismissed"].as_object_mut().expect("dismissed map");
+                    // Expired entries go with every change, so the list stays short.
+                    list.retain(|_, at| at.as_str().is_some_and(|at| files::age(at) < 90.0));
+                    if back {
+                        list.remove(id);
+                    } else {
+                        list.insert(id.to_owned(), json!(files::now()));
+                    }
+                    config::save(&self.env, &c)
+                })?;
+                activity::record(
+                    &self.env,
+                    json!({"by":by,"title":if back {format!("Suggested again: {title}")} else {format!("Dismissed: {title}")}}),
+                );
+                Ok(json!({"ok":true}))
+            }
+            "clean" => {
+                let snap = self.snapshot()?;
+                let node = self.node(id)?;
+                let parts: Vec<Value> = array(&node["size"]["parts"])
+                    .iter()
+                    .map(|p| json!(std::path::Path::new(string(&node, "path")).join(string(p, "path"))))
+                    .collect();
+                if parts.is_empty() {
+                    return Err("Nothing to clean in this project".into());
+                }
+                let title = format!("Moved the build output of {} to the trash", string(&node, "name"));
+                let j = ops::apply_action(&self.env, &snap, &title, &json!({"type":"trash","paths":parts}))?;
+                self.journaled(j, node["path"].as_str(), by)
+            }
             "undo" => {
                 let j = ops::undo(&self.env, id)?;
                 let entry = activity::read_log(&self.env, 300).into_iter().find(|e| e["journal"] == j["id"]);
@@ -584,6 +682,32 @@ impl Service {
                 activity::record(
                     &self.env,
                     json!({"by":by,"title":format!("Restored a {name} session from the backup"),"path":result["restored"],"detail":result["title"]}),
+                );
+                Ok(result)
+            }
+            "session/delete" => {
+                let snap = self.snapshot()?;
+                let files: Vec<String> = b["files"]
+                    .as_array()
+                    .ok_or("Choose the sessions to delete")?
+                    .iter()
+                    .map(|f| f.as_str().map(str::to_owned).ok_or("Invalid session"))
+                    .collect::<std::result::Result<_, _>>()?;
+                let journal = ops::delete_sessions(&self.env, &snap, &files)?;
+                self.journaled(journal, None, by)
+            }
+            "session/keep" => {
+                let on = b["keep"].as_bool().ok_or("Choose keep or not")?;
+                let sessions = b["sessions"].as_array().ok_or("Choose the sessions")?;
+                let changed = ops::with_lock(&self.env, || agents::keep(&self.env, sessions, on))?;
+                Ok(json!({"changed":changed}))
+            }
+            "storage" => storage::report(&self.env),
+            "storage/free" => {
+                let result = storage::free(&self.env, string(b, "part"))?;
+                activity::record(
+                    &self.env,
+                    json!({"by":by,"title":result["title"],"detail":format!("{} freed",scan::bytes(result["freed"].as_u64().unwrap_or(0)))}),
                 );
                 Ok(result)
             }

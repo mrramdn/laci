@@ -97,7 +97,7 @@ pub(crate) fn prepare(env: &Env, snapshot: &Value, proposal: &mut Value) {
         let mut projects = Vec::new();
         let ownership = |history: &Value| -> Result<Vec<PathBuf>> {
             if history["ownershipComplete"] != true {
-                return Err("History ownership is incomplete or unreadable; cleanup is blocked".into());
+                return Err("Laci couldn't read all of this history, so it won't clean it up".into());
             }
             let cwds = history["cwds"]
                 .as_object()

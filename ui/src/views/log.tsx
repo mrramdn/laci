@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Icon, Time, Group, Ops } from "../common";
 import { useApp, run, changed, toggleExpanded, refreshLog } from "../store";
 import { daysBack, logKind, plural } from "../helpers";
@@ -13,6 +13,8 @@ const LOG_FILTERS = [
 ];
 export function LogView() {
   const s = useApp();
+  const [query, setQuery] = useState("");
+  const [undoable, setUndoable] = useState(false);
   const log = s.activity;
   useEffect(() => {
     void refreshLog();
@@ -30,9 +32,18 @@ export function LogView() {
           : key === "agent"
             ? entry.by === "agent"
             : true;
+  const needle = query.trim().toLowerCase();
+  const canUndo = log?.entries.filter((e) => e.canUndo).length ?? 0;
+  const narrow = (e: NonNullable<typeof log>["entries"][number]) =>
+    (!undoable || !!e.canUndo) &&
+    (!needle ||
+      [e.title, e.detail, e.path].some((text) =>
+        text?.toLowerCase().includes(needle),
+      ));
   const groups = new Map<string, NonNullable<typeof log>["entries"]>();
-  for (const entry of log?.entries.filter((e) => filter(e, s.logFilter)) ??
-    []) {
+  for (const entry of log?.entries.filter(
+    (e) => filter(e, s.logFilter) && narrow(e),
+  ) ?? []) {
     const day = new Date(entry.at);
     const back = daysBack(day);
     const label =
@@ -94,11 +105,29 @@ export function LogView() {
               ) : null}
             </button>
           ))}
+          {canUndo ? (
+            <button
+              className="chipf"
+              aria-pressed={undoable}
+              onClick={() => setUndoable(!undoable)}
+            >
+              Can undo
+              <span className="n">{canUndo}</span>
+            </button>
+          ) : null}
         </div>
         <span className="grow" />
-        <span className="scope">
-          Everything laci changed, from the app or an agent · newest first
-        </span>
+        <input
+          className="inp log-search"
+          type="search"
+          name="logSearch"
+          aria-label="Search the log"
+          placeholder="Search the log"
+          title="Everything laci changed, from the app or an agent, newest first"
+          autoComplete="off"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
       </div>
       <div className="body">
         {!log ? (
@@ -211,7 +240,9 @@ export function LogView() {
             </Group>
           ))
         )}
-        {log && !log.error && !groups.size ? (
+        {log && !log.error && !groups.size && log.entries.length ? (
+          <div className="empty">No entries match</div>
+        ) : log && !log.error && !groups.size ? (
           <div className="empty">
             Nothing yet. Moves, archives, status changes, to-dos and notes show
             up here, with a way to undo them.

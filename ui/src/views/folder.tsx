@@ -14,6 +14,7 @@ import {
   bytes,
   cap,
   deadlineInfo,
+  liveIssues,
   descendants,
   parentOf,
   priorityRank,
@@ -116,7 +117,7 @@ function filterNode(n: Node, key: string, snapshot: Snapshot) {
     : key === "agents"
       ? agentCount(n, snapshot) > 0
       : key === "attention"
-        ? n.issues.some((i) => i.severity !== "low")
+        ? liveIssues(n).some((i) => i.severity !== "low")
         : key === "deadline"
           ? !!deadlineInfo(n.meta.deadline)
           : key === "priority"
@@ -459,8 +460,8 @@ function FolderItem({ row }: { row: FolderRow }) {
   const kids = n ? descendants(n, snapshot) : [];
   const issues = n
     ? n.kind === "project"
-      ? n.issues
-      : kids.filter((n) => n.kind === "project").flatMap((n) => n.issues)
+      ? liveIssues(n)
+      : kids.filter((n) => n.kind === "project").flatMap(liveIssues)
     : [];
   const sev = issues.some((i) => i.severity === "high")
     ? "high"

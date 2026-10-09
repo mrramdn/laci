@@ -46,7 +46,7 @@ laci puts all of this in one place and makes moving projects safe.
 The home screen answers "what should I look at?". Each list says how it's ordered.
 
 - **Deadlines**: overdue projects and the next 14 days, soonest first, with their priority. Shown only when there are any.
-- **Could lose work**: no remote, never committed, uncommitted or unpushed changes, stashes. One row per project, every issue as a chip, and a one-click fix for the worst one (for example *Create remote* or *Push*) that opens in the built-in terminal.
+- **Could lose work**: no remote, never committed, uncommitted or unpushed changes, a branch that has diverged from its remote, stashes. One row per project, every issue as a chip, and a one-click fix for the worst one (for example *Create remote* or *Push*) that opens in the built-in terminal. A diverged branch gets no Push or Pull: neither would fix it.
 - **Pick up where you left off**: recently active projects, each with its last commit and last agent session.
 - **Open to-dos**: every open `- [ ]` checkbox across your notes files, plus next steps you add in laci.
 - **Handoffs**: `HANDOFF.md` or `TODO.md` files that still have open items under a TODO heading.
@@ -64,9 +64,9 @@ Every folder and file, like Dolphin or Finder, with projects marked by their sta
 
 ### Projects and details
 
-Select a project to see its summary, status, priority, deadline, remote, branch, stack and size. The panel has four tabs:
+Select a project to see its summary, status, priority, deadline, remotes, branch, stack and size. When build output (such as `target` or `node_modules`) takes much of the size, **Move build output to Trash…** clears it. The panel has four tabs:
 
-- **Health**: checks with what stands behind them (the changed files, the commits not pushed, the stashes), a release line (declared version, last tag, commits since), recent commits and a commit chart.
+- **Health**: checks with what stands behind them (the changed files, the commits not pushed, the stashes), a release line (declared version, last tag, commits since), recent commits and a commit chart. Any check except a deadline can be muted for that project: it stays listed under *Muted* and is counted nowhere else. Muted checks are kept in the project's `.laci.md`.
 - **To-do**: next steps and notes.
 - **Agents**: sessions, memory and plans from every connected tool.
 - **README**: the rendered README.
@@ -82,7 +82,9 @@ laci finds cleanups and shows exactly which files each one touches before anythi
 - **Free space** from `node_modules` and build output in dormant or archived projects.
 - **Duplicates**: the same repo cloned in two places.
 - **Quarantine** sessions whose recorded owning folders are all confirmed missing, or explicitly move the selected history to **system Trash**. Shared history with a live owner, incomplete or unreadable logs, offline drives and ambiguous locations block cleanup. Laci rechecks sources, reconnection and running writers when you apply it.
-- **Archive** projects nobody has touched in a while.
+- **Archive** projects nobody has touched in a while, as long as nothing in them is uncommitted, unpushed or stashed.
+
+Any suggestion can be dismissed; it stays away for 90 days, and the dismissed ones are listed at the end so you can ask for one again.
 
 ![Tidy up: suggestions grouped by kind, each listing the files it will change](docs/screenshots/tidy.png)
 
@@ -102,7 +104,7 @@ The whole folder, including ignored files, moves to system Trash. Ignored files 
 
 ### Log
 
-Every change laci makes, from the app or from an agent through MCP: moves, archives, Tidy fixes, status, priority and deadline, to-dos, notes, connectors, settings and new projects. Moves expand to show what went where. Most changes have an *Undo*; simple edits that were changed again later say so instead of overwriting the newer change.
+Every change laci makes, from the app or from an agent through MCP: moves, archives, Tidy fixes, deleted sessions, status, priority and deadline, to-dos, notes, connectors, settings and new projects. Moves expand to show what went where. Search it, or show only what can still be undone. Most changes have an *Undo*; simple edits that were changed again later say so instead of overwriting the newer change.
 
 Undoing a deleted to-do requires its `.laci.md` to remain unchanged after deletion. If you edited it afterward, undo the newer edit first or restore the to-do manually.
 
@@ -110,11 +112,17 @@ Undoing a deleted to-do requires its `.laci.md` to remain unchanged after deleti
 
 ### Agents
 
-The Agents page has one card per AI tool: whether it is connected and installed, how many sessions it has, the model and effort it starts with, and **Start…** to open it in a project. Below the cards, one list holds every session, newest first, with search and filters for agent, resumable and inside or outside projects. Storage sizes, detached history and the backup live under **Storage and cleanup**.
+The Agents page has one card per AI tool: whether it is connected and installed, how many sessions it has, the model and effort it starts with, and **Start…** to open it in a project.
+
+Below the cards are your sessions, counted and listed as conversations: the logs of subagents and the stubs `/resume` leaves behind fold into the conversation they belong to. They are grouped by project, newest first; chats outside projects sit in one closed group. Chats of a couple of prompts that changed no file fold into one row. Each row says what happened in it: prompts, files changed, time spent, size and pull requests. Opening one shows its first and last prompt and the agent's last reply.
+
+Select sessions to **Keep** them or **Delete** them. A deleted session goes, with its subagent logs and Laci's backup copy, to Laci's quarantine; Undo in the Log puts it back. Kept sessions are never offered for cleanup. Filters show short chats, sessions older than 30 days, those outside projects, kept ones and those only the backup holds, and search covers titles, prompts and projects.
+
+**Storage and cleanup** has the history size per project, detached history, and what Laci keeps itself: the quarantine, undo copies of moves, the session backup and files left by Laci 1. The quarantine, undo copies older than a week and the Laci 1 files can be freed from there.
 
 A connector tells laci where an AI tool keeps its history, so it shows on the right project and travels with it. Claude Code, Codex and Antigravity are offered as built-ins, enabled only when you select them. Previously configured integrations and custom stores remain readable; adding a built-in does not duplicate an existing store. Any other tool can be added with a short form, no code: its logs record the folder, it keeps one folder per project, it keeps history inside the project, or its files mention project paths.
 
-Codex titles use its title index, then a bounded first user message, then a short session ID. Child sessions appear under their parent. Home sessions stay global and can be inspected and resumed without a matched project. Antigravity uses `agy` and its last-conversation index; it does not expose full titles or resumability for history-only records. Laci does not edit provider title/model settings.
+Codex titles use its title index, then a bounded first user message, then a short session ID. Claude Code sessions without a title take their first prompt. Subagent logs appear inside their conversation. Home sessions stay global and can be inspected and resumed without a matched project. Antigravity uses `agy` and its last-conversation index; it does not expose full titles or resumability for history-only records. Laci does not edit provider title/model settings.
 
 Claude Code, Codex and Antigravity are built in. Any other tool can be added with its command name in **Add another AI tool**; how it takes a first prompt, continues its last conversation and picks a model is optional. A tool does not need a history store that Laci can read. The same description can be written in `~/.config/laci/config.json`:
 
@@ -140,7 +148,7 @@ Claude Code, Codex and Antigravity are built in. Any other tool can be added wit
 
 Claude Code deletes session logs after a retention period. **Back up logs now** copies agent logs to `~/.local/share/laci/history`; Today then shows when the backup last ran and how many sessions it keeps, with **Open backup folder**. Automatic backup is optional and runs at most once an hour, only when a session changed. Nothing is ever removed from the backup. Sessions a tool has deleted stay listed from the backup, marked "In backup only", and can be restored.
 
-![Agents: each tool with its MCP setup, your own tool beside the built-in ones, and one list of sessions](docs/screenshots/agents.png)
+![Agents: each tool with its MCP setup, and sessions grouped by project with short chats folded away](docs/screenshots/agents.png)
 
 ### New project
 

@@ -1,38 +1,83 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../common";
 import { useApp, readListing, setTheme, rescan } from "../store";
-import { base, cap, todayBadge, tilde, within } from "../helpers";
+import {
+  base,
+  cap,
+  deadlinesOf,
+  plural,
+  risksOf,
+  todayBadge,
+  tilde,
+  within,
+} from "../helpers";
 import type { Listing, View } from "../types";
 export function Sidebar() {
   const s = useApp();
   const snapshot = s.snapshot!;
   const [railOpen, setRailOpen] = useState(false);
+  const [placesOpen, setPlacesOpen] = useState(false);
   const navRef = useRef<HTMLElement>(null);
+  const placesBtn = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
   const hot = todayBadge(snapshot);
-  const nav: [View, string, string, number][] = [
-    ["today", "Today", "inbox", hot],
+  // Same projects todayBadge counts: due today or overdue, or a high risk. One that is both counts once.
+  const due = new Set(
+    deadlinesOf(snapshot)
+      .filter(({ info }) => info.days <= 0)
+      .map(({ n }) => n.id),
+  );
+  const atRisk = risksOf(snapshot).filter(
+    ({ n, issues }) =>
+      !due.has(n.id) && issues.some((i) => i.severity === "high"),
+  ).length;
+  const suggestions = snapshot.proposals.filter((p) => p.action).length;
+  const detached =
+    snapshot.orphans.claude.length + snapshot.orphans.items.length;
+  const nav: [View, string, string, number, string][] = [
+    [
+      "today",
+      "Today",
+      "inbox",
+      hot,
+      `${hot} need${hot === 1 ? "s" : ""} you today: ${plural(due.size, "deadline")} due or overdue, ${plural(atRisk, "other project")} at high risk`,
+    ],
     [
       "tidy",
       "Tidy up",
       "sparkles",
-      snapshot.proposals.filter((p) => p.action).length,
+      suggestions,
+      `${plural(suggestions, "suggestion")} to review`,
     ],
     [
       "agents",
       "Agents",
       "history",
-      snapshot.orphans.claude.length + snapshot.orphans.items.length,
+      detached,
+      `${detached} detached agent ${detached === 1 ? "history" : "histories"}: the project folder is missing or unavailable`,
     ],
-    ["log", "Log", "scroll", 0],
+    ["log", "Log", "scroll", 0, ""],
   ];
   useEffect(() => {
-    if (!railOpen) return;
+    if (!railOpen && !placesOpen) return;
     const away = (event: PointerEvent) => {
-      if (!navRef.current?.contains(event.target as Node)) setRailOpen(false);
+      if (navRef.current?.contains(event.target as Node)) return;
+      setRailOpen(false);
+      setPlacesOpen(false);
     };
     document.addEventListener("pointerdown", away, true);
     return () => document.removeEventListener("pointerdown", away, true);
-  }, [railOpen]);
+  }, [railOpen, placesOpen]);
+  useEffect(() => {
+    if (placesOpen)
+      panel.current
+        ?.querySelector<HTMLElement>('[role="treeitem"][tabindex="0"]')
+        ?.focus();
+  }, [placesOpen]);
+  const closePlaces = () => {
+    setPlacesOpen(false);
+    placesBtn.current?.focus();
+  };
   return (
     <nav
       id="side"
@@ -40,15 +85,24 @@ export function Sidebar() {
       className={`side ${railOpen ? "rail-open" : ""}`}
       aria-label="Sidebar"
       onKeyDown={(event) => {
-        if (event.key !== "Escape" || !railOpen) return;
-        event.preventDefault();
-        setRailOpen(false);
-        navRef.current?.querySelector<HTMLElement>(".sb-rail-toggle")?.focus();
+        if (event.key !== "Escape") return;
+        if (placesOpen) {
+          event.preventDefault();
+          closePlaces();
+        } else if (railOpen) {
+          event.preventDefault();
+          setRailOpen(false);
+          navRef.current
+            ?.querySelector<HTMLElement>(".sb-rail-toggle")
+            ?.focus();
+        }
       }}
       onBlur={(event) => {
         const next = event.relatedTarget as Node | null;
-        if (railOpen && next && !event.currentTarget.contains(next))
+        if (next && !event.currentTarget.contains(next)) {
           setRailOpen(false);
+          setPlacesOpen(false);
+        }
       }}
     >
       <div className="sb-top">
@@ -57,7 +111,10 @@ export function Sidebar() {
           title={railOpen ? "Close sidebar" : "Open sidebar"}
           aria-label={railOpen ? "Close sidebar" : "Open sidebar"}
           aria-expanded={railOpen}
-          onClick={() => setRailOpen(!railOpen)}
+          onClick={() => {
+            setPlacesOpen(false);
+            setRailOpen(!railOpen);
+          }}
         >
           <Icon name="layers" />
         </button>
@@ -96,11 +153,12 @@ export function Sidebar() {
         </button>
       </div>
       <div className="sb-scroll">
-        {nav.map(([view, label, icon, count]) => (
+        {nav.map(([view, label, icon, count, what]) => (
           <button
             className="sb-item"
             key={view}
-            title={label}
+            title={count ? `${label}: ${what}` : label}
+            aria-label={count ? `${label}, ${what}` : undefined}
             aria-current={s.view === view ? "page" : undefined}
             onClick={() => {
               setRailOpen(false);
@@ -110,15 +168,35 @@ export function Sidebar() {
             <Icon name={icon} />
             <span>{label}</span>
             {count ? (
-              <span className={`n ${view === "today" ? "hot" : ""}`}>
+              <span
+                className={`n ${view === "today" ? "hot" : ""}`}
+                title={what}
+              >
                 {count}
               </span>
             ) : null}
           </button>
         ))}
+        <button
+          className="sb-item sb-places"
+          ref={placesBtn}
+          title="Places"
+          aria-label="Places"
+          aria-expanded={placesOpen}
+          aria-controls="places-panel"
+          onClick={() => setPlacesOpen(!placesOpen)}
+        >
+          <Icon name="folder" />
+          <span>Places</span>
+        </button>
         <div className="sb-sec">Places</div>
         <Tree onChoose={() => setRailOpen(false)} />
       </div>
+      {placesOpen ? (
+        <div className="places-panel" id="places-panel" ref={panel}>
+          <Tree onChoose={closePlaces} />
+        </div>
+      ) : null}
       <div className="sb-foot">
         <button
           className="sb-item"

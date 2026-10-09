@@ -175,12 +175,17 @@ struct Cache {
 
 impl Cache {
     fn load(env: &Env) -> Self {
-        let values = files::read_limit(&env.cache_dir.join("v4-agent-facts.json"), 32 * 1024 * 1024)
+        let values = files::read_limit(&env.cache_dir.join("v5-agent-facts.json"), 32 * 1024 * 1024)
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         Self { values, seen: BTreeSet::new() }
     }
     fn facts(&mut self, kind: &str, path: &Path, read: impl FnOnce() -> Value) -> Value {
+        self.grown(kind, path, |_| read())
+    }
+    /// Like `facts`, but a changed file is handed the facts of its last read, so a log that only grew
+    /// can be read from where that read stopped.
+    fn grown(&mut self, kind: &str, path: &Path, read: impl FnOnce(Option<&Value>) -> Value) -> Value {
         let key = format!("{kind}:{}", path.display());
         self.seen.insert(key.clone());
         let meta = fs::metadata(path).ok();
@@ -216,7 +221,7 @@ impl Cache {
         {
             return previous["facts"].clone();
         }
-        let facts = read();
+        let facts = read(self.values.get(&key).map(|previous| &previous["facts"]));
         if self.values.len() >= 20_000 {
             self.values.clear();
         }
@@ -227,7 +232,7 @@ impl Cache {
         self.values.retain(|k, _| self.seen.contains(k));
         if let Ok(text) = serde_json::to_vec(&self.values) {
             let _ = files::private_dir(&env.cache_dir);
-            let _ = files::replace(&env.cache_dir.join("v4-agent-facts.json"), &text);
+            let _ = files::replace(&env.cache_dir.join("v5-agent-facts.json"), &text);
         }
     }
 }
@@ -335,7 +340,8 @@ fn records_from(path: &Path, tail: bool, mut read: impl FnMut(Value)) -> bool {
     });
     complete
 }
-fn concise(text: &str) -> Option<String> {
+/// What the user typed or the agent said, as one line. Tool plumbing and injected context are not text.
+fn spoken(text: &str) -> Option<String> {
     let text = text.trim();
     if text.is_empty()
         || [
@@ -349,127 +355,360 @@ fn concise(text: &str) -> Option<String> {
             "This session is being continued",
             "[Request interrupted",
             "<codex_delegation>",
+            "<user_instructions>",
+            "<task-notification>",
         ]
         .iter()
         .any(|prefix| text.starts_with(prefix))
     {
         return None;
     }
-    Some(text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(120).collect())
+    // Text the user pasted arrives wrapped in a tag; what they wrote is inside it.
+    let text = re_pasted().replace_all(text, " ");
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!text.is_empty()).then_some(text)
+}
+fn re_pasted() -> &'static Regex {
+    static PASTED: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"</?pasted_content[^>]*>").expect("pasted content pattern"));
+    &PASTED
+}
+fn concise(text: &str) -> Option<String> {
+    spoken(text).map(|text| text.chars().take(120).collect())
+}
+fn excerpt(text: String) -> String {
+    let mut out: String = text.chars().take(EXCERPT).collect();
+    if out.len() < text.len() {
+        out.push('…');
+    }
+    out
 }
 fn message_text(content: &Value) -> Option<String> {
     if let Some(text) = content.as_str() {
-        return concise(text);
+        return spoken(text);
     }
     content
         .as_array()?
         .iter()
-        .filter(|v| matches!(v["type"].as_str(), Some("text" | "input_text")))
-        .find_map(|v| v["text"].as_str().and_then(concise))
+        .filter(|v| matches!(v["type"].as_str(), Some("text" | "input_text" | "output_text")))
+        .find_map(|v| v["text"].as_str().and_then(spoken))
 }
+const EXCERPT: usize = 400;
+/// The longest pause between two records that still counts as time spent in a session.
+const ACTIVE_GAP: i64 = 30 * 60;
+/// Files one session changed are remembered up to this many, to count each once.
+const CHANGED_FILES: usize = 400;
+/// One pass reads at most this much; a longer log carries on at the next refresh.
+const PASS_BYTES: u64 = 256 * 1024 * 1024;
+/// Bumped when the facts a pass collects change, so older cached passes are read again from the start.
+const READER: u64 = 3;
+/// The bytes just before where the last pass stopped, to tell a log that only grew from one rewritten.
+fn probe(file: &mut fs::File, offset: u64) -> Option<String> {
+    let start = offset.saturating_sub(256);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::new();
+    (&mut *file).take(offset - start).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 == offset - start).then(|| format!("{:x}", Sha256::digest(&bytes)))
+}
+#[cfg(test)]
 fn session_facts(path: &Path, provider: &str) -> Value {
-    let mut facts = json!({"cwds":{},"lines":0});
-    let mut first_message = None;
-    let mut valid_locations = true;
-    let mut read = |v: Value, head: bool| {
-        let meta = if provider == "codex" {
-            if matches!(v["type"].as_str(), Some("session_meta" | "turn_context")) {
-                Some(&v["payload"])
-            } else if v["type"].is_null() {
-                Some(&v)
+    session_facts_from(path, provider, None)
+}
+/// Reads one session log. When `previous` is the last pass over the same file and the file only grew,
+/// only the new lines are read: an agent that is working costs a few kilobytes per refresh.
+///
+/// Ownership (which folders a log belongs to) is still decided by the head window alone, as before: a
+/// log longer than it is never complete enough to clean up.
+fn session_facts_from(path: &Path, provider: &str, previous: Option<&Value>) -> Value {
+    use std::io::BufRead;
+    use std::os::unix::fs::MetadataExt;
+    let fresh = || json!({"cwds":{},"lines":0,"prompts":0,"filesChanged":0});
+    let Ok(mut file) = fs::File::open(path) else {
+        return json!({"cwds":{},"lines":0,"ownershipComplete":false});
+    };
+    let Ok(before) = file.metadata() else {
+        return json!({"cwds":{},"lines":0,"ownershipComplete":false});
+    };
+    let len = before.len();
+    let resumed = previous.filter(|p| {
+        let read = &p["_read"];
+        read["reader"] == READER
+            && read["inode"] == before.ino()
+            && read["offset"].as_u64().is_some_and(|offset| offset <= len)
+            && read["probe"]
+                .as_str()
+                .is_some_and(|hash| Some(hash.to_owned()) == probe(&mut file, read["offset"].as_u64().unwrap_or(0)))
+    });
+    let mut facts = resumed.cloned().unwrap_or_else(fresh);
+    let mut state = facts["_read"].take();
+    if resumed.is_none() {
+        state = json!({"reader":READER,"offset":0,"headBytes":0,"headRecords":0,"head":true,"parsed":true,"valid":true,"files":[]});
+    }
+    let start = state["offset"].as_u64().unwrap_or(0);
+    let mut changed: BTreeSet<String> =
+        state["files"].as_array().into_iter().flatten().filter_map(|f| f.as_str().map(str::to_owned)).collect();
+    let mut head = state["head"] == true;
+    let mut head_bytes = state["headBytes"].as_u64().unwrap_or(0);
+    let mut head_records = state["headRecords"].as_u64().unwrap_or(0) as usize;
+    let mut parsed = state["parsed"] == true;
+    let mut valid = state["valid"] == true;
+    let mut offset = start;
+    let mut pending = false;
+    if file.seek(SeekFrom::Start(start)).is_ok() {
+        let mut reader = std::io::BufReader::new((&mut file).take(len - start));
+        let mut line = Vec::new();
+        while offset - start < PASS_BYTES {
+            line.clear();
+            match reader.read_until(b'\n', &mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let finished = line.last() == Some(&b'\n');
+            let value = serde_json::from_slice::<Value>(&line).ok().filter(Value::is_object);
+            // A half-written last line is read again once its writer finishes it.
+            if !finished && value.is_none() {
+                pending = true;
+                break;
+            }
+            let size = line.len() as u64;
+            offset += size;
+            let in_head = head && head_bytes + size <= METADATA_BYTES && head_records < METADATA_RECORDS;
+            if in_head {
+                head_bytes += size;
+                head_records += 1;
             } else {
-                None
+                head = false;
             }
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            let Some(v) = value else {
+                parsed = false;
+                continue;
+            };
+            read_record(&v, provider, in_head, &mut facts, &mut valid, &mut changed);
+        }
+        if offset < len && !pending {
+            // The pass stopped at its size limit; the rest is read at the next refresh.
+            pending = true;
+        }
+    }
+    // A log that shrank or was replaced while it was read proves nothing; read it again next time.
+    let replaced = fs::metadata(path).map_or(true, |after| after.ino() != before.ino() || after.len() < offset);
+    facts["filesChanged"] = json!(changed.len());
+    if facts["title"].is_null()
+        && let Some(prompt) = facts["firstPrompt"].as_str()
+    {
+        facts["title"] = json!(prompt.chars().take(120).collect::<String>().trim_end_matches('…'));
+        facts["titleSource"] = json!("first-message");
+    }
+    facts["ownershipComplete"] = json!(head && parsed && valid && !pending && !replaced);
+    if !replaced {
+        facts["_read"] = json!({"reader":READER,"inode":before.ino(),"offset":offset,"probe":probe(&mut file, offset),"headBytes":head_bytes,"headRecords":head_records,"head":head,"parsed":parsed,"valid":valid,"files":changed.into_iter().take(CHANGED_FILES).collect::<Vec<_>>()});
+    }
+    facts
+}
+/// One record of a Claude Code or Codex log: where it ran, what it is called, and what happened in it.
+fn read_record(
+    v: &Value,
+    provider: &str,
+    head: bool,
+    facts: &mut Value,
+    valid: &mut bool,
+    changed: &mut BTreeSet<String>,
+) {
+    if let Some(at) = v["timestamp"].as_str().filter(|at| !at.is_empty()) {
+        if facts["startedAt"].is_null() {
+            facts["startedAt"] = json!(at);
+        }
+        // Time spent in it: gaps of more than half an hour are time away, not work.
+        let parse = |at: &str| chrono::DateTime::parse_from_rfc3339(at).ok();
+        if let (Some(before), Some(now)) = (facts["endedAt"].as_str().and_then(parse), parse(at)) {
+            let gap = (now - before).num_seconds();
+            if (0..=ACTIVE_GAP).contains(&gap) {
+                facts["activeSeconds"] = json!(facts["activeSeconds"].as_i64().unwrap_or(0) + gap);
+            }
+        }
+        facts["endedAt"] = json!(at);
+    }
+    let meta = if provider == "codex" {
+        if matches!(v["type"].as_str(), Some("session_meta" | "turn_context")) {
+            Some(&v["payload"])
+        } else if v["type"].is_null() {
+            Some(v)
         } else {
-            Some(&v)
-        };
-        if let Some(meta) = meta {
-            if let Some(cwd) = meta["cwd"].as_str().filter(|s| Path::new(s).is_absolute()) {
-                let cwd = paths::normalize(Path::new(cwd)).to_string_lossy().into_owned();
-                // Session and turn metadata are authoritative; tool arguments are never searched.
-                facts["cwd"] = json!(cwd);
-                if head {
-                    let n = facts["cwds"][&cwd].as_u64().unwrap_or(0) + 1;
-                    facts["cwds"][&cwd] = json!(n);
-                    facts["lines"] = json!(facts["lines"].as_u64().unwrap_or(0) + 1);
-                }
-            } else if !meta["cwd"].is_null() {
-                valid_locations = false;
+            None
+        }
+    } else {
+        Some(v)
+    };
+    if let Some(meta) = meta {
+        if let Some(cwd) = meta["cwd"].as_str().filter(|s| Path::new(s).is_absolute()) {
+            let cwd = paths::normalize(Path::new(cwd)).to_string_lossy().into_owned();
+            // Session and turn metadata are authoritative; tool arguments are never searched.
+            facts["cwd"] = json!(cwd);
+            if head {
+                let n = facts["cwds"][&cwd].as_u64().unwrap_or(0) + 1;
+                facts["cwds"][&cwd] = json!(n);
+                facts["lines"] = json!(facts["lines"].as_u64().unwrap_or(0) + 1);
             }
-            if provider == "codex" && v["type"] == "session_meta" {
-                if let Some(id) = meta["id"].as_str().filter(|id| !id.is_empty()) {
-                    if facts["sessionId"].is_null() {
-                        facts["sessionId"] = json!(id);
-                    } else if facts["sessionId"] != id {
-                        valid_locations = false;
-                    }
+        } else if !meta["cwd"].is_null() {
+            *valid = false;
+        }
+        if provider == "codex" && v["type"] == "session_meta" {
+            if let Some(id) = meta["id"].as_str().filter(|id| !id.is_empty()) {
+                if facts["sessionId"].is_null() {
+                    facts["sessionId"] = json!(id);
+                } else if facts["sessionId"] != id {
+                    *valid = false;
                 }
-                if let Some(source) = meta["source"].as_str().filter(|source| !source.is_empty()) {
-                    facts["sourceKind"] = json!(source);
-                } else if meta["source"]["subagent"].is_object() {
-                    facts["sourceKind"] = json!("subagent");
+            }
+            if let Some(source) = meta["source"].as_str().filter(|source| !source.is_empty()) {
+                facts["sourceKind"] = json!(source);
+            } else if meta["source"]["subagent"].is_object() {
+                facts["sourceKind"] = json!("subagent");
+            }
+            if let Some(parent) = meta["parent_thread_id"]
+                .as_str()
+                .filter(|id| !id.is_empty())
+                .or_else(|| meta["source"]["subagent"]["thread_spawn"]["parent_thread_id"].as_str())
+                .or_else(|| meta["source"]["subagent"]["parent_thread_id"].as_str())
+                .filter(|id| !id.is_empty())
+            {
+                facts["parentId"] = json!(parent);
+            }
+        } else if provider == "codex" && v["type"] == "turn_context" {
+            if let Some(model) = meta["model"].as_str().filter(|m| !m.is_empty()) {
+                facts["model"] = json!(model);
+            }
+        } else if provider == "claude" {
+            if let Some(id) = v["sessionId"].as_str().filter(|id| !id.is_empty()) {
+                if facts["sessionId"].is_null() {
+                    facts["sessionId"] = json!(id);
+                } else if facts["sessionId"] != id {
+                    *valid = false;
                 }
-                if let Some(parent) = meta["parent_thread_id"]
-                    .as_str()
-                    .filter(|id| !id.is_empty())
-                    .or_else(|| meta["source"]["subagent"]["thread_spawn"]["parent_thread_id"].as_str())
-                    .or_else(|| meta["source"]["subagent"]["parent_thread_id"].as_str())
-                    .filter(|id| !id.is_empty())
-                {
-                    facts["parentId"] = json!(parent);
-                }
-            } else if provider == "claude" {
-                if let Some(id) = v["sessionId"].as_str().filter(|id| !id.is_empty()) {
-                    if facts["sessionId"].is_null() {
-                        facts["sessionId"] = json!(id);
-                    } else if facts["sessionId"] != id {
-                        valid_locations = false;
-                    }
-                }
-                if let Some(branch) = v["gitBranch"].as_str() {
-                    facts["branch"] = json!(branch);
-                }
-                for key in ["aiTitle", "customTitle"] {
-                    if let Some(title) = v[key].as_str().and_then(concise) {
-                        facts["title"] = json!(title);
-                        facts["titleSource"] = json!("provider");
-                    }
-                }
-                if v["type"] == "summary"
-                    && let Some(title) = v["summary"].as_str().and_then(concise)
-                {
+            }
+            if let Some(branch) = v["gitBranch"].as_str() {
+                facts["branch"] = json!(branch);
+            }
+            for key in ["aiTitle", "agentName", "customTitle"] {
+                if let Some(title) = v[key].as_str().and_then(concise) {
                     facts["title"] = json!(title);
                     facts["titleSource"] = json!("provider");
                 }
             }
-        }
-        if head && first_message.is_none() {
-            if provider == "codex" {
-                if v["type"] == "event_msg" && v["payload"]["type"] == "user_message" {
-                    first_message = v["payload"]["message"].as_str().and_then(concise);
-                } else if v["type"] == "response_item"
-                    && v["payload"]["type"] == "message"
-                    && v["payload"]["role"] == "user"
-                {
-                    first_message = message_text(&v["payload"]["content"]);
-                }
-            } else if v["type"] == "user" && v["isMeta"] != true && v["message"]["role"] == "user" {
-                first_message = message_text(&v["message"]["content"]);
+            if v["type"] == "summary"
+                && let Some(title) = v["summary"].as_str().and_then(concise)
+            {
+                facts["title"] = json!(title);
+                facts["titleSource"] = json!("provider");
             }
         }
+    }
+    let prompt = |facts: &mut Value, text: String| {
+        if facts["firstPrompt"].is_null() {
+            facts["firstPrompt"] = json!(excerpt(text.clone()));
+        }
+        facts["lastPrompt"] = json!(excerpt(text));
+        facts["prompts"] = json!(facts["prompts"].as_u64().unwrap_or(0) + 1);
     };
-    let complete = records(path, |v| read(v, true));
-    if !complete {
-        records_from(path, true, |v| read(v, false));
+    let mut touched = |path: &str| {
+        if changed.len() < CHANGED_FILES && !path.is_empty() {
+            changed.insert(path.to_owned());
+        }
+    };
+    if provider == "codex" {
+        let p = &v["payload"];
+        match (v["type"].as_str(), p["type"].as_str()) {
+            (Some("event_msg"), Some("user_message")) => {
+                if let Some(text) = p["message"].as_str().and_then(spoken) {
+                    prompt(facts, text);
+                }
+            }
+            (Some("event_msg"), Some("agent_message")) => {
+                if let Some(text) = p["message"].as_str().and_then(spoken) {
+                    facts["lastReply"] = json!(excerpt(text));
+                }
+            }
+            (Some("response_item"), Some("custom_tool_call" | "function_call")) if p["name"] == "apply_patch" => {
+                let input = p["input"].as_str().map(str::to_owned).unwrap_or_else(|| {
+                    p["arguments"]
+                        .as_str()
+                        .and_then(|a| serde_json::from_str::<Value>(a).ok())
+                        .and_then(|a| a["input"].as_str().map(str::to_owned))
+                        .unwrap_or_default()
+                });
+                for line in input.lines() {
+                    if let Some(path) = ["*** Update File: ", "*** Add File: ", "*** Delete File: "]
+                        .iter()
+                        .find_map(|prefix| line.strip_prefix(prefix))
+                    {
+                        touched(path.trim());
+                    }
+                }
+            }
+            _ => {}
+        }
+        return;
     }
-    facts["ownershipComplete"] = json!(complete && valid_locations);
-    if facts["title"].is_null()
-        && let Some(title) = first_message
-    {
-        facts["title"] = json!(title);
-        facts["titleSource"] = json!("first-message");
+    match v["type"].as_str() {
+        Some("user")
+            if v["isMeta"] != true
+                && v["isSidechain"] != true
+                && v["isCompactSummary"] != true
+                && v["message"]["role"] == "user" =>
+        {
+            if let Some(text) = message_text(&v["message"]["content"]) {
+                prompt(facts, text);
+            }
+        }
+        Some("assistant") if v["isSidechain"] != true => {
+            let message = &v["message"];
+            if let Some(model) = message["model"].as_str().filter(|m| !m.is_empty() && !m.starts_with('<')) {
+                facts["model"] = json!(model);
+            }
+            for block in message["content"].as_array().into_iter().flatten() {
+                match block["type"].as_str() {
+                    Some("text") => {
+                        if let Some(text) = block["text"].as_str().and_then(spoken) {
+                            facts["lastReply"] = json!(excerpt(text));
+                        }
+                    }
+                    Some("tool_use")
+                        if matches!(block["name"].as_str(), Some("Edit" | "Write" | "MultiEdit" | "NotebookEdit")) =>
+                    {
+                        let input = &block["input"];
+                        touched(input["file_path"].as_str().or(input["notebook_path"].as_str()).unwrap_or(""));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Some("pr-link") => {
+            if let Some(url) = v["prUrl"].as_str().filter(|u| u.starts_with("https://")) {
+                let prs = facts["prs"].as_array().cloned().unwrap_or_default();
+                if prs.len() < 10 && !prs.iter().any(|pr| pr["url"] == url) {
+                    let mut prs = prs;
+                    prs.push(json!({"number":v["prNumber"],"url":url}));
+                    facts["prs"] = json!(prs);
+                }
+            }
+        }
+        Some("continued-in") => {
+            if let Some(id) = v["continuedInSessionId"].as_str().filter(|id| crate::launch::session_id_valid(id)) {
+                facts["continuedIn"] = json!(id);
+            }
+        }
+        Some("cost-state") => {
+            for (from, to) in [("totalLinesAdded", "linesAdded"), ("totalLinesRemoved", "linesRemoved")] {
+                if let Some(n) = v[from].as_u64() {
+                    facts[to] = json!(n);
+                }
+            }
+        }
+        _ => {}
     }
-    facts
 }
 fn normalized_session(provider: &str, file: &Path, facts: &Value, fallback_id: Option<&str>) -> Value {
     let id = facts["sessionId"].as_str().or(fallback_id).unwrap_or("");
@@ -481,8 +720,30 @@ fn normalized_session(provider: &str, file: &Path, facts: &Value, fallback_id: O
         }
     });
     let resumable = crate::launch::session_id_valid(id);
-    json!({"provider":provider,"sessionId":id,"title":title,"titleSource":facts["titleSource"].as_str().unwrap_or("fallback"),"cwd":facts["cwd"],"parentId":facts["parentId"],"sourceKind":facts["sourceKind"].as_str().unwrap_or("cli"),"updatedAt":files::modified(file),"resumeCapability":if resumable {"supported"}else{"history-only"},"file":file})
+    let mut session = json!({"provider":provider,"sessionId":id,"title":title,"titleSource":facts["titleSource"].as_str().unwrap_or("fallback"),"cwd":facts["cwd"],"parentId":facts["parentId"],"sourceKind":facts["sourceKind"].as_str().unwrap_or("cli"),"updatedAt":files::modified(file),"resumeCapability":if resumable {"supported"}else{"history-only"},"file":file});
+    for key in SUMMARY {
+        if !facts[key].is_null() {
+            session[key] = facts[key].clone();
+        }
+    }
+    session
 }
+/// What a session was about, as far as its log tells.
+const SUMMARY: [&str; 13] = [
+    "prompts",
+    "activeSeconds",
+    "filesChanged",
+    "firstPrompt",
+    "lastPrompt",
+    "lastReply",
+    "startedAt",
+    "endedAt",
+    "model",
+    "prs",
+    "continuedIn",
+    "linesAdded",
+    "linesRemoved",
+];
 fn title_index(path: &Path) -> Value {
     let mut titles = json!({});
     records_from(path, true, |v| {
@@ -556,7 +817,7 @@ fn claude_dirs(env: &Env, cache: &mut Cache) -> BTreeMap<String, Value> {
                 continue;
             }
 
-            let facts = cache.facts("claude", f.path(), || session_facts(f.path(), "claude"));
+            let facts = cache.grown("claude", f.path(), |previous| session_facts_from(f.path(), "claude", previous));
             complete &=
                 facts["ownershipComplete"] == true && facts["cwds"].as_object().is_some_and(|cwds| !cwds.is_empty());
             for (cwd, n) in facts["cwds"].as_object().into_iter().flatten() {
@@ -672,7 +933,8 @@ fn read_backup(env: &Env, on: &[Value], cache: &mut Cache, out: &mut AgentData) 
             if fs::symlink_metadata(&original).is_ok() {
                 continue;
             }
-            let facts = cache.facts(&format!("backup:{provider}"), &file, || session_facts(&file, provider));
+            let facts = cache
+                .grown(&format!("backup:{provider}"), &file, |previous| session_facts_from(&file, provider, previous));
             let stem = file.file_stem().unwrap_or_default().to_string_lossy();
             let mut session = normalized_session(provider, &file, &facts, (provider == "claude").then_some(&*stem));
             session["id"] = json!(format!("backup:{id}:{}", relative.display()));
@@ -685,6 +947,39 @@ fn read_backup(env: &Env, on: &[Value], cache: &mut Cache, out: &mut AgentData) 
             out.sessions.push(session);
         }
     }
+}
+
+/// The sessions the user keeps: cleanup never offers or deletes them. Keyed by agent and session id, so
+/// the mark survives a project move.
+pub fn kept(env: &Env) -> BTreeSet<String> {
+    files::read_limit(&env.data_dir.join(KEPT), 4 * 1024 * 1024)
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|v| v["kept"].as_array().cloned())
+        .into_iter()
+        .flatten()
+        .filter_map(|k| k.as_str().map(str::to_owned))
+        .collect()
+}
+const KEPT: &str = "sessions.json";
+pub fn kept_key(session: &Value) -> String {
+    format!("{}:{}", session["provider"].as_str().unwrap_or(""), session["sessionId"].as_str().unwrap_or(""))
+}
+pub fn keep(env: &Env, sessions: &[Value], on: bool) -> crate::Result<usize> {
+    let mut all = kept(env);
+    let mut changed = 0;
+    for session in sessions {
+        let key = kept_key(session);
+        if key.ends_with(':') || key.starts_with(':') {
+            return Err("Unknown session".into());
+        }
+        changed += usize::from(if on { all.insert(key) } else { all.remove(&key) });
+    }
+    if changed > 0 {
+        files::private_dir(&env.data_dir)?;
+        let text = serde_json::to_vec_pretty(&json!({"kept":all})).map_err(|e| e.to_string())?;
+        files::replace(&env.data_dir.join(KEPT), &text)?;
+    }
+    Ok(changed)
 }
 
 pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
@@ -716,8 +1011,12 @@ pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
                     json!({})
                 };
                 for file in regular_files(env, &dir, link["ext"].as_str().unwrap_or(".jsonl")) {
-                    let facts = cache.facts(&format!("cwd:{id}:{field}"), &file, || {
-                        if provider == "codex" { session_facts(&file, "codex") } else { log_facts(&file, field, false) }
+                    let facts = cache.grown(&format!("cwd:{id}:{field}"), &file, |previous| {
+                        if provider == "codex" {
+                            session_facts_from(&file, "codex", previous)
+                        } else {
+                            log_facts(&file, field, false)
+                        }
                     });
                     let key = format!("{id}:{}", file.strip_prefix(&dir).unwrap_or(&file).display());
                     let mut item = json!({"id":key,"connector":id,"file":file,"at":files::modified(&file),"bytes":fs::metadata(&file).map_or(0,|m|m.len()),"lines":facts["lines"],"cwds":facts["cwds"],"ownershipComplete":facts["ownershipComplete"]});
@@ -814,6 +1113,12 @@ pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
         }
     }
     read_backup(env, on, &mut cache, &mut out);
+    let kept = kept(env);
+    for session in &mut out.sessions {
+        if kept.contains(&kept_key(session)) {
+            session["kept"] = json!(true);
+        }
+    }
     out.sessions.sort_by(|a, b| b["updatedAt"].as_str().cmp(&a["updatedAt"].as_str()));
     cache.save(env);
     out
@@ -930,6 +1235,114 @@ mod tests {
         }
     }
     #[test]
+    fn a_session_says_what_it_was_about() {
+        let temp = tempfile::tempdir().unwrap();
+        let log = temp.path().join("claude.jsonl");
+        put(
+            &log,
+            &[
+                json!({"type":"user","isMeta":true,"sessionId":ID,"cwd":"/p","message":{"role":"user","content":"<local-command-caveat>x"}}),
+                json!({"type":"user","sessionId":ID,"cwd":"/p","timestamp":"2026-10-09T01:00:00Z","message":{"role":"user","content":"<pasted_content id=\"4a3b\">\nFix the login page\n</pasted_content>"}}),
+                json!({"type":"assistant","sessionId":ID,"cwd":"/p","timestamp":"2026-10-09T01:00:05Z","message":{"model":"claude-opus-5-5","content":[{"type":"text","text":"Looking at it."},{"type":"tool_use","name":"Edit","input":{"file_path":"/p/login.tsx"}},{"type":"tool_use","name":"Edit","input":{"file_path":"/p/login.tsx"}},{"type":"tool_use","name":"Write","input":{"file_path":"/p/test.ts"}}]}}),
+                json!({"type":"user","sessionId":ID,"cwd":"/p","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}),
+                json!({"type":"assistant","sessionId":ID,"cwd":"/p","message":{"model":"<synthetic>","content":[{"type":"text","text":"Done: the form submits again."}]}}),
+                json!({"type":"user","sessionId":ID,"cwd":"/p","timestamp":"2026-10-09T02:30:00Z","message":{"role":"user","content":"Thanks, ship it"}}),
+                json!({"type":"pr-link","prNumber":4,"prUrl":"https://github.com/a/b/pull/4"}),
+                json!({"type":"pr-link","prNumber":4,"prUrl":"https://github.com/a/b/pull/4"}),
+            ],
+        );
+        let facts = session_facts(&log, "claude");
+        assert_eq!(facts["title"], "Fix the login page");
+        assert_eq!(facts["titleSource"], "first-message");
+        assert_eq!(facts["prompts"], 2);
+        assert_eq!(facts["filesChanged"], 2);
+        assert_eq!(facts["firstPrompt"], "Fix the login page");
+        assert_eq!(facts["lastPrompt"], "Thanks, ship it");
+        assert_eq!(facts["lastReply"], "Done: the form submits again.");
+        assert_eq!(facts["model"], "claude-opus-5-5");
+        assert_eq!(facts["startedAt"], "2026-10-09T01:00:00Z");
+        assert_eq!(facts["endedAt"], "2026-10-09T02:30:00Z");
+        assert_eq!(facts["activeSeconds"], 5, "the 90 minutes away do not count");
+        assert_eq!(facts["prs"], json!([{"number":4,"url":"https://github.com/a/b/pull/4"}]));
+        let session = normalized_session("claude", &log, &facts, None);
+        assert_eq!(session["prompts"], 2);
+        assert!(session.get("_read").is_none());
+
+        let codex = temp.path().join("codex.jsonl");
+        put(
+            &codex,
+            &[
+                json!({"type":"session_meta","payload":{"id":ID,"cwd":"/p","source":"cli"}}),
+                json!({"type":"turn_context","payload":{"cwd":"/p","model":"gpt-6"}}),
+                json!({"type":"event_msg","payload":{"type":"user_message","message":"<environment_context>x"}}),
+                json!({"type":"event_msg","payload":{"type":"user_message","message":"Add a README"}}),
+                json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** Add File: README.md\n+hi\n*** Update File: src/a.rs\n*** End Patch"}}),
+                json!({"type":"event_msg","payload":{"type":"agent_message","message":"Added it."}}),
+            ],
+        );
+        let facts = session_facts(&codex, "codex");
+        assert_eq!((facts["prompts"].clone(), facts["filesChanged"].clone()), (json!(1), json!(2)));
+        assert_eq!(facts["lastReply"], "Added it.");
+        assert_eq!(facts["model"], "gpt-6");
+    }
+    #[test]
+    fn a_log_that_only_grew_is_read_from_where_the_last_read_stopped() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let log = env.home.join("session.jsonl");
+        let line = |text: &str| {
+            format!("{}\n", json!({"type":"user","sessionId":ID,"cwd":"/p","message":{"role":"user","content":text}}))
+        };
+        fs::write(&log, line("First")).unwrap();
+        let mut cache = Cache::load(&env);
+        let first = cache.grown("claude", &log, |previous| session_facts_from(&log, "claude", previous));
+        assert_eq!((first["prompts"].clone(), first["ownershipComplete"].clone()), (json!(1), json!(true)));
+        let stopped = first["_read"]["offset"].as_u64().unwrap();
+        // Appended, and half of the next line still being written.
+        let mut text = fs::read_to_string(&log).unwrap();
+        text.push_str(&line("Second"));
+        text.push_str(r#"{"type":"user","sess"#);
+        fs::write(&log, &text).unwrap();
+        let mut reads = vec![];
+        let grown = cache.grown("claude", &log, |previous| {
+            reads.push(previous.and_then(|p| p["_read"]["offset"].as_u64()));
+            session_facts_from(&log, "claude", previous)
+        });
+        assert_eq!(reads, [Some(stopped)]);
+        assert_eq!(grown["prompts"], 2);
+        assert_eq!(grown["lastPrompt"], "Second");
+        assert_eq!(grown["cwds"], json!({"/p":2}));
+        assert_eq!(grown["ownershipComplete"], false, "an unfinished line is not proof yet");
+        // The writer finishes the line: only that line is read, and ownership is complete again.
+        let finished = format!("{}{}\n", text.trim_end_matches(r#"{"type":"user","sess"#), line("Third").trim_end());
+        fs::write(&log, &finished).unwrap();
+        let done = cache.grown("claude", &log, |previous| session_facts_from(&log, "claude", previous));
+        assert_eq!((done["prompts"].clone(), done["ownershipComplete"].clone()), (json!(3), json!(true)));
+        // A rewritten log is read again from the start, not stitched onto the old read.
+        fs::write(&log, line("Only")).unwrap();
+        let rewritten = cache.grown("claude", &log, |previous| session_facts_from(&log, "claude", previous));
+        assert_eq!(rewritten["prompts"], 1);
+        assert_eq!(rewritten["firstPrompt"], "Only");
+    }
+    #[test]
+    fn a_stub_left_by_resume_points_to_where_the_conversation_went() {
+        let temp = tempfile::tempdir().unwrap();
+        let log = temp.path().join("stub.jsonl");
+        put(
+            &log,
+            &[
+                json!({"type":"system","subtype":"local_command","sessionId":ID,"cwd":"/p","content":"<command-name>/resume</command-name>"}),
+                json!({"type":"continued-in","sessionId":ID,"continuedInSessionId":CHILD}),
+                json!({"type":"cost-state","sessionId":ID,"totalLinesAdded":12,"totalLinesRemoved":3}),
+            ],
+        );
+        let facts = session_facts(&log, "claude");
+        assert_eq!(facts["continuedIn"], CHILD);
+        assert_eq!(facts["prompts"], 0);
+        assert!(facts["title"].is_null());
+        assert_eq!((facts["linesAdded"].clone(), facts["linesRemoved"].clone()), (json!(12), json!(3)));
+    }
+    #[test]
     fn previous_cache_schema_cannot_hide_shared_ownership() {
         let home = tempfile::tempdir().unwrap();
         let env = Env::for_home(home.path().to_owned());
@@ -948,7 +1361,7 @@ mod tests {
             || json!({"cwd":"/projects/gone","cwds":{"/projects/gone":1},"ownershipComplete":true}),
         );
         old.save(&env);
-        fs::rename(env.cache_dir.join("v4-agent-facts.json"), env.cache_dir.join("v3-agent-facts.json")).unwrap();
+        fs::rename(env.cache_dir.join("v5-agent-facts.json"), env.cache_dir.join("v4-agent-facts.json")).unwrap();
         let history = read_all(&env, &connectors(&env, &json!({"presets":["codex"]})));
         let item = history.items.values().next().unwrap();
         assert_eq!(item["cwds"], json!({"/projects/live":1,"/projects/gone":1}));

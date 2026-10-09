@@ -5,6 +5,8 @@ export interface Issue {
   severity: Severity;
   title: string;
   detail?: string;
+  /** The user muted this check for the project (`quiet` in its .laci.md). Listed, never counted. */
+  muted?: boolean;
 }
 
 /** A to-do found in a file. `check` = `- [ ]` checkbox, `list` = item under a TODO/Next heading. */
@@ -31,6 +33,8 @@ export interface Meta {
   deadline?: string;
   client?: string;
   tags?: string[];
+  /** Muted check codes, comma separated. */
+  quiet?: string;
 }
 
 export interface Remote {
@@ -125,6 +129,44 @@ export interface Session {
   backup?: boolean;
   /** Where a restore puts the copy back. */
   restoreTo?: string;
+  /** Log size in bytes. */
+  bytes?: number;
+  /** "unsupported" for entries that share one file with others and can't be removed alone. */
+  cleanupCapability?: string;
+  /** The user keeps it: cleanup never offers or deletes it. */
+  kept?: boolean;
+  // What the log tells about the conversation (Claude Code and Codex).
+  /** Messages the user typed. */
+  prompts?: number;
+  filesChanged?: number;
+  firstPrompt?: string;
+  lastPrompt?: string;
+  lastReply?: string;
+  startedAt?: string;
+  endedAt?: string;
+  /** Time between its records, leaving out pauses of more than half an hour. */
+  activeSeconds?: number;
+  model?: string;
+  prs?: { number: number | string; url: string }[];
+  /** Claude Code left this stub when the conversation was resumed under this other session id. */
+  continuedIn?: string;
+  linesAdded?: number;
+  linesRemoved?: number;
+}
+
+/** One part of what Laci keeps on disk itself (`storage`). */
+export interface StoragePart {
+  id: "removed" | "undo" | "history" | "legacy" | "journal" | "cache";
+  label: string;
+  about: string;
+  bytes: number;
+  /** How much `storage/free` would free now; 0 when this part is not freed from Laci. */
+  free: number;
+}
+export interface Storage {
+  parts: StoragePart[];
+  total: number;
+  dir: string;
 }
 
 /** How a connector finds the project a piece of agent history belongs to. */
@@ -412,6 +454,8 @@ export interface Snapshot {
   /** Folders in a hashed store that match no folder laci knows. They may still exist elsewhere. */
   unmatched: string[];
   proposals: Proposal[];
+  /** Suggestions the user dismissed; Tidy up can offer them again. */
+  dismissed?: { id: string; title: string; at: string }[];
   warnings: Issue[];
   /** Present while the Claude Code connector is on. */
   backup?: Backup;

@@ -18,7 +18,7 @@ export type SortKey = "name" | "last" | "size" | "ai" | "priority" | "deadline";
 export type Modal =
   | { kind: "shortcuts" | "connector" }
   | { kind: "new"; job?: CreationJob }
-  | { kind: "archive" | "delete" | "orphan"; id: string }
+  | { kind: "archive" | "delete" | "orphan" | "clean"; id: string }
   | { kind: "terminal-close"; id: string }
   | { kind: "mcp"; provider: string }
   | {
@@ -35,6 +35,8 @@ export type Modal =
       file: string;
       projectPath?: string;
     }
+  /** Delete the conversations whose newest session is one of `files`. */
+  | { kind: "session-delete"; files: string[] }
   | null;
 interface Toast {
   title: string;

@@ -29,8 +29,13 @@ struct AppState {
     creations: creation::Creations,
     watches: Option<Watches>,
     listings: Mutex<BTreeSet<PathBuf>>,
+    /// When agent history was last read because a log changed, and whether a later read is already due.
+    agents_read: Mutex<(Option<Instant>, bool)>,
 }
 type Shared = Arc<AppState>;
+/// While an agent works its log changes every second. Its history is read again at most this often, so a
+/// long session does not keep Laci busy; a new session or a removed one is still read at once.
+const AGENT_SETTLE: Duration = Duration::from_secs(15);
 impl AppState {
     fn notice(&self, v: Value) {
         let _ = self.handle.emit("laci", v);
@@ -249,7 +254,32 @@ impl AppState {
         }
         Ok(outcome.value)
     }
-    fn changed(&self, changed: Changes) {
+    fn read_agents_soon(self: &Arc<Self>) {
+        let mut read = self.agents_read.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        match read.0 {
+            Some(at) if now < at + AGENT_SETTLE => {
+                if !read.1 {
+                    read.1 = true;
+                    let wait = at + AGENT_SETTLE - now;
+                    let weak = Arc::downgrade(self);
+                    thread::spawn(move || {
+                        thread::sleep(wait);
+                        if let Some(state) = weak.upgrade() {
+                            *state.agents_read.lock().unwrap_or_else(|e| e.into_inner()) =
+                                (Some(Instant::now()), false);
+                            state.queue.request(Refresh::agents());
+                        }
+                    });
+                }
+            }
+            _ => {
+                *read = (Some(now), false);
+                self.queue.request(Refresh::agents());
+            }
+        }
+    }
+    fn changed(self: &Arc<Self>, changed: Changes) {
         let (env, snapshot) = {
             let engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
             (engine.service.env.clone(), engine.service.current.clone())
@@ -259,7 +289,11 @@ impl AppState {
             return;
         };
         let refresh = watch::refresh_for(&env, &snapshot, &changed);
-        self.queue.request(refresh);
+        if refresh == Refresh::agents() {
+            self.read_agents_soon();
+        } else {
+            self.queue.request(refresh);
+        }
         if changed.paths.contains(&env.data_dir.join("activity.jsonl")) {
             self.notice(json!({"type":"log"}));
         }
@@ -343,6 +377,7 @@ pub fn run(env: Env) -> Result<()> {
                 terminals: Terminals::default(), watches,
                 creations: creation::Creations::default(),
                 listings: Mutex::new(BTreeSet::new()),
+                agents_read: Mutex::new((None, false)),
             });
             app.manage(Arc::clone(&state));
             let script = if ["light", "dark"].contains(&theme.as_str()) {

@@ -1001,3 +1001,131 @@ fn sessions_only_the_backup_holds_are_listed_and_can_be_put_back() {
     assert!(service.request("backup/restore", &json!({"id":lost["id"]})).is_err(), "it is no longer missing");
     assert!(service.request("backup/restore", &json!({"id":"backup:claude:../../x.jsonl"})).is_err());
 }
+
+/// A Claude Code session in `project`, last written an hour ago, with a folder of subagent logs.
+fn old_session(env: &Env, project: &Path, id: &str, prompt: &str) -> PathBuf {
+    let store = env.home.join(".claude/projects").join(laci_core::paths::enc(&project.to_string_lossy()));
+    let session = store.join(format!("{id}.jsonl"));
+    write(
+        &session,
+        &format!(
+            "{}\n",
+            json!({"type":"user","cwd":project,"sessionId":id,"message":{"role":"user","content":prompt}})
+        ),
+    );
+    write(
+        &store.join(format!("{id}/subagents/agent-a.jsonl")),
+        &format!("{}\n", json!({"type":"user","cwd":project,"sessionId":id})),
+    );
+    let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    fs::File::options().write(true).open(&session).unwrap().set_modified(hour_ago).unwrap();
+    session
+}
+
+#[test]
+fn deleted_sessions_go_to_the_quarantine_with_their_backup_copy_and_undo_brings_them_back() {
+    const ID: &str = "11111111-2222-3333-4444-555555555555";
+    const OTHER: &str = "22222222-2222-3333-4444-555555555555";
+    let (_temp, env, project) = fixture();
+    config::save(&env, &json!({"roots":["~/project"],"presets":["claude"],"custom":[]})).unwrap();
+    let session = old_session(&env, &project, ID, "Fix the login page");
+    let other = old_session(&env, &project, OTHER, "Write the docs");
+    let mut service = loaded(&env, &project);
+    service.request("backup", &json!({})).unwrap();
+    let copy =
+        env.data_dir.join("history/claude").join(session.strip_prefix(env.home.join(".claude/projects")).unwrap());
+    assert!(copy.is_file());
+
+    // Kept sessions, sessions still being written and unknown files are refused, and nothing moves.
+    service
+        .request("session/keep", &json!({"sessions":[{"provider":"claude","sessionId":OTHER}],"keep":true}))
+        .unwrap();
+    let snap = service.snapshot().unwrap();
+    let kept = snap["sessions"].as_array().unwrap().iter().find(|s| s["sessionId"] == OTHER).unwrap();
+    assert_eq!(kept["kept"], true);
+    let refused = service.request("session/delete", &json!({"files":[other]})).unwrap_err();
+    assert!(refused.contains("is kept"), "{refused}");
+    let typed = fs::read_to_string(&other).unwrap();
+    fs::write(&other, &typed).unwrap();
+    service.rescan().unwrap();
+    service
+        .request("session/keep", &json!({"sessions":[{"provider":"claude","sessionId":OTHER}],"keep":false}))
+        .unwrap();
+    assert!(service.request("session/delete", &json!({"files":[other]})).unwrap_err().contains("still being written"));
+    assert!(service.request("session/delete", &json!({"files":[env.home.join("x.jsonl")]})).is_err());
+    assert!(other.exists());
+
+    let done = service.request("session/delete", &json!({"files":[session]})).unwrap();
+    assert_eq!(done["journal"]["title"], "Deleted the session “Fix the login page”");
+    assert!(!session.exists() && !session.with_extension("").exists() && !copy.exists());
+    let snap = service.rescan().unwrap();
+    assert!(
+        !snap["sessions"].as_array().unwrap().iter().any(|s| s["sessionId"] == ID),
+        "neither the session nor its backup copy is listed any more"
+    );
+    let entry = activity::read_log(&env, 20).into_iter().find(|e| e["journal"] == done["journal"]["id"]).unwrap();
+    assert_eq!(entry["canUndo"], true);
+    service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
+    assert!(session.exists() && session.with_extension("").join("subagents/agent-a.jsonl").exists() && copy.exists());
+
+    // Emptying the quarantine makes a deletion final: the Log stops offering its Undo.
+    let done = service.request("session/delete", &json!({"files":[session]})).unwrap();
+    let storage = service.request("storage", &json!({})).unwrap();
+    let removed = storage["parts"].as_array().unwrap().iter().find(|p| p["id"] == "removed").unwrap();
+    assert!(removed["bytes"].as_u64().unwrap() > 0);
+    service.request("storage/free", &json!({"part":"removed"})).unwrap();
+    assert!(fs::read_dir(env.data_dir.join("orphans")).unwrap().next().is_none());
+    let entry = activity::read_log(&env, 20).into_iter().find(|e| e["journal"] == done["journal"]["id"]).unwrap();
+    assert_eq!(entry["canUndo"], false);
+    assert!(service.request("undo", &json!({"id":done["journal"]["id"]})).unwrap_err().contains("free space"));
+}
+
+#[test]
+fn only_files_left_by_laci_1_are_freed_from_its_config_folder() {
+    let (_temp, env, project) = fixture();
+    write(&env.config_dir.join("Cache/data_0"), "x".repeat(4096).as_str());
+    write(&env.config_dir.join("Local State"), "{}");
+    write(&env.config_dir.join("mine.txt"), "keep me");
+    let mut service = loaded(&env, &project);
+    let storage = service.request("storage", &json!({})).unwrap();
+    let legacy = storage["parts"].as_array().unwrap().iter().find(|p| p["id"] == "legacy").unwrap();
+    assert_eq!(legacy["free"], 4098);
+    service.request("storage/free", &json!({"part":"legacy"})).unwrap();
+    assert!(!env.config_dir.join("Cache").exists() && !env.config_dir.join("Local State").exists());
+    assert!(env.config_dir.join("config.json").exists() && env.config_dir.join("mine.txt").exists());
+    assert!(service.request("storage/free", &json!({"part":"history"})).is_err());
+    assert_eq!(activity::read_log(&env, 5)[0]["title"], "Removed files left by Laci 1");
+}
+
+#[test]
+fn a_dismissed_suggestion_stays_away_until_it_is_asked_back() {
+    let (_temp, env, project) = fixture();
+    let history =
+        env.home.join(".claude/projects").join(laci_core::paths::enc(&env.home.join("project/gone").to_string_lossy()));
+    write(&history.join("session.jsonl"), &format!("{}\n", json!({"cwd":env.home.join("project/gone")})));
+    config::save(&env, &json!({"roots":["~/project"],"presets":["claude"],"custom":[],"apps":{}})).unwrap();
+    let mut service = loaded(&env, &project);
+    let snap = service.snapshot().unwrap();
+    let id = snap["proposals"][0]["id"].clone();
+    assert!(id.is_string());
+    let after = service.request("proposal/dismiss", &json!({"id":id})).unwrap();
+    let snap = &after["snapshot"];
+    assert!(!snap["proposals"].as_array().unwrap().iter().any(|p| p["id"] == id));
+    assert_eq!(snap["dismissed"][0]["id"], id);
+    assert!(activity::read_log(&env, 5)[0]["title"].as_str().unwrap().starts_with("Dismissed: "));
+    let back = service.request("proposal/dismiss", &json!({"id":id,"undo":true})).unwrap();
+    assert!(back["snapshot"]["proposals"].as_array().unwrap().iter().any(|p| p["id"] == id));
+}
+
+#[test]
+fn a_muted_check_is_marked_and_named_in_the_log() {
+    let (_temp, env, project) = fixture();
+    let mut service = loaded(&env, &project);
+    let id = project.to_str().unwrap();
+    service.request("meta", &json!({"id":id,"key":"quiet","value":"no-git"})).unwrap();
+    let snap = service.snapshot().unwrap();
+    let issue = snap["nodes"][id]["issues"].as_array().unwrap().iter().find(|i| i["code"] == "no-git").unwrap().clone();
+    assert_eq!(issue["muted"], true);
+    assert_eq!(activity::read_log(&env, 5)[0]["title"], "Muted “Not under version control” on demo");
+    assert!(service.request("meta", &json!({"id":id,"key":"quiet","value":"No Git!"})).is_err());
+}

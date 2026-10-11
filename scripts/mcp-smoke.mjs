@@ -22,6 +22,11 @@ const ghost = path.join(home, 'project', 'ghost');
 const orphanDir = path.join(logStore, encode(ghost));
 const originalClaude = `${JSON.stringify({ type: 'user', cwd: project, gitBranch: 'main' })}\n`;
 const originalCodex = `${JSON.stringify({ type: 'session_meta', payload: { cwd: project } })}\n`;
+const toolNames = [
+  'add_next_step', 'apply_suggestion', 'archive_project', 'complete_task', 'create_project', 'delete_project', 'list_projects',
+  'move_project', 'needs_attention', 'project_details', 'recent_changes', 'set_project_fields', 'tidy_suggestions',
+  'undo_change', 'write_notes',
+];
 let child;
 let stderr = '';
 let checks = 0;
@@ -76,16 +81,7 @@ class Client {
   close() { this.lines.close(); this.fail(new Error('Client closed')); }
 }
 
-try {
-  assert.ok(await exists(binary), `Build the native binary first: ${binary}`);
-  await write(path.join(project, 'package.json'), '{"name":"alpha","scripts":{"test":"node --test"},"dependencies":{"react":"latest"}}\n');
-  await write(path.join(project, 'README.md'), '# Alpha\n\nTokenizer prototype for migration checks.\n');
-  await write(path.join(project, 'TODO.md'), '## Next\n\n- [ ] Ship tokenizer parser\n- [ ] Ship tokenizer docs\n');
-  await write(claudeFile, originalClaude);
-  await write(codexFile, originalCodex);
-  await write(path.join(orphanDir, 'gone.jsonl'), `${JSON.stringify({ cwd: ghost })}\n`);
-  await write(path.join(home, '.config', 'laci', 'config.json'), JSON.stringify({ roots: ['~/project'], presets: ['claude', 'codex'], custom: [], apps: {} }));
-
+function start() {
   child = spawn(binary, ['mcp'], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
@@ -99,18 +95,37 @@ try {
   });
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-16_000); });
-  const client = new Client(child);
+  return new Client(child);
+}
+
+async function stop(client) {
+  client.close();
+  client.process.stdin.end();
+  const exit = once(client.process, 'exit');
+  const timer = setTimeout(() => client.process.kill('SIGTERM'), 3000);
+  const [code, signal] = await exit;
+  clearTimeout(timer);
+  assert.equal(code, 0, `MCP must exit cleanly after stdin closes (${signal || code}): ${stderr}`);
+}
+
+try {
+  assert.ok(await exists(binary), `Build the native binary first: ${binary}`);
+  await write(path.join(project, 'package.json'), '{"name":"alpha","scripts":{"test":"node --test"},"dependencies":{"react":"latest"}}\n');
+  await write(path.join(project, 'README.md'), '# Alpha\n\nTokenizer prototype for migration checks.\n');
+  await write(path.join(project, 'TODO.md'), '## Next\n\n- [ ] Ship tokenizer parser\n- [ ] Ship tokenizer docs\n');
+  await write(claudeFile, originalClaude);
+  await write(codexFile, originalCodex);
+  await write(path.join(orphanDir, 'gone.jsonl'), `${JSON.stringify({ cwd: ghost })}\n`);
+  await write(path.join(home, '.config', 'laci', 'config.json'), JSON.stringify({ roots: ['~/project'], presets: ['claude', 'codex'], custom: [], apps: {} }));
+
+  const client = start();
   const initialized = await client.request('initialize', {
     protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'laci-migration-smoke', version: '1.0.0' },
   });
   assert.equal(initialized.serverInfo.name, 'laci');
   client.notify('notifications/initialized');
   const catalog = await client.request('tools/list');
-  assert.deepEqual(catalog.tools.map(tool => tool.name).sort(), [
-    'add_next_step', 'apply_suggestion', 'archive_project', 'complete_task', 'create_project', 'delete_project', 'list_projects',
-    'move_project', 'needs_attention', 'project_details', 'recent_changes', 'set_project_fields', 'tidy_suggestions',
-    'undo_change', 'write_notes',
-  ]);
+  assert.deepEqual(catalog.tools.map(tool => tool.name).sort(), toolNames);
   checks++;
 
   const listed = await client.call('list_projects', { query: 'alpha react', filter: 'all' });
@@ -270,14 +285,26 @@ try {
   assert.ok(changes.entries.some(entry => entry.by === 'agent'));
   assert.ok(changes.entries.some(entry => entry.undoes));
 
-  client.close();
-  child.stdin.end();
-  const exit = once(child, 'exit');
-  const timer = setTimeout(() => child.kill('SIGTERM'), 3000);
-  const [code, signal] = await exit;
-  clearTimeout(timer);
-  assert.equal(code, 0, `MCP must exit cleanly after stdin closes (${signal || code}): ${stderr}`);
-  console.log(`MCP smoke passed: 15 tools, ${checks} checks, isolated plan/confirm, history move/undo, and validation.`);
+  await stop(client);
+
+  // Protocol 2026-07-28 has no initialize: each request carries its version and client context in _meta,
+  // and a list result must say how long and for whom it may be cached (Claude Code 2.1.296 rejects it otherwise).
+  const client2026 = start();
+  const _meta = {
+    'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+    'io.modelcontextprotocol/clientInfo': { name: 'laci-migration-smoke', version: '1.0.0' },
+    'io.modelcontextprotocol/clientCapabilities': {},
+  };
+  const discovered = await client2026.request('server/discover', { _meta });
+  assert.ok(discovered.supportedVersions.includes('2026-07-28'), `supportedVersions: ${discovered.supportedVersions}`);
+  checks++;
+  const catalog2026 = await client2026.request('tools/list', { _meta });
+  assert.deepEqual(catalog2026.tools.map(tool => tool.name).sort(), toolNames);
+  assert.equal(typeof catalog2026.ttlMs, 'number', 'tools/list must carry ttlMs for 2026-07-28 clients');
+  assert.ok(['public', 'private'].includes(catalog2026.cacheScope), `cacheScope must be public or private, got ${catalog2026.cacheScope}`);
+  checks++;
+  await stop(client2026);
+  console.log(`MCP smoke passed: 15 tools, ${checks} checks, isolated plan/confirm, history move/undo, validation, and the 2026-07-28 handshake.`);
 } finally {
   if (child && child.exitCode === null && child.signalCode === null) {
     child.kill('SIGTERM');

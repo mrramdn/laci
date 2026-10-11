@@ -4,6 +4,12 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-10-11
+
+### Fixed
+
+- **The MCP server works with Claude Code 2.1.296.** Laci offered MCP protocol 2026-07-28, but its tool list lacked the caching hints that version requires (`ttlMs` and `cacheScope`), so Claude Code 2.1.296 and other clients on that version rejected Laci's tools and `claude mcp get` showed "tools fetch failed". rmcp 3.5.1, the MCP library Laci is built on, now fills them in.
+
 ## [2.3.1] - 2026-10-09
 
 ### Fixed

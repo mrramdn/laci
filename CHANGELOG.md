@@ -4,6 +4,13 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-10-14
+
+### Fixed
+
+- **Shortened paths in reports.** A report header that names `~/project/personal/{raster, ledger}` links to both projects. It used to link to neither.
+- **Code blocks inside code blocks.** A fenced block ends only at a fence of the same character and at least its length, as in Markdown. Headings, to-dos and checkboxes shown inside a longer fence are no longer taken for real ones, and a line with backticks at both ends no longer opens a fence. README sections also skip `~~~` fences now.
+
 ## [2.4.0] - 2026-10-14
 
 Reports your agents write, next to their sessions and projects.

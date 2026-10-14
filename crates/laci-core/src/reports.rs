@@ -28,6 +28,9 @@ static UUID: LazyLock<Regex> = LazyLock::new(|| {
 static DATE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\d{4}-\d{2}-\d{2}\b").expect("date pattern"));
 static NAME_DATE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d{4}-\d{2}-\d{2})").expect("name date pattern"));
 static TICKS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`\n]+)`").expect("code span pattern"));
+static BRACES: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"((?:~|/)[^\s{}`,;()\[\]<>"]*)\{([^{}\n]*)\}([^\s{}`,;()\[\]<>"]*)"#).expect("brace pattern")
+});
 static BULLET: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$").expect("bullet pattern"));
 static CHECKBOX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\[[ xX]\]\s*").expect("checkbox pattern"));
@@ -120,6 +123,21 @@ fn clip(text: &str, max: usize) -> String {
     out
 }
 
+/// `~/project/{api, web}/src` names `~/project/api/src` and `~/project/web/src`.
+fn expand_braces(text: &str, separator: &str) -> String {
+    BRACES
+        .replace_all(text, |c: &regex::Captures| {
+            c[2].split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .take(64)
+                .map(|item| format!("{}{item}{}", &c[1], &c[3]))
+                .collect::<Vec<_>>()
+                .join(separator)
+        })
+        .into_owned()
+}
+
 /// Paths named in a header field. A path in backticks may hold spaces; elsewhere words and punctuation
 /// separate them, and a web address or a branch name is never a path.
 fn path_tokens(text: &str) -> Vec<String> {
@@ -132,7 +150,7 @@ fn path_tokens(text: &str) -> Vec<String> {
         rest.push(' ');
         let inner = c[1].trim();
         if inner.starts_with('/') || inner.starts_with("~/") {
-            tokens.push(inner.to_owned());
+            tokens.extend(expand_braces(inner, "\n").split('\n').map(|t| t.trim().to_owned()));
         } else {
             rest.push_str(inner);
             rest.push(' ');
@@ -140,6 +158,7 @@ fn path_tokens(text: &str) -> Vec<String> {
         last = whole.end();
     }
     rest.push_str(&text[last..]);
+    let rest = expand_braces(&rest, " ");
     tokens.extend(
         rest.split(|c: char| c.is_whitespace() || ",;()[]<>\"`".contains(c))
             .filter(|t| (t.starts_with('/') && !t.starts_with("//")) || t.starts_with("~/"))
@@ -168,17 +187,13 @@ pub fn parse(name: &str, text: &str, modified: &str) -> Value {
     let mut title = None;
     let mut fields: Vec<(String, String)> = Vec::new();
     let mut in_header = true;
-    let mut fence = false;
+    let mut fence = readers::Fence::default();
     let mut section = String::new();
     let mut summary: Vec<&str> = Vec::new();
     let mut summary_seen = false;
     let mut open: Option<Vec<&str>> = None;
     for line in lines {
-        if line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~") {
-            fence = !fence;
-            continue;
-        }
-        if fence {
+        if fence.skip(line) {
             continue;
         }
         if let Some(h) = line.strip_prefix("## ") {
@@ -728,6 +743,32 @@ mod tests {
             ["~/with space/x", "/a/b", "/c/d", "~/e", "/f", "/g"]
         );
         assert!(path_tokens("feat/x https://a.b/c ~ / github.com/a").is_empty());
+    }
+
+    #[test]
+    fn shorthand_paths_name_every_project_in_the_braces() {
+        assert_eq!(
+            path_tokens("/home/u/personal/{raster, ledger} and `~/p/{api,web}/src`, {not, a, path}"),
+            ["~/p/api/src", "~/p/web/src", "/home/u/personal/raster", "/home/u/personal/ledger"]
+        );
+        let header = "# Catalog\n\n- **Projects:** /home/u/project/portfolio (PR #16), /home/u/project/personal/{raster, ledger,\n  verso} (each a repo), Figma \"{Name} Design System\"\n";
+        assert_eq!(
+            parse("x.md", header, MODIFIED)["projectPaths"],
+            json!([
+                "/home/u/project/portfolio",
+                "/home/u/project/personal/raster",
+                "/home/u/project/personal/ledger",
+                "/home/u/project/personal/verso"
+            ])
+        );
+    }
+
+    #[test]
+    fn a_longer_fence_can_show_a_shorter_one() {
+        let text = "# Notes on reports\n\n## Summary\nHow a report looks.\n\n````markdown\n## Summary\nNot this one.\n```\n## Open\n- Not an item\n```\n````\n\n## Open\n- The real item\n~~~\n- Inside a tilde fence\n~~~\n";
+        let facts = parse("x.md", text, MODIFIED);
+        assert_eq!(facts["summary"], "How a report looks.");
+        assert_eq!(facts["open"], json!(["The real item"]));
     }
 
     #[test]

@@ -186,16 +186,13 @@ fn checkboxes(file: &Path, text: &str) -> Result<Vec<Checkbox>> {
     plain_path(file)?;
     let source = fs::read_to_string(file).map_err(|e| e.to_string())?;
     let re = Regex::new(r"^(\s*[-*+]\s+\[)([ xX])(\]\s+)(.+)$").unwrap();
-    let mut code = false;
+    // The same fences as the to-do reader, so a checkbox is found on the line it was listed from.
+    let mut fence = readers::Fence::default();
     let mut matches = source
         .lines()
         .enumerate()
         .filter_map(|(at, line)| {
-            if line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~") {
-                code = !code;
-                return None;
-            }
-            if code {
+            if fence.skip(line) {
                 return None;
             }
             let captures = re.captures(line)?;

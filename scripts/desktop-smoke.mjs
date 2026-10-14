@@ -797,16 +797,20 @@ async function reportRegressions() {
           textContains(".insp .sec-t", "Reports"),
         );
         await nav("Agents", "Agents");
-        const row = await wait("session row with a report", () =>
-          execute(
-            (title) =>
-              [...document.querySelectorAll(".sess")]
-                .find((row) => row.textContent.includes(title))
-                ?.querySelector(".sess-rep") ?? null,
-            sessionTitle,
-          ),
+        const icon = await wait("session row with a report", () =>
+          execute((title) => {
+            const button = [...document.querySelectorAll(".main .sess")]
+              .find((row) => row.textContent.includes(title))
+              ?.querySelector(".sess-rep");
+            if (!button) return null;
+            // Rows far down the list are drawn only once they come near the screen.
+            button.scrollIntoView({ block: "center" });
+            const box = button.getBoundingClientRect();
+            return box.width && box.height ? button : null;
+          }, sessionTitle),
         );
-        await command("POST", `/element/${row[elementKey]}/click`, {});
+        await sleep(200);
+        await command("POST", `/element/${icon[elementKey]}/click`, {});
         await wait("report opened from its session", () =>
           textContains("#report-title", titleA),
         );

@@ -11,7 +11,7 @@ laci shows every folder like a file manager, and for each project it adds its gi
   <img alt="The Today view: work that could be lost, projects to pick up again, and open to-dos" src="docs/screenshots/today-light.png">
 </picture>
 
-> Status: 2.4.0, Linux x86-64. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
+> Status: 2.4.1, Linux x86-64. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
 
 ## Contents
 
@@ -353,7 +353,7 @@ Safari showed a total one rupiah off. Fixed and deployed to staging.
 
 - **Date** dates the report. Without it, laci uses the date the file name starts with, then the file's time.
 - **Session** names the folder the agent started in and its session id. The id links the report to that session in Claude Code, Codex or Antigravity; the folder links it to the project it is in.
-- **Projects** names the projects worked in, by path. Anything that isn't a path, like the Figma file above, is shown as written.
+- **Projects** names the projects worked in, by path; `~/project/{api, web}` names both. Anything that isn't a path, like the Figma file above, is shown as written.
 - The first paragraph of **Summary** shows in the list, and the items under the last **Open** heading on Today.
 
 The folder's `README.md` and files whose names start with a dot are not reports. Reports are read as UTF-8 text, up to 2 MB each.

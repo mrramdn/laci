@@ -50,6 +50,31 @@ pub fn section(text: &str, name: &str) -> Option<String> {
     let body = lines.join("\n").trim().to_owned();
     if body.is_empty() { None } else { Some(body) }
 }
+/// Fenced code blocks as Markdown has them: a fence of three or more backticks or tildes ends only at a line of the
+/// same character, at least as long, with nothing after it. So a longer fence can show a shorter one, and a line
+/// with backticks at both ends is inline code, not a fence.
+#[derive(Default)]
+pub(crate) struct Fence(Option<(u8, usize)>);
+impl Fence {
+    /// Whether `line` belongs to a fenced block: it opens or closes one, or lies inside one.
+    pub(crate) fn skip(&mut self, line: &str) -> bool {
+        let text = line.trim_start();
+        let marker = text.bytes().next().filter(|b| matches!(b, b'`' | b'~'));
+        let run = marker.map_or(0, |m| text.bytes().take_while(|b| *b == m).count());
+        match (self.0, marker) {
+            (Some((open, length)), Some(m)) if m == open && run >= length && text[run..].trim().is_empty() => {
+                self.0 = None;
+                true
+            }
+            (Some(_), _) => true,
+            (None, Some(m)) if run >= 3 && !(m == b'`' && text[run..].contains('`')) => {
+                self.0 = Some((m, run));
+                true
+            }
+            (None, _) => false,
+        }
+    }
+}
 pub fn parse_meta(text: &str) -> Value {
     let mut meta = json!({});
     let normalized = text.replace("\r\n", "\n");
@@ -109,14 +134,10 @@ pub fn tasks(dir: &Path) -> Value {
         }
         let mut headings: Vec<(usize, String)> = Vec::new();
         let mut todo = 0;
-        let mut code = false;
+        let mut fence = Fence::default();
         let mut found = Vec::new();
         for (index, line) in text.lines().enumerate() {
-            if line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~") {
-                code = !code;
-                continue;
-            }
-            if code {
+            if fence.skip(line) {
                 continue;
             }
             if let Some(h) = re!(r"^(#{1,6})\s+(.+)").captures(line) {
@@ -361,17 +382,13 @@ fn readme(dir: &Path) -> Option<Value> {
     let mut title = String::new();
     let mut tagline = String::new();
     let mut sections = Vec::new();
-    let mut code = false;
+    let mut fence = Fence::default();
     let mut started = false;
     for line in raw.lines() {
+        if fence.skip(line) {
+            continue;
+        }
         let s = line.trim();
-        if s.starts_with("```") {
-            code = !code;
-            continue;
-        }
-        if code {
-            continue;
-        }
         if let Some(t) = s.strip_prefix("# ") {
             if title.is_empty() {
                 title = strip_md(t);
@@ -798,6 +815,22 @@ mod tests {
         assert_eq!(items.len(), 1, "{items:?}");
         assert_eq!(items[0]["text"], "Ship the release");
         assert_eq!(items[0]["done"], false);
+    }
+
+    #[test]
+    fn headings_and_checkboxes_inside_a_longer_fence_are_not_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let readme = "# Tool\n\nWhat it does.\n\n## Real\n\n````markdown\n## Fake\n```markdown\n## Also fake\n```\n## Still fake\n````\n\n## After\n\n~~~\n## Tilde fake\n~~~\n\n```js inline``` is not a fence\n\n## Last\n";
+        std::fs::write(dir.path().join("README.md"), readme).unwrap();
+        assert_eq!(super::readme(dir.path()).unwrap()["sections"], serde_json::json!(["Real", "After", "Last"]));
+        let todo = "````\n- [ ] Ship\n```\n- [ ] Ship\n```\n````\n- [ ] Ship\n";
+        std::fs::write(dir.path().join("TODO.md"), todo).unwrap();
+        let items = tasks(dir.path())["tasks"].as_array().unwrap().clone();
+        assert_eq!(items.len(), 1, "{items:?}");
+        assert_eq!(items[0]["line"], 7);
+        // Editing a checkbox finds it under the same rules, on the line it was listed from.
+        let found = crate::sidecar::checkbox_occurrence(&dir.path().join("TODO.md"), "Ship", 0, 1).unwrap();
+        assert_eq!(found.line, 7);
     }
 
     #[test]

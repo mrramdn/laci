@@ -772,7 +772,9 @@ async function reportRegressions() {
             titleB,
           ),
         );
-        await type('[aria-label="Search reports"]', "");
+        // WebDriver's clear empties the field without telling React; Escape is what a person presses.
+        await key("\uE00C");
+        await element(".rp-row", titleA);
       },
     );
     await check(

@@ -428,6 +428,46 @@ export interface Health {
     since?: number;
   };
 }
+/** A Markdown report an agent wrote about one session, in the folder chosen in Settings. */
+export interface Report {
+  /** Its file name in the folder. */
+  id: string;
+  file: string;
+  title: string;
+  /** "YYYY-MM-DD": from its header, else its name, else its file time. */
+  date: string;
+  /** File time, ISO. */
+  modified: string;
+  bytes: number;
+  /** Session ids its header names, lower case. */
+  sessions: string[];
+  /** Paths of the projects it names, through paths or its sessions. */
+  projects: string[];
+  /** Its Projects line as written, as plain text. */
+  scope?: string;
+  /** The first paragraph of its Summary. */
+  summary?: string;
+  /** The first entries under its last Open heading. */
+  open: string[];
+  /** All entries under that heading. */
+  openCount: number;
+}
+export interface ReportsDir {
+  path: string;
+  /** Report files found; the snapshot carries the newest. */
+  total?: number;
+  /** Why the folder can't be read now. */
+  error?: string;
+}
+export interface ReportHit {
+  id: string;
+  snippet: string;
+}
+export interface ReportText {
+  id: string;
+  file: string;
+  raw: string;
+}
 export interface Snapshot {
   revision?: number;
   historyPending?: boolean;
@@ -459,6 +499,10 @@ export interface Snapshot {
   warnings: Issue[];
   /** Present while the Claude Code connector is on. */
   backup?: Backup;
+  /** Present when a reports folder is set in Settings. */
+  reportsDir?: ReportsDir;
+  /** Newest first; empty while the folder can't be read. */
+  reports?: Report[];
   tookMs: number;
 }
 
@@ -479,6 +523,7 @@ export interface SetupInfo {
   rootStatus?: RootStatus[];
   terminalTarget?: TerminalTarget;
   archiveDir?: string;
+  reportsDir?: string;
   candidates: { path: string; repos: number }[];
   presets: string[];
   custom: number;
@@ -552,5 +597,12 @@ export interface TerminalInfo {
   title: string;
   exited?: number | boolean;
 }
-export type View = "today" | "folder" | "tidy" | "agents" | "log" | "settings";
+export type View =
+  | "today"
+  | "folder"
+  | "tidy"
+  | "agents"
+  | "reports"
+  | "log"
+  | "settings";
 export type Tab = "health" | "todo" | "agents" | "readme";

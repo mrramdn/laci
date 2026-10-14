@@ -18,7 +18,7 @@ impl ServerHandler for Mcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("laci",env!("CARGO_PKG_VERSION")))
-            .with_instructions("Use laci for moving projects so their agent history travels with them. Destructive tools return a plan first; show it to the user before calling with confirm: true.")
+            .with_instructions("Use laci for moving projects so their agent history travels with them. Destructive tools return a plan first; show it to the user before calling with confirm: true. Reports from earlier sessions are in list_reports and project_details; read a report's file for its full text.")
     }
     async fn list_tools(
         &self,
@@ -47,7 +47,12 @@ impl ServerHandler for Mcp {
             let result = call(service, &name, &args);
             if !matches!(
                 name.as_str(),
-                "list_projects" | "project_details" | "needs_attention" | "tidy_suggestions" | "recent_changes"
+                "list_projects"
+                    | "list_reports"
+                    | "project_details"
+                    | "needs_attention"
+                    | "tidy_suggestions"
+                    | "recent_changes"
             ) {
                 *scanned = Instant::now();
             }
@@ -156,7 +161,19 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                     .map(|id| s["items"][id].clone())
                     .collect::<Vec<_>>()
             );
+            if s["reportsDir"].is_object() {
+                let under = Path::new(string(&n, "path")).to_owned();
+                n["reports"] = laci_core::reports::list(&service.env, &s, Some(&under), None, 3)?["reports"].clone();
+            }
             Ok(n)
+        }
+        "list_reports" => {
+            let under = match args["project"].as_str() {
+                Some(raw) => Some(std::path::PathBuf::from(string(&project(service, raw)?, "path"))),
+                None => None,
+            };
+            let s = service.snapshot()?;
+            laci_core::reports::list(&service.env, &s, under.as_deref(), args["query"].as_str(), 20)
         }
         "needs_attention" => {
             let s = service.snapshot()?;
@@ -369,8 +386,14 @@ fn tools() -> Vec<Tool> {
             vec![],
         ),
         (
+            "list_reports",
+            "Reports agents wrote after earlier sessions, newest first: summary, open items and the file to read",
+            json!({"project":project,"query":{"type":"string","minLength":1,"maxLength":200,"description":"Words that must all appear in the report"}}),
+            vec![],
+        ),
+        (
             "project_details",
-            "Git, stack, README, to-dos, agent history and archive plan",
+            "Git, stack, README, to-dos, agent history, session reports and archive plan",
             json!({"project":project}),
             vec!["project"],
         ),
@@ -443,9 +466,15 @@ fn tools() -> Vec<Tool> {
         .map(|(name, description, properties, required)| {
             let schema =
                 json!({"type":"object","properties":properties,"required":required,"additionalProperties":false});
-            let readonly =
-                ["list_projects", "project_details", "needs_attention", "tidy_suggestions", "recent_changes"]
-                    .contains(&name);
+            let readonly = [
+                "list_projects",
+                "list_reports",
+                "project_details",
+                "needs_attention",
+                "tidy_suggestions",
+                "recent_changes",
+            ]
+            .contains(&name);
             Tool::new_with_raw(name, Some(description.into()), schema.as_object().cloned().unwrap_or_default())
                 .with_annotations(
                     ToolAnnotations::new()

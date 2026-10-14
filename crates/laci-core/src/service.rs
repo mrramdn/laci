@@ -54,6 +54,15 @@ fn settings_detail(env: &Env, before: &Value, after: &Value) -> String {
     if archive(before) != archive(after) {
         parts.push(format!("Archive folder: {}", archive(after).unwrap_or_else(|| "none".into())));
     }
+    let reports = |c: &Value| {
+        c["reportsDir"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(|s| paths::tilde(&paths::expand(s, &env.home), &env.home))
+    };
+    if reports(before) != reports(after) {
+        parts.push(format!("Reports folder: {}", reports(after).unwrap_or_else(|| "none".into())));
+    }
     let catalog = agents::catalog(env);
     let (old, new) = (array(&before["presets"]), array(&after["presets"]));
     let tools: Vec<_> = new
@@ -82,6 +91,8 @@ pub struct Refresh {
     pub agents: bool,
     pub projects: BTreeSet<String>,
     pub watches: bool,
+    /// Only the reports folder changed. Agent passes and full scans read it as well.
+    pub reports: bool,
 }
 impl Refresh {
     pub fn full() -> Self {
@@ -90,17 +101,24 @@ impl Refresh {
     pub fn agents() -> Self {
         Self { agents: true, ..Self::default() }
     }
+    pub fn reports() -> Self {
+        Self { reports: true, ..Self::default() }
+    }
     pub fn needed(&self) -> bool {
-        self.full || self.agents || !self.projects.is_empty() || self.watches
+        self.full || self.agents || self.reports || !self.projects.is_empty() || self.watches
     }
     pub fn merge(&mut self, other: Self) {
         self.full |= other.full;
         self.agents |= other.agents;
+        self.reports |= other.reports;
         self.watches |= other.watches;
         self.projects.extend(other.projects);
         if self.full {
             self.agents = false;
             self.projects.clear();
+        }
+        if self.full || self.agents {
+            self.reports = false;
         }
     }
     /// Returns the refreshed snapshot and whether discovery changed its project graph.
@@ -111,6 +129,8 @@ impl Refresh {
         let mut topology = false;
         if self.agents {
             topology = scan::refresh_agents(env, &mut snapshot)?;
+        } else if self.reports {
+            crate::reports::attach(env, &mut snapshot);
         }
         if !topology {
             for id in &self.projects {
@@ -755,6 +775,8 @@ impl Service {
                 let apps = config::validate_apps(&b["apps"])?;
                 let archive_dir =
                     b.get("archiveDir").map(|v| config::validate_archive_dir(&self.env, v)).transpose()?;
+                let reports_dir =
+                    b.get("reportsDir").map(|v| config::validate_reports_dir(&self.env, v)).transpose()?;
                 let presets = array(&b["presets"]);
                 let catalog = agents::catalog(&self.env);
                 let existing = config::load(&self.env);
@@ -766,7 +788,7 @@ impl Service {
                 }
                 ops::with_lock(&self.env, || {
                     let mut c = config::load(&self.env);
-                    let before = json!({"type":"config","roots":c["roots"],"presets":c["presets"],"apps":c["apps"],"archiveDir":c["archiveDir"],"rootIdentities":c["rootIdentities"],"terminalTarget":c["terminalTarget"]});
+                    let before = json!({"type":"config","roots":c["roots"],"presets":c["presets"],"apps":c["apps"],"archiveDir":c["archiveDir"],"reportsDir":c["reportsDir"],"rootIdentities":c["rootIdentities"],"terminalTarget":c["terminalTarget"]});
                     c["roots"] = roots;
                     if let Some(target) = b.get("terminalTarget") {
                         c["terminalTarget"] = target.clone();
@@ -784,6 +806,10 @@ impl Service {
                     c["apps"] = apps;
                     if let Some(archive_dir) = archive_dir {
                         c["archiveDir"] = archive_dir;
+                    }
+                    // The reports folder is only read: it is not a scan root and grants no project actions.
+                    if let Some(reports_dir) = reports_dir {
+                        c["reportsDir"] = reports_dir;
                     }
                     let mut locations = array(&c["roots"]);
                     if let Some(dir) = c["archiveDir"].as_str().filter(|dir| !dir.is_empty()) {
@@ -944,6 +970,10 @@ impl Service {
                 Ok(json!({"ok":true}))
             }
             "open" => self.open(b),
+            "reports/read" | "reports/search" | "reports/open" => {
+                let snapshot = self.snapshot()?;
+                crate::reports::request(&self.env, &snapshot, &self.apps(), name, b)
+            }
             _ => Err(format!("Unknown action: {name}")),
         }
     }
@@ -955,7 +985,7 @@ impl Service {
             .map(|s| json!(paths::expand(s, &self.env.home)))
             .collect();
         Ok(
-            json!({"configured":c["roots"].is_array(),"roots":roots,"rootStatus":scan::root_status(&self.env,&c),"archiveDir":c["archiveDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"candidates":[],"presets":array(&c["presets"]),"custom":array(&c["custom"]).len(),"apps":self.apps(),"terminalTarget":c["terminalTarget"].as_str().unwrap_or("internal"),"installed":installed_apps()}),
+            json!({"configured":c["roots"].is_array(),"roots":roots,"rootStatus":scan::root_status(&self.env,&c),"archiveDir":c["archiveDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"reportsDir":c["reportsDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"candidates":[],"presets":array(&c["presets"]),"custom":array(&c["custom"]).len(),"apps":self.apps(),"terminalTarget":c["terminalTarget"].as_str().unwrap_or("internal"),"installed":installed_apps()}),
         )
     }
     /// Optional shallow discovery. Opening Settings never walks Home or selects suggestions.

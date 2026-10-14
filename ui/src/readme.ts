@@ -1,6 +1,8 @@
+import type { MouseEvent } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import { toast, urlOpen } from "./store";
 
 // A README comes with the project, so it is not trusted. Only text structure gets through: no styles, classes,
 // ids, forms or media, so it cannot restyle or cover Laci's own interface.
@@ -80,11 +82,17 @@ export function renderReadme(
     }
   }
   const taken = new Map<string, number>();
+  const headings: { id: string; text: string; level: number }[] = [];
   for (const heading of doc.querySelectorAll("h1,h2,h3,h4,h5,h6")) {
     const id = anchorId(heading.textContent ?? "");
     const seen = taken.get(id) ?? 0;
     taken.set(id, seen + 1);
     heading.id = seen ? `${id}-${seen}` : id;
+    headings.push({
+      id: heading.id,
+      text: heading.textContent?.trim() ?? "",
+      level: Number(heading.tagName.slice(1)),
+    });
   }
   // The text of a link can promise one place and lead to another.
   for (const link of doc.querySelectorAll("a[href]"))
@@ -94,5 +102,32 @@ export function renderReadme(
       input.setAttribute("disabled", "");
     else input.remove();
   }
-  return { html: doc.body.innerHTML, remote };
+  return { html: doc.body.innerHTML, remote, headings };
+}
+
+/** Clicks in rendered Markdown: web and mail links open outside, `#` links scroll, `relative` takes the
+ * rest. A clicked placeholder for a web image calls `remote`. */
+export function proseClick(
+  event: MouseEvent<HTMLElement>,
+  how: { remote: () => void; relative: (href: string) => void; blocked: string },
+) {
+  const target = event.target as HTMLElement;
+  const link = target.closest("a");
+  if (target.closest("[data-remote]")) {
+    event.preventDefault();
+    how.remote();
+  } else if (link) {
+    event.preventDefault();
+    const href = (link.getAttribute("href") ?? "").trim();
+    if (/^(https?:\/\/|mailto:)/i.test(href)) urlOpen(href);
+    else if (href.startsWith("//")) urlOpen(`https:${href}`);
+    else if (href.startsWith("#"))
+      event.currentTarget
+        .querySelector(`#${CSS.escape(anchorOf(href.slice(1)))}`)
+        ?.scrollIntoView();
+    // The cleaner drops addresses it does not allow, leaving a link with nowhere to go.
+    else if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href))
+      toast("Link not opened", how.blocked);
+    else how.relative(href);
+  }
 }

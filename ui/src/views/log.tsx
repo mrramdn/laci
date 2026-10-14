@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Icon, Time, Group, Ops } from "../common";
 import { useApp, run, changed, toggleExpanded, refreshLog } from "../store";
-import { daysBack, logKind, plural } from "../helpers";
+import { dayLabel, logKind, plural } from "../helpers";
 import { api } from "../api";
 import type { Change } from "../types";
 const LOG_FILTERS = [
@@ -44,21 +44,7 @@ export function LogView() {
   for (const entry of log?.entries.filter(
     (e) => filter(e, s.logFilter) && narrow(e),
   ) ?? []) {
-    const day = new Date(entry.at);
-    const back = daysBack(day);
-    const label =
-      back === 0
-        ? "Today"
-        : back === 1
-          ? "Yesterday"
-          : day.toLocaleDateString("en-GB", {
-              weekday: "long",
-              day: "numeric",
-              month: "short",
-              ...(day.getFullYear() !== new Date().getFullYear()
-                ? { year: "numeric" }
-                : {}),
-            });
+    const label = dayLabel(new Date(entry.at));
     groups.set(label, [...(groups.get(label) ?? []), entry]);
   }
   const icons: Record<string, string> = {

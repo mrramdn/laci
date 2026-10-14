@@ -14,6 +14,8 @@ import type {
   View,
 } from "./types";
 export type Theme = "system" | "light" | "dark";
+/** The reports a view is narrowed to: one conversation's, or one project's. */
+export type ReportFilter = { sessions: string[] } | { project: string } | null;
 export type SortKey = "name" | "last" | "size" | "ai" | "priority" | "deadline";
 export type Modal =
   | { kind: "shortcuts" | "connector" }
@@ -78,6 +80,11 @@ interface State {
   filter: string;
   tidyFilter: string;
   logFilter: string;
+  /** The report open in Reports. */
+  report: string | null;
+  reportFilter: ReportFilter;
+  /** When Reports was last opened: reports changed since then count as new. 0 until a folder is set. */
+  reportsSeen: number;
   display: boolean;
   activity: ActivityLog | null;
   toast: Toast | null;
@@ -86,6 +93,8 @@ interface State {
   cd: (path: string) => void;
   select: (id: string, tab?: Tab, row?: string) => void;
   navigate: (view: View) => void;
+  /** Show Reports with this report open, narrowed to these sessions or this project. */
+  openReport: (to: { id?: string; sessions?: string[]; project?: string }) => void;
 }
 export function pref<T>(key: string, fallback: T): T {
   try {
@@ -135,6 +144,9 @@ export const useApp = create<State>((set, get) => ({
   filter: "all",
   tidyFilter: "all",
   logFilter: "all",
+  report: null,
+  reportFilter: null,
+  reportsSeen: pref("reportsSeen", 0),
   display: false,
   activity: null,
   toast: null,
@@ -212,8 +224,52 @@ export const useApp = create<State>((set, get) => ({
       fileSelected: null,
       ...(tab ? { tab } : {}),
     }),
-  navigate: (view) => set({ view, display: false, pendingSelection: null }),
+  navigate: (view) =>
+    set({
+      view,
+      display: false,
+      pendingSelection: null,
+      // Going to Reports shows them all; the report that was open stays open.
+      ...(view === "reports" ? { reportFilter: null } : {}),
+    }),
+  openReport: ({ id, sessions, project }) =>
+    set({
+      view: "reports",
+      display: false,
+      pendingSelection: null,
+      modal: null,
+      palette: false,
+      report: id ?? null,
+      reportFilter: sessions?.length
+        ? { sessions }
+        : project
+          ? { project }
+          : null,
+    }),
 }));
+/** Views that use the whole width: they have no project details beside them. */
+export const FULL_WIDTH: readonly View[] = ["settings", "log", "reports"];
+/** Show a project's details, leaving a view that has no room for them. */
+export function goToProject(id: string, tab?: Tab) {
+  if (FULL_WIDTH.includes(useApp.getState().view))
+    useApp.getState().navigate("today");
+  useApp.getState().select(id, tab);
+}
+export function markReportsSeen() {
+  const now = Date.now();
+  savePref("reportsSeen", now);
+  useApp.setState({ reportsSeen: now });
+}
+// Reports that were in the folder before it was chosen are not news.
+useApp.subscribe((state) => {
+  if (state.snapshot?.reportsDir && !state.reportsSeen) markReportsSeen();
+});
+export function copyText(text: string, title: string, message = "") {
+  void run(async () => {
+    await navigator.clipboard.writeText(text);
+    toast(title, message);
+  });
+}
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 function dismissToastLater() {
   clearTimeout(toastTimer);

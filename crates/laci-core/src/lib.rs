@@ -15,6 +15,7 @@ pub mod paths;
 pub mod process;
 pub mod providers;
 pub mod readers;
+pub mod reports;
 pub mod scan;
 pub mod service;
 pub mod sidecar;

@@ -22,10 +22,12 @@ const ghost = path.join(home, 'project', 'ghost');
 const orphanDir = path.join(logStore, encode(ghost));
 const originalClaude = `${JSON.stringify({ type: 'user', cwd: project, gitBranch: 'main' })}\n`;
 const originalCodex = `${JSON.stringify({ type: 'session_meta', payload: { cwd: project } })}\n`;
+const reportsDir = path.join(home, 'notes', 'agent-reports');
+const reportFile = path.join(reportsDir, '2026-10-12-alpha-tokenizer.md');
 const toolNames = [
   'add_next_step', 'apply_suggestion', 'archive_project', 'complete_task', 'create_project', 'delete_project', 'list_projects',
-  'move_project', 'needs_attention', 'project_details', 'recent_changes', 'set_project_fields', 'tidy_suggestions',
-  'undo_change', 'write_notes',
+  'list_reports', 'move_project', 'needs_attention', 'project_details', 'recent_changes', 'set_project_fields',
+  'tidy_suggestions', 'undo_change', 'write_notes',
 ];
 let child;
 let stderr = '';
@@ -116,7 +118,10 @@ try {
   await write(claudeFile, originalClaude);
   await write(codexFile, originalCodex);
   await write(path.join(orphanDir, 'gone.jsonl'), `${JSON.stringify({ cwd: ghost })}\n`);
-  await write(path.join(home, '.config', 'laci', 'config.json'), JSON.stringify({ roots: ['~/project'], presets: ['claude', 'codex'], custom: [], apps: {} }));
+  await write(path.join(reportsDir, 'README.md'), '| Date | Title |\n');
+  await write(path.join(reportsDir, '.draft.md'), '# Not finished\n');
+  await write(reportFile, `# Alpha tokenizer\n\n- **Date:** 2026-10-12\n- **Session:** ${home} · 0adaa996-bb83-4ac2-a823-963b6afc49b0\n- **Projects:** ${project}\n\n## Summary\nRewrote the tokenizer parser.\n\n## Open\n- Ship tokenizer docs\n- Measure the parser\n`);
+  await write(path.join(home, '.config', 'laci', 'config.json'), JSON.stringify({ roots: ['~/project'], presets: ['claude', 'codex'], custom: [], apps: {}, reportsDir }));
 
   const client = start();
   const initialized = await client.request('initialize', {
@@ -136,6 +141,17 @@ try {
   assert.equal(details.sessions.length, 1);
   assert.equal(details.agentItems.length, 1);
   assert.ok(details.agentSessions.some(session => session.provider === 'codex' && session.cwd === project));
+  assert.deepEqual(details.reports.map(report => report.file), [reportFile]);
+  const reports = await client.call('list_reports');
+  assert.equal(reports.folder.path, reportsDir);
+  assert.equal(reports.reports.length, 1, 'The folder index and hidden drafts are not reports');
+  assert.deepEqual(reports.reports[0].projects, [project]);
+  assert.deepEqual(reports.reports[0].open, ['Ship tokenizer docs', 'Measure the parser']);
+  assert.equal((await client.call('list_reports', { project: 'alpha' })).reports.length, 1);
+  const found = await client.call('list_reports', { query: 'TOKENIZER parser' });
+  assert.match(found.reports[0].snippet, /tokenizer parser/i);
+  assert.equal((await client.call('list_reports', { query: 'nothing-like-this' })).reports.length, 0);
+  checks++;
   const attention = await client.call('needs_attention');
   assert.ok(attention.projects.some(node => node.path === project));
   assert.ok(attention.warnings.some(warning => warning.code === 'claude-cleanup'));
@@ -279,6 +295,9 @@ try {
   await client.rejects('undo_change', { id: moved.journal.id }, /no longer be undone/i);
   await client.rejects('create_project', { parent: '~/project', name: 'extra', scanProject: true, confirm: true }, /Unknown argument scanProject/i);
   await client.rejects('recent_changes', { limit: 5 }, /Unknown argument limit/i);
+  await client.rejects('list_reports', { project: 'missing-project' }, /Unknown project/i);
+  await client.rejects('list_reports', { query: '' }, /length/i);
+  await client.rejects('list_reports', { limit: 5 }, /Unknown argument limit/i);
   assert.equal(await exists(path.join(home, 'project', 'extra')), false);
   assert.equal(await exists(path.join(home, 'escape')), false);
   const changes = await client.call('recent_changes');
@@ -304,7 +323,7 @@ try {
   assert.ok(['public', 'private'].includes(catalog2026.cacheScope), `cacheScope must be public or private, got ${catalog2026.cacheScope}`);
   checks++;
   await stop(client2026);
-  console.log(`MCP smoke passed: 15 tools, ${checks} checks, isolated plan/confirm, history move/undo, validation, and the 2026-07-28 handshake.`);
+  console.log(`MCP smoke passed: ${toolNames.length} tools, ${checks} checks, isolated plan/confirm, history move/undo, validation, and the 2026-07-28 handshake.`);
 } finally {
   if (child && child.exitCode === null && child.signalCode === null) {
     child.kill('SIGTERM');

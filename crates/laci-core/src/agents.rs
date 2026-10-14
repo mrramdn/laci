@@ -168,19 +168,25 @@ pub struct AgentData {
     pub paths: BTreeSet<PathBuf>,
 }
 
-struct Cache {
+/// Facts read from files, kept until a file's size, mtime or inode changes.
+pub(crate) struct Cache {
+    file: &'static str,
     values: BTreeMap<String, Value>,
     seen: BTreeSet<String>,
+    changed: bool,
 }
 
 impl Cache {
     fn load(env: &Env) -> Self {
-        let values = files::read_limit(&env.cache_dir.join("v5-agent-facts.json"), 32 * 1024 * 1024)
+        Self::open(env, "v5-agent-facts.json")
+    }
+    pub(crate) fn open(env: &Env, file: &'static str) -> Self {
+        let values = files::read_limit(&env.cache_dir.join(file), 32 * 1024 * 1024)
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        Self { values, seen: BTreeSet::new() }
+        Self { file, values, seen: BTreeSet::new(), changed: false }
     }
-    fn facts(&mut self, kind: &str, path: &Path, read: impl FnOnce() -> Value) -> Value {
+    pub(crate) fn facts(&mut self, kind: &str, path: &Path, read: impl FnOnce() -> Value) -> Value {
         self.grown(kind, path, |_| read())
     }
     /// Like `facts`, but a changed file is handed the facts of its last read, so a log that only grew
@@ -226,13 +232,19 @@ impl Cache {
             self.values.clear();
         }
         self.values.insert(key, json!({"size":size,"modified":modified,"changed":changed,"facts":facts}));
+        self.changed = true;
         facts
     }
-    fn save(mut self, env: &Env) {
+    /// Writes only when a file was read again or one is gone, so a quiet pass leaves the disk alone.
+    pub(crate) fn save(mut self, env: &Env) {
+        let before = self.values.len();
         self.values.retain(|k, _| self.seen.contains(k));
+        if !self.changed && self.values.len() == before && env.cache_dir.join(self.file).is_file() {
+            return;
+        }
         if let Ok(text) = serde_json::to_vec(&self.values) {
             let _ = files::private_dir(&env.cache_dir);
-            let _ = files::replace(&env.cache_dir.join("v5-agent-facts.json"), &text);
+            let _ = files::replace(&env.cache_dir.join(self.file), &text);
         }
     }
 }

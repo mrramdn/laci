@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
 import {
   useApp,
+  FULL_WIDTH,
   changed,
   readListing,
   refreshLog,
@@ -13,7 +14,15 @@ import {
 } from "./store";
 import { parentOf } from "./helpers";
 import { selectIsOpen } from "./select";
-import { AgentsView, Folder, LogView, Sidebar, Tidy, Today } from "./views";
+import {
+  AgentsView,
+  Folder,
+  LogView,
+  ReportsView,
+  Sidebar,
+  Tidy,
+  Today,
+} from "./views";
 import { Settings } from "./settings";
 import { Inspector } from "./inspector";
 import { Dialogs } from "./dialogs";
@@ -322,6 +331,8 @@ export default function App() {
               <Tidy />
             ) : s.view === "agents" ? (
               <AgentsView />
+            ) : s.view === "reports" ? (
+              <ReportsView />
             ) : s.view === "log" ? (
               <LogView />
             ) : s.view === "settings" ? (
@@ -330,7 +341,7 @@ export default function App() {
               <Today />
             )}
           </main>
-          {n && !["settings", "log"].includes(s.view) ? (
+          {n && !FULL_WIDTH.includes(s.view) ? (
             <Inspector node={n} />
           ) : null}
           {hasTerminals ? (

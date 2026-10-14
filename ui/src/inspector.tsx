@@ -10,7 +10,7 @@ import type { ReactNode } from "react";
 import type { ChangeEvent } from "react";
 import { api, errorText } from "./api";
 import { useApp, external, run, toast, urlOpen } from "./store";
-import { anchorOf, renderReadme } from "./readme";
+import { proseClick, renderReadme } from "./readme";
 import {
   agentCount,
   APP_NAMES,
@@ -24,6 +24,8 @@ import {
   hasSessionFile,
   liveIssues,
   conversations,
+  reportsOfProject,
+  shortDay,
   taskIdentity,
   tilde,
 } from "./helpers";
@@ -1217,6 +1219,7 @@ function AgentsTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
           ) : null}
         </>
       ) : null}
+      {snapshot.reportsDir ? <ReportsSection node={n} /> : null}
       {memory.length ? (
         <>
           <div className="sec-t">
@@ -1326,6 +1329,54 @@ function AgentsTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
     </>
   );
 }
+/** The project's newest reports; each opens in Reports. */
+function ReportsSection({ node: n }: { node: Node }) {
+  const snapshot = useApp((s) => s.snapshot!);
+  const reports = reportsOfProject(snapshot, n.path);
+  if (!reports.length) return null;
+  const open = useApp.getState().openReport;
+  return (
+    <>
+      <div className="sec-t">
+        Reports <span className="grow" />
+        <span className="faint" style={{ fontWeight: 400 }}>
+          {plural(reports.length, "report")}
+        </span>
+      </div>
+      {reports.slice(0, 3).map((r) => (
+        <div className="sess" key={r.id}>
+          <Icon name="report" className="sm" />
+          <button
+            className="session-title"
+            title={r.title}
+            onClick={() => open({ id: r.id, project: n.path })}
+          >
+            <span>{r.title}</span>
+            <small>
+              {[
+                shortDay(r.date),
+                r.openCount ? `${r.openCount} open` : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </small>
+          </button>
+          <span className="m">
+            <Time at={r.modified} />
+          </span>
+        </div>
+      ))}
+      {reports.length > 3 ? (
+        <button
+          className="more"
+          onClick={() => open({ project: n.path })}
+        >
+          All {reports.length} in Reports
+        </button>
+      ) : null}
+    </>
+  );
+}
 function ReadmeTab({ node }: { node: Node }) {
   const [remoteFor, setRemoteFor] = useState<string>();
   const loadRemote = remoteFor === node.path;
@@ -1355,28 +1406,11 @@ function ReadmeTab({ node }: { node: Node }) {
       <div
         className="readme"
         dangerouslySetInnerHTML={{ __html: html }}
-        onClick={(e) => {
-          const target = e.target as HTMLElement;
-          const link = target.closest("a");
-          if (target.closest("[data-remote]")) {
-            e.preventDefault();
-            setRemoteFor(node.path);
-          } else if (link) {
-            e.preventDefault();
-            const href = (link.getAttribute("href") ?? "").trim();
-            if (/^(https?:\/\/|mailto:)/i.test(href)) urlOpen(href);
-            else if (href.startsWith("//")) urlOpen(`https:${href}`);
-            else if (href.startsWith("#"))
-              e.currentTarget
-                .querySelector(`#${CSS.escape(anchorOf(href.slice(1)))}`)
-                ?.scrollIntoView();
-            // The cleaner drops addresses it does not allow, leaving a link with nowhere to go.
-            else if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href))
-              toast(
-                "Link not opened",
-                "A README can open web, mail and project links only",
-              );
-            else
+        onClick={(e) =>
+          proseClick(e, {
+            remote: () => setRemoteFor(node.path),
+            blocked: "A README can open web, mail and project links only",
+            relative: (href) =>
               void run(async () => {
                 const result = await api<{ shown: boolean }>("open", {
                   id: node.id,
@@ -1387,9 +1421,9 @@ function ReadmeTab({ node }: { node: Node }) {
                   result.shown ? "Shown in the file manager" : "Opened",
                   href,
                 );
-              });
-          }
-        }}
+              }),
+          })
+        }
       />
     </>
   );

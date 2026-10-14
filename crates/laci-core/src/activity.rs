@@ -222,15 +222,18 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
                         c[key] = value.clone();
                     }
                 }
-                if let Some(archive_dir) = undo.get("archiveDir") {
-                    if archive_dir.is_null() {
-                        c.as_object_mut().unwrap().remove("archiveDir");
-                    } else {
-                        c["archiveDir"] = if archive_dir.as_str() == Some("") {
-                            json!("")
+                // Entries from before a setting existed carry no key for it and leave it alone.
+                for key in ["archiveDir", "reportsDir"] {
+                    if let Some(dir) = undo.get(key) {
+                        if dir.is_null() {
+                            c.as_object_mut().unwrap().remove(key);
                         } else {
-                            config::restore_roots(env, &json!([archive_dir]))?[0].clone()
-                        };
+                            c[key] = if dir.as_str() == Some("") {
+                                json!("")
+                            } else {
+                                config::restore_roots(env, &json!([dir]))?[0].clone()
+                            };
+                        }
                     }
                 }
             } else if let Some(remove) = undo["remove"].as_str() {

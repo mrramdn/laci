@@ -14,6 +14,8 @@ const put = (file: string, text: string) => {
   writeFileSync(file, text)
 }
 const line = (o: object) => JSON.stringify(o) + '\n'
+/** A real session id, so the report about this session can name it. */
+const ACME_SESSION = '5f0c2a1e-8d4b-4c7a-9e21-3b6d0f9a7c42'
 
 /** Set every file's mtime (outside .git) to `daysAgo`, so activity dates look lived-in. */
 function age(dir: string, daysAgo: number) {
@@ -75,7 +77,7 @@ put(path.join(acme, 'src/app/checkout.tsx'), 'export const Checkout = () => null
 // Sessions started at the old path: the folder was moved into clients/ by hand, the logs never followed.
 sessions(acme, [
   { id: 'a1', cwd: P('acme-store'), title: 'Midtrans checkout integration', daysAgo: 30 },
-  { id: 'a2', cwd: acme, title: 'Checkout total wrong on mobile', daysAgo: 1 },
+  { id: ACME_SESSION, cwd: acme, title: 'Checkout total wrong on mobile', daysAgo: 1 },
 ], ['MEMORY.md', 'client-preferences.md', 'deploy.md'])
 
 const kopi = P('clients', 'kopi-landing')
@@ -124,6 +126,157 @@ sessions(P('infra-notes'), [{ id: 'n1', cwd: P('infra-notes'), title: 'Why the d
 const old = P('_archive', 'old-portfolio')
 repo(old, { 'package.json': pkg('old-portfolio', ['next', 'react']), 'README.md': '# Portfolio v1\n\nMy first portfolio site.\n' }, [[300, 'init'], [260, 'feat: projects page']], 'git@github.com:me/portfolio-v1.git')
 sessions(P('old-portfolio'), [{ id: 'o1', cwd: P('old-portfolio'), title: 'Portfolio projects grid', daysAgo: 26 }], ['MEMORY.md'])
+
+// Session reports, as an agent following Laci's instruction writes them. Choose ~/Documents/agent-reports
+// in Settings to see them.
+const reports = path.join(home, 'Documents', 'agent-reports')
+const dayOf = (daysAgo: number) => {
+  const t = new Date(Date.now() - daysAgo * DAY)
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
+}
+function report(daysAgo: number, slug: string, text: string) {
+  const file = path.join(reports, `${dayOf(daysAgo)}-${slug}.md`)
+  put(file, text.replace(/\{day\}/g, dayOf(daysAgo)))
+  const t = new Date(Date.now() - daysAgo * DAY + 3 * 3600_000)
+  utimesSync(file, t, t)
+  return path.basename(file)
+}
+put(path.join(reports, 'README.md'), '# Session reports\n\nOne file per session that did real work. Newest first.\n')
+report(1, 'checkout-total-on-mobile-safari', `# Checkout total wrong on mobile Safari
+
+- **Date:** {day}
+- **Session:** \`~/project/clients/acme-store\` · \`${ACME_SESSION}\`
+- **Projects:** ~/project/clients/acme-store
+
+## Summary
+Safari on iOS showed a checkout total one rupiah off. The cart rounded each line before adding them up; it now adds first and rounds once, as Midtrans does. Fixed, tested on Safari, Chrome and Firefox, and deployed to staging.
+
+## What was done
+- \`src/app/checkout.tsx\`: the total is computed in whole rupiah and rounded once.
+- A test for a cart of three discounted items (\`pnpm test checkout\`).
+- Staging redeployed at [acme-coffee-staging.example](https://acme-coffee-staging.example).
+
+## State now
+- Staging shows the right total on Safari, Chrome and Firefox.
+- Production still rounds per line. The release waits for the client.
+
+## Open
+- Send the staging link to the client and ask for the go to release.
+- Promo codes stack with the expo discount; ask whether that is wanted.
+`)
+report(2, 'kopi-hero-and-contact-form', `# Kopi landing: hero copy and contact form
+
+- **Date:** {day}
+- **Session:** ~/project/clients/kopi-landing · Codex
+- **Projects:** Kopi Landing, the Astro site
+
+## Summary
+Wrote the hero copy in Indonesian and English and added a contact form that posts to the shop's WhatsApp.
+
+## What was done
+- Hero and menu sections in \`src/pages/index.astro\`.
+- The form opens WhatsApp with the message filled in; no server needed.
+
+## State now
+Builds with \`pnpm build\`; not deployed yet.
+
+## Open
+- The shop's opening hours for the footer.
+- Photos of the real menu instead of the placeholders.
+`)
+report(3, 'email-filters', `# Email filters for the work inbox
+
+- **Date:** {day}
+- **Session:** ~ · Claude Code
+- **Projects:** Gmail (work account)
+
+## Summary
+Sorted the work inbox: six filters label invoices, client mail and newsletters as they arrive.
+
+## Open
+Nothing open.
+`)
+report(5, 'droplet-memory-and-swap', `# Why the droplet keeps running out of memory
+
+- **Date:** {day}
+- **Session:** ~/project/infra-notes · Claude Code
+- **Projects:** ~/project/infra-notes/NOTES.md
+
+## Summary
+The staging droplet has 1 GB of memory and Postgres plus two Node apps. Added 2 GB of swap and capped Postgres; the out-of-memory kills stopped.
+
+## State now
+Swap is on and survives a reboot. Memory peaks at 840 MB under the nightly import.
+
+## Open
+- Rotate the SSH keys on the staging droplet.
+- Renew the SSL certificate before it expires on the 30th.
+`)
+report(8, 'hyprland-binds', `# New Hyprland binds
+
+- **Date:** {day}
+- **Session:** ~/project/side/dotfiles · Claude Code
+- **Projects:** ~/project/side/dotfiles
+
+## Summary
+Moved window focus to Super+HJKL and added a bind for the screenshot tool.
+
+## Open
+Nothing open.
+`)
+const rubrics = report(44, 'grading-model-and-rubrics', `# Grading model and rubrics
+
+- **Date:** {day}
+- **Session:** ~/project/thesis/campus-lms · Claude Code
+- **Projects:** ~/project/thesis/campus-lms
+
+## Summary
+Designed how grades are stored: a rubric per assignment, a score per criterion, and a weighted total computed when it is read.
+
+## Open
+- Export the grades for the school's report cards.
+`)
+report(19, 'grading-export-to-pdf', `# Grading export to PDF
+
+- **Date:** {day}
+- **Session:** ~/project/thesis/campus-lms · Claude Code
+- **Projects:** ~/project/thesis/campus-lms
+
+## Summary
+Started the grading export the school asked for: one CSV for the office and one PDF report card per student. The CSV works; the PDF is half done and stashed. This continues [the grading model](${rubrics}).
+
+## What was done
+- \`app/Export.php\` builds the CSV from the weighted totals, one row per student and course.
+- The PDF layout follows the school's paper report card: the student's name, the class, then one table per course.
+- Chose DomPDF over a headless browser: it runs inside the PHP container, so the school's server needs nothing new.
+
+## Decisions
+- Grades are rounded to whole numbers only on the report card. The CSV keeps two decimals, because the office recalculates class ranks from it.
+- A course without a score is left out of the report card instead of showing zero.
+- Report cards are generated on request, not stored: the rubric can change until the term closes.
+
+## Load test plan
+The quiz page must hold 300 students at once on exam day. The plan for chapter 4:
+
+1. Seed a course with 300 students and a 40-question quiz.
+2. Run k6 with 300 virtual users answering a question every 20 seconds.
+3. Measure the 95th percentile response time and the database's connection count.
+4. Repeat with Redis caching the quiz questions.
+
+\`\`\`sh
+k6 run --vus 300 --duration 15m load/quiz.js
+\`\`\`
+
+## State now
+- The CSV export works and is tested against last term's grades.
+- The PDF export is in a stash named "half-done export".
+- Nothing of this is deployed.
+
+## Open
+1. Finish the PDF report card from the stash.
+2. Load test the quiz page with 300 students.
+3. Write chapter 4 from the load test results.
+`)
 
 // A neutral prompt for terminal screenshots (login shells read ~/.bash_profile).
 put(path.join(home, '.bash_profile'), "PS1='\\W $ '\n")

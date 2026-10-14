@@ -549,6 +549,11 @@ kbd {
   color: var(--red);
   font-weight: 600;
 }
+.sb-item .n.new {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
 .sb-sec {
   display: flex;
   align-items: center;
@@ -2291,6 +2296,46 @@ textarea.notes:focus {
   border: 1px solid var(--border);
   padding: 4px 8px;
 }
+.readme > :first-child {
+  margin-top: 0;
+}
+.readme p,
+.readme ul,
+.readme ol {
+  margin: 0 0 0.8em;
+}
+.readme ul,
+.readme ol {
+  padding-left: 1.5em;
+}
+.readme li {
+  margin: 0.2em 0;
+}
+.readme li > ul,
+.readme li > ol {
+  margin: 0.2em 0 0;
+}
+.readme li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.3em;
+}
+.readme blockquote {
+  margin: 0 0 0.8em;
+  padding: 2px 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--muted);
+}
+.readme hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.4em 0;
+}
+.readme h4,
+.readme h5,
+.readme h6 {
+  font-size: 13px;
+  margin: 1.2em 0 0.4em;
+}
 
 /* terminal panel (VS Code / Zed style), follows the theme */
 .term {
@@ -2897,6 +2942,9 @@ textarea.notes:focus {
   }
   .side:not(.rail-open) .sb-item .n.hot {
     background: var(--red);
+  }
+  .side:not(.rail-open) .sb-item .n.new {
+    background: var(--accent);
   }
   .side:not(.rail-open) .sb-foot {
     padding: 8px;
@@ -3557,4 +3605,215 @@ textarea.notes:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+/* Reports: the list beside the report it opens, like a mail client. */
+.body.rp-split {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  overflow: hidden;
+}
+.rp-list {
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+}
+.rp-list .group-h {
+  padding-left: 16px;
+}
+.rp-row {
+  padding-left: 16px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+.rp-row .rp-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.rp-row .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+.rp-row .rp-open {
+  flex: none;
+}
+.rp-sum {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.rp-reader {
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+}
+.rp-head {
+  padding: 18px 28px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.rp-head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.rp-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.rp-chips,
+.rp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.rp-chip {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  cursor: pointer;
+}
+.rp-chip:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.rp-chip-t {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+.rp-outline {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  gap: 4px;
+  padding: 6px 28px;
+  overflow-x: auto;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.rp-outline .chipf {
+  flex: none;
+}
+.rp-body {
+  max-width: 80ch;
+  padding: 16px 28px 48px;
+}
+.rp-body :is(h1, h2, h3) {
+  scroll-margin-top: 48px;
+}
+.rp-note {
+  margin: 14px 28px 0;
+  max-width: calc(80ch - 56px);
+}
+.rp-reader > .empty {
+  padding: 24px 28px;
+}
+.rp-back {
+  display: none;
+  margin: -6px 0 8px -8px;
+}
+.rp-back .i {
+  transform: rotate(180deg);
+}
+.rp-filter {
+  max-width: 320px;
+}
+.rp-filter > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rp-row-actions,
+.rp-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.rp-copy {
+  margin-top: 10px;
+}
+.rp-status.ok {
+  color: var(--green);
+}
+.rp-status.bad {
+  color: var(--red);
+}
+.item .l2.rep-open {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+.item .l2.rep-open:hover > span:first-of-type {
+  color: var(--text);
+}
+.item .l2.rep-open .more-n {
+  flex: none;
+}
+.sess .sess-rep {
+  flex: none;
+  width: auto;
+  min-width: 24px;
+  height: 24px;
+  gap: 2px;
+  padding: 0 4px;
+}
+.sess .sess-rep small {
+  font-size: 10px;
+  color: var(--muted);
+}
+@media (max-width: 1240px) {
+  .body.rp-split {
+    grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  }
+  .rp-head,
+  .rp-body {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+  .rp-outline {
+    padding: 6px 20px;
+  }
+}
+@media (max-width: 860px) {
+  .body.rp-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rp-split[data-show="reader"] .rp-list,
+  .rp-split[data-show="list"] .rp-reader {
+    display: none;
+  }
+  .rp-list {
+    border-right: 0;
+  }
+  .rp-back {
+    display: inline-flex;
+  }
 }

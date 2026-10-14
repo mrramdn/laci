@@ -1,7 +1,7 @@
 use laci_core::{
     agents,
     env::Env,
-    files, paths,
+    files, paths, reports,
     service::{Refresh, array, string},
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -67,6 +67,7 @@ pub fn refresh_for(env: &Env, snapshot: &Value, changes: &Changes) -> Refresh {
         .filter(|node| node["kind"] == "project")
         .collect();
     let mut git_owners = None;
+    let reports_dir = snapshot["reportsDir"]["path"].as_str().map(Path::new);
     for path in &changes.paths {
         if path.starts_with(&env.data_dir) {
             continue;
@@ -74,6 +75,26 @@ pub fn refresh_for(env: &Env, snapshot: &Value, changes: &Changes) -> Refresh {
         if path.starts_with(&env.config_dir) {
             refresh.merge(Refresh::full());
             continue;
+        }
+        if let Some(dir) = reports_dir {
+            if path.parent() == Some(dir)
+                && path.file_name().and_then(|n| n.to_str()).is_some_and(reports::is_report_name)
+            {
+                // A report never changes which projects exist, so it never costs a full scan. The folder can
+                // be a project of its own too, for example under the archive folder.
+                refresh.merge(Refresh::reports());
+                if let Some(node) = projects
+                    .iter()
+                    .filter(|node| path.starts_with(string(node, "path")))
+                    .max_by_key(|node| string(node, "path").len())
+                {
+                    refresh.projects.insert(string(node, "id").to_owned());
+                }
+                continue;
+            }
+            if path == dir {
+                refresh.merge(Refresh::reports());
+            }
         }
         if array(&snapshot["connectors"]).iter().any(|connector| {
             agents::metadata_paths(env, connector).iter().any(|metadata| path == metadata || metadata.starts_with(path))
@@ -211,7 +232,13 @@ impl Watches {
                 }
             }
         }
-        want.into_iter().filter(|p| p.is_dir()).take(12_000).collect()
+        let mut want: BTreeSet<PathBuf> = want.into_iter().filter(|p| p.is_dir()).take(12_000).collect();
+        // Added after the limit, so a reports folder that sorts late is still watched.
+        if let Some(dir) = snapshot["reportsDir"]["path"].as_str().filter(|_| snapshot["reportsDir"]["error"].is_null())
+        {
+            want.insert(PathBuf::from(dir));
+        }
+        want
     }
     pub fn install(&self, want: BTreeSet<PathBuf>) {
         if let Ok(mut inner) = self.inner.lock() {
@@ -254,6 +281,31 @@ mod tests {
         assert!(desired.contains(&root));
         let changes = Changes { paths: BTreeSet::from([root.join("session_index.jsonl")]), structural: false };
         assert_eq!(refresh_for(&env, &snapshot, &changes), Refresh::agents());
+    }
+    #[test]
+    fn report_files_refresh_only_the_reports_and_their_folder_is_watched() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let archive = home.path().join("archive");
+        let reports = archive.join("reports");
+        fs::create_dir_all(&reports).unwrap();
+        let mut snapshot =
+            json!({"roots":[archive],"connectors":[],"nodes":{},"reportsDir":{"path":reports,"total":0}});
+        let report = Changes { paths: BTreeSet::from([reports.join("2026-10-14-x.md")]), structural: true };
+        assert_eq!(refresh_for(&env, &snapshot, &report), Refresh::reports(), "a new report is no new project");
+        let other = Changes { paths: BTreeSet::from([reports.join("notes.swp")]), structural: true };
+        assert!(refresh_for(&env, &snapshot, &other).full, "other files keep their usual handling");
+        let folder = Changes { paths: BTreeSet::from([reports.clone()]), structural: true };
+        assert!(refresh_for(&env, &snapshot, &folder).full);
+        assert!(Watches::desired(&env, &snapshot, &BTreeSet::new()).contains(&reports));
+        // The folder can be a project too, as under an archive folder: its own details refresh with it.
+        snapshot["nodes"] = json!({"docs":{"id":"docs","kind":"project","path":reports,"archived":true}});
+        let refresh = refresh_for(&env, &snapshot, &report);
+        assert!(refresh.reports && !refresh.full && !refresh.agents);
+        assert_eq!(refresh.projects, BTreeSet::from(["docs".to_owned()]));
+        snapshot["nodes"] = json!({});
+        snapshot["reportsDir"]["error"] = json!("Folder not found");
+        assert!(!Watches::desired(&env, &snapshot, &BTreeSet::new()).contains(&reports));
     }
     #[test]
     fn continuous_changes_flush_at_the_batch_deadline() {

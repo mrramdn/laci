@@ -105,18 +105,37 @@ pub fn root_identities(env: &Env, roots: &Value, previous: &Value) -> Value {
     out
 }
 
-pub fn validate_archive_dir(env: &Env, value: &Value) -> Result<Value> {
-    let raw = value.as_str().ok_or("Pick an archive folder")?.trim();
+/// A folder picked in Settings, or `None` to clear it. Keeping the stored folder works while its drive is offline.
+fn chosen_folder(env: &Env, value: &Value, key: &str, missing: &str) -> Result<Option<std::path::PathBuf>> {
+    let raw = value.as_str().ok_or(missing)?.trim();
     if raw.is_empty() {
-        return Ok(json!(""));
+        return Ok(None);
     }
     let requested = paths::expand(raw, &env.home);
-    let stored = load(env)["archiveDir"].as_str().map(|old| paths::expand(old, &env.home));
-    let path = if stored.as_ref() == Some(&requested) && requested.is_absolute() {
+    let stored = load(env)[key].as_str().map(|old| paths::expand(old, &env.home));
+    Ok(Some(if stored.as_ref() == Some(&requested) && requested.is_absolute() {
         requested
     } else {
         paths::selected_directory(raw, env)?
+    }))
+}
+
+pub fn validate_archive_dir(env: &Env, value: &Value) -> Result<Value> {
+    let path = chosen_folder(env, value, "archiveDir", "Pick an archive folder")?;
+    Ok(json!(path.map(|p| paths::tilde(&p, &env.home)).unwrap_or_default()))
+}
+
+/// The folder agents write session reports to. Laci only reads it, and it grants no project actions.
+pub fn validate_reports_dir(env: &Env, value: &Value) -> Result<Value> {
+    let Some(path) = chosen_folder(env, value, "reportsDir", "Pick the reports folder")? else {
+        return Ok(json!(""));
     };
+    if env.home.starts_with(&path) {
+        return Err("Pick the folder that holds the reports, not your home folder or one above it".into());
+    }
+    if [&env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|own| path.starts_with(own)) {
+        return Err("That folder belongs to Laci itself".into());
+    }
     Ok(json!(paths::tilde(&path, &env.home)))
 }
 

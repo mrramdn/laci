@@ -281,3 +281,82 @@ test("metadata cwd maps sessions to the nearest project without double counting 
   );
   assert.equal(helpers.sessionsOf(home, data).length, 0);
 });
+
+test("reports open with their context, and project details leave full-width views", () => {
+  const { useApp, goToProject, FULL_WIDTH } = store();
+  useApp.getState().load(snapshot(1));
+  useApp.setState({
+    modal: { kind: "session", provider: "claude", sessionId: "s", file: "f" },
+  });
+  useApp.getState().openReport({ id: "a.md", sessions: ["s1", "s2"] });
+  let state = useApp.getState();
+  assert.equal(state.view, "reports");
+  assert.equal(state.report, "a.md");
+  assert.deepEqual(state.reportFilter, { sessions: ["s1", "s2"] });
+  assert.equal(state.modal, null);
+  state.navigate("reports");
+  assert.equal(useApp.getState().reportFilter, null);
+  assert.equal(useApp.getState().report, "a.md", "the open report stays open");
+  useApp.getState().openReport({ project: "/work/app" });
+  assert.deepEqual(useApp.getState().reportFilter, { project: "/work/app" });
+  assert.equal(useApp.getState().report, null);
+  assert.ok(FULL_WIDTH.includes("reports"));
+  goToProject("project", "agents");
+  state = useApp.getState();
+  assert.equal(state.view, "today");
+  assert.equal(state.selected, "project");
+  assert.equal(state.tab, "agents");
+});
+
+test("reports already in a newly chosen folder do not count as new", () => {
+  const { useApp } = store();
+  useApp.getState().load(snapshot(1));
+  assert.equal(useApp.getState().reportsSeen, 0);
+  useApp
+    .getState()
+    .load({ ...snapshot(2), reportsDir: { path: "/reports", total: 0 }, reports: [] });
+  assert.ok(useApp.getState().reportsSeen > 0);
+});
+
+function report(id, date, modified, sessions = [], projects = []) {
+  return {
+    id,
+    file: `/reports/${id}`,
+    title: id,
+    date,
+    modified,
+    bytes: 1,
+    sessions,
+    projects,
+    open: [],
+    openCount: 0,
+  };
+}
+
+test("reports are found by session and by project, newest first", () => {
+  const data = {
+    reports: [
+      report("old.md", "2026-10-01", "2026-10-01T10:00:00.000Z", ["AAA"], ["/work/app"]),
+      report("new.md", "2026-10-03", "2026-10-03T10:00:00.000Z", ["aaa", "bbb"], ["/work/app"]),
+      report("later.md", "2026-10-03", "2026-10-04T08:00:00.000Z", [], ["/work/other"]),
+    ],
+  };
+  assert.deepEqual(
+    helpers.reportList(data).map((r) => r.id),
+    ["later.md", "new.md", "old.md"],
+  );
+  assert.deepEqual(
+    helpers.reportsOfSessions(data, ["AAA", "bbb"]).map((r) => r.id),
+    ["new.md", "old.md"],
+  );
+  assert.equal(helpers.latestReport(data, "/work/app").id, "new.md");
+  assert.equal(helpers.latestReport(data, "/nowhere"), undefined);
+  assert.equal(helpers.reportById(data, "old.md").date, "2026-10-01");
+  assert.equal(helpers.localDay("2026-10-13").getDate(), 13);
+  assert.equal(helpers.localDay("13 Oct"), undefined);
+  assert.deepEqual(
+    helpers.conversationIds({ session: { sessionId: "x" }, parts: [{ sessionId: "y" }] }),
+    ["x", "y"],
+  );
+  assert.ok(helpers.agentInstruction("/notes/reports").includes("`/notes/reports`"));
+});

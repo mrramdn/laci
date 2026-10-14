@@ -4,6 +4,23 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-14
+
+Reports your agents write, next to their sessions and projects.
+
+### Added
+
+- **Reports.** Choose the folder your agents write session reports to, and Reports lists them, newest first, beside the one you read. Search covers titles, summaries and projects at once, and the full text a moment later. A long report gets a row of its sections. Laci only reads the folder.
+- **Reports know their sessions and projects.** A report names them in its header, by path or by session id, and keeps the link when Laci moves a project. Session rows and the session dialog open their report, a project's Agents tab lists its newest reports, and Today shows the first item its latest report left open.
+- **Copy agent instruction.** Settings copies the rule that makes Claude Code, Codex or another agent write these reports, with the folder filled in. The format is in the README.
+- **Agents read reports too.** The MCP tool `list_reports` lists and searches them, and `project_details` includes a project's newest three, each with the file to read.
+- The sidebar counts reports added since you last opened Reports, and the palette finds reports.
+
+### Changed
+
+- Rendered Markdown, in READMEs and reports, sets lists, quotes and rules apart more clearly.
+- `laci doctor` says when the reports folder can't be read.
+
 ## [2.3.2] - 2026-10-11
 
 ### Fixed

@@ -21,6 +21,7 @@ laci shows every folder like a file manager, and for each project it adds its gi
 - [Using it](#using-it)
 - [How it works](#how-it-works)
 - [The `.laci.md` file](#the-lacimd-file)
+- [Session reports](#session-reports)
 - [Safety](#safety)
 - [Configuration](#configuration)
 - [Development](#development)
@@ -150,6 +151,20 @@ Claude Code deletes session logs after a retention period. **Back up logs now** 
 
 ![Agents: each tool with its MCP setup, and sessions grouped by project with short chats folded away](docs/screenshots/agents.png)
 
+### Reports
+
+Agents can write a short Markdown report when a session ends: what was asked, what changed, what works now and what is still open. Choose the folder they write to in Settings, and **Reports** appears in the sidebar. The reports are listed newest first on the left, and the one you pick reads on the right. Search covers titles, summaries and projects at once, and the full text a moment later. A long report gets a row of its sections to jump between.
+
+A report links to the projects and agent sessions its header names, by path or by session id. Through the session id it still finds a project that Laci moved. Each place shows the link:
+
+- A report icon on the session's row, and **Report** in the session dialog.
+- A Reports section in the project's Agents tab.
+- On Today, a line under the project with the first thing its latest report left open.
+
+The sidebar counts reports added since you last looked. Laci never changes the folder. The format, and the instruction to give your agent, are in [Session reports](#session-reports).
+
+![Reports: the list beside the report it opens, with the project and the session it links to](docs/screenshots/reports.png)
+
 ### New project
 
 <kbd>+</kbd> in the sidebar creates an empty project, copies a local template, clones a URL, or runs a generator recipe. Templates can live in `~/.config/laci/templates` or a folder you reference in the form. Vite is the initial generator preset; you can save custom recipes as a program and argument list.
@@ -170,7 +185,7 @@ Hiding the panel keeps its sessions running. Closing a live tab asks for confirm
 
 ### Stays current
 
-laci watches your project folders, each project's files and git state, the agent logs and the folders you have open. New folders, edits, commits and agent sessions show up on their own, usually within a couple of seconds. The sidebar says *Up to date*; click it to scan everything again if something looks off.
+laci watches your project folders, each project's files and git state, the agent logs, the reports folder and the folders you have open. New folders, edits, commits and agent sessions show up on their own, usually within a couple of seconds. The sidebar says *Up to date*; click it to scan everything again if something looks off.
 
 ### For agents: MCP
 
@@ -178,7 +193,7 @@ laci ships an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Cod
 
 ### In the terminal
 
-`laci doctor` prints what could be lost, open checkboxes and tidy-up suggestions without opening the app.
+`laci doctor` prints what could be lost, open checkboxes and tidy-up suggestions without opening the app, and says when the reports folder can't be read.
 
 ## Getting started
 
@@ -259,7 +274,8 @@ Then ask your agent things like *"which projects could lose work?"*, *"archive d
 | Tool | What it does |
 | --- | --- |
 | `list_projects` | Projects with status, activity, summary, stack and problems. Filter by status or `at_risk` |
-| `project_details` | Git, scripts, to-dos, notes, sessions, memory and archive destination of one project |
+| `project_details` | Git, scripts, to-dos, notes, sessions, memory, the newest session reports and archive destination of one project |
+| `list_reports` | Session reports, newest first, with summary, open items and the file to read. Narrow by project or by words |
 | `needs_attention` | Work at risk, open to-dos, deadlines, stale handoffs |
 | `tidy_suggestions` | The Tidy up list |
 | `set_project_fields` | Status, priority, deadline |
@@ -289,6 +305,7 @@ flowchart LR
 - **Finding projects.** laci walks the folders you picked (Settings). A folder is a *project* if it has `.git` or a build file (`package.json`, `go.mod`, `Cargo.toml`, `pyproject.toml`, `composer.json`, `pubspec.yaml` and more). A folder that only holds notes, or one an agent worked in, is a *docs project*. A folder of projects is a *group*. These are fixed rules, not guesses by an AI.
 - **Reading each project.** It reads the git state (commits, remote, branch, uncommitted, unpushed, stashes and weekly activity), the README (title, summary, links), the stack from package files, and to-dos from `.laci.md`, `HANDOFF*.md`, `TODO*.md`, `NOTES*.md` and `tasks/todo.md`.
 - **Linking agent history.** Each connector says how its tool links history to a folder. Claude Code names its session folders after the path with every non-alphanumeric character turned into `-`, so the name can't be decoded back; laci walks the real filesystem to find the folder a name belongs to. Codex logs are linked by the `cwd` inside them, Gemini CLI by a hash of the path, and Claude plans by the paths they mention. Parsed facts are cached; transcript reads are bounded, with the head used to establish cleanup ownership and a recent window used for current session metadata.
+- **Reading reports.** With a reports folder set, laci reads the Markdown files directly in it: title, header lines, summary and open items. A report links to the deepest project that contains a path in its header, the folder its session started in, or the folder a session it names last worked in.
 - **Staying current.** After a scan, laci watches the folders where projects live, the files and git state of each project, the agent log folders and the folders open in the app. It then re-reads only what changed: one project, the agent logs, or (when folders appear or disappear) a full scan.
 - **Status.** Status is set automatically from the last activity (commit, file change or agent session): *active* within 14 days, *idle* within 60, *dormant* after that, and *archived* inside an archive folder or after an explicit archive action. Set it by hand to override. Editing `.laci.md` doesn't count as activity.
 - **Former locations.** When a session folder resolves to a real folder but its sessions *started* somewhere that no longer exists, that old path is a former location. This is how laci spots half-done moves and renames, such as a repo renamed from `shop-old` to `shop`.
@@ -316,6 +333,64 @@ Client wants the launch before the coffee expo.
 
 laci adds `.laci.md` to the repo's `.git/info/exclude` (not `.gitignore`), so it is never committed and your repo files stay unchanged.
 
+## Session reports
+
+A report is one Markdown file per session, directly in the reports folder. laci reads its title (the first `# ` line) and three header lines. All of them are optional:
+
+```markdown
+# Checkout total wrong on mobile Safari
+
+- **Date:** 2026-10-13
+- **Session:** ~/project/clients/acme-store · 5f0c2a1e-8d4b-4c7a-9e21-3b6d0f9a7c42
+- **Projects:** ~/project/clients/acme-store, Figma file "Checkout"
+
+## Summary
+Safari showed a total one rupiah off. Fixed and deployed to staging.
+
+## Open
+- Send the staging link to the client.
+```
+
+- **Date** dates the report. Without it, laci uses the date the file name starts with, then the file's time.
+- **Session** names the folder the agent started in and its session id. The id links the report to that session in Claude Code, Codex or Antigravity; the folder links it to the project it is in.
+- **Projects** names the projects worked in, by path. Anything that isn't a path, like the Figma file above, is shown as written.
+- The first paragraph of **Summary** shows in the list, and the items under the last **Open** heading on Today.
+
+The folder's `README.md` and files whose names start with a dot are not reports. Reports are read as UTF-8 text, up to 2 MB each.
+
+To have an agent write them, add this rule where it reads its instructions: `~/.claude/CLAUDE.md` for Claude Code, `~/.codex/AGENTS.md` for Codex or `~/.gemini/GEMINI.md` for Gemini. **Copy agent instruction** in Settings copies it with your folder filled in.
+
+````markdown
+## Session reports
+
+When a session finishes real work, write a report about it in `~/notes/agent-reports`. Skip quick questions that change nothing.
+
+- One file per session, named `YYYY-MM-DD-short-title.md` after the day the session started. If the session continues later, update that file instead of writing a new one.
+- Use this layout:
+
+```markdown
+# Title saying what the session was about
+
+- **Date:** YYYY-MM-DD
+- **Session:** <folder you were started in> · <your session id, if you know it>
+- **Projects:** <full path of each project you worked in>
+
+## Summary
+Two or three sentences: what was asked and where it ended up.
+
+## What was done
+What changed, grouped by project, and where it lives.
+
+## State now
+What works now, and how that was checked.
+
+## Open
+One line per thing still to do, most important first, or `Nothing open.`
+```
+
+- No secrets in reports: name the file that holds a secret, never its value.
+````
+
 ## Safety
 
 | When | What happens |
@@ -326,6 +401,7 @@ laci adds `.laci.md` to the repo's `.git/info/exclude` (not `.gitignore`), so it
 | Archive, move, reconnect, finish a move | Moves folders, renames agent history folders, rewrites the folder path in agent logs (keeping each log's time) |
 | Free space | Deletes `node_modules`, `.next` and similar folders for good; an install or build brings them back |
 | Back up logs | Copies agent logs to `~/.local/share/laci/history` |
+| Reports folder | Read-only: lists, reads and searches the reports, never writes there |
 | New project | Makes the folder; creates a remote repo only if you pick one |
 
 - **Undo.** Every move and rewrite is written to `~/.local/share/laci/journal/` *before* it happens. Rewritten files are kept in `~/.local/share/laci/backup/`. Undo restores them byte for byte. If a step fails midway, laci rolls back what it already did.
@@ -333,7 +409,7 @@ laci adds `.laci.md` to the repo's `.git/info/exclude` (not `.gitignore`), so it
 - **Log.** Every change is also listed in `~/.local/share/laci/activity.jsonl`, which the Log page reads. Undo from the Log goes through the same checks as the app, and stays inside home or explicitly selected workspace folders.
 - **Busy folders are refused.** If a running process (a `claude` session, a dev server) has its working directory inside a folder, laci won't move it.
 - **One change at a time.** A lock file keeps the app and agents from changing files at once.
-- **Local only.** The React interface uses Tauri IPC, with no local HTTP server. Fonts are bundled. Rendered Markdown is sanitized, and only scanned project folders can serve local README images. There is no telemetry.
+- **Local only.** The React interface uses Tauri IPC, with no local HTTP server. Fonts are bundled. Rendered Markdown is sanitized, and only scanned project folders and the reports folder can serve local images. There is no telemetry.
 
 ## Configuration
 
@@ -346,6 +422,7 @@ Settings are saved in `~/.config/laci/config.json` (or under `$XDG_CONFIG_HOME`)
 | `templatePaths` | Local template folders referenced from New project |
 | `recipes` | User-saved generator programs, argument arrays and prerequisite/download declarations |
 | `archiveDir` | Default archive folder; empty or absent uses the nearest `_archive/` folder |
+| `reportsDir` | Folder of session reports; empty or absent hides Reports. Read only, never scanned for projects |
 | `presets` | Built-in connectors you added |
 | `custom` | Connectors you described yourself |
 | `apps` | `terminal`, `editor` and `files`: the programs laci opens things with |
@@ -367,7 +444,7 @@ Other files laci keeps:
 | --- | --- |
 | `~/.config/laci/templates/` | Starting points for *New project*: each folder is one template |
 | `~/.local/share/laci/` | Undo journals, backups, the Log (`activity.jsonl`) and the debug log (`laci.log`) |
-| `~/.cache/laci/` | What laci learned from agent logs, and the last scan. Safe to delete |
+| `~/.cache/laci/` | What laci learned from agent logs and reports, and the last scan. Safe to delete |
 
 ## Development
 

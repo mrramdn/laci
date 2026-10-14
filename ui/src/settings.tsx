@@ -1,9 +1,17 @@
 import { useEffect, useState } from "react";
 import { api, errorText } from "./api";
-import { APP_NAMES, cap, plural, tilde } from "./helpers";
+import {
+  agentInstruction,
+  APP_NAMES,
+  cap,
+  plural,
+  reportList,
+  shortDay,
+  tilde,
+} from "./helpers";
 import { Select } from "./select";
 import { Icon } from "./common";
-import { useApp, acknowledge, changed, rescan, run } from "./store";
+import { useApp, acknowledge, changed, copyText, rescan, run } from "./store";
 import type {
   Apps,
   Change,
@@ -25,6 +33,7 @@ export function Settings({ first = false }: { first?: boolean }) {
   const [discovering, setDiscovering] = useState(false);
   const [folder, setFolder] = useState("");
   const [archiveDir, setArchiveDir] = useState("");
+  const [reportsDir, setReportsDir] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const retryScan = first && s.setupPending && Boolean(s.error);
@@ -36,6 +45,7 @@ export function Settings({ first = false }: { first?: boolean }) {
         setInfo(info);
         setRoots(new Set(info.roots));
         setArchiveDir(info.archiveDir ?? "");
+        setReportsDir(info.reportsDir ?? "");
         setPresets(
           new Set([
             ...info.presets,
@@ -87,14 +97,24 @@ export function Settings({ first = false }: { first?: boolean }) {
     else next.add(value);
     setter(next);
   }
+  /** A typed folder as an absolute path, with ~ expanded. */
+  const full = (raw: string) => {
+    const path = raw.trim().replace(/(.)\/+$/, "$1");
+    return path === "~" || path.startsWith("~/")
+      ? snapshot.home + path.slice(1)
+      : path;
+  };
   async function save() {
-    let archivePath = archiveDir.trim();
-    if (archivePath === "~" || archivePath.startsWith("~/"))
-      archivePath = snapshot.home + archivePath.slice(1);
+    const archivePath = full(archiveDir);
     if (archivePath && !archivePath.startsWith("/")) {
       setError(
         "Use a full archive folder path like ~/archive or /mnt/backup/archive",
       );
+      return;
+    }
+    const reportsPath = full(reportsDir);
+    if (!first && reportsPath && !reportsPath.startsWith("/")) {
+      setError("Use a full reports folder path like ~/notes/agent-reports");
       return;
     }
     await run(
@@ -106,6 +126,8 @@ export function Settings({ first = false }: { first?: boolean }) {
           const result = await api<Change>("setup/save", {
             roots: [...roots],
             archiveDir: archivePath,
+            // First-run setup does not show this field, so it keeps whatever is saved.
+            ...(first ? {} : { reportsDir: reportsPath }),
             presets: [...presets],
             apps,
             terminalTarget,
@@ -352,6 +374,13 @@ export function Settings({ first = false }: { first?: boolean }) {
               ))}
             </div>
           </section>
+          {!first ? (
+            <ReportsSetting
+              value={reportsDir}
+              onChange={setReportsDir}
+              draft={full(reportsDir)}
+            />
+          ) : null}
         </>
       )}
       <div className="setup-foot">
@@ -412,5 +441,80 @@ export function Settings({ first = false }: { first?: boolean }) {
       </div>
       <div className="body">{content}</div>
     </>
+  );
+}
+function ReportsSetting({
+  value,
+  onChange,
+  draft,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  draft: string;
+}) {
+  const snapshot = useApp((s) => s.snapshot!);
+  const saved = snapshot.reportsDir;
+  const newest = reportList(snapshot)[0];
+  const [tone, status] =
+    draft !== (saved?.path ?? "")
+      ? [
+          "",
+          draft
+            ? "Save to read reports from this folder."
+            : "Save to stop showing reports.",
+        ]
+      : saved?.error
+        ? ["bad", `Laci can’t read this folder: ${saved.error}`]
+        : saved
+          ? [
+              "ok",
+              `${plural(saved.total ?? 0, "report")} found${newest ? ` · newest ${shortDay(newest.date)}` : ""}`,
+            ]
+          : ["", "Leave empty to keep Reports hidden."];
+  return (
+    <section className="sset">
+      <h2>
+        <span className="num">4</span>Session reports
+      </h2>
+      <p>
+        Agents can write a short report when a session ends. Laci lists them in
+        Reports, links each to its session and projects, shows what they left
+        open on Today, and lets agents read them through its MCP tools. Laci
+        never changes the folder.
+      </p>
+      <label className="fld">
+        <span>Reports folder</span>
+        <input
+          className="inp mono"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="~/notes/agent-reports"
+          autoComplete="off"
+          aria-label="Reports folder"
+        />
+        <small className={`rp-status ${tone}`}>{status}</small>
+      </label>
+      <div className="rp-copy">
+        <button
+          className="btn sm"
+          disabled={!draft.startsWith("/")}
+          onClick={() =>
+            copyText(
+              agentInstruction(tilde(draft, snapshot.home)),
+              "Agent instruction copied",
+              "Paste it into CLAUDE.md, AGENTS.md or GEMINI.md",
+            )
+          }
+        >
+          <Icon name="copy" className="sm" />
+          Copy agent instruction
+        </button>
+        <small className="faint">
+          The rule that makes an agent write these reports, with this folder
+          filled in. Paste it where your agent reads its instructions:
+          CLAUDE.md, AGENTS.md or GEMINI.md.
+        </small>
+      </div>
+    </section>
   );
 }

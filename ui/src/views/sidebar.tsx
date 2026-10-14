@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../common";
 import { useApp, readListing, setTheme, rescan } from "../store";
 import {
@@ -34,6 +34,17 @@ export function Sidebar() {
   const suggestions = snapshot.proposals.filter((p) => p.action).length;
   const detached =
     snapshot.orphans.claude.length + snapshot.orphans.items.length;
+  const reportsReady = Boolean(
+    snapshot.reportsDir && !snapshot.reportsDir.error,
+  );
+  const newReports = useMemo(
+    () =>
+      (snapshot.reports ?? []).filter(
+        (r) => Date.parse(r.modified) > s.reportsSeen,
+      ).length,
+    [snapshot.reports, s.reportsSeen],
+  );
+  const freshReports = reportsReady && s.view !== "reports" ? newReports : 0;
   const nav: [View, string, string, number, string][] = [
     [
       "today",
@@ -56,6 +67,17 @@ export function Sidebar() {
       detached,
       `${detached} detached agent ${detached === 1 ? "history" : "histories"}: the project folder is missing or unavailable`,
     ],
+    ...(snapshot.reportsDir
+      ? ([
+          [
+            "reports",
+            "Reports",
+            "report",
+            freshReports,
+            `${plural(freshReports, "new report")} since you last opened Reports`,
+          ],
+        ] as [View, string, string, number, string][])
+      : []),
     ["log", "Log", "scroll", 0, ""],
   ];
   useEffect(() => {
@@ -169,7 +191,7 @@ export function Sidebar() {
             <span>{label}</span>
             {count ? (
               <span
-                className={`n ${view === "today" ? "hot" : ""}`}
+                className={`n ${view === "today" ? "hot" : view === "reports" ? "new" : ""}`}
                 title={what}
               >
                 {count}

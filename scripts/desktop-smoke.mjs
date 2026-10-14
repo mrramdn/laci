@@ -7,6 +7,7 @@
  * LACI_SCREENSHOTS optionally receives screenshots from the real app window.
  * LACI_ONBOARDING_ONLY=1 checks the first-run wizard on an unconfigured fixture.
  * LACI_WATCHER_ONLY=1 checks archived/worktree Git and continuously written session logs.
+ * LACI_MODULAR_ONLY=1 checks external scan and archive folders, project Trash, and session reports.
  * LACI_KEYBOARD_ONLY=1 checks modal, connector, row and terminal keyboard behavior.
  * LACI_PATCH_ONLY=1 checks themed selects, empty roots after reload, and isolated generator cancellation/failure.
  * LACI_AGENT_ONLY=1 uses fixture bin scripts and LACI_AGENT_CAPTURE; driver PATH must be fixture/bin:/usr/bin:/bin.
@@ -20,6 +21,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  realpath,
   rename,
   readFile,
   rm,
@@ -599,6 +601,289 @@ async function modularRegressions() {
         { force: true },
       );
     }
+  }
+}
+
+/** Session reports: setting the folder, reading, links in from sessions, projects, Today and the palette. */
+async function reportRegressions() {
+  const original = await api("setup/info");
+  const folder = await mkdtemp(
+    path.join(path.dirname(fixtureHome), "laci-reports-"),
+  );
+  const dayOf = (back) => {
+    const t = new Date(Date.now() - back * 864e5);
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+  };
+  const titleA = `Report A ${stamp}`;
+  const titleB = `Report B ${stamp}`;
+  const titleC = `Report C ${stamp}`;
+  const sessionTitle = `Report session ${stamp}`;
+  const firstOpen = `First open item ${stamp}`;
+  const word = `fulltext${stamp}`;
+  const fileB = `${dayOf(1)}-report-b-${stamp}.md`;
+  const sessionId = crypto.randomUUID();
+  let historyFile;
+  try {
+    await nav("Today", "Today");
+    const projectPath = await wait("a recent project on Today", () =>
+      execute(
+        () =>
+          document.querySelector("#sec-recent .item[data-id]")?.dataset.id ??
+          null,
+      ),
+    );
+    const project = (await snapshot()).nodes[projectPath];
+    historyFile = path.join(
+      fixtureHome,
+      ".claude/projects",
+      projectPath.replace(/[^A-Za-z0-9]/g, "-"),
+      `${sessionId}.jsonl`,
+    );
+    await mkdir(path.dirname(historyFile), { recursive: true });
+    await writeFile(
+      historyFile,
+      JSON.stringify({
+        type: "user",
+        cwd: projectPath,
+        sessionId,
+        timestamp: new Date().toISOString(),
+        message: { role: "user", content: "Write the report" },
+      }) +
+        "\n" +
+        JSON.stringify({ type: "ai-title", aiTitle: sessionTitle, sessionId }) +
+        "\n",
+    );
+    await writeFile(path.join(folder, "README.md"), "| Date | Title |\n");
+    await writeFile(
+      path.join(folder, `${dayOf(0)}-report-a-${stamp}.md`),
+      `# ${titleA}\n\n- **Date:** ${dayOf(0)}\n- **Session:** ${projectPath} · ${sessionId}\n- **Projects:** ${projectPath}\n\n## Summary\nThe newest report.\n\nIt continues [the earlier report](${fileB}).\n\n## Open\n- ${firstOpen}\n- Second open item\n- Third open item\n`,
+    );
+    const filler = "A line of findings that makes the report long. ".repeat(
+      12,
+    );
+    await writeFile(
+      path.join(folder, fileB),
+      `# ${titleB}\n\n- **Date:** ${dayOf(1)}\n- **Projects:** ${projectPath}\n\n## Summary\nAn older report.\n\n` +
+        Array.from(
+          { length: 8 },
+          (_, i) => `## Part ${i + 1}\n${filler}\n\n`,
+        ).join("") +
+        `## Hostile\n<script>window.__REPORT_XSS__ = 1</script>\n<img src="x" onerror="window.__REPORT_XSS__ = 1">\n` +
+        `[bad](javascript:window.__REPORT_XSS__=1) <div style="position:fixed;inset:0">cover</div>\n` +
+        `<form action="https://example.invalid"><input name="x"></form>\n![pixel](https://example.invalid/pixel.png)\n\n` +
+        `Only the body says ${word}.\n`,
+    );
+    await check(
+      "Settings choose a reports folder and copy the agent instruction",
+      async () => {
+        await nav("Settings", "Settings");
+        const actual = await realpath(folder);
+        await type('[aria-label="Reports folder"]', folder);
+        await click(".main button", "Save and rescan", true);
+        await wait("reports listed", async () => {
+          const current = await snapshot();
+          return (
+            !current.historyPending &&
+            current.reportsDir?.path === actual &&
+            current.reports?.length === 2
+          );
+        });
+        await wait("settings report status", () =>
+          textContains(".main .sset", "2 reports found"),
+        );
+        await execute(() => {
+          window.__copied = [];
+          Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: {
+              writeText: (text) => {
+                window.__copied.push(text);
+                return Promise.resolve();
+              },
+            },
+          });
+        });
+        await click(".main .rp-copy button", "Copy agent instruction");
+        const copied = await wait("instruction copied", () =>
+          execute(() => window.__copied[0] ?? null),
+        );
+        assert.ok(copied.includes(folder) && copied.includes("## Open"));
+      },
+    );
+    await check(
+      "Reports list, read, follow a link and stay sanitized",
+      async () => {
+        await nav("Reports", "Reports");
+        await click(".rp-row", titleA);
+        await wait("report A open", () =>
+          textContains("#report-title", titleA),
+        );
+        await wait("report A text", () =>
+          textContains(".rp-body", "The newest report."),
+        );
+        assert.ok(
+          !(await textContains(".rp-body", sessionId)),
+          "the header lines show above the text, not in it",
+        );
+        await click(".rp-body a", "the earlier report");
+        await wait("report B open through its link", () =>
+          textContains("#report-title", titleB),
+        );
+        await wait("report B text", () => textContains(".rp-body", word));
+        assert.equal(
+          await execute(
+            () =>
+              document.querySelectorAll(
+                '.rp-body script, .rp-body style, .rp-body form, .rp-body [style], .rp-body [onerror], .rp-body a[href^="javascript:"], .rp-body [class]:not(.readme-remote)',
+              ).length,
+          ),
+          0,
+          "A report renders as text structure only",
+        );
+        assert.equal(
+          await execute(() => window.__REPORT_XSS__ ?? null),
+          null,
+        );
+        assert.equal(
+          await execute(
+            () =>
+              document.querySelectorAll('.rp-body img[src^="https:"]').length,
+          ),
+          0,
+          "web images wait for Load images",
+        );
+        const sections = await execute(
+          () => document.querySelectorAll(".rp-outline button").length,
+        );
+        assert.ok(sections >= 4, `outline has ${sections} sections`);
+        await click(".rp-outline button", "Hostile");
+        await wait("outline scrolled the report", () =>
+          execute(() => document.querySelector(".rp-reader").scrollTop > 0),
+        );
+        await type('[aria-label="Search reports"]', word);
+        await wait("full-text match with a snippet", () =>
+          execute(
+            (title) =>
+              [...document.querySelectorAll(".rp-row")].some(
+                (row) =>
+                  row.textContent.includes(title) &&
+                  row.querySelector(".rp-sum .hl"),
+              ),
+            titleB,
+          ),
+        );
+        await type('[aria-label="Search reports"]', "");
+      },
+    );
+    await check(
+      "Sessions, projects, Today and the palette open their report",
+      async () => {
+        await click(".rp-row", titleA);
+        await click(".rp-chip", sessionTitle);
+        await wait("session dialog", () =>
+          textContains(".dialog .dh h2", sessionTitle),
+        );
+        await click(".dialog .df button", "Report", true);
+        await wait("reports for that session", () =>
+          textContains(".rp-filter", sessionTitle),
+        );
+        await click(".rp-chip", project.label);
+        await wait("project details", () =>
+          textContains(".insp .ititle h2", project.name),
+        );
+        await wait("the project's reports", () =>
+          textContains(".insp .sec-t", "Reports"),
+        );
+        await nav("Agents", "Agents");
+        const row = await wait("session row with a report", () =>
+          execute(
+            (title) =>
+              [...document.querySelectorAll(".sess")]
+                .find((row) => row.textContent.includes(title))
+                ?.querySelector(".sess-rep") ?? null,
+            sessionTitle,
+          ),
+        );
+        await command("POST", `/element/${row[elementKey]}/click`, {});
+        await wait("report opened from its session", () =>
+          textContains("#report-title", titleA),
+        );
+        await nav("Today", "Today");
+        await click(".rep-open", firstOpen);
+        await wait("report opened from Today", () =>
+          textContains("#report-title", titleA),
+        );
+        await nav("Today", "Today");
+        await key("k", true);
+        await type("#pal-in", titleB);
+        await click(".pal-item", titleB);
+        await wait("report opened from the palette", () =>
+          textContains("#report-title", titleB),
+        );
+      },
+    );
+    await check("A new report is counted until Reports is opened", async () => {
+      await nav("Today", "Today");
+      await writeFile(
+        path.join(folder, `${dayOf(0)}-report-c-${stamp}.md`),
+        `# ${titleC}\n\n## Summary\nWritten while Laci was open.\n`,
+      );
+      await wait("watcher counted the new report", () =>
+        execute(
+          () =>
+            [...document.querySelectorAll(".sb-item")]
+              .find((item) => item.textContent.includes("Reports"))
+              ?.querySelector(".n.new")?.textContent === "1",
+        ),
+      );
+      await nav("Reports", "Reports");
+      await wait("new report marked", () =>
+        execute(
+          (title) =>
+            [...document.querySelectorAll(".rp-row")].some(
+              (row) =>
+                row.textContent.includes(title) && row.querySelector(".dot"),
+            ),
+          titleC,
+        ),
+      );
+      assert.ok(
+        await execute(
+          () => !document.querySelector(".sb-item .n.new"),
+        ),
+        "opening Reports clears the count",
+      );
+    });
+    const demo = path.join(fixtureHome, "Documents/agent-reports");
+    if (screenshotDir && (await stat(demo).catch(() => null))) {
+      await saveSetup({
+        roots: original.roots,
+        presets: original.presets,
+        apps: original.apps,
+        reportsDir: demo,
+      });
+      await nav("Today", "Today");
+      await nav("Reports", "Reports");
+      await click(".rp-row", "Checkout total wrong on mobile Safari");
+      await wait("demo report open", () =>
+        textContains(".rp-body", "Midtrans"),
+      );
+      await shot("reports");
+    }
+  } finally {
+    await wait(
+      "history settled for reports restore",
+      async () => !(await api("status")).historyPending,
+    ).catch(() => {});
+    await saveSetup({
+      roots: original.roots,
+      presets: original.presets,
+      apps: original.apps,
+      archiveDir: original.archiveDir ?? "",
+      reportsDir: original.reportsDir ?? "",
+    }).catch(() => {});
+    if (historyFile) await rm(historyFile, { force: true });
+    await rm(folder, { recursive: true, force: true });
   }
 }
 
@@ -2945,6 +3230,7 @@ try {
       );
     } else if (modularOnly) {
       await modularRegressions();
+      await reportRegressions();
       assert.deepEqual(
         await execute(() => window.__LACI_SMOKE_ERRORS__ ?? []),
         [],
@@ -3514,6 +3800,7 @@ try {
       await tidyRegressions();
       await watcherRegressions();
       await modularRegressions();
+      await reportRegressions();
 
       await check("No unhandled frontend errors", async () => {
         const errors = await execute(() => window.__LACI_SMOKE_ERRORS__ ?? []);

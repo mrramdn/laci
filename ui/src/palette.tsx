@@ -1,15 +1,24 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useApp, rescan, setTheme } from "./store";
+import { useApp, goToProject, rescan, setTheme } from "./store";
 import {
   ago,
   allSessions,
+  base,
   days,
   providerName,
+  reportList,
   sessionKey,
   sessionsOf,
+  shortDay,
   tilde,
 } from "./helpers";
-import { Icon, KindIcon, PriorityGlyph, restoreFocus } from "./common";
+import {
+  Highlight,
+  Icon,
+  KindIcon,
+  PriorityGlyph,
+  restoreFocus,
+} from "./common";
 import { DeadlinePill } from "./deadline";
 import type { Node, View } from "./types";
 export function Palette() {
@@ -114,10 +123,34 @@ export function Palette() {
           ),
         )
     : [];
+  const projectNames = (paths: string[]) =>
+    paths.map((p) => snapshot.nodes[p]?.label ?? base(p)).join(", ");
+  const reportHits = terms.length
+    ? reportList(snapshot)
+        .filter((r) =>
+          matches(
+            `${r.title} ${r.summary ?? ""} ${r.scope ?? ""} ${projectNames(r.projects)}`,
+          ),
+        )
+        .slice(0, 5)
+        .map((r) =>
+          found(
+            "report:" + r.id,
+            "Reports",
+            r.title,
+            [shortDay(r.date), projectNames(r.projects)]
+              .filter(Boolean)
+              .join(" · "),
+            "report",
+            ago(r.modified),
+          ),
+        )
+    : [];
   const actions = [
     ["view:today", "Open Today", "inbox"],
     ["view:tidy", "Open Tidy up", "sparkles"],
     ["view:agents", "Open Agents", "history"],
+    ...(snapshot.reportsDir ? [["view:reports", "Open Reports", "report"]] : []),
     ["view:log", "Open Log", "scroll"],
     ["new", "New project", "plus"],
     ["shortcuts", "Keyboard shortcuts", "keyboard"],
@@ -140,6 +173,7 @@ export function Palette() {
     ...hits.filter((i) => i.section === "Projects"),
     ...hits.filter((i) => i.section === "Folders"),
     ...sessionHits,
+    ...reportHits,
     ...todoHits,
     ...actions,
   ];
@@ -149,10 +183,7 @@ export function Palette() {
     if (id.startsWith("node:")) {
       const n = snapshot.nodes[id.slice(5)];
       if (n.kind === "folder") s.cd(n.path);
-      else {
-        if (["settings", "log"].includes(s.view)) s.navigate("today");
-        s.select(n.id);
-      }
+      else goToProject(n.id);
     } else if (id.startsWith("session:")) {
       const session = allSessions(snapshot).find(
         (x) => "session:" + sessionKey(x) === id,
@@ -166,11 +197,11 @@ export function Palette() {
             file: session.file,
           },
         });
-    } else if (id.startsWith("todo:")) {
+    } else if (id.startsWith("report:"))
+      s.openReport({ id: id.slice("report:".length) });
+    else if (id.startsWith("todo:")) {
       const nodeId = items.find((i) => i.id === id)?.project;
-      if (!nodeId) return;
-      if (["settings", "log"].includes(s.view)) s.navigate("today");
-      s.select(nodeId, "todo");
+      if (nodeId) goToProject(nodeId, "todo");
     } else if (id.startsWith("view:")) s.navigate(id.slice(5) as View);
     else if (id === "new") useApp.setState({ modal: { kind: "new" } });
     else if (id === "shortcuts")
@@ -233,7 +264,11 @@ export function Palette() {
               setQuery(e.target.value);
               setSelected(0);
             }}
-            placeholder="Search projects, sessions, to-dos, actions…"
+            placeholder={
+              snapshot.reportsDir
+                ? "Search projects, sessions, reports, to-dos, actions…"
+                : "Search projects, sessions, to-dos, actions…"
+            }
             autoComplete="off"
             aria-label="Search"
             role="combobox"
@@ -298,27 +333,5 @@ export function Palette() {
         </div>
       </div>
     </div>
-  );
-}
-function Highlight({ text, query }: { text: string; query: string }) {
-  const terms = query
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  if (!terms.length) return <>{text}</>;
-  const regex = new RegExp(`(${terms.join("|")})`, "gi");
-  return (
-    <>
-      {text.split(regex).map((part, i) =>
-        i % 2 ? (
-          <span className="hl" key={i}>
-            {part}
-          </span>
-        ) : (
-          part
-        ),
-      )}
-    </>
   );
 }

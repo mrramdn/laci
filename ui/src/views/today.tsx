@@ -12,10 +12,12 @@ import { useApp, run } from "../store";
 import { BackupNotice } from "../backup";
 import {
   deadlinesOf,
+  latestReport,
   plural,
   recency,
   risksOf,
   sessionsOf,
+  shortDay,
   taskIdentity,
 } from "../helpers";
 import { DeadlinePill } from "../deadline";
@@ -313,6 +315,7 @@ export function Today() {
                       </span>
                     </div>
                   ) : null}
+                  <ReportOpen node={n} />
                 </div>
                 <span className="meta">
                   {session?.resumeCapability === "supported" ? (
@@ -424,5 +427,32 @@ export function Today() {
         ) : null}
       </div>
     </>
+  );
+}
+/** What the project's latest report left open; a click shows the report. */
+function ReportOpen({ node }: { node: Node }) {
+  const snapshot = useApp((s) => s.snapshot!);
+  const report = latestReport(snapshot, node.path);
+  if (!report?.open.length) return null;
+  return (
+    <button
+      className="l2 rep-open"
+      title={[
+        `Open in the report of ${shortDay(report.date)}: ${report.title}`,
+        ...report.open.map((item) => `• ${item}`),
+      ].join("\n")}
+      onClick={(event) => {
+        event.stopPropagation();
+        useApp.getState().openReport({ id: report.id, project: node.path });
+      }}
+    >
+      <Icon name="report" />
+      <span>
+        Open ({shortDay(report.date)} report): {report.open[0]}
+      </span>
+      {report.openCount > 1 ? (
+        <span className="faint more-n">+{report.openCount - 1}</span>
+      ) : null}
+    </button>
   );
 }

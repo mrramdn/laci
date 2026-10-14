@@ -11,18 +11,20 @@ import { Icon, Time } from "./common";
 import {
   allSessions,
   bytes,
+  conversationIds,
   conversationKey,
   conversations,
   deletable,
   duration,
   plural,
   providerName,
+  reportsOfSessions,
   sessionKey,
   sessionsOf,
   tilde,
 } from "./helpers";
 import type { Conversation, SessionGroup } from "./helpers";
-import { changed, run, toast, urlOpen, useApp } from "./store";
+import { changed, goToProject, run, toast, urlOpen, useApp } from "./store";
 import type { Modal } from "./store";
 import type { Change, Node, Session } from "./types";
 
@@ -170,6 +172,13 @@ function ConversationRow({
         : tilde(session.cwd, home)
       : "No folder recorded";
   const can = deletable(c);
+  const reports = snapshot.reportsDir
+    ? reportsOfSessions(snapshot, conversationIds(c))
+    : [];
+  const reportLabel =
+    reports.length === 1
+      ? `Read its report: ${reports[0].title}`
+      : `Read its ${reports.length} reports`;
   return (
     <div className="session-group">
       <div className={`sess${c.short ? " is-short" : ""}`}>
@@ -219,6 +228,22 @@ function ConversationRow({
             ].join(" · ")}
           </small>
         </button>
+        {reports.length ? (
+          <button
+            className="icon-btn sess-rep"
+            title={reportLabel}
+            aria-label={reportLabel}
+            onClick={() =>
+              useApp.getState().openReport({
+                id: reports[0].id,
+                sessions: conversationIds(c),
+              })
+            }
+          >
+            <Icon name="report" className="sm" />
+            {reports.length > 1 ? <small>{reports.length}</small> : null}
+          </button>
+        ) : null}
         <span
           className="kept"
           title={session.kept ? "Kept: cleanup leaves it alone" : undefined}
@@ -557,6 +582,8 @@ export function SessionDialog({
       )
     : undefined;
   const main = c?.session === session ? c : undefined;
+  const ids = c ? conversationIds(c) : session ? [session.sessionId] : [];
+  const reports = snapshot.reportsDir ? reportsOfSessions(snapshot, ids) : [];
   return (
     <DialogFrame
       title={main?.title ?? session?.title ?? "Session unavailable"}
@@ -599,12 +626,25 @@ export function SessionDialog({
             </button>
           ) : null}
           <span className="grow" />
+          {reports.length ? (
+            <button
+              className="btn"
+              onClick={() =>
+                useApp
+                  .getState()
+                  .openReport({ id: reports[0].id, sessions: ids })
+              }
+            >
+              <Icon name="report" className="sm" />
+              {reports.length === 1 ? "Report" : `${reports.length} reports`}
+            </button>
+          ) : null}
           {node && request.projectPath !== node.id ? (
             <button
               className="btn"
               onClick={() => {
                 useApp.setState({ modal: null });
-                useApp.getState().select(node.id, "agents");
+                goToProject(node.id, "agents");
               }}
             >
               Open {node.label}

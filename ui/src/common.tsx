@@ -309,3 +309,26 @@ export function Ops({
     </ul>
   );
 }
+/** `text` with the words of `query` marked. */
+export function Highlight({ text, query }: { text: string; query: string }) {
+  const terms = query
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!terms.length) return <>{text}</>;
+  const regex = new RegExp(`(${terms.join("|")})`, "gi");
+  return (
+    <>
+      {text.split(regex).map((part, i) =>
+        i % 2 ? (
+          <span className="hl" key={i}>
+            {part}
+          </span>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}

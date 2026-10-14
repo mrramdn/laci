@@ -1,4 +1,11 @@
-import type { Node, Snapshot, LogEntry, Task, Session } from "./types";
+import type {
+  Node,
+  Snapshot,
+  LogEntry,
+  Task,
+  Session,
+  Report,
+} from "./types";
 export function taskIdentity(node: Node, task: Task) {
   const matching = node.tasks.filter(
     (candidate) =>
@@ -48,6 +55,41 @@ export const date = (at?: string) =>
           : {}),
       })
     : "—";
+/** A "YYYY-MM-DD" day at local midnight. `new Date("2026-10-13")` is UTC midnight: the day before, west of
+ * Greenwich. */
+export function localDay(ymd?: string) {
+  const m = ymd ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd) : null;
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]) : undefined;
+}
+/** "Today", "Yesterday", else the weekday and the date. */
+export function dayLabel(day: Date) {
+  const back = daysBack(day);
+  return back === 0
+    ? "Today"
+    : back === 1
+      ? "Yesterday"
+      : day.toLocaleDateString("en-GB", {
+          weekday: "long",
+          day: "numeric",
+          month: "short",
+          ...(day.getFullYear() !== new Date().getFullYear()
+            ? { year: "numeric" }
+            : {}),
+        });
+}
+/** "13 Oct" for a "YYYY-MM-DD" day, with the year when it is another year. */
+export function shortDay(ymd: string) {
+  const day = localDay(ymd);
+  return day
+    ? day.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+        ...(day.getFullYear() !== new Date().getFullYear()
+          ? { year: "numeric" }
+          : {}),
+      })
+    : ymd;
+}
 export function daysBack(d: Date) {
   const midnight = (x: Date) =>
     new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
@@ -469,4 +511,105 @@ export function logKind(e: LogEntry) {
     : e.title.startsWith("Created")
       ? "new"
       : "other";
+}
+
+interface ReportIndex {
+  all: Report[];
+  byId: Map<string, Report>;
+  bySession: Map<string, Report[]>;
+  byProject: Map<string, Report[]>;
+}
+const NO_REPORTS: Report[] = [];
+const reportIndexes = new WeakMap<Report[], ReportIndex>();
+/** Keyed on the reports array, which survives the periodic snapshot copy. */
+function indexReports(snapshot: Snapshot | null | undefined): ReportIndex {
+  const reports = snapshot?.reports ?? NO_REPORTS;
+  const cached = reportIndexes.get(reports);
+  if (cached) return cached;
+  const all = reports
+    .slice()
+    .sort(
+      (a, b) =>
+        b.date.localeCompare(a.date) ||
+        b.modified.localeCompare(a.modified) ||
+        b.id.localeCompare(a.id),
+    );
+  const index: ReportIndex = {
+    all,
+    byId: new Map(all.map((r) => [r.id, r])),
+    bySession: new Map(),
+    byProject: new Map(),
+  };
+  const add = (map: Map<string, Report[]>, key: string, report: Report) =>
+    map.set(key, [...(map.get(key) ?? []), report]);
+  for (const report of all) {
+    for (const id of report.sessions)
+      add(index.bySession, id.toLowerCase(), report);
+    for (const path of report.projects) add(index.byProject, path, report);
+  }
+  reportIndexes.set(reports, index);
+  return index;
+}
+/** Every report, newest first. */
+export const reportList = (snapshot: Snapshot | null | undefined) =>
+  indexReports(snapshot).all;
+export const reportById = (
+  snapshot: Snapshot | null | undefined,
+  id: string | null | undefined,
+) => (id ? indexReports(snapshot).byId.get(id) : undefined);
+/** Reports that name any of these sessions, newest first. */
+export function reportsOfSessions(
+  snapshot: Snapshot | null | undefined,
+  ids: string[],
+) {
+  const index = indexReports(snapshot);
+  const found = new Set(
+    ids.flatMap((id) => index.bySession.get(id.toLowerCase()) ?? []),
+  );
+  return index.all.filter((report) => found.has(report));
+}
+export const reportsOfProject = (
+  snapshot: Snapshot | null | undefined,
+  path: string,
+) => indexReports(snapshot).byProject.get(path) ?? NO_REPORTS;
+export const latestReport = (
+  snapshot: Snapshot | null | undefined,
+  path: string,
+): Report | undefined => reportsOfProject(snapshot, path)[0];
+/** The session ids one conversation went by: its newest session and those it continued. */
+export const conversationIds = (c: Conversation) => [
+  c.session.sessionId,
+  ...c.parts.map((part) => part.sessionId),
+];
+/** The rule that makes an agent write reports Laci reads, for CLAUDE.md, AGENTS.md or GEMINI.md. */
+export function agentInstruction(dir: string) {
+  return `## Session reports
+
+When a session finishes real work, write a report about it in \`${dir}\`. Skip quick questions that change nothing.
+
+- One file per session, named \`YYYY-MM-DD-short-title.md\` after the day the session started. If the session continues later, update that file instead of writing a new one.
+- Use this layout:
+
+\`\`\`markdown
+# Title saying what the session was about
+
+- **Date:** YYYY-MM-DD
+- **Session:** <folder you were started in> · <your session id, if you know it>
+- **Projects:** <full path of each project you worked in>
+
+## Summary
+Two or three sentences: what was asked and where it ended up.
+
+## What was done
+What changed, grouped by project, and where it lives.
+
+## State now
+What works now, and how that was checked.
+
+## Open
+One line per thing still to do, most important first, or \`Nothing open.\`
+\`\`\`
+
+- No secrets in reports: name the file that holds a secret, never its value.
+`;
 }

@@ -304,6 +304,7 @@ fn build(
     link(env, &mut snapshot, &on, &history.paths, &history.mentions);
     settle(env, &mut snapshot);
     plan(env, &mut snapshot);
+    crate::reports::attach(env, &mut snapshot);
     snapshot["tookMs"] = json!(started.elapsed().as_millis() as u64);
     Ok(snapshot)
 }
@@ -354,6 +355,8 @@ pub fn refresh_agents(env: &Env, snapshot: &mut Value) -> Result<bool> {
     link(env, snapshot, &on, &history.paths, &history.mentions);
     settle(env, snapshot);
     plan(env, snapshot);
+    // Sessions changed, and with them the projects a report reaches through its session ids.
+    crate::reports::attach(env, snapshot);
     Ok(false)
 }
 

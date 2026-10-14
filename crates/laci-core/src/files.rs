@@ -52,6 +52,28 @@ pub fn text(path: &Path) -> Option<String> {
     }
     fs::read_to_string(path).ok()
 }
+/// Like `text` for a file in a folder someone else writes: the last path component is never followed as a
+/// link, even when one replaces the file after it was listed, and a FIFO cannot block the read.
+pub fn text_nofollow(path: &Path, limit: u64) -> Option<String> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32);
+    }
+    let file = options.open(path).ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > limit {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    file.take(limit + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > limit {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
 pub fn entries(path: &Path) -> Vec<fs::DirEntry> {
     let mut out: Vec<_> = fs::read_dir(path).into_iter().flatten().filter_map(|e| e.ok()).collect();
     out.sort_by_key(|e| e.file_name());

@@ -66,5 +66,8 @@ fn doctor(s: &Value, out: &mut impl Write) -> io::Result<()> {
     for proposal in array(&s["proposals"]) {
         writeln!(out, "Tidy: {}", string(&proposal, "title"))?;
     }
+    if let Some(error) = s["reportsDir"]["error"].as_str() {
+        writeln!(out, "Reports folder {}: {error}", string(&s["reportsDir"], "path"))?;
+    }
     Ok(())
 }

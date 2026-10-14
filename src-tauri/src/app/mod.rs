@@ -81,7 +81,10 @@ impl AppState {
         };
         let read_ms = started.elapsed().as_millis();
         let watches_started = Instant::now();
-        let desired = if topology || prepared.refresh.watches {
+        // A reports folder that was chosen, cleared or came back needs its watch and image access.
+        let folder = |s: &Value| (s["reportsDir"]["path"].clone(), s["reportsDir"]["error"].is_null());
+        let reports_changed = prepared.current.as_ref().map(folder) != Some(folder(&snapshot));
+        let desired = if topology || prepared.refresh.watches || reports_changed {
             let listings = self.listings.lock().map(|l| l.clone()).unwrap_or_default();
             self.watches.as_ref().map(|_| Watches::desired(&prepared.env, &snapshot, &listings))
         } else {
@@ -104,9 +107,10 @@ impl AppState {
             engine.service.cache_snapshot(&snapshot);
             let cache_ms = cache_started.elapsed().as_millis();
             engine.service.debug(&format!(
-                "refresh full={} agents={} projects={} read={read_ms}ms watches={watches_ms}ms config={config_ms}ms cache={cache_ms}ms",
+                "refresh full={} agents={} reports={} projects={} read={read_ms}ms watches={watches_ms}ms config={config_ms}ms cache={cache_ms}ms",
                 prepared.refresh.full || topology,
                 prepared.refresh.agents,
+                prepared.refresh.reports,
                 prepared.refresh.projects.len()
             ));
             engine.revision
@@ -118,6 +122,13 @@ impl AppState {
                     let _ = self.handle.asset_protocol_scope().allow_directory(string(node, "path"), true);
                 }
             }
+        }
+        if (topology || reports_changed)
+            && snapshot["reportsDir"]["error"].is_null()
+            && let Some(dir) = snapshot["reportsDir"]["path"].as_str()
+        {
+            // Images a report shows from its own folder.
+            let _ = self.handle.asset_protocol_scope().allow_directory(dir, true);
         }
         if let (Some(watch), Some(desired)) = (&self.watches, desired) {
             // Watch enumeration and OS registration never hold the service lock.
@@ -214,6 +225,15 @@ impl AppState {
             "snapshot" => return self.snapshot(),
             "status" => return Ok(self.status()),
             "rescan" => return self.rescan(),
+            // Reading, searching or opening a report waits for no refresh and blocks none.
+            "reports/read" | "reports/search" | "reports/open" => {
+                let snapshot = self.snapshot()?;
+                let (env, apps) = {
+                    let engine = self.engine.lock().map_err(|e| e.to_string())?;
+                    (engine.service.env.clone(), engine.service.apps())
+                };
+                return laci_core::reports::request(&env, &snapshot, &apps, name, body);
+            }
             "delete/plan" => {
                 let (env, node) = {
                     let mut engine = self.engine.lock().map_err(|e| e.to_string())?;

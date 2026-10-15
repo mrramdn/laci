@@ -828,6 +828,68 @@ async function reportRegressions() {
         );
       },
     );
+    await check(
+      "A report item closes from Today and opens again in Reports",
+      async () => {
+        await nav("Today", "Today");
+        // The button shows on hover; a script click reaches it the same way.
+        assert.ok(
+          await execute((text) => {
+            const button = [...document.querySelectorAll(".rep-line")]
+              .find((line) => line.textContent.includes(text))
+              ?.querySelector(".rep-close");
+            button?.click();
+            return Boolean(button);
+          }, firstOpen),
+          "the report line has a close button",
+        );
+        await wait("the next item shows on Today", () =>
+          textContains(".rep-open", "Second open item"),
+        );
+        await nav("Reports", "Reports");
+        await click(".rp-row", titleA);
+        await wait("the closed item is listed apart", () =>
+          textContains(".rp-closed summary", "Closed (1)"),
+        );
+        assert.ok(
+          await execute(
+            (text) =>
+              ![...document.querySelectorAll(".rp-items .rp-item:not(.done)")]
+                .some((item) => item.textContent.includes(text)),
+            firstOpen,
+          ),
+        );
+        await execute(() =>
+          document.querySelector(".rp-closed")?.setAttribute("open", ""),
+        );
+        await click(".rp-closed .btn", "Open again", true);
+        await wait("the item is open again", () =>
+          execute(
+            (text) =>
+              !document.querySelector(".rp-closed") &&
+              [...document.querySelectorAll(".rp-items .rp-item")].some(
+                (item) => item.textContent.includes(text),
+              ),
+            firstOpen,
+          ),
+        );
+      },
+    );
+    await check("Review with an agent opens Start with Laci's brief", async () => {
+      await nav("Today", "Today");
+      await click(".main .head .btn", "Review with an agent", false);
+      await wait("start dialog", () =>
+        textContains(".dialog .dh h2", "Start an agent"),
+      );
+      const prompt = await execute(
+        () => document.querySelector('textarea[name="agentPrompt"]')?.value ?? null,
+      );
+      if (prompt !== null) assert.match(prompt, /open_items/);
+      await click(".dialog .df button", "Discard draft", true);
+      await wait("start dialog closed", () =>
+        execute(() => !document.querySelector(".dialog")),
+      );
+    });
     await check("A new report is counted until Reports is opened", async () => {
       await nav("Today", "Today");
       await writeFile(

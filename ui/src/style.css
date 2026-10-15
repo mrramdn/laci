@@ -3777,6 +3777,66 @@ textarea.notes:focus {
 .item .l2.rep-open .more-n {
   flex: none;
 }
+.item .rep-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.item .rep-line > .rep-open {
+  flex: 1;
+  min-width: 0;
+}
+.item .rep-line .rep-close,
+.item .meta .work-on {
+  width: 22px;
+  height: 22px;
+  opacity: 0;
+}
+.item:hover .rep-line .rep-close,
+.item .rep-line .rep-close:focus-visible,
+.item:hover .meta .work-on,
+.item .meta .work-on:focus-visible {
+  opacity: 1;
+}
+.rp-items {
+  margin: 4px 0 14px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.rp-items .sec-t {
+  margin-top: 0;
+}
+.rp-items-note {
+  font-weight: 400;
+  font-size: 11px;
+}
+.rp-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12.5px;
+}
+.rp-item .txt {
+  flex: 1;
+  min-width: 0;
+}
+.rp-item.done .txt {
+  color: var(--faint);
+  text-decoration: line-through;
+}
+.rp-items-more {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+.rp-closed summary {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
 .sess .sess-rep {
   flex: none;
   width: auto;

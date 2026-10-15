@@ -1,6 +1,7 @@
 //! Disk engine shared by the desktop app, command line and MCP server.
 pub mod activity;
 pub mod agents;
+pub mod assistant;
 pub mod config;
 pub mod create;
 pub mod deletion;

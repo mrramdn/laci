@@ -763,11 +763,33 @@ fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
                 ));
             }
             if u(g, "dirty") > 0 && u(g, "commits") > 0 {
+                let deleted = u(g, "deleted");
                 out.push(issue(
                     "dirty",
                     if n["archived"] == true { "high" } else { "med" },
                     plural(u(g, "dirty"), "uncommitted change"),
-                    (n["archived"] == true).then(|| "Archived with work that was never committed".into()),
+                    if n["archived"] == true {
+                        Some("Archived with work that was never committed".into())
+                    } else if deleted > 0 {
+                        Some(format!(
+                            "{} deleted, still in the last commit",
+                            count(deleted, "tracked file", "tracked files")
+                        ))
+                    } else {
+                        None
+                    },
+                ));
+            }
+            if u(g, "localOnly") > 0 {
+                out.push(issue(
+                    "unpushed",
+                    "med",
+                    count(u(g, "localOnly"), "commit not pushed", "commits not pushed"),
+                    Some(format!(
+                        "{} has no upstream, and no remote has {}",
+                        if string(g, "branch").is_empty() { "This branch" } else { string(g, "branch") },
+                        if u(g, "localOnly") == 1 { "it" } else { "them" }
+                    )),
                 ));
             }
             let diverged = u(g, "ahead") > 0 && u(g, "behind") > 0;
@@ -1240,6 +1262,18 @@ mod tests {
         assert_eq!(codes(&node(40, 40, "")), ["diverged"]);
         assert_eq!(codes(&node(2, 0, "")), ["unpushed"]);
         assert_eq!(codes(&node(0, 3, "")), ["behind"]);
+        // A branch with no upstream still shows commits that no remote has, and deleted files say so.
+        let mut local = node(0, 0, "");
+        local["git"]["upstream"] = json!("");
+        local["git"]["branch"] = json!("fix/fingerprint");
+        local["git"]["localOnly"] = json!(1);
+        local["git"]["dirty"] = json!(2);
+        local["git"]["deleted"] = json!(2);
+        let found = issues(&env, &local, &json!({}));
+        assert_eq!(found.iter().map(|i| string(i, "code")).collect::<Vec<_>>(), ["dirty", "unpushed"]);
+        assert_eq!(found[0]["detail"], "2 tracked files deleted, still in the last commit");
+        assert_eq!(found[1]["title"], "1 commit not pushed");
+        assert_eq!(found[1]["detail"], "fix/fingerprint has no upstream, and no remote has it");
         let both = issues(&env, &node(40, 40, "diverged"), &json!({}));
         assert_eq!(both[0]["title"], "Diverged from gitlab/main");
         assert_eq!(both[0]["detail"], "40 commits here and 40 commits there; push or pull alone won't fix it");

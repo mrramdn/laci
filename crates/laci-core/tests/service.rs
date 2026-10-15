@@ -140,6 +140,23 @@ fn metadata_tasks_and_notes_can_be_changed_and_undone_through_log() {
     assert_eq!(notes(&project), "base notes");
 }
 #[test]
+fn a_to_do_is_rewritten_with_its_mark_and_the_log_puts_the_old_words_back() {
+    let (_temp, env, project) = fixture();
+    let sidecar = project.join(".laci.md");
+    fs::write(&sidecar, "---\nstatus: active\n---\n\n## Next\n\n- [x] Write `docs` now\n\n## Notes\n\nbase notes\n")
+        .unwrap();
+    let mut service = loaded(&env, &project);
+    let id = project.to_str().unwrap();
+    let edit = |to: &str| json!({"id":id,"op":"edit","file":".laci.md","text":"Write docs now","to":to});
+    assert!(service.request("todo", &edit("   ")).is_err());
+    assert!(service.request("todo", &edit(&"x".repeat(301))).is_err());
+    let node = service.request("todo", &edit("Write the user  guide")).unwrap();
+    assert!(node["tasks"].as_array().unwrap().iter().any(|t| t["text"] == "Write the user guide" && t["done"] == true));
+    assert!(fs::read_to_string(&sidecar).unwrap().contains("- [x] Write the user guide\n"));
+    undo_latest(&mut service, &todo_key(&project, ".laci.md", "Write the user guide", 0));
+    assert!(fs::read_to_string(&sidecar).unwrap().contains("- [x] Write `docs` now\n"));
+}
+#[test]
 fn stale_service_metadata_undo_restores_latest_value_from_disk() {
     let (_temp, env, project) = fixture();
     let id = project.to_str().unwrap();

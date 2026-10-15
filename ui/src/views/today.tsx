@@ -8,7 +8,7 @@ import {
   Group,
   Expand,
 } from "../common";
-import { useApp, run } from "../store";
+import { useApp, run, toast } from "../store";
 import { BackupNotice } from "../backup";
 import {
   deadlinesOf,
@@ -23,6 +23,7 @@ import {
 import { DeadlinePill } from "../deadline";
 import { api } from "../api";
 import { requestResume } from "../session-ui";
+import { askAgent } from "../agent-launch";
 import type { Node } from "../types";
 export function Today() {
   const s = useApp();
@@ -133,6 +134,14 @@ export function Today() {
             ) : null,
           )}
         </div>
+        <button
+          className="btn sm"
+          title="Start an agent that goes through every open to-do and report item with you, and agrees on what to do next"
+          onClick={() => void run(() => askAgent({ kind: "review" }))}
+        >
+          <Icon name="sparkles" className="sm" />
+          Review with an agent…
+        </button>
       </div>
       <div className="body">
         <BackupNotice />
@@ -382,6 +391,25 @@ export function Today() {
                 <span className="mono">
                   {t.file}:{t.line}
                 </span>
+                <button
+                  className="icon-btn work-on"
+                  title="Work on it with an agent, in this project's folder"
+                  aria-label={`Work on it: ${t.text}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void run(() =>
+                      askAgent({
+                        kind: "task",
+                        id: n.id,
+                        file: t.file,
+                        text: t.text,
+                      }),
+                    );
+                  }}
+                >
+                  <Icon name="play" className="sm" />
+                </button>
               </span>
             </label>
           ))}
@@ -435,24 +463,44 @@ function ReportOpen({ node }: { node: Node }) {
   const report = latestReport(snapshot, node.path);
   if (!report?.open.length) return null;
   return (
-    <button
-      className="l2 rep-open"
-      title={[
-        `Open in the report of ${shortDay(report.date)}: ${report.title}`,
-        ...report.open.map((item) => `• ${item}`),
-      ].join("\n")}
-      onClick={(event) => {
-        event.stopPropagation();
-        useApp.getState().openReport({ id: report.id, project: node.path });
-      }}
-    >
-      <Icon name="report" />
-      <span>
-        Open ({shortDay(report.date)} report): {report.open[0]}
-      </span>
-      {report.openCount > 1 ? (
-        <span className="faint more-n">+{report.openCount - 1}</span>
-      ) : null}
-    </button>
+    <div className="rep-line">
+      <button
+        className="l2 rep-open"
+        title={[
+          `Open in the report of ${shortDay(report.date)}: ${report.title}`,
+          ...report.open.map((item) => `• ${item}`),
+        ].join("\n")}
+        onClick={(event) => {
+          event.stopPropagation();
+          useApp.getState().openReport({ id: report.id, project: node.path });
+        }}
+      >
+        <Icon name="report" />
+        <span>
+          Open ({shortDay(report.date)} report): {report.open[0]}
+        </span>
+        {report.openCount > 1 ? (
+          <span className="faint more-n">+{report.openCount - 1}</span>
+        ) : null}
+      </button>
+      <button
+        className="icon-btn rep-close"
+        title="Close this item as done. The report stays as written; the Log can undo it."
+        aria-label={`Close as done: ${report.open[0]}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          void run(async () => {
+            await api("report/close", {
+              report: report.id,
+              item: 1,
+              state: "done",
+            });
+            toast("Closed in the report", report.open[0]);
+          });
+        }}
+      >
+        <Icon name="check" className="sm" />
+      </button>
+    </div>
   );
 }

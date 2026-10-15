@@ -418,3 +418,18 @@ export async function launchAgent(
     }));
   return result;
 }
+/**
+ * Opens "Start an agent" with a first prompt the engine writes: a review of everything open, or one to-do
+ * in its project's folder. The dialog still lets the user pick the agent, change the prompt and cancel.
+ */
+export async function askAgent(
+  body:
+    | { kind: "review" }
+    | { kind: "task"; id: string; file: string; text: string },
+) {
+  const { prompt, projectPath } = await api<{
+    prompt: string;
+    projectPath: string;
+  }>("assistant/prompt", body);
+  useApp.setState({ modal: { kind: "agent", projectPath, prompt } });
+}

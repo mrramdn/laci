@@ -56,10 +56,17 @@ fn list(s: &Value, out: &mut impl Write) -> io::Result<()> {
 }
 fn doctor(s: &Value, out: &mut impl Write) -> io::Result<()> {
     for n in s["nodes"].as_object().into_iter().flatten().map(|(_, n)| n) {
-        for issue in array(&n["issues"]) {
-            writeln!(out, "{}: {}", string(n, "label"), string(&issue, "title"))?;
+        let issues = array(&n["issues"]);
+        let open: Vec<_> = array(&n["tasks"]).into_iter().filter(|t| t["done"] == false).collect();
+        if issues.is_empty() && open.is_empty() {
+            continue;
         }
-        for task in array(&n["tasks"]).into_iter().filter(|t| t["done"] == false) {
+        // A project line of its own, so a project without issues doesn't list its to-dos under the one before.
+        writeln!(out, "{}  {}", string(n, "label"), string(n, "path"))?;
+        for issue in issues {
+            writeln!(out, "  ! {}", string(&issue, "title"))?;
+        }
+        for task in open {
             writeln!(out, "  [ ] {} ({}:{})", string(&task, "text"), string(&task, "file"), task["line"])?;
         }
     }

@@ -16,9 +16,37 @@ struct Mcp {
 }
 impl ServerHandler for Mcp {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_prompts().build())
             .with_server_info(Implementation::new("laci",env!("CARGO_PKG_VERSION")))
-            .with_instructions("Use laci for moving projects so their agent history travels with them. Destructive tools return a plan first; show it to the user before calling with confirm: true. Reports from earlier sessions are in list_reports and project_details; read a report's file for its full text.")
+            .with_instructions("Use laci for moving projects so their agent history travels with them. Destructive tools return a plan first; show it to the user before calling with confirm: true. open_items lists every open to-do and report item; change to-dos with complete_task, edit_task, delete_task and move_task, and close report items with close_report_item, so each change shows in Laci's Log with Undo. Reports from earlier sessions are in list_reports and project_details; read a report's file for its full text. The review prompt goes through everything open with the user.")
+    }
+    async fn list_prompts(
+        &self,
+        _: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        Ok(ListPromptsResult::with_all_items(prompts()))
+    }
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResponse, ErrorData> {
+        let engine = Arc::clone(&self.engine);
+        let args = Value::Object(request.arguments.unwrap_or_default());
+        let name = request.name;
+        let text = tokio::task::spawn_blocking(move || {
+            let (service, scanned) = &mut *engine.lock().map_err(|_| "The engine stopped; restart laci".to_owned())?;
+            if scanned.elapsed() > Duration::from_secs(60) {
+                service.rescan()?;
+                *scanned = Instant::now();
+            }
+            prompt(service, &name, &args)
+        })
+        .await
+        .map_err(|e| ErrorData::internal_error(format!("The engine stopped: {e}"), None))?
+        .map_err(|e| ErrorData::invalid_params(e, None))?;
+        Ok(GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)]).into())
     }
     async fn list_tools(
         &self,
@@ -51,12 +79,19 @@ impl ServerHandler for Mcp {
                     | "list_reports"
                     | "project_details"
                     | "needs_attention"
+                    | "open_items"
                     | "tidy_suggestions"
                     | "recent_changes"
             ) {
                 *scanned = Instant::now();
             }
-            result
+            // A change answers with the whole refreshed scan for the desktop; an agent only needs its result.
+            result.map(|mut value| {
+                if let Some(object) = value.as_object_mut() {
+                    object.remove("snapshot");
+                }
+                value
+            })
         })
         .await;
         let result = match result {
@@ -130,7 +165,7 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                     .to_lowercase();
                     query.split_whitespace().all(|word| haystack.contains(word))
                 })
-                .cloned()
+                .map(|n| compact(n, Tasks::Count))
                 .collect();
             let mut nodes = nodes;
             nodes.sort_by(|a, b| string(&b["lastActivity"], "at").cmp(string(&a["lastActivity"], "at")));
@@ -183,7 +218,7 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                 .flatten()
                 .map(|(_, n)| n)
                 .filter(|n| !array(&n["issues"]).is_empty() || array(&n["tasks"]).iter().any(|t| t["done"] == false))
-                .cloned()
+                .map(|n| compact(n, Tasks::Open))
                 .collect();
             Ok(json!({"projects":projects,"warnings":s["warnings"]}))
         }
@@ -299,29 +334,99 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                     node = service.request_as("meta", &json!({"id":id,"key":key,"value":args[key]}), "agent")?;
                 }
             }
-            Ok(node)
+            Ok(compact(&node, Tasks::All))
         }
         "add_next_step" => {
             let node = project(service, string(args, "project"))?;
-            service.request_as("todo", &json!({"id":node["id"],"op":"add","text":args["text"]}), "agent")
+            Ok(compact(
+                &service.request_as("todo", &json!({"id":node["id"],"op":"add","text":args["text"]}), "agent")?,
+                Tasks::All,
+            ))
         }
         "complete_task" => {
             service.rescan()?;
             let node = project(service, string(args, "project"))?;
-            let query = string(args, "text").to_lowercase();
             let done = args["done"].as_bool().unwrap_or(true);
-            let matches: Vec<_> = array(&node["tasks"])
-                .into_iter()
-                .filter(|t| {
-                    t["kind"] == "check" && t["done"] != done && string(t, "text").to_lowercase().contains(&query)
-                })
-                .collect();
-            let task = match matches.as_slice() {
-                [task] => task,
-                [] => return Err("No checkbox matches that text".into()),
-                _ => return Err("More than one checkbox matches; use more of its text".into()),
+            let task = checkbox(&node, string(args, "text"), |t| t["done"] != done)?;
+            Ok(compact(
+                &service.request_as("todo",&json!({"id":node["id"],"op":"toggle","file":task["file"],"line":task["line"],"text":task["text"],"done":done}),"agent")?,
+                Tasks::All,
+            ))
+        }
+        "edit_task" => {
+            service.rescan()?;
+            let node = project(service, string(args, "project"))?;
+            let task = checkbox(&node, string(args, "text"), |_| true)?;
+            Ok(compact(
+                &service.request_as("todo",&json!({"id":node["id"],"op":"edit","file":task["file"],"line":task["line"],"text":task["text"],"to":args["to"]}),"agent")?,
+                Tasks::All,
+            ))
+        }
+        "delete_task" => {
+            service.rescan()?;
+            let node = project(service, string(args, "project"))?;
+            let task = checkbox(&node, string(args, "text"), |t| t["file"] == ".laci.md")?;
+            Ok(compact(
+                &service.request_as(
+                    "todo",
+                    &json!({"id":node["id"],"op":"delete","file":task["file"],"line":task["line"],"text":task["text"]}),
+                    "agent",
+                )?,
+                Tasks::All,
+            ))
+        }
+        "move_task" => {
+            service.rescan()?;
+            let from = project(service, string(args, "project"))?;
+            let to = project(service, string(args, "to_project"))?;
+            if from["id"] == to["id"] {
+                return Err("That is the same project".into());
+            }
+            let task = checkbox(&from, string(args, "text"), |t| t["file"] == ".laci.md" && t["done"] == false)?;
+            // Added first, so a failure leaves the to-do in both places rather than in neither.
+            let to = service.request_as("todo", &json!({"id":to["id"],"op":"add","text":task["text"]}), "agent")?;
+            let from = service.request_as(
+                "todo",
+                &json!({"id":from["id"],"op":"delete","file":task["file"],"line":task["line"],"text":task["text"]}),
+                "agent",
+            )?;
+            Ok(json!({"from":compact(&from, Tasks::All),"to":compact(&to, Tasks::All)}))
+        }
+        "open_items" => open_items(service, args),
+        "close_report_item" => {
+            let s = service.snapshot()?;
+            let words = string(args, "report").to_lowercase();
+            let reports = array(&s["reports"]);
+            let exact = reports.iter().find(|r| r["id"] == string(args, "report"));
+            let report = match exact {
+                Some(r) => r.clone(),
+                None => {
+                    let found: Vec<_> = reports
+                        .iter()
+                        .filter(|r| {
+                            let hay = format!("{} {}", string(r, "id"), string(r, "title")).to_lowercase();
+                            !words.trim().is_empty() && words.split_whitespace().all(|w| hay.contains(w))
+                        })
+                        .collect();
+                    match found.as_slice() {
+                        [one] => (*one).clone(),
+                        [] => return Err("No report matches. Use list_reports to find its id.".into()),
+                        _ => return Err("More than one report matches; use its id (the file name)".into()),
+                    }
+                }
             };
-            service.request_as("todo",&json!({"id":node["id"],"op":"toggle","file":task["file"],"line":task["line"],"text":task["text"],"done":args["done"].as_bool().unwrap_or(true)}),"agent")
+            let state = if string(args, "state").is_empty() { "done" } else { string(args, "state") };
+            let mut out = service.request_as(
+                "report/close",
+                &json!({"report":report["id"],"item":args["item"],"state":state,"note":args["note"]}),
+                "agent",
+            )?;
+            let now = service.snapshot()?;
+            if let Some(r) = array(&now["reports"]).into_iter().find(|r| r["id"] == report["id"]) {
+                out["open"] = r["open"].clone();
+                out["openCount"] = r["openCount"].clone();
+            }
+            Ok(out)
         }
         "write_notes" => {
             service.rescan()?;
@@ -331,12 +436,196 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             } else {
                 format!("{}\n\n{}", string(&node, "notes"), string(args, "notes"))
             };
-            service.request_as("notes", &json!({"id":node["id"],"text":text}), "agent")
+            Ok(compact(&service.request_as("notes", &json!({"id":node["id"],"text":text}), "agent")?, Tasks::All))
         }
         _ => Err("Unknown tool".into()),
     }
 }
 use std::path::Path;
+
+/// Which of a project's to-dos a compact answer carries.
+#[derive(Clone, Copy)]
+enum Tasks {
+    /// All of them, with the notes: the answer to a change.
+    All,
+    /// The open ones.
+    Open,
+    /// Only how many are open.
+    Count,
+}
+/// What an agent needs about a project in a list or after a change, without the README text, archive plan,
+/// stack and session lists that project_details gives.
+fn compact(n: &Value, tasks: Tasks) -> Value {
+    let mut out = json!({});
+    for key in ["path", "name", "kind", "type", "archived", "status", "meta", "issues", "lastActivity"] {
+        if !n[key].is_null() {
+            out[key] = n[key].clone();
+        }
+    }
+    if let Some(text) = n["summary"]["text"].as_str() {
+        out["summary"] = json!(text);
+    }
+    let g = &n["git"];
+    if g.is_object() {
+        out["git"] = json!({"branch":g["branch"],"upstream":g["upstream"],"ahead":g["ahead"],"behind":g["behind"],
+            "dirty":g["dirty"],"commits":g["commits"],"lastCommitAt":g["lastCommitAt"],
+            "remotes":array(&g["remotes"]).iter().map(|r| r["web"].clone()).collect::<Vec<_>>()});
+    }
+    let all = array(&n["tasks"]);
+    let open: Vec<&Value> = all.iter().filter(|t| t["done"] == false).collect();
+    out["openTasks"] = json!(open.len());
+    match tasks {
+        Tasks::All => {
+            out["tasks"] = json!(all);
+            if !n["notes"].is_null() {
+                out["notes"] = n["notes"].clone();
+            }
+        }
+        Tasks::Open => out["tasks"] = json!(open),
+        Tasks::Count => {}
+    }
+    out
+}
+/// The one checkbox of a project whose text holds `query`, among those `wanted` accepts.
+fn checkbox(node: &Value, query: &str, wanted: impl Fn(&Value) -> bool) -> Result<Value, String> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Err("Give some of the to-do's text".into());
+    }
+    let matches: Vec<_> = array(&node["tasks"])
+        .into_iter()
+        .filter(|t| t["kind"] == "check" && wanted(t) && string(t, "text").to_lowercase().contains(&query))
+        .collect();
+    match matches.as_slice() {
+        [task] => Ok(task.clone()),
+        [] => Err("No checkbox matches that text".into()),
+        _ => Err("More than one checkbox matches; use more of its text".into()),
+    }
+}
+/// Every open to-do and report item, the most pressing projects first: priority, then the nearest deadline,
+/// then the latest activity.
+fn open_items(service: &mut Service, args: &Value) -> Result<Value, String> {
+    const LIMIT: usize = 300;
+    let s = service.snapshot()?;
+    let only = match args["project"].as_str().filter(|p| !p.is_empty()) {
+        Some(raw) => Some(string(&project(service, raw)?, "path").to_owned()),
+        None => None,
+    };
+    let kind = string(args, "kind");
+    let words: Vec<String> = string(args, "query").split_whitespace().map(str::to_lowercase).collect();
+    let fits = |text: &str| {
+        let text = text.to_lowercase();
+        words.iter().all(|w| text.contains(w))
+    };
+    let rank = |n: &Value| match string(&n["meta"], "priority") {
+        "high" => 0,
+        "medium" => 1,
+        "low" => 3,
+        _ => 2,
+    };
+    let mut nodes: Vec<&Value> = s["nodes"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(_, n)| n)
+        .filter(|n| n["kind"] == "project" && n["archived"] != true)
+        .filter(|n| only.as_deref().is_none_or(|p| string(n, "path") == p))
+        .collect();
+    nodes.sort_by(|a, b| {
+        let deadline = |n: &Value| string(&n["meta"], "deadline").to_owned();
+        let soonest = |n: &Value| if deadline(n).is_empty() { "9999".to_owned() } else { deadline(n) };
+        (rank(a), soonest(a), std::cmp::Reverse(string(&a["lastActivity"], "at"))).cmp(&(
+            rank(b),
+            soonest(b),
+            std::cmp::Reverse(string(&b["lastActivity"], "at")),
+        ))
+    });
+    let mut items = Vec::new();
+    if kind.is_empty() || kind == "todo" {
+        for n in &nodes {
+            for t in array(&n["tasks"]).iter().filter(|t| t["done"] == false) {
+                if !fits(&format!("{} {}", string(t, "text"), string(n, "name"))) {
+                    continue;
+                }
+                let mut item = json!({"kind":"todo","project":n["path"],"projectName":n["name"],"text":t["text"],
+                    "file":t["file"],"line":t["line"]});
+                for key in ["section"] {
+                    if !string(t, key).is_empty() {
+                        item[key] = t[key].clone();
+                    }
+                }
+                if t["kind"] == "list" {
+                    item["note"] =
+                        json!("A list item under a TODO heading, not a checkbox: edit its file to change it");
+                }
+                for key in ["priority", "deadline"] {
+                    if !string(&n["meta"], key).is_empty() {
+                        item[key] = n["meta"][key].clone();
+                    }
+                }
+                items.push(item);
+            }
+        }
+    }
+    if kind.is_empty() || kind == "report" {
+        for r in array(&s["reports"]) {
+            let projects = array(&r["projects"]);
+            if only.as_deref().is_some_and(|p| !projects.iter().any(|x| x.as_str() == Some(p))) {
+                continue;
+            }
+            for (i, text) in array(&r["open"]).iter().enumerate() {
+                if !fits(&format!("{} {}", text.as_str().unwrap_or(""), string(&r, "title"))) {
+                    continue;
+                }
+                items.push(json!({"kind":"report","report":r["id"],"reportTitle":r["title"],"date":r["date"],
+                    "item":i + 1,"text":text,"projects":projects,"file":r["file"]}));
+            }
+            let shown = array(&r["open"]).len() as u64;
+            if r["openCount"].as_u64().unwrap_or(0) > shown && words.is_empty() {
+                items.push(json!({"kind":"report","report":r["id"],"reportTitle":r["title"],"date":r["date"],
+                    "more":r["openCount"].as_u64().unwrap_or(0) - shown,
+                    "note":"More open items than shown; close some, or read the report's file for the rest"}));
+            }
+        }
+    }
+    let todos = items.iter().filter(|i| i["kind"] == "todo").count();
+    let more = items.len() > LIMIT;
+    items.truncate(LIMIT);
+    Ok(
+        json!({"items":items,"todos":todos,"reportItems":array(&s["reports"]).iter().filter_map(|r| r["openCount"].as_u64()).sum::<u64>(),"more":more}),
+    )
+}
+fn prompts() -> Vec<Prompt> {
+    vec![
+        Prompt::new(
+            "review",
+            Some("Go through everything open across the projects with the user and agree on what to do next"),
+            None,
+        ),
+        Prompt::new(
+            "work_on",
+            Some("Work on one open to-do in its project"),
+            Some(vec![
+                PromptArgument::new("project")
+                    .with_description("Absolute path, ~/path, or unique project name")
+                    .with_required(true),
+                PromptArgument::new("task").with_description("Words from the to-do's text").with_required(true),
+            ]),
+        ),
+    ]
+}
+fn prompt(service: &mut Service, name: &str, args: &Value) -> Result<String, String> {
+    let s = service.snapshot()?;
+    match name {
+        "review" => Ok(laci_core::assistant::review(&service.env, &s)),
+        "work_on" => {
+            let node = project(service, string(args, "project"))?;
+            let task = checkbox(&node, string(args, "task"), |t| t["done"] == false)?;
+            Ok(laci_core::assistant::work_on(&service.env, &s, &node, &task))
+        }
+        _ => Err("Unknown prompt".into()),
+    }
+}
 fn validate_args(name: &str, args: &Value) -> Result<(), String> {
     let tool = tools().into_iter().find(|t| t.name == name).ok_or("Unknown tool")?;
     let schema = Value::Object((*tool.input_schema).clone());
@@ -398,6 +687,39 @@ fn tools() -> Vec<Tool> {
             vec!["project"],
         ),
         ("needs_attention", "Work at risk, deadlines, open tasks and warnings", json!({}), vec![]),
+        (
+            "open_items",
+            "Every open to-do and every open item of the session reports, the most pressing projects first",
+            json!({"project":project,"kind":{"type":"string","enum":["","todo","report"]},"query":{"type":"string","maxLength":200,"description":"Words that must all appear"}}),
+            vec![],
+        ),
+        (
+            "edit_task",
+            "Rewrite a checkbox's text, keeping whether it is done",
+            json!({"project":project,"text":{"type":"string","description":"Words from its current text"},"to":{"type":"string","minLength":1,"maxLength":300}}),
+            vec!["project", "text", "to"],
+        ),
+        (
+            "delete_task",
+            "Delete a checkbox from the project's .laci.md (the Log can undo it)",
+            json!({"project":project,"text":{"type":"string","description":"Words from its text"}}),
+            vec!["project", "text"],
+        ),
+        (
+            "move_task",
+            "Move an open checkbox from one project's .laci.md to another's Next",
+            json!({"project":project,"text":{"type":"string","description":"Words from its text"},"to_project":project}),
+            vec!["project", "text", "to_project"],
+        ),
+        (
+            "close_report_item",
+            "Close an open item of a session report as done, dropped or moved, or open it again. Laci keeps this itself and never writes to the reports folder",
+            json!({"report":{"type":"string","description":"The report's id (its file name), or words from its title"},
+                "item":{"type":"string","description":"The item's number among the report's open items (closed ones, for state open), or words from it"},
+                "state":{"type":"string","enum":["","done","dropped","moved","open"]},
+                "note":{"type":"string","maxLength":300}}),
+            vec!["report", "item"],
+        ),
         ("tidy_suggestions", "Preview cleanup suggestions and their exact operations", json!({}), vec![]),
         (
             "set_project_fields",
@@ -471,6 +793,7 @@ fn tools() -> Vec<Tool> {
                 "list_reports",
                 "project_details",
                 "needs_attention",
+                "open_items",
                 "tidy_suggestions",
                 "recent_changes",
             ]

@@ -447,10 +447,14 @@ export interface Report {
   scope?: string;
   /** The first paragraph of its Summary. */
   summary?: string;
-  /** The first entries under its last Open heading. */
+  /** The first entries under its last Open heading that the user hasn't closed. */
   open: string[];
-  /** All entries under that heading. */
+  /** All entries under that heading, less the closed ones. */
   openCount: number;
+  /** Entries the user closed in Laci; the report itself is unchanged. */
+  closedCount?: number;
+  /** Those entries, in the report's order. */
+  closed?: string[];
 }
 export interface ReportsDir {
   path: string;

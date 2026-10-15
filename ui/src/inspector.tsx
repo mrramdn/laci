@@ -41,7 +41,7 @@ import {
 } from "./common";
 import { Select } from "./select";
 import { TerminalButton, launchShell } from "./terminal-controls";
-import { agentProviders } from "./agent-launch";
+import { agentProviders, askAgent } from "./agent-launch";
 import { SessionList, requestResume } from "./session-ui";
 import { openTerminal } from "./terminal-api";
 import type { Commit, Health, Node, Snapshot, Task } from "./types";
@@ -959,6 +959,26 @@ function TaskCheckbox({ node, task }: { node: Node; task: Task }) {
           <div className="src">{task.section}</div>
         ) : null}
       </div>
+      {!task.done ? (
+        <button
+          className="icon-btn"
+          title="Work on it with an agent, in this project's folder"
+          aria-label={`Work on it: ${task.text}`}
+          onClick={(e) => {
+            e.preventDefault();
+            void run(() =>
+              askAgent({
+                kind: "task",
+                id: node.id,
+                file: task.file,
+                text: task.text,
+              }),
+            );
+          }}
+        >
+          <Icon name="play" className="sm" />
+        </button>
+      ) : null}
       {task.file === ".laci.md" ? (
         <button
           className="icon-btn"

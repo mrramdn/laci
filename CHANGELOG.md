@@ -4,6 +4,35 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-15
+
+An agent that goes through everything open with you, and to-dos you can hand to one.
+
+### Added
+
+- **Review with an agent.** A button on Today starts Claude Code, Codex or Antigravity in the built-in terminal with a brief. The agent reads everything open through Laci's MCP server, checks what is already done, and proposes what to tick, delete, split or move. It agrees with you on three to five things for the week, and makes the agreed changes through Laci, so they show in the Log with Undo. The same brief is the MCP prompt `review`.
+- **Work on it.** Every open to-do, on Today and in a project's To-do tab, can start an agent in the project's folder. Its first prompt holds the to-do, where it is listed, and the project's newest reports. The MCP prompt `work_on` gives the same text.
+- **Close report items.** Close an open item of a report as done or dropped, from Today's report line or from the report's *Open items* in Reports, and open it again later. Laci keeps this in its own data and never changes the report file. Closed items leave Today and the counts, and the Log can undo each one.
+- **MCP tools for tidying up:**
+  - `open_items` lists every open to-do and report item, the most pressing projects first.
+  - `edit_task` rewrites a to-do.
+  - `delete_task` deletes a to-do from `.laci.md`.
+  - `move_task` moves a to-do to another project.
+  - `close_report_item` closes a report item or opens it again.
+
+  Each change is in the Log with Undo.
+
+### Changed
+
+- **Smaller MCP answers.** `list_projects` and `needs_attention` give each project's status, priority, deadline, checks and to-dos. They no longer include its README, stack, archive plan and session lists; `project_details` still has them. A change answers with the changed project instead of the whole scan; creating a project used to answer with the entire scan.
+- **Commits no remote has** count as not pushed, also on a branch without an upstream. The fix button then pushes with `-u`.
+- **Deleted files** are named in the uncommitted-changes check.
+- `laci doctor` prints each project on a line of its own above its checks and to-dos.
+
+### Fixed
+
+- A heading such as "Open questions" no longer makes the items under it count as to-dos.
+
 ## [2.4.1] - 2026-10-14
 
 ### Fixed

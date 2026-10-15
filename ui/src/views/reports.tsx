@@ -516,6 +516,75 @@ function reportLink(href: string, reports: Report[], folder: string) {
   return name.includes("/") ? undefined : reports.find((r) => r.id === name);
 }
 
+/**
+ * The report's open items, each of which can be closed as done or dropped; closed ones can be opened again.
+ * Laci keeps this in its own data: the report file stays as the agent wrote it.
+ */
+function OpenItems({ report }: { report: Report }) {
+  const closed = report.closed ?? [];
+  if (!report.open.length && !closed.length) return null;
+  const close = (item: number | string, state: string, text: string) =>
+    void run(async () => {
+      await api("report/close", { report: report.id, item, state });
+      toast(
+        state === "open" ? "Opened again" : "Closed in the report",
+        text,
+      );
+    });
+  return (
+    <section className="rp-items" aria-label="Open items">
+      <div className="sec-t">
+        Open items <span className="faint">{report.openCount}</span>
+        <span className="grow" />
+        <span className="faint rp-items-note">
+          Closing one changes nothing in the file
+        </span>
+      </div>
+      {report.open.map((item, i) => (
+        <div className="rp-item" key={item}>
+          <Icon name="check" className="sm faint" />
+          <span className="txt">{item}</span>
+          <button
+            className="btn sm ghost"
+            title="It is finished"
+            onClick={() => close(i + 1, "done", item)}
+          >
+            Done
+          </button>
+          <button
+            className="btn sm ghost"
+            title="It no longer needs doing"
+            onClick={() => close(i + 1, "dropped", item)}
+          >
+            Drop
+          </button>
+        </div>
+      ))}
+      {report.openCount > report.open.length ? (
+        <p className="faint rp-items-more">
+          {plural(report.openCount - report.open.length, "more item")} below
+          in the report
+        </p>
+      ) : null}
+      {closed.length ? (
+        <details className="rp-closed">
+          <summary>Closed ({closed.length})</summary>
+          {closed.map((item, i) => (
+            <div className="rp-item done" key={item}>
+              <span className="txt">{item}</span>
+              <button
+                className="btn sm ghost"
+                onClick={() => close(i + 1, "open", item)}
+              >
+                Open again
+              </button>
+            </div>
+          ))}
+        </details>
+      ) : null}
+    </section>
+  );
+}
 function ReportReader({
   report,
   dir,
@@ -687,6 +756,7 @@ function ReportReader({
           </button>
         </div>
       </div>
+      <OpenItems report={report} />
       {sections.length >= 5 ||
       (sections.length >= 3 && (text.raw?.length ?? 0) > 3000) ? (
         <nav className="rp-outline" aria-label="Sections">

@@ -25,9 +25,10 @@ const originalCodex = `${JSON.stringify({ type: 'session_meta', payload: { cwd: 
 const reportsDir = path.join(home, 'notes', 'agent-reports');
 const reportFile = path.join(reportsDir, '2026-10-12-alpha-tokenizer.md');
 const toolNames = [
-  'add_next_step', 'apply_suggestion', 'archive_project', 'complete_task', 'create_project', 'delete_project', 'list_projects',
-  'list_reports', 'move_project', 'needs_attention', 'project_details', 'recent_changes', 'set_project_fields',
-  'tidy_suggestions', 'undo_change', 'write_notes',
+  'add_next_step', 'apply_suggestion', 'archive_project', 'close_report_item', 'complete_task', 'create_project',
+  'delete_project', 'delete_task', 'edit_task', 'list_projects', 'list_reports', 'move_project', 'move_task',
+  'needs_attention', 'open_items', 'project_details', 'recent_changes', 'set_project_fields', 'tidy_suggestions',
+  'undo_change', 'write_notes',
 ];
 let child;
 let stderr = '';
@@ -132,10 +133,21 @@ try {
   const catalog = await client.request('tools/list');
   assert.deepEqual(catalog.tools.map(tool => tool.name).sort(), toolNames);
   checks++;
+  const offered = await client.request('prompts/list');
+  assert.deepEqual(offered.prompts.map(prompt => prompt.name).sort(), ['review', 'work_on']);
+  const review = await client.request('prompts/get', { name: 'review' });
+  assert.match(review.messages[0].content.text, /open_items/);
+  assert.match(review.messages[0].content.text, /1 open report item|2 open report items/);
+  const workOn = await client.request('prompts/get', { name: 'work_on', arguments: { project: 'alpha', task: 'tokenizer docs' } });
+  assert.match(workOn.messages[0].content.text, /Ship tokenizer docs/);
+  assert.match(workOn.messages[0].content.text, /TODO\.md:4/);
+  checks++;
 
   const listed = await client.call('list_projects', { query: 'alpha react', filter: 'all' });
   assert.equal(listed.length, 1);
   assert.equal(listed[0].path, project);
+  assert.equal(listed[0].openTasks, 2);
+  for (const heavy of ['readme', 'archivePlan', 'stack', 'agents']) assert.equal(listed[0][heavy], undefined, heavy);
   const details = await client.call('project_details', { project: 'alpha' });
   assert.equal(details.tasks.length, 2);
   assert.equal(details.sessions.length, 1);
@@ -155,6 +167,11 @@ try {
   const attention = await client.call('needs_attention');
   assert.ok(attention.projects.some(node => node.path === project));
   assert.ok(attention.warnings.some(warning => warning.code === 'claude-cleanup'));
+  assert.ok(JSON.stringify(attention).length < 20_000, 'needs_attention stays small enough for an agent to read');
+  const items = await client.call('open_items');
+  assert.ok(items.items.some(item => item.kind === 'todo' && item.text === 'Ship tokenizer parser' && item.file === 'TODO.md'));
+  assert.ok(items.items.some(item => item.kind === 'report' && item.text === 'Measure the parser' && item.item === 2));
+  assert.equal((await client.call('open_items', { kind: 'report', query: 'measure' })).items.length, 1);
   await client.call('recent_changes');
   checks++;
 
@@ -174,6 +191,19 @@ try {
   await client.call('write_notes', { project, notes: 'Initial migration note.', mode: 'replace' });
   edited = await client.call('write_notes', { project, notes: 'Second migration note.', mode: 'append' });
   assert.equal(edited.notes, 'Initial migration note.\n\nSecond migration note.');
+  assert.equal(edited.readme, undefined, 'A change answers with the project, not its README');
+  edited = await client.call('edit_task', { project, text: 'validator coverage', to: 'Ship schema validator tests' });
+  assert.ok(edited.tasks.some(task => task.text === 'Ship schema validator tests' && task.done === false));
+  await client.rejects('delete_task', { project, text: 'tokenizer docs' }, /No checkbox matches/i);
+  edited = await client.call('delete_task', { project, text: 'validator tests' });
+  assert.ok(!edited.tasks.some(task => task.text === 'Ship schema validator tests'));
+  const closedItem = await client.call('close_report_item', { report: 'alpha tokenizer', item: 'measure' });
+  assert.equal(closedItem.item, 'Measure the parser');
+  assert.deepEqual(closedItem.open, ['Ship tokenizer docs']);
+  assert.equal((await client.call('list_reports')).reports[0].closedCount, 1);
+  const reopened = await client.call('close_report_item', { report: '2026-10-12-alpha-tokenizer.md', item: '1', state: 'open' });
+  assert.deepEqual(reopened.open, ['Ship tokenizer docs', 'Measure the parser']);
+  assert.match(await readFile(reportFile, 'utf8'), /- Measure the parser\n/);
   checks++;
 
   const createArgs = { parent: '~/project', name: 'created', summary: 'Created through native MCP.' };
@@ -185,6 +215,11 @@ try {
   assert.equal(await exists(path.join(created.path, '.git')), true);
   assert.deepEqual(created.warnings, []);
   assert.ok((await client.call('list_projects', { query: 'created' })).some(node => node.path === created.path));
+  assert.equal(created.snapshot, undefined, 'A change answers without the whole scan');
+  await client.call('add_next_step', { project, text: 'Hand over the fixtures' });
+  const handed = await client.call('move_task', { project, text: 'hand over', to_project: created.path });
+  assert.ok(handed.to.tasks.some(task => task.text === 'Hand over the fixtures'));
+  assert.ok(!handed.from.tasks.some(task => task.text === 'Hand over the fixtures'));
   checks++;
 
   const beforeSidecar = await readFile(path.join(project, '.laci.md'));

@@ -147,7 +147,11 @@ pub fn tasks(dir: &Path) -> Value {
                 if todo > 0 && level <= todo {
                     todo = 0;
                 }
-                if todo == 0 && re!(r"(?i)\b(todo|to-do|next|pending|open|sisa|belum|lanjut)\b").is_match(&h[2]) {
+                // "Open questions" lists things to ask, not things to do.
+                if todo == 0
+                    && re!(r"(?i)\b(todo|to-do|next|pending|open|sisa|belum|lanjut)\b").is_match(&h[2])
+                    && !re!(r"(?i)\b(questions?|pertanyaan)\b").is_match(&h[2])
+                {
                     todo = level;
                 }
                 continue;
@@ -245,10 +249,18 @@ pub fn git_info(dir: &Path) -> Option<Value> {
             .and_then(|c| c[1].parse::<u64>().ok())
             .unwrap_or(0)
     };
+    // A branch without an upstream reports nothing ahead, even when no remote has its commits.
+    let local_only = if upstream.is_empty() && !remotes.is_empty() && count > 0 {
+        repo.read(&["rev-list", "--count", "HEAD", "--not", "--remotes"]).parse::<u64>().unwrap_or(0)
+    } else {
+        0
+    };
+    let changes = status.iter().filter(|l| !l.starts_with("##") && !l.is_empty() && *l != SIDECAR_UNTRACKED);
+    let deleted = changes.clone().filter(|l| l.get(..2).is_some_and(|xy| xy.contains('D'))).count();
     Some(
         json!({"commits":count,"rootCommit":first.next().unwrap_or(""),"firstCommitAt":utc(first.next().unwrap_or("")),
         "lastCommitAt":utc(last.next().unwrap_or("")),"lastSubject":last.next().unwrap_or(""),"branch":repo.read(&["branch","--show-current"]),
-        "remotes":remotes,"upstream":upstream,"dirty":status.iter().filter(|l|!l.starts_with("##")&&!l.is_empty()&&*l!=SIDECAR_UNTRACKED).count(),
+        "remotes":remotes,"upstream":upstream,"dirty":changes.count(),"deleted":deleted,"localOnly":local_only,
         "ahead":number("ahead"),"behind":number("behind"),"stashes":repo.read(&["stash","list"]).lines().count(),"weekly":weekly,
         "authors":people(&repo.read(&["shortlog","-sne","HEAD"])),
         "worktree":dir.join(".git").is_file()}),
@@ -815,6 +827,18 @@ mod tests {
         assert_eq!(items.len(), 1, "{items:?}");
         assert_eq!(items[0]["text"], "Ship the release");
         assert_eq!(items[0]["done"], false);
+    }
+
+    #[test]
+    fn open_questions_are_not_listed_as_to_dos() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("tasks")).unwrap();
+        let todo = "# Current Task\n\n## Next\n\n- Pin the framework version\n\n## Notes / open questions\n\n- Node here is v26\n- Package manager: pnpm?\n\n## Pertanyaan terbuka\n\n- Pakai npm?\n";
+        std::fs::write(dir.path().join("tasks/todo.md"), todo).unwrap();
+        let found = tasks(dir.path());
+        let items = found["tasks"].as_array().unwrap();
+        assert_eq!(items.len(), 1, "{items:?}");
+        assert_eq!(items[0]["text"], "Pin the framework version");
     }
 
     #[test]

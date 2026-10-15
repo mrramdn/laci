@@ -292,6 +292,23 @@ pub fn toggle_check(file: &Path, line: usize, text: &str, done: bool) -> Result<
     lines[at] = &changed;
     files::replace(file, lines.join("\n").as_bytes())
 }
+/// Rewrites a checkbox's text and keeps its mark and indentation. Returns the text it replaced, as written.
+pub(crate) fn edit_check(file: &Path, line: usize, text: &str, to: &str) -> Result<String> {
+    if to.trim().is_empty() || to.contains(['\n', '\r']) {
+        return Err("Write the new text on one line".into());
+    }
+    plain_path(file)?;
+    let src = fs::read_to_string(file).map_err(|e| e.to_string())?;
+    let mut lines = src.split('\n').collect::<Vec<_>>();
+    let re = Regex::new(r"^(\s*[-*+]\s+\[)([ xX])(\]\s+)(.+)$").unwrap();
+    let at = locate(&lines, line, text, &re)?;
+    let c = re.captures(lines[at]).unwrap();
+    let before = c[4].to_owned();
+    let changed = format!("{}{}{}{}", &c[1], &c[2], &c[3], to.trim());
+    lines[at] = &changed;
+    files::replace(file, lines.join("\n").as_bytes())?;
+    Ok(before)
+}
 pub fn delete_check(file: &Path, line: usize, text: &str) -> Result<()> {
     delete_check_with_context(file, line, text).map(|_| ())
 }

@@ -1,9 +1,10 @@
 //! Session reports: Markdown files that agents write at the end of a session, in a folder chosen in Settings.
 //! Laci only reads that folder. A report links to the sessions and projects its header names.
-use crate::{Result, agents, config, env::Env, files, paths, readers};
+use crate::{Result, activity, agents, config, env::Env, files, ops, paths, readers};
 use chrono::{DateTime, Local, NaiveDate, SecondsFormat, Utc};
 use regex::{Regex, RegexBuilder};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeSet, HashMap},
     fs,
@@ -16,8 +17,13 @@ use std::{
 pub const LIMIT: usize = 1_000;
 const MAX_BYTES: u64 = 2_000_000;
 const ENTRIES: usize = 20_000;
-const CACHE: &str = "reports-v1.json";
+const CACHE: &str = "reports-v2.json";
+/// Open items a report shows in the snapshot.
 const OPEN_ITEMS: usize = 8;
+/// Open items the parse cache keeps per report, so each can be closed on its own.
+const ALL_ITEMS: usize = 40;
+/// Open items the user closed, in Laci's data folder: the reports folder itself is never written.
+const CLOSED: &str = "report-items.json";
 
 static FIELD: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[-*+]\s+\*\*\s*([A-Za-z][A-Za-z ]{0,30}?)\s*:?\s*\*\*\s*:?\s*(.*)$").expect("field pattern")
@@ -298,7 +304,117 @@ pub fn parse(name: &str, text: &str, modified: &str) -> Value {
     let items = open_items(open.as_deref().unwrap_or_default());
     facts["openCount"] = json!(items.len());
     facts["open"] = json!(items.iter().take(OPEN_ITEMS).map(|i| clip(i, 240)).collect::<Vec<_>>());
+    facts["items"] = json!(items.iter().take(ALL_ITEMS).map(|i| clip(i, 240)).collect::<Vec<_>>());
     facts
+}
+
+/// The open items the user closed: report file name, then item key, then how and when.
+pub fn closed_items(env: &Env) -> Value {
+    files::text(&env.data_dir.join(CLOSED))
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}))
+}
+/// An item is known by its text, so it stays closed while the report keeps it and reopens when it is
+/// reworded.
+pub fn item_key(text: &str) -> String {
+    format!("{:x}", Sha256::digest(readers::strip_md(text).as_bytes()))[..16].to_owned()
+}
+fn save_closed(env: &Env, closed: &Value) -> Result<()> {
+    files::private_dir(&env.data_dir)?;
+    files::replace(&env.data_dir.join(CLOSED), serde_json::to_string_pretty(closed).unwrap_or_default().as_bytes())
+}
+/// The items of a report still open after the user's closures, and how many were closed.
+fn still_open(items: &[String], closed: &Value) -> (Vec<String>, usize) {
+    let (done, open): (Vec<&String>, Vec<&String>) = items.iter().partition(|i| closed[item_key(i)].is_object());
+    (open.into_iter().cloned().collect(), done.len())
+}
+
+/// Closes an open item of a report (state `done`, `dropped` or `moved`) or opens a closed one again (`open`).
+/// `item` is its number among the items it can apply to, from 1, or words that match only one of them.
+pub fn close_item(
+    env: &Env,
+    snapshot: &Value,
+    id: &str,
+    item: &str,
+    state: &str,
+    note: &str,
+    by: &str,
+) -> Result<Value> {
+    if !["done", "dropped", "moved", "open"].contains(&state) {
+        return Err("Choose done, dropped, moved or open".into());
+    }
+    let file = listed(env, snapshot, id)?;
+    let text = files::text_nofollow(&file, MAX_BYTES)
+        .ok_or("That report can't be read: it is gone, over 2 MB, or not UTF-8 text")?;
+    let facts = parse(id, &text, "");
+    let all: Vec<String> =
+        facts["items"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+    let closed = closed_items(env);
+    let pool: Vec<&String> = all.iter().filter(|i| closed[id][item_key(i)].is_object() == (state == "open")).collect();
+    let chosen = match item.trim().parse::<usize>() {
+        Ok(n) if n >= 1 => *pool.get(n - 1).ok_or("No item has that number")?,
+        _ => {
+            let words: Vec<String> = item.split_whitespace().map(str::to_lowercase).collect();
+            if words.is_empty() {
+                return Err("Name the item by its number or by words from it".into());
+            }
+            let matches: Vec<&&String> =
+                pool.iter().filter(|i| words.iter().all(|w| i.to_lowercase().contains(w))).collect();
+            match matches.as_slice() {
+                [one] => **one,
+                [] => {
+                    return Err(if state == "open" { "No closed item matches" } else { "No open item matches" }.into());
+                }
+                _ => return Err("More than one item matches; use more of its words or its number".into()),
+            }
+        }
+    };
+    let key = item_key(chosen);
+    let title = snapshot["reports"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|r| r["id"] == id)
+        .map_or(id, |r| r["title"].as_str().unwrap_or(id));
+    ops::with_lock(env, || {
+        let mut closed = closed_items(env);
+        let previous = closed[id][key.as_str()].clone();
+        if state == "open" {
+            if let Some(items) = closed[id].as_object_mut() {
+                items.remove(&key);
+            }
+        } else {
+            if !closed[id].is_object() {
+                closed[id] = json!({});
+            }
+            closed[id][key.as_str()] = json!({"state":state,"at":files::now(),"by":by,"note":note,"text":chosen});
+        }
+        save_closed(env, &closed)?;
+        activity::record(
+            env,
+            json!({"by":by,"title":format!("{} an item of the report “{}”",if state == "open" { "Reopened" } else { "Closed" },clip(title, 80)),
+                "detail":chosen,"path":file,"key":format!("report:{id}:{key}"),
+                "undo":{"type":"report-item","report":id,"item":key,"previous":previous}}),
+        );
+        Ok(())
+    })?;
+    Ok(json!({"report":id,"item":chosen,"state":state}))
+}
+/// Puts an item's closure back as it was before a change, for the Log's Undo.
+pub(crate) fn restore_item(env: &Env, undo: &Value) -> Result<()> {
+    let id = undo["report"].as_str().ok_or("Unknown report")?;
+    let key = undo["item"].as_str().ok_or("Unknown report item")?;
+    let mut closed = closed_items(env);
+    if undo["previous"].is_object() {
+        if !closed[id].is_object() {
+            closed[id] = json!({});
+        }
+        closed[id][key] = undo["previous"].clone();
+    } else if let Some(items) = closed[id].as_object_mut() {
+        items.remove(key);
+    }
+    save_closed(env, &closed)
 }
 
 fn title_from(name: &str) -> String {
@@ -448,6 +564,7 @@ pub fn attach(env: &Env, snapshot: &mut Value) {
     };
     let (found, total) = candidates(&dir);
     let linker = Linker::new(env, snapshot);
+    let closed = closed_items(env);
     let mut cache = agents::Cache::open(env, CACHE);
     let mut reports: Vec<Value> = found
         .iter()
@@ -458,6 +575,10 @@ pub fn attach(env: &Env, snapshot: &mut Value) {
             if facts.is_null() {
                 return None;
             }
+            let listed = if facts["items"].is_array() { &facts["items"] } else { &facts["open"] };
+            let items: Vec<String> =
+                listed.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+            let (open, done) = still_open(&items, &closed[c.name.as_str()]);
             let mut report = json!({
                 "id": c.name,
                 "file": c.path,
@@ -467,9 +588,16 @@ pub fn attach(env: &Env, snapshot: &mut Value) {
                 "bytes": c.bytes,
                 "sessions": facts["sessions"],
                 "projects": linker.link(env, &facts),
-                "open": facts["open"],
-                "openCount": facts["openCount"],
+                "open": open.into_iter().take(OPEN_ITEMS).collect::<Vec<_>>(),
+                "openCount": (facts["openCount"].as_u64().unwrap_or(0) as usize).saturating_sub(done),
             });
+            if done > 0 {
+                report["closedCount"] = json!(done);
+                // In the report's order, so a closed item can be opened again by its number.
+                report["closed"] = json!(
+                    items.iter().filter(|i| closed[c.name.as_str()][item_key(i)].is_object()).collect::<Vec<_>>()
+                );
+            }
             for key in ["scope", "summary"] {
                 if facts[key].is_string() {
                     report[key] = facts[key].clone();
@@ -645,7 +773,9 @@ pub fn list(env: &Env, snapshot: &Value, under: Option<&Path>, query: Option<&st
         .take(limit)
         .map(|r| {
             let mut out = json!({});
-            for key in ["id", "title", "date", "file", "projects", "sessions", "summary", "open", "openCount"] {
+            for key in
+                ["id", "title", "date", "file", "projects", "sessions", "summary", "open", "openCount", "closedCount"]
+            {
                 if !r[key].is_null() {
                     out[key] = r[key].clone();
                 }

@@ -116,6 +116,44 @@ fn reports_on_another_disk_link_by_projects_session_start_and_session_id() {
 }
 
 #[test]
+fn open_items_close_and_reopen_in_laci_and_the_report_stays_as_written() {
+    let f = fixture();
+    let alpha = f.reports.join("2026-10-01-alpha.md");
+    let text =
+        fs::read_to_string(&alpha).unwrap().replace("- Ship it\n", "- Ship it\n- Measure the parser\n- Write docs\n");
+    write(&alpha, &text);
+    let mut service = Service::new(f.env.clone());
+    save_reports_dir(&mut service, &json!(f.reports)).unwrap();
+    let open = |service: &mut Service| {
+        let r = report(&service.snapshot().unwrap(), "2026-10-01-alpha.md").clone();
+        (r["open"].clone(), r["openCount"].clone(), r["closedCount"].clone())
+    };
+    assert_eq!(open(&mut service).0, json!(["Ship it", "Measure the parser", "Write docs"]));
+
+    let closed = service
+        .request("report/close", &json!({"report":"2026-10-01-alpha.md","item":"measure","state":"done"}))
+        .unwrap();
+    assert_eq!(closed["item"], "Measure the parser");
+    assert_eq!(open(&mut service), (json!(["Ship it", "Write docs"]), json!(2), json!(1)));
+    // A number counts among the items still open.
+    service.request("report/close", &json!({"report":"2026-10-01-alpha.md","item":2,"state":"dropped"})).unwrap();
+    assert_eq!(open(&mut service), (json!(["Ship it"]), json!(1), json!(2)));
+    assert!(
+        service.request("report/close", &json!({"report":"2026-10-01-alpha.md","item":"nothing like it"})).is_err()
+    );
+
+    let last = activity::read_log(&f.env, 100)
+        .into_iter()
+        .find(|e| e["undo"]["type"] == "report-item" && e["canUndo"] == true)
+        .unwrap();
+    service.request("log/undo", &json!({"id":last["id"]})).unwrap();
+    assert_eq!(open(&mut service).0, json!(["Ship it", "Write docs"]));
+    service.request("report/close", &json!({"report":"2026-10-01-alpha.md","item":"measure","state":"open"})).unwrap();
+    assert_eq!(open(&mut service), (json!(["Ship it", "Measure the parser", "Write docs"]), json!(3), Value::Null));
+    assert_eq!(fs::read_to_string(&alpha).unwrap(), text, "the reports folder is only read");
+}
+
+#[test]
 fn a_moved_project_keeps_its_reports_through_their_session() {
     let f = fixture();
     let mut service = Service::new(f.env.clone());

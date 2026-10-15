@@ -1,5 +1,8 @@
 //! Application actions shared by IPC and MCP.
-use crate::{Result, activity, agents, config, create, env::Env, files, ops, paths, readers, scan, sidecar, storage};
+use crate::{
+    Result, activity, agents, assistant, config, create, env::Env, files, ops, paths, readers, reports, scan, sidecar,
+    storage,
+};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -155,6 +158,7 @@ pub fn mutates(name: &str) -> bool {
         "meta"
             | "todo"
             | "notes"
+            | "report/close"
             | "archive"
             | "delete"
             | "move"
@@ -388,6 +392,7 @@ impl Service {
             "session/delete" | "storage/free" => Refresh { watches: true, ..Refresh::agents() },
             "proposal/dismiss" => Refresh::agents(),
             "clean" => Refresh::full(),
+            "report/close" => Refresh::reports(),
             _ => Refresh::default(),
         };
         if changes_history(name)
@@ -489,6 +494,24 @@ impl Service {
                                 ),
                             )
                         }
+                        "edit" => {
+                            let to = string(b, "to").split_whitespace().collect::<Vec<_>>().join(" ");
+                            if to.is_empty() {
+                                return Err("Write something first".into());
+                            }
+                            if to.chars().count() > 300 {
+                                return Err("Keep a to-do under 300 characters".into());
+                            }
+                            let task = self.checkbox(&node, b, &task_path)?;
+                            let was = sidecar::edit_check(&task_path, task.line, text, &to)?;
+                            let now = readers::strip_md(&to);
+                            let after = sidecar::checkbox(&task_path, task.line, &now)?;
+                            (
+                                to.clone(),
+                                json!({"type":"edit","file":file,"text":now,"was":was,"line":after.line,"occurrence":after.occurrence,"count":after.count}),
+                                format!("Edited a to-do in {}", string(&node, "name")),
+                            )
+                        }
                         "delete" => {
                             if file != ".laci.md" {
                                 return Err("Only .laci.md tasks can be deleted here".into());
@@ -512,6 +535,37 @@ impl Service {
                     Ok(())
                 })?;
                 self.refreshed(id)
+            }
+            "report/close" => {
+                let snapshot = self.snapshot()?;
+                reports::close_item(
+                    &self.env,
+                    &snapshot,
+                    string(b, "report"),
+                    &b["item"].as_u64().map_or_else(|| string(b, "item").to_owned(), |n| n.to_string()),
+                    if string(b, "state").is_empty() { "done" } else { string(b, "state") },
+                    string(b, "note"),
+                    by,
+                )
+            }
+            "assistant/prompt" => {
+                let snapshot = self.snapshot()?;
+                match string(b, "kind") {
+                    "review" => {
+                        Ok(json!({"prompt":assistant::review(&self.env, &snapshot),"projectPath":self.env.home}))
+                    }
+                    "task" => {
+                        let node = self.node(id)?;
+                        let task = array(&node["tasks"])
+                            .into_iter()
+                            .find(|t| t["file"] == b["file"] && t["text"] == b["text"] && t["done"] == false)
+                            .ok_or("That to-do is no longer open. Refresh and try again.")?;
+                        Ok(
+                            json!({"prompt":assistant::work_on(&self.env, &snapshot, &node, &task),"projectPath":node["path"]}),
+                        )
+                    }
+                    _ => Err("Unknown prompt".into()),
+                }
             }
             "notes" => {
                 let (node, dir) = self.editable(id)?;
@@ -1099,6 +1153,15 @@ impl Service {
                     }
                     "no-commits" => "git add -A && git commit -m 'chore: initial commit'".into(),
                     "dirty" => "git status --short".into(),
+                    // Without an upstream, a plain push has nowhere to go; set one on the first remote.
+                    "unpushed" if string(&node["git"], "upstream").is_empty() => {
+                        let remote = node["git"]["remotes"][0]["name"].as_str().unwrap_or("origin");
+                        let branch = string(&node["git"], "branch");
+                        if branch.is_empty() {
+                            return Err("Check out a branch before pushing".into());
+                        }
+                        format!("git push -u {} {}", shell_quote(remote), shell_quote(branch))
+                    }
                     "unpushed" => "git push".into(),
                     "stash" => "git stash show -p stash@{0}".into(),
                     "no-git" => "git init".into(),

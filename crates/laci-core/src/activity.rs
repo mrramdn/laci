@@ -156,7 +156,7 @@ pub fn read_log(env: &Env, limit: usize) -> Vec<Value> {
 }
 fn task_scope(entry: &Value) -> Option<String> {
     let undo = &entry["undo"];
-    if !["check", "drop", "add"].contains(&undo["type"].as_str()?) {
+    if !["check", "drop", "add", "edit"].contains(&undo["type"].as_str()?) {
         return None;
     }
     Some(format!(
@@ -262,6 +262,9 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
             }
             config::save(env, &c)?;
             out["refresh"] = json!("all");
+        } else if kind == "report-item" {
+            crate::reports::restore_item(env, undo)?;
+            out["refresh"] = json!("all");
         } else {
             let dir = paths::workspace_path(a["path"].as_str().ok_or("Missing project")?, env)?;
             sidecar::plain_path(&dir)?;
@@ -291,6 +294,21 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
                         task.line,
                         undo["text"].as_str().ok_or("Unknown task")?,
                         undo["done"].as_bool().ok_or("Invalid old checkbox")?,
+                    )?;
+                }
+                "edit" => {
+                    let raw = undo["file"].as_str().ok_or("Unknown task file")?;
+                    let file = paths::normalize(&dir.join(raw));
+                    if !file.starts_with(&dir) {
+                        return Err("Unknown task file".into());
+                    }
+                    paths::workspace_path(&file.to_string_lossy(), env)?;
+                    let task = recorded_checkbox(&file, undo)?;
+                    sidecar::edit_check(
+                        &file,
+                        task.line,
+                        undo["text"].as_str().ok_or("Unknown task")?,
+                        undo["was"].as_str().ok_or("Invalid old text")?,
                     )?;
                 }
                 "drop" => {

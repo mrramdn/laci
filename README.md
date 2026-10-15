@@ -49,10 +49,21 @@ The home screen answers "what should I look at?". Each list says how it's ordere
 - **Deadlines**: overdue projects and the next 14 days, soonest first, with their priority. Shown only when there are any.
 - **Could lose work**: no remote, never committed, uncommitted or unpushed changes, a branch that has diverged from its remote, stashes. One row per project, every issue as a chip, and a one-click fix for the worst one (for example *Create remote* or *Push*) that opens in the built-in terminal. A diverged branch gets no Push or Pull: neither would fix it.
 - **Pick up where you left off**: recently active projects, each with its last commit and last agent session.
-- **Open to-dos**: every open `- [ ]` checkbox across your notes files, plus next steps you add in laci.
+- **Open to-dos**: every open `- [ ]` checkbox across your notes files, plus next steps you add in laci. **Work on it** (the play button) starts an agent in the project's folder with that to-do as its first prompt.
 - **Handoffs**: `HANDOFF.md` or `TODO.md` files that still have open items under a TODO heading.
 
 Each list opens the tab that fits it: a risk opens Health, a recent project opens Agents, a deadline opens To-do.
+
+### Review with an agent
+
+When the notes pile up faster than the work gets done, **Review with an agent…** at the top of Today starts Claude Code, Codex or Antigravity with a brief, in the built-in terminal or your own. The agent works through Laci's [MCP server](#agents-mcp):
+
+1. It reads every open to-do, report item, risk and cleanup.
+2. It checks against the git log, pull requests and files what is already done.
+3. It proposes what to tick, delete, split, move or close, three to five things for the week, and the questions only you can answer.
+4. After you agree, it makes the changes with Laci's tools, so each one is in the Log with Undo.
+
+Work that belongs to one project stays a to-do there, for **Work on it**. You see the prompt in the start dialog and can change it before the agent starts. The agent needs Laci's MCP server; its card on the Agents page sets that up.
 
 ### Browse everything
 
@@ -68,7 +79,7 @@ Every folder and file, like Dolphin or Finder, with projects marked by their sta
 Select a project to see its summary, status, priority, deadline, remotes, branch, stack and size. When build output (such as `target` or `node_modules`) takes much of the size, **Delete build output…** frees it for good; the next install or build brings it back. It is not moved to the Trash, which would keep the space taken. The panel has four tabs:
 
 - **Health**: checks with what stands behind them (the changed files, the commits not pushed, the stashes), a release line (declared version, last tag, commits since), recent commits and a commit chart. Any check except a deadline can be muted for that project: it stays listed under *Muted* and is counted nowhere else. Muted checks are kept in the project's `.laci.md`.
-- **To-do**: next steps and notes.
+- **To-do**: next steps and notes. **Work on it** on an open to-do starts an agent on it.
 - **Agents**: sessions, memory and plans from every connected tool.
 - **README**: the rendered README.
 
@@ -160,6 +171,8 @@ A report links to the projects and agent sessions its header names, by path or b
 - A report icon on the session's row, and **Report** in the session dialog.
 - A Reports section in the project's Agents tab.
 - On Today, a line under the project with the first thing its latest report left open.
+
+A report's *Open items* can be closed as done or dropped, in Reports or from that line on Today, and opened again. Laci keeps this in its own data, so a closed item leaves Today and the counts while the report stays as written. The Log can undo each one.
 
 The sidebar counts reports added since you last looked. Laci never changes the folder. The format, and the instruction to give your agent, are in [Session reports](#session-reports).
 
@@ -277,11 +290,22 @@ Then ask your agent things like *"which projects could lose work?"*, *"archive d
 | `project_details` | Git, scripts, to-dos, notes, sessions, memory, the newest session reports and archive destination of one project |
 | `list_reports` | Session reports, newest first, with summary, open items and the file to read. Narrow by project or by words |
 | `needs_attention` | Work at risk, open to-dos, deadlines, stale handoffs |
+| `open_items` | Every open to-do and report item, the most pressing projects first. Narrow by project, kind or words |
 | `tidy_suggestions` | The Tidy up list |
 | `set_project_fields` | Status, priority, deadline |
-| `add_next_step`, `complete_task`, `write_notes` | Edit to-dos and notes |
+| `add_next_step`, `complete_task`, `edit_task`, `delete_task`, `move_task`, `write_notes` | Add, tick, rewrite, delete or move to-dos, and edit notes |
+| `close_report_item` | Close a report's open item as done, dropped or moved, or open it again. The report file stays as written |
 | `move_project`, `archive_project`, `delete_project`, `apply_suggestion`, `create_project`, `undo_change` | Changes on disk. Two calls: the first returns the plan, the second (with `confirm: true`) runs it |
 | `recent_changes` | The Log, and which entries can be undone |
+
+Projects in lists and in answers to changes are short: status, priority, deadline, checks and to-dos. `project_details` has the README, stack, sessions and archive plan.
+
+The server also offers two prompts, which the desktop app uses for its buttons. In Claude Code, they are slash commands such as `/mcp__laci__review`.
+
+| Prompt | What it starts |
+| --- | --- |
+| `review` | Going through everything open with you, as **Review with an agent…** on Today does |
+| `work_on` | Work on one to-do (`project`, `task`), as **Work on it** does |
 
 Moves and new projects must stay inside home or a scan/archive folder explicitly selected in Settings, and only one laci process (the app or an agent) changes files at a time.
 

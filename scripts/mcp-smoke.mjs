@@ -77,6 +77,12 @@ class Client {
     if (result.isError) throw new Error(text || `Tool failed: ${name}`);
     return JSON.parse(text);
   }
+  async raw(name, args = {}) {
+    const result = await this.request('tools/call', { name, arguments: args });
+    const text = (result.content || []).filter(block => block.type === 'text').map(block => block.text).join('\n');
+    if (result.isError) throw new Error(text || `Tool failed: ${name}`);
+    return text;
+  }
   async rejects(name, args, expected) {
     await assert.rejects(() => this.call(name, args), expected);
     checks++;
@@ -144,16 +150,21 @@ try {
   checks++;
 
   const listed = await client.call('list_projects', { query: 'alpha react', filter: 'all' });
-  assert.equal(listed.length, 1);
-  assert.equal(listed[0].path, project);
-  assert.equal(listed[0].openTasks, 2);
-  for (const heavy of ['readme', 'archivePlan', 'stack', 'agents']) assert.equal(listed[0][heavy], undefined, heavy);
+  assert.equal(listed.projects.length, 1);
+  assert.equal(listed.total, 1);
+  assert.equal(listed.more, false);
+  assert.equal(listed.projects[0].path, project);
+  assert.equal(listed.projects[0].openTasks, 2);
+  for (const heavy of ['readme', 'archivePlan', 'stack', 'agents']) assert.equal(listed.projects[0][heavy], undefined, heavy);
   const details = await client.call('project_details', { project: 'alpha' });
   assert.equal(details.tasks.length, 2);
   assert.equal(details.sessions.length, 1);
   assert.equal(details.agentItems.length, 1);
   assert.ok(details.agentSessions.some(session => session.provider === 'codex' && session.cwd === project));
   assert.deepEqual(details.reports.map(report => report.file), [reportFile]);
+  assert.equal(details.readme.raw, undefined, 'project_details gives the start of the README, not all of it');
+  assert.match(details.readme.text, /Tokenizer prototype/);
+  assert.equal(details.agentSessionCount, details.agentSessions.length);
   const reports = await client.call('list_reports');
   assert.equal(reports.folder.path, reportsDir);
   assert.equal(reports.reports.length, 1, 'The folder index and hidden drafts are not reports');
@@ -170,7 +181,7 @@ try {
   assert.ok(JSON.stringify(attention).length < 20_000, 'needs_attention stays small enough for an agent to read');
   const items = await client.call('open_items');
   assert.ok(items.items.some(item => item.kind === 'todo' && item.text === 'Ship tokenizer parser' && item.file === 'TODO.md'));
-  assert.ok(items.items.some(item => item.kind === 'report' && item.text === 'Measure the parser' && item.item === 2));
+  assert.ok(items.items.some(item => item.kind === 'report' && item.text === 'Measure the parser' && item.item === '2'));
   assert.equal((await client.call('open_items', { kind: 'report', query: 'measure' })).items.length, 1);
   await client.call('recent_changes');
   checks++;
@@ -184,6 +195,7 @@ try {
   assert.equal(edited.tasks.find(task => task.text === 'Ship schema validator coverage').done, true);
   edited = await client.call('complete_task', { project, text: 'schema validator', done: false });
   assert.equal(edited.tasks.find(task => task.text === 'Ship schema validator coverage').done, false);
+  assert.equal(edited.notes, undefined, 'Only write_notes answers with the notes');
   edited = await client.call('set_project_fields', { project, status: 'paused', priority: 'high', deadline: '2099-10-02' });
   assert.equal(edited.meta.status, 'paused');
   assert.equal(edited.meta.priority, 'high');
@@ -203,6 +215,12 @@ try {
   assert.equal((await client.call('list_reports')).reports[0].closedCount, 1);
   const reopened = await client.call('close_report_item', { report: '2026-10-12-alpha-tokenizer.md', item: '1', state: 'open' });
   assert.deepEqual(reopened.open, ['Ship tokenizer docs', 'Measure the parser']);
+  const reportItem = (await client.call('open_items', { kind: 'report', query: 'measure' })).items[0];
+  const byNumber = await client.call('close_report_item', { report: reportItem.report, item: reportItem.item, state: 'dropped' });
+  assert.deepEqual(byNumber.open, ['Ship tokenizer docs'], 'The item number open_items gives closes that item');
+  await client.call('close_report_item', { report: reportItem.report, item: '1', state: 'open' });
+  await client.rejects('close_report_item', { report: reportItem.report, item: '0' }, /numbered from 1/i);
+  await client.rejects('close_report_item', { report: reportItem.report, item: 2 }, /Invalid item: expected string/i);
   assert.match(await readFile(reportFile, 'utf8'), /- Measure the parser\n/);
   checks++;
 
@@ -214,7 +232,7 @@ try {
   assert.equal(created.path, path.join(home, 'project', 'created'));
   assert.equal(await exists(path.join(created.path, '.git')), true);
   assert.deepEqual(created.warnings, []);
-  assert.ok((await client.call('list_projects', { query: 'created' })).some(node => node.path === created.path));
+  assert.ok((await client.call('list_projects', { query: 'created' })).projects.some(node => node.path === created.path));
   assert.equal(created.snapshot, undefined, 'A change answers without the whole scan');
   await client.call('add_next_step', { project, text: 'Hand over the fixtures' });
   const handed = await client.call('move_task', { project, text: 'hand over', to_project: created.path });
@@ -329,15 +347,61 @@ try {
   await client.rejects('undo_change', { id: 'missing-change' }, /Unknown change/i);
   await client.rejects('undo_change', { id: moved.journal.id }, /no longer be undone/i);
   await client.rejects('create_project', { parent: '~/project', name: 'extra', scanProject: true, confirm: true }, /Unknown argument scanProject/i);
-  await client.rejects('recent_changes', { limit: 5 }, /Unknown argument limit/i);
+  await client.rejects('recent_changes', { limit: 0 }, /Invalid limit/i);
+  await client.rejects('recent_changes', { limit: '5' }, /Invalid limit: expected integer/i);
+  await client.rejects('recent_changes', { limit: 5, lines: 3 }, /Unknown argument lines/i);
   await client.rejects('list_reports', { project: 'missing-project' }, /Unknown project/i);
   await client.rejects('list_reports', { query: '' }, /length/i);
-  await client.rejects('list_reports', { limit: 5 }, /Unknown argument limit/i);
+  await client.rejects('list_reports', { limit: 51 }, /Invalid limit/i);
+  const oneReport = await client.call('list_reports', { limit: 1 });
+  assert.equal(oneReport.reports.length, 1);
+  assert.equal(oneReport.more, false);
+  assert.equal((await client.call('list_reports', { offset: 1 })).reports.length, 0);
   assert.equal(await exists(path.join(home, 'project', 'extra')), false);
   assert.equal(await exists(path.join(home, 'escape')), false);
   const changes = await client.call('recent_changes');
   assert.ok(changes.entries.some(entry => entry.by === 'agent'));
   assert.ok(changes.entries.some(entry => entry.undoes));
+  assert.ok(changes.entries.every(entry => entry.undo === undefined), 'The Log answer leaves out the undo data');
+  const alphaChanges = await client.call('recent_changes', { project, limit: 3 });
+  assert.ok(alphaChanges.entries.length > 0 && alphaChanges.entries.length <= 3);
+  assert.ok(alphaChanges.entries.every(entry => entry.path?.startsWith(project)));
+  assert.ok((await client.call('recent_changes', { undoable: true })).entries.every(entry => entry.canUndo));
+  const projectLog = await client.call('recent_changes', { project, limit: 100 });
+  assert.ok(projectLog.searched >= projectLog.total);
+  assert.ok(projectLog.entries.some(entry => /an item of the report/.test(entry.title)), 'Closed report items count for the projects the report names');
+  const movedLog = await client.call('recent_changes', { project: movedPath, limit: 100 });
+  assert.ok(movedLog.entries.some(entry => entry.journal === moved.journal.id), 'A move is listed under the folder it moved to');
+  assert.ok(movedLog.entries.find(entry => entry.journal === moved.journal.id).steps.some(step => step.to));
+  await client.rejects('recent_changes', { project: 'no-such-project' }, /path it had before/i);
+  checks++;
+
+  // A busy home: a long Log whose entries keep whole notes, and more to-dos than one page.
+  for (let i = 0; i < 30; i++) {
+    await client.call('write_notes', { project, notes: `${i} `.padEnd(15_000, 'n'), mode: 'replace' });
+  }
+  const logText = await client.raw('recent_changes');
+  assert.ok(logText.length < 20_000, `recent_changes answers in ${logText.length} characters`);
+  const longLog = JSON.parse(logText);
+  assert.equal(longLog.entries.length, 30);
+  assert.equal(longLog.more, true);
+  assert.ok(longLog.entries.every(entry => entry.undo === undefined));
+  const bulk = Array.from({ length: 120 }, (_, i) => `- [ ] Bulk item ${String(i).padStart(3, '0')} ${'with a few words '.repeat(6)}`);
+  await write(path.join(created.path, 'TODO.md'), `## Next\n\n${bulk.join('\n')}\n`);
+  await client.call('complete_task', { project: created.path, text: 'Bulk item 000' });
+  const firstPage = JSON.parse(await client.raw('open_items', { project: created.path }));
+  assert.equal(firstPage.items.length, 50);
+  assert.equal(firstPage.more, true);
+  assert.equal(firstPage.total, 120, '119 bulk items and the to-do moved there earlier');
+  const lastPage = await client.call('open_items', { project: created.path, offset: 100 });
+  assert.equal(lastPage.items.length, 20);
+  assert.equal(lastPage.more, false);
+  const everything = await client.raw('open_items');
+  assert.ok(everything.length < 20_000, `open_items answers in ${everything.length} characters`);
+  const attentionText = await client.raw('needs_attention');
+  assert.ok(attentionText.length < 20_000, `needs_attention answers in ${attentionText.length} characters`);
+  assert.equal(JSON.parse(attentionText).projects.find(node => node.path === created.path).tasks, undefined);
+  checks++;
 
   await stop(client);
 

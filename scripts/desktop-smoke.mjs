@@ -5,6 +5,8 @@
  * fixtures, then run: LACI_HOME=/tmp/laci-demo node scripts/desktop-smoke.mjs
  * LACI_BINARY overrides target/debug/laci; LACI_WEBDRIVER defaults to :4444.
  * LACI_SCREENSHOTS optionally receives screenshots from the real app window.
+ * LACI_SMOKE_DIAGNOSTICS receives a screenshot, the page text, the app status and the end of its debug log when a
+ * check fails; without it they go to a new laci-smoke-diagnostics-* folder in the temp folder. Not inside LACI_HOME.
  * LACI_ONBOARDING_ONLY=1 checks the first-run wizard on an unconfigured fixture.
  * LACI_WATCHER_ONLY=1 checks archived/worktree Git and continuously written session logs.
  * LACI_MODULAR_ONLY=1 checks external scan and archive folders, project Trash, and session reports.
@@ -139,9 +141,134 @@ async function wait(label, condition, timeout = 45_000) {
     `Timed out: ${label}${lastError ? ` (${lastError.message})` : ""}`,
   );
 }
+/**
+ * Waits until no scan, history refresh or project Git check has run for 1.2 s, so the next click is not dropped.
+ * Longer than the 900 ms the app's watcher holds file events (src-tauri/src/app/mod.rs) before it starts a refresh.
+ */
+async function settled(label) {
+  let idleSince;
+  await wait(label, async () => {
+    const status = await api("status");
+    if (status.busy || status.historyPending) {
+      idleSince = undefined;
+      return false;
+    }
+    idleSince ??= Date.now();
+    return Date.now() - idleSince >= 1_200;
+  });
+}
+/** wait() for what a dialog submits: the dialog's own error alert ends it at once, instead of a timeout hiding it. */
+async function waitAccepted(label, condition, timeout) {
+  let refusal = "";
+  const accepted = await wait(
+    label,
+    async () => {
+      refusal = await execute(
+        () =>
+          [...document.querySelectorAll(".dialog [role=alert]")]
+            .map((alert) => alert.textContent.trim())
+            .find(Boolean) ?? "",
+      );
+      // wait() retries when its condition throws, so a refusal ends it as a value and is thrown below.
+      return refusal || condition();
+    },
+    timeout,
+  );
+  if (refusal)
+    throw new Error(`Dialog error while waiting for “${label}”: ${refusal}`);
+  return accepted;
+}
+/** Gives up on a window that stopped answering, so a failing run does not wait minutes on each diagnostic. */
+async function withTimeout(ms, work) {
+  let timer;
+  try {
+    return await Promise.race([
+      work,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`no answer within ${ms / 1000} s`)),
+          ms,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+/**
+ * Keeps what a failing check shows before anything is cleaned up: the end of the debug log, the page text with any
+ * open dialog, a screenshot and the app status. They go outside the fixture home, which CI deletes. This never
+ * throws, so the error being reported stays the original one.
+ */
+async function diagnose(name, error) {
+  try {
+    const reason = String(error?.message ?? error).replace(/\s+/g, " ");
+    console.error(`FAIL ${name}: ${reason.slice(0, 300)}`);
+    const slug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 60);
+    const parent = process.env.LACI_SMOKE_DIAGNOSTICS
+      ? path.resolve(process.env.LACI_SMOKE_DIAGNOSTICS)
+      : await mkdtemp(path.join(tmpdir(), "laci-smoke-diagnostics-"));
+    const folder = path.join(parent, `${stamp}-${slug}`);
+    await mkdir(folder, { recursive: true });
+    const save = async (file, produce) => {
+      try {
+        await writeFile(path.join(folder, file), await produce());
+      } catch (problem) {
+        await writeFile(
+          path.join(folder, `${file}.failed.txt`),
+          String(problem?.stack ?? problem),
+        ).catch(() => {});
+      }
+    };
+    await save("error.txt", () => `${name}\n\n${error?.stack ?? error}\n`);
+    if (fixtureHome)
+      await save("laci-log-tail.txt", async () => {
+        const log = await readFile(
+          path.join(fixtureHome, ".local/share/laci/laci.log"),
+          "utf8",
+        );
+        return log.trimEnd().split("\n").slice(-200).join("\n") + "\n";
+      });
+    if (session) {
+      await save("page.txt", () =>
+        withTimeout(
+          15_000,
+          execute(() => {
+            const dialog = document.querySelector(".dialog");
+            const open = dialog ? `Open dialog:\n${dialog.innerText}\n\n` : "";
+            return `${open}Page:\n${document.body.innerText}\n`;
+          }),
+        ),
+      );
+      await save("screenshot.png", async () =>
+        Buffer.from(
+          await withTimeout(15_000, command("GET", "/screenshot")),
+          "base64",
+        ),
+      );
+      await save("status.json", async () => {
+        const status = await withTimeout(15_000, api("status"));
+        return JSON.stringify(status, null, 2) + "\n";
+      });
+    }
+    console.error(`Diagnostics for ${name}: ${folder}`);
+  } catch (problem) {
+    console.error(`Could not save diagnostics: ${problem?.message ?? problem}`);
+  }
+}
 async function check(name, task) {
   const started = Date.now();
-  await task();
+  try {
+    await task();
+  } catch (error) {
+    // Before a surrounding finally closes the dialog and restores the settings the failure happened in.
+    await diagnose(name, error);
+    throw error;
+  }
   results.push({ name, passed: true, tookMs: Date.now() - started });
   console.log(`PASS ${name}`);
 }
@@ -440,29 +567,40 @@ async function modularRegressions() {
           archiveRoot,
           `${path.basename(source)}-chosen`,
         );
+        // WebDriver's clear never reaches React: a refresh landing between it and the typing (the Settings save
+        // just before starts two scans) re-renders the field with the default destination, and the typed path
+        // ends up appended to it. Let the scans finish first, and check the field holds exactly this path.
+        await settled("scans after the Settings change settle before typing");
         await type('[aria-label="Archive destination"]', destination);
         await wait("custom archive preview ready", () =>
-          execute(() => {
+          execute((expected) => {
+            const field = document.querySelector(
+              '[aria-label="Archive destination"]',
+            );
             const button = [
               ...document.querySelectorAll(".dialog .df button"),
             ].find((b) => b.textContent.trim() === "Archive");
             return (
+              field?.value === expected &&
               button &&
               !button.disabled &&
               document
                 .querySelector(".dialog .ops")
                 ?.textContent.includes("-chosen")
             );
-          }),
+          }, destination),
         );
         await shot("modular-archive");
+        await settled("scan and project Git checks settle before Archive");
         await click(".dialog .df button", "Archive", true);
-        await wait("custom archive accepted", async () => {
+        await waitAccepted("custom archive accepted", async () => {
           const current = await snapshot();
-          return (
-            !current.historyPending &&
-            current.nodes[destination]?.archived &&
-            !current.nodes[source]
+          const moved = current.nodes[destination];
+          if (!current.historyPending && moved?.archived && !current.nodes[source])
+            return true;
+          // wait() keeps the last error, so a timeout says what was still missing.
+          throw new Error(
+            `historyPending ${current.historyPending}, destination ${moved ? (moved.archived ? "archived" : "not archived") : "missing"}, source ${current.nodes[source] ? "still listed" : "gone"}`,
           );
         });
         assert.ok(
@@ -470,19 +608,7 @@ async function modularRegressions() {
             await readFile(path.join(destination, "README.md"), "utf8")
           ).includes("Modular project"),
         );
-        let idleSince;
-        await wait(
-          "archive scan and project Git checks settle before Undo",
-          async () => {
-            const status = await api("status");
-            if (status.busy || status.historyPending) {
-              idleSince = undefined;
-              return false;
-            }
-            idleSince ??= Date.now();
-            return Date.now() - idleSince >= 750;
-          },
-        );
+        await settled("archive scan and project Git checks settle before Undo");
         await click(".toast button", "Undo", true);
         await wait("external archive undone", async () => {
           const current = await snapshot();
@@ -517,6 +643,9 @@ async function modularRegressions() {
           path.join(source, "README.md"),
           "Local work after the review\n",
         );
+        await settled(
+          "scan and project Git checks settle before the blocked Move to Trash",
+        );
         await click(".dialog .df button", "Move to Trash", true);
         await wait("fresh execution safety check rejected", () =>
           textContains(".dialog [role=alert]", "local changes"),
@@ -546,6 +675,9 @@ async function modularRegressions() {
           }),
         );
         await shot("modular-trash");
+        await settled(
+          "scan and project Git checks settle before the final Move to Trash",
+        );
         await click(".dialog .df button", "Move to Trash", true);
         await wait("project removed from snapshot", async () => {
           const current = await snapshot();

@@ -11,7 +11,7 @@ laci shows every folder like a file manager, and for each project it adds its gi
   <img alt="The Today view: work that could be lost, projects to pick up again, and open to-dos" src="docs/screenshots/today-light.png">
 </picture>
 
-> Status: 2.5.0, Linux x86-64. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
+> Status: 2.5.1, Linux x86-64. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
 
 ## Contents
 
@@ -286,19 +286,21 @@ Then ask your agent things like *"which projects could lose work?"*, *"archive d
 
 | Tool | What it does |
 | --- | --- |
-| `list_projects` | Projects with status, activity, summary, stack and problems. Filter by status or `at_risk` |
-| `project_details` | Git, scripts, to-dos, notes, sessions, memory, the newest session reports and archive destination of one project |
+| `list_projects` | Projects with status, activity, summary and problems, the most recently active first. Filter by status, `at_risk` or words |
+| `project_details` | Git, stack, to-dos, notes, the start of the README, the newest agent sessions, memory, the newest session reports and archive destination of one project |
 | `list_reports` | Session reports, newest first, with summary, open items and the file to read. Narrow by project or by words |
-| `needs_attention` | Work at risk, open to-dos, deadlines, stale handoffs |
-| `open_items` | Every open to-do and report item, the most pressing projects first. Narrow by project, kind or words |
+| `needs_attention` | Work at risk, deadlines and how many to-dos are open, the worst first |
+| `open_items` | Open to-dos and report items, the most pressing projects first. Narrow by project, kind or words |
 | `tidy_suggestions` | The Tidy up list |
 | `set_project_fields` | Status, priority, deadline |
 | `add_next_step`, `complete_task`, `edit_task`, `delete_task`, `move_task`, `write_notes` | Add, tick, rewrite, delete or move to-dos, and edit notes |
 | `close_report_item` | Close a report's open item as done, dropped or moved, or open it again. The report file stays as written |
 | `move_project`, `archive_project`, `delete_project`, `apply_suggestion`, `create_project`, `undo_change` | Changes on disk. Two calls: the first returns the plan, the second (with `confirm: true`) runs it |
-| `recent_changes` | The Log, and which entries can be undone |
+| `recent_changes` | The Log, newest first, and which entries can be undone. Narrow by project, words or `undoable` |
 
-Projects in lists and in answers to changes are short: status, priority, deadline, checks and to-dos. `project_details` has the README, stack, sessions and archive plan.
+Projects in lists and in answers to changes are short: status, priority, deadline, checks and to-dos. `project_details` has the stack, the start of the README, the newest sessions and the archive plan.
+
+Lists answer a page at a time: `list_projects`, `needs_attention` and `recent_changes` 30 entries, `open_items` 50 and `list_reports` 10. `limit` sets the size of a page; when an answer says `more`, call again with `offset`.
 
 The server also offers two prompts, which the desktop app uses for its buttons. In Claude Code, they are slash commands such as `/mcp__laci__review`.
 
@@ -382,7 +384,7 @@ Safari showed a total one rupiah off. Fixed and deployed to staging.
 
 The folder's `README.md` and files whose names start with a dot are not reports. Reports are read as UTF-8 text, up to 2 MB each.
 
-To have an agent write them, add this rule where it reads its instructions: `~/.claude/CLAUDE.md` for Claude Code, `~/.codex/AGENTS.md` for Codex or `~/.gemini/GEMINI.md` for Gemini. **Copy agent instruction** in Settings copies it with your folder filled in.
+To have an agent write them, add this rule where it reads its instructions: `~/.claude/CLAUDE.md` for Claude Code, `~/.codex/AGENTS.md` for Codex or `~/.gemini/GEMINI.md` for Antigravity. **Copy agent instruction** in Settings copies it with your folder filled in.
 
 ````markdown
 ## Session reports

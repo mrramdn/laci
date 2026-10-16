@@ -10,7 +10,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
         "-c",
         "credential.interactive=false",
         "-c",
-        "core.sshCommand=ssh -oBatchMode=yes -oConnectTimeout=5",
+        "core.sshCommand=ssh -oBatchMode=yes -oConnectTimeout=5 -oControlMaster=no",
     ];
     options.extend_from_slice(args);
     Repo::at(dir).run(&options, Duration::from_secs(15))
@@ -135,9 +135,9 @@ fn check(dir: &Path) -> Result<String> {
             ));
         }
     }
-    let busy = ops::busy_in(&[dir.to_owned()]);
+    let busy = ops::still_busy(&[dir.to_owned()]);
     if !busy.is_empty() {
-        return Err("This project is in use by a running process. Close it first.".into());
+        return Err(format!("This project is in use by {}. Close it first.", ops::holders(&busy)));
     }
     Ok(remote.to_owned())
 }
@@ -178,11 +178,14 @@ pub fn plan(env: &Env, node: &Value) -> Result<Value> {
 
 pub fn trash(env: &Env, node: &Value) -> Result<()> {
     ops::with_lock(env, || {
+        let dir = paths::workspace_path(string(node, "path"), env)?;
+        // Git that another program runs there gets a moment to finish first, so what it wrote is verified below,
+        // and anything still in the folder after that makes the check refuse.
+        ops::still_busy(std::slice::from_ref(&dir));
         let current = plan(env, node)?;
         if current["allowed"] != true {
             return Err(current["checks"][0]["detail"].as_str().unwrap_or("Project removal was blocked").to_owned());
         }
-        let dir = paths::workspace_path(string(node, "path"), env)?;
         sidecar::plain_path(&dir)?;
         process::run("gio", &["trash", "--", &dir.to_string_lossy()], None, Duration::from_secs(120))?;
         Ok(())

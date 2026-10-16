@@ -4,6 +4,28 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-10-16
+
+MCP answers an agent can read in full, and an archive that no longer trips over Laci's own Git.
+
+### Fixed
+
+- **MCP answers fit an agent's context.** On a busy home `recent_changes` answered with 404,000 characters, more than Claude Code accepts, and `project_details` (up to 178,000) and `open_items` (52,000) were cut off or saved to a file. On the same home they are now 12,500, 20,000 and 15,000.
+  - The list tools answer a page at a time. `limit` sets the size of a page, the answer says `total` and `more`, and `offset` gives the next page. `list_projects`, `needs_attention` and `recent_changes` give 30 at a time, `open_items` 50 and `list_reports` 10.
+  - `recent_changes` leaves out the undo data, where a notes change kept the whole previous notes. Long details are cut to 300 characters, and a long list of steps to its first five. It narrows by `project` (also finding a project's moves, archives and closed report items), words (`query`) or `undoable`, so an agent can find the id `undo_change` needs. It searches the newest 300 Log entries, fewer when they are long, and says how many in `searched`.
+  - `project_details` gives the first 2,000 characters of the README, and the newest 10 conversations and agent items with a count of all, without their prompts and replies. Subagent logs no longer count as conversations. Claude history folders come without their per-session lists. Notes stay whole.
+  - `open_items` names each report's title, date, file and projects once, in `reports`, instead of on every item.
+  - `needs_attention` counts each project's open to-dos instead of listing them (they are in `open_items`) and lists the worst problems first. A check you muted is listed but not counted, as in the app.
+  - Answers to changes leave out the project's notes, except the answer to `write_notes`. Answers are compact JSON.
+- `close_report_item` takes the item number that `open_items` gives, as a string. The number 0 is refused; it used to be taken as words and could close another item.
+- **Archive, move and Move to Trash no longer fail during a background scan** with "In use by git" (Move to Trash: "This project is in use by a running process"). Laci's own Git, which scans run inside each project, no longer counts as using the folder, and neither does a process that is gone a moment later. Git that another program runs there, such as the desktop app's scan while an agent archives through the MCP server, gets up to 3 seconds to finish. A shell, an editor or any other program that stays still blocks the change, and Move to Trash now names it, as archive and move do. Move to Trash waits for that Git before it checks the backup again, so nothing that Git wrote goes to the Trash unchecked.
+- **The desktop check "custom archive accepted" no longer fails now and then.** CI's new diagnostics showed the archive itself went through: the test typed its destination while a scan re-rendered the dialog, so the path it typed was added to the default one. It now waits for scans before typing and checks the field. A failing desktop check now leaves a screenshot, the page text, the app status and the end of the log in CI.
+
+### Changed
+
+- `list_projects` answers with `projects`, `total`, `offset` and `more` instead of a bare list.
+- `delete_task`, `edit_task`, `move_task` and `write_notes` are marked as destructive for MCP clients: they delete or overwrite, even with Undo in the Log.
+
 ## [2.5.0] - 2026-10-15
 
 An agent that goes through everything open with you, and to-dos you can hand to one.

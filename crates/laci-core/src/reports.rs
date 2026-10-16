@@ -353,7 +353,9 @@ pub fn close_item(
     let closed = closed_items(env);
     let pool: Vec<&String> = all.iter().filter(|i| closed[id][item_key(i)].is_object() == (state == "open")).collect();
     let chosen = match item.trim().parse::<usize>() {
-        Ok(n) if n >= 1 => *pool.get(n - 1).ok_or("No item has that number")?,
+        // Without this, 0 would be taken as words and close whichever item happens to contain a 0.
+        Ok(0) => return Err("Items are numbered from 1".into()),
+        Ok(n) => *pool.get(n - 1).ok_or("No item has that number")?,
         _ => {
             let words: Vec<String> = item.split_whitespace().map(str::to_lowercase).collect();
             if words.is_empty() {
@@ -661,6 +663,10 @@ fn boundary(text: &str, mut at: usize, forward: bool) -> usize {
 /// Reports whose text holds every word of `query`, newest first, each with the text around its first match.
 /// Only reports of the last scan are read, and the search stops early on a slow or very large folder.
 pub fn search(env: &Env, snapshot: &Value, ids: &[&str], query: &str, limit: usize) -> Result<Vec<Value>> {
+    search_until(env, snapshot, ids, query, limit).map(|(hits, _)| hits)
+}
+/// [`search`], and whether it stopped on its time or size budget before reading every report.
+fn search_until(env: &Env, snapshot: &Value, ids: &[&str], query: &str, limit: usize) -> Result<(Vec<Value>, bool)> {
     let query = query.trim();
     if query.is_empty() || query.chars().count() > 200 {
         return Err("Search for 1 to 200 characters".into());
@@ -676,8 +682,11 @@ pub fn search(env: &Env, snapshot: &Value, ids: &[&str], query: &str, limit: usi
     let mut budget: u64 = 64 * 1024 * 1024;
     let mut hits = Vec::new();
     for id in ids {
-        if hits.len() >= limit || budget == 0 || started.elapsed() > Duration::from_secs(3) {
+        if hits.len() >= limit {
             break;
+        }
+        if budget == 0 || started.elapsed() > Duration::from_secs(3) {
+            return Ok((hits, true));
         }
         if id.contains(['/', '\0']) || !is_report_name(id) {
             continue;
@@ -699,7 +708,7 @@ pub fn search(env: &Env, snapshot: &Value, ids: &[&str], query: &str, limit: usi
         }
         hits.push(json!({"id":id,"snippet":snippet}));
     }
-    Ok(hits)
+    Ok((hits, false))
 }
 
 /// Opens a report in the editor, or the reports folder in the file manager.
@@ -734,15 +743,23 @@ pub fn request(env: &Env, snapshot: &Value, apps: &Value, name: &str, body: &Val
     }
 }
 
-/// Reports for an agent: newest first, those linked to a project under `under`, matching `query` if given.
-pub fn list(env: &Env, snapshot: &Value, under: Option<&Path>, query: Option<&str>, limit: usize) -> Result<Value> {
+/// Reports for an agent: newest first, those linked to a project under `under`, matching `query` if given, `limit`
+/// of them from `offset`.
+pub fn list(
+    env: &Env,
+    snapshot: &Value,
+    under: Option<&Path>,
+    query: Option<&str>,
+    offset: usize,
+    limit: usize,
+) -> Result<Value> {
     let Some(dir) = snapshot.get("reportsDir").filter(|d| d.is_object()) else {
         return Ok(
-            json!({"folder":null,"reports":[],"more":false,"note":"No reports folder is set in Laci's Settings"}),
+            json!({"folder":null,"reports":[],"total":0,"more":false,"note":"No reports folder is set in Laci's Settings"}),
         );
     };
     if let Some(error) = dir["error"].as_str() {
-        return Ok(json!({"folder":{"path":dir["path"],"error":error},"reports":[],"more":false}));
+        return Ok(json!({"folder":{"path":dir["path"],"error":error},"reports":[],"total":0,"more":false}));
     }
     let mut reports: Vec<&Value> = snapshot["reports"]
         .as_array()
@@ -760,16 +777,22 @@ pub fn list(env: &Env, snapshot: &Value, under: Option<&Path>, query: Option<&st
         })
         .collect();
     let mut snippets: HashMap<String, Value> = HashMap::new();
+    let mut partial = false;
     if let Some(query) = query {
         let ids: Vec<&str> = reports.iter().filter_map(|r| r["id"].as_str()).collect();
-        for hit in search(env, snapshot, &ids, query, limit + 1)? {
+        // Every match, so the total is right on every page, unless the search runs out of its time or size budget.
+        let (hits, stopped) = search_until(env, snapshot, &ids, query, ids.len())?;
+        partial = stopped;
+        for hit in hits {
             snippets.insert(hit["id"].as_str().unwrap_or("").to_owned(), hit["snippet"].clone());
         }
         reports.retain(|r| snippets.contains_key(r["id"].as_str().unwrap_or("")));
     }
-    let more = reports.len() > limit;
+    let total = reports.len();
+    let more = partial || total > offset.saturating_add(limit);
     let out: Vec<Value> = reports
         .into_iter()
+        .skip(offset)
         .take(limit)
         .map(|r| {
             let mut out = json!({});
@@ -786,7 +809,13 @@ pub fn list(env: &Env, snapshot: &Value, under: Option<&Path>, query: Option<&st
             out
         })
         .collect();
-    Ok(json!({"folder":{"path":dir["path"],"total":dir["total"]},"reports":out,"more":more}))
+    let mut answer =
+        json!({"folder":{"path":dir["path"],"total":dir["total"]},"reports":out,"total":total,"more":more});
+    if partial {
+        answer["partial"] = json!(true);
+        answer["note"] = json!("The search stopped early on a large folder; total counts the reports it read");
+    }
+    Ok(answer)
 }
 
 #[cfg(test)]

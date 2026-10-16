@@ -1,8 +1,10 @@
 use crate::Result;
 use std::{
+    collections::BTreeSet,
     ffi::{OsStr, OsString},
     path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
+    sync::{Mutex, MutexGuard},
     thread,
     time::{Duration, Instant},
 };
@@ -93,6 +95,41 @@ pub(crate) fn host_path() -> OsString {
         .unwrap_or_else(|| std::env::var_os("PATH").unwrap_or_default())
 }
 
+/// Helpers [`run_env`] has started and not yet reaped. They never make a folder busy: a scan's `git status` must not
+/// stop Laci from moving it. Terminals and apps Laci opens are started elsewhere and still count.
+static HELPERS: Mutex<BTreeSet<u32>> = Mutex::new(BTreeSet::new());
+
+fn helpers() -> MutexGuard<'static, BTreeSet<u32>> {
+    HELPERS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Whether `pid` is a helper [`run_env`] is still running.
+pub(crate) fn is_own_child(pid: u32) -> bool {
+    helpers().contains(&pid)
+}
+
+/// Keeps a helper's pid in [`HELPERS`] until dropped, which also happens on every early return.
+struct Listed(u32);
+impl Listed {
+    fn new(child: &Child) -> Self {
+        let pid = child.id();
+        helpers().insert(pid);
+        Self(pid)
+    }
+}
+impl Drop for Listed {
+    fn drop(&mut self) {
+        helpers().remove(&self.0);
+    }
+}
+
+/// Whether the child has finished, leaving it unreaped so its pid can't go to another process yet.
+fn exited(child: &Child) -> Result<bool> {
+    use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+    let options = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
+    Ok(waitid(WaitId::Pid(Pid::from_child(child)), options).map_err(|e| e.to_string())?.is_some())
+}
+
 pub fn run(program: &str, args: &[&str], cwd: Option<&Path>, timeout: Duration) -> Result<String> {
     run_env(program, args, cwd, timeout, &[])
 }
@@ -126,10 +163,14 @@ pub(crate) fn run_env(
         command.current_dir(cwd);
     }
     let mut child = command.spawn().map_err(|e| format!("Couldn't start {program}: {e}"))?;
+    let listed = Listed::new(&child);
     let started = Instant::now();
     loop {
-        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+        if exited(&child)? {
             use std::io::{Read, Seek, SeekFrom};
+            // Forgotten before the pid is freed, so a listed pid never names a newer process.
+            drop(listed);
+            let status = child.wait().map_err(|e| e.to_string())?;
             let mut file = if status.success() { output } else { errors };
             file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
             let mut text = String::new();
@@ -142,6 +183,7 @@ pub(crate) fn run_env(
         }
         if started.elapsed() >= timeout {
             let _ = child.kill();
+            drop(listed);
             let _ = child.wait();
             return Err(format!("{program} took too long"));
         }

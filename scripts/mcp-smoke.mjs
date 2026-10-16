@@ -181,7 +181,7 @@ try {
   assert.ok(JSON.stringify(attention).length < 20_000, 'needs_attention stays small enough for an agent to read');
   const items = await client.call('open_items');
   assert.ok(items.items.some(item => item.kind === 'todo' && item.text === 'Ship tokenizer parser' && item.file === 'TODO.md'));
-  assert.ok(items.items.some(item => item.kind === 'report' && item.text === 'Measure the parser' && item.item === 2));
+  assert.ok(items.items.some(item => item.kind === 'report' && item.text === 'Measure the parser' && item.item === '2'));
   assert.equal((await client.call('open_items', { kind: 'report', query: 'measure' })).items.length, 1);
   await client.call('recent_changes');
   checks++;
@@ -218,7 +218,9 @@ try {
   const reportItem = (await client.call('open_items', { kind: 'report', query: 'measure' })).items[0];
   const byNumber = await client.call('close_report_item', { report: reportItem.report, item: reportItem.item, state: 'dropped' });
   assert.deepEqual(byNumber.open, ['Ship tokenizer docs'], 'The item number open_items gives closes that item');
-  await client.call('close_report_item', { report: reportItem.report, item: 1, state: 'open' });
+  await client.call('close_report_item', { report: reportItem.report, item: '1', state: 'open' });
+  await client.rejects('close_report_item', { report: reportItem.report, item: '0' }, /numbered from 1/i);
+  await client.rejects('close_report_item', { report: reportItem.report, item: 2 }, /Invalid item: expected string/i);
   assert.match(await readFile(reportFile, 'utf8'), /- Measure the parser\n/);
   checks++;
 
@@ -365,6 +367,13 @@ try {
   assert.ok(alphaChanges.entries.length > 0 && alphaChanges.entries.length <= 3);
   assert.ok(alphaChanges.entries.every(entry => entry.path?.startsWith(project)));
   assert.ok((await client.call('recent_changes', { undoable: true })).entries.every(entry => entry.canUndo));
+  const projectLog = await client.call('recent_changes', { project, limit: 100 });
+  assert.ok(projectLog.searched >= projectLog.total);
+  assert.ok(projectLog.entries.some(entry => /an item of the report/.test(entry.title)), 'Closed report items count for the projects the report names');
+  const movedLog = await client.call('recent_changes', { project: movedPath, limit: 100 });
+  assert.ok(movedLog.entries.some(entry => entry.journal === moved.journal.id), 'A move is listed under the folder it moved to');
+  assert.ok(movedLog.entries.find(entry => entry.journal === moved.journal.id).steps.some(step => step.to));
+  await client.rejects('recent_changes', { project: 'no-such-project' }, /path it had before/i);
   checks++;
 
   // A busy home: a long Log whose entries keep whole notes, and more to-dos than one page.

@@ -197,8 +197,10 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
         }
         "needs_attention" => {
             let s = service.snapshot()?;
+            // A check the user muted is listed with the project but never counted, as in the app.
+            let live = |n: &Value| array(&n["issues"]).into_iter().filter(|i| i["muted"] != true).collect::<Vec<_>>();
             let worst = |n: &Value| {
-                array(&n["issues"])
+                live(n)
                     .iter()
                     .map(|i| match string(i, "severity") {
                         "high" => 0,
@@ -217,7 +219,7 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                 .into_iter()
                 .flatten()
                 .map(|(_, n)| n)
-                .filter(|n| !array(&n["issues"]).is_empty() || array(&n["tasks"]).iter().any(|t| t["done"] == false))
+                .filter(|n| !live(n).is_empty() || array(&n["tasks"]).iter().any(|t| t["done"] == false))
                 .collect();
             // Work that could be lost first, then the nearest deadline, then the latest activity.
             nodes.sort_by(|a, b| {
@@ -243,14 +245,37 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                     Err(_) if raw.starts_with('/') || raw.starts_with('~') => {
                         paths::expand(raw, &service.env.home).to_string_lossy().into_owned()
                     }
-                    Err(error) => return Err(error),
+                    Err(_) => {
+                        return Err(
+                            "Unknown project. Use its path, or the path it had before it moved or was removed.".into(),
+                        );
+                    }
                 }),
                 None => None,
             };
+            let s = service.snapshot()?;
+            let home = service.env.home.clone();
+            // A change belongs to a project when it happened there: its own path, a step that moved something in or
+            // out (a move keeps the path it started from), or a closed item of a report linked to the project.
+            let touches = |e: &Value, p: &str| {
+                let inside = |raw: &str| !raw.is_empty() && paths::expand(raw, &home).starts_with(p);
+                inside(string(e, "path"))
+                    || array(&e["steps"]).iter().any(|step| inside(string(step, "from")) || inside(string(step, "to")))
+                    || (e["undo"]["type"] == "report-item"
+                        && array(&s["reports"]).iter().any(|r| {
+                            r["id"] == e["undo"]["report"]
+                                && array(&r["projects"])
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .any(|x| Path::new(x).starts_with(p))
+                        }))
+            };
             let words = words(args);
-            let entries: Vec<Value> = array(&log["entries"])
+            let read = array(&log["entries"]);
+            let searched = read.len();
+            let entries: Vec<Value> = read
                 .into_iter()
-                .filter(|e| under.as_deref().is_none_or(|p| Path::new(string(e, "path")).starts_with(p)))
+                .filter(|e| under.as_deref().is_none_or(|p| touches(e, p)))
                 .filter(|e| args["undoable"] != true || e["canUndo"] == true)
                 .filter(|e| {
                     let text = format!("{} {} {}", string(e, "title"), string(e, "detail"), string(e, "path"));
@@ -259,6 +284,8 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                 .map(|e| change(&e))
                 .collect();
             let mut out = Page::of(args, 30).answer("entries", entries);
+            // total counts matches among the entries read: the newest 300, or fewer when they are long.
+            out["searched"] = json!(searched);
             out["file"] = log["file"].clone();
             Ok(out)
         }
@@ -578,8 +605,46 @@ fn change(e: &Value) -> Value {
     if e["superseded"] == true {
         out["superseded"] = json!(true);
     }
+    // The first steps name what moved where or went to the Trash; a longer list is only counted.
     if let Some(steps) = e["steps"].as_array() {
-        out["steps"] = json!(steps.len());
+        out["steps"] = json!(steps.iter().take(5).collect::<Vec<_>>());
+        if steps.len() > 5 {
+            out["moreSteps"] = json!(steps.len() - 5);
+        }
+    }
+    out
+}
+/// An agent session or item, as project_details lists it: enough to tell it apart and resume it, without its
+/// prompts and replies. One with no title keeps the start of its first prompt.
+fn brief(session: &Value) -> Value {
+    let mut out = json!({});
+    for key in [
+        "id",
+        "sessionId",
+        "provider",
+        "connector",
+        "title",
+        "at",
+        "startedAt",
+        "endedAt",
+        "prompts",
+        "filesChanged",
+        "branch",
+        "cwd",
+        "file",
+        "model",
+        "sourceKind",
+        "resumeCapability",
+        "backup",
+    ] {
+        if !session[key].is_null() {
+            out[key] = session[key].clone();
+        }
+    }
+    if out["title"].is_null()
+        && let Some(prompt) = session["firstPrompt"].as_str()
+    {
+        out["firstPrompt"] = json!(clip(prompt, 120));
     }
     out
 }
@@ -604,32 +669,12 @@ fn details(env: &Env, s: &Value, mut n: Value) -> Result<Value, String> {
         readme.remove("raw");
     }
     let path = string(&n, "path").to_owned();
+    // Conversations, as the app counts them: a subagent's log belongs to the conversation that ran it.
     let sessions: Vec<Value> = array(&s["sessions"])
         .into_iter()
+        .filter(|session| session["sourceKind"] != "subagent")
         .filter(|session| session["cwd"].as_str().is_some_and(|cwd| Path::new(cwd).starts_with(&path)))
-        .map(|session| {
-            let mut out = json!({});
-            for key in [
-                "id",
-                "sessionId",
-                "provider",
-                "connector",
-                "title",
-                "at",
-                "startedAt",
-                "endedAt",
-                "prompts",
-                "filesChanged",
-                "branch",
-                "cwd",
-                "file",
-            ] {
-                if !session[key].is_null() {
-                    out[key] = session[key].clone();
-                }
-            }
-            out
-        })
+        .map(|session| brief(&session))
         .collect();
     n["agentSessionCount"] = json!(sessions.len());
     n["agentSessions"] = json!(newest(sessions, NEWEST));
@@ -639,7 +684,9 @@ fn details(env: &Env, s: &Value, mut n: Value) -> Result<Value, String> {
             .filter_map(Value::as_str)
             .map(|id| {
                 let mut record = s["claude"][id].clone();
-                record["sessionCount"] = json!(array(&record["sessions"]).len());
+                let logs = array(&record["sessions"]).len();
+                record["sessionCount"] =
+                    json!(logs.saturating_sub(record["subagentLogs"].as_u64().unwrap_or(0) as usize));
                 if let Some(record) = record.as_object_mut() {
                     for heavy in ["sessions", "gone", "cwds"] {
                         record.remove(heavy);
@@ -650,9 +697,13 @@ fn details(env: &Env, s: &Value, mut n: Value) -> Result<Value, String> {
             .collect::<Vec<_>>()
     );
     let items: Vec<Value> =
-        array(&n["agents"]["items"]).iter().filter_map(Value::as_str).map(|id| s["items"][id].clone()).collect();
+        array(&n["agents"]["items"]).iter().filter_map(Value::as_str).map(|id| brief(&s["items"][id])).collect();
     n["agentItemCount"] = json!(items.len());
     n["agentItems"] = json!(newest(items, NEWEST));
+    // Every item's id again; agentItems and agentItemCount say the same in less.
+    if let Some(agents) = n["agents"].as_object_mut() {
+        agents.remove("items");
+    }
     if s["reportsDir"].is_object() {
         let mut reports = laci_core::reports::list(env, s, Some(Path::new(&path)), None, 0, 3)?["reports"].clone();
         for report in reports.as_array_mut().into_iter().flatten() {
@@ -756,17 +807,27 @@ fn open_items(service: &mut Service, args: &Value) -> Result<Value, String> {
                 if !fits(&format!("{} {}", text.as_str().unwrap_or(""), string(&r, "title"))) {
                     continue;
                 }
-                items.push(json!({"kind":"report","report":r["id"],"item":i + 1,"text":text}));
+                // A string, as close_report_item takes it.
+                items.push(json!({"kind":"report","report":r["id"],"item":(i + 1).to_string(),"text":text}));
+                listed = true;
+            }
+            // A report lists its first open items. Words can't match the rest, unless the title alone holds them all.
+            let shown = array(&r["open"]).len() as u64;
+            let hidden = if words.is_empty() || fits(string(&r, "title")) {
+                r["openCount"].as_u64().unwrap_or(0).saturating_sub(shown)
+            } else {
+                0
+            };
+            if !listed && hidden > 0 {
+                // A report whose first items are all closed shows none of the rest; one row stands for them.
+                items.push(json!({"kind":"report","report":r["id"],"hidden":hidden}));
                 listed = true;
             }
             if !listed {
                 continue;
             }
             let mut detail = json!({"title":r["title"],"date":r["date"],"file":r["file"],"projects":projects});
-            // A report lists its first open items; words can't match the rest, so they are only counted without.
-            let shown = array(&r["open"]).len() as u64;
-            let hidden = r["openCount"].as_u64().unwrap_or(0).saturating_sub(shown);
-            if hidden > 0 && words.is_empty() {
+            if hidden > 0 {
                 detail["hidden"] = json!(hidden);
                 hidden_items += hidden as usize;
             }
@@ -833,19 +894,14 @@ fn validate_args(name: &str, args: &Value) -> Result<(), String> {
         if rule.is_null() {
             return Err(format!("Unknown argument {key}"));
         }
-        // A type is one name or a list of them, such as close_report_item's item: its number or words from it.
-        let types: Vec<&str> = match &rule["type"] {
-            Value::Array(names) => names.iter().filter_map(Value::as_str).collect(),
-            name => name.as_str().into_iter().collect(),
-        };
-        let valid = types.iter().any(|kind| match *kind {
+        let valid = match string(rule, "type") {
             "string" => value.is_string(),
             "boolean" => value.is_boolean(),
             "integer" => value.is_i64() || value.is_u64(),
             _ => false,
-        });
+        };
         if !valid {
-            return Err(format!("Invalid {key}: expected {}", types.join(" or ")));
+            return Err(format!("Invalid {key}: expected {}", string(rule, "type")));
         }
         if let Some(choices) = rule["enum"].as_array()
             && !choices.contains(value)
@@ -938,7 +994,7 @@ fn tools() -> Vec<Tool> {
             "close_report_item",
             "Close an open item of a session report as done, dropped or moved, or open it again. Laci keeps this itself and never writes to the reports folder",
             json!({"report":{"type":"string","description":"The report's id (its file name), or words from its title"},
-                "item":{"type":["string","integer"],"description":"The item's number among the report's open items (closed ones, for state open), or words from it"},
+                "item":{"type":"string","description":"The item's number among the report's open items (closed ones, for state open), counted from 1, or words from it"},
                 "state":{"type":"string","enum":["","done","dropped","moved","open"]},
                 "note":{"type":"string","maxLength":300}}),
             vec!["report", "item"],
@@ -1000,7 +1056,7 @@ fn tools() -> Vec<Tool> {
         ),
         (
             "recent_changes",
-            "Read the change log, newest first, and which entries can be undone",
+            "Read the change log, newest first, and which entries can be undone. It searches the newest entries, up to 300; searched says how many",
             json!({"project":{"type":"string","description":"Only changes under this project: absolute path, ~/path, or unique project name"},
                 "query":{"type":"string","maxLength":200,"description":"Words that must all appear in the title, detail or path"},
                 "undoable":{"type":"boolean","description":"Only changes that can still be undone"},
@@ -1072,10 +1128,12 @@ mod tests {
             let error = validate_args("recent_changes", &bad).unwrap_err();
             assert!(error.starts_with("Invalid limit") || error.starts_with("Invalid offset"), "{bad}: {error}");
         }
-        assert!(validate_args("close_report_item", &json!({"report":"r","item":2})).is_ok());
+        // The item number is a string, as open_items gives it: clients that keep to a subset of JSON Schema accept
+        // one type per argument.
+        assert!(validate_args("close_report_item", &json!({"report":"r","item":"2"})).is_ok());
         assert!(validate_args("close_report_item", &json!({"report":"r","item":"some words"})).is_ok());
-        let error = validate_args("close_report_item", &json!({"report":"r","item":true})).unwrap_err();
-        assert!(error.contains("string or integer"), "{error}");
+        let error = validate_args("close_report_item", &json!({"report":"r","item":2})).unwrap_err();
+        assert!(error.contains("expected string"), "{error}");
         let error = validate_args("set_project_fields", &json!({"project":"p","status":"nope"})).unwrap_err();
         assert!(error.contains("\"paused\""), "{error}");
     }
@@ -1086,11 +1144,13 @@ mod tests {
             "key":"notes:/p","path":"/p","detail":"é".repeat(400),"state":"applied","superseded":false,"canUndo":true,
             "undo":{"type":"notes","text":"y".repeat(18_000)},"steps":[1,2]});
         let shown = change(&entry);
-        for gone in ["undo", "key", "state", "superseded"] {
+        for gone in ["undo", "key", "state", "superseded", "moreSteps"] {
             assert!(shown.get(gone).is_none(), "{gone}");
         }
         assert_eq!(shown["canUndo"], true);
-        assert_eq!(shown["steps"], 2);
+        assert_eq!(shown["steps"], json!([1, 2]), "a short list of steps names what moved or went to the Trash");
+        let long = change(&json!({"steps":(0..7).collect::<Vec<_>>()}));
+        assert_eq!((long["steps"].clone(), long["moreSteps"].clone()), (json!([0, 1, 2, 3, 4]), json!(2)));
         assert_eq!(shown["detail"].as_str().unwrap().chars().count(), 301, "300 characters and the ellipsis");
         assert_eq!(change(&json!({"state":"undone","superseded":true}))["state"], "undone");
     }
@@ -1109,8 +1169,9 @@ mod tests {
         assert_eq!((past["items"].clone(), past["more"].clone()), (json!([]), json!(false)));
     }
 
-    /// A home about twice as busy as a real one: 60 projects with 20 to-dos each, one with a 60 KB README and 64
-    /// agent sessions, 22 session reports, and 300 Log entries that each keep 18 KB of previous notes.
+    /// A home about twice as busy as a real one: 60 projects with 20 to-dos each, one with a 60 KB README, 64
+    /// conversations, 30 newer subagent logs and 20 Codex sessions, ten projects whose only check is muted, 22 session
+    /// reports, and 300 Log entries that each keep 18 KB of previous notes.
     fn busy_home() -> (tempfile::TempDir, Service, String) {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().to_path_buf();
@@ -1135,6 +1196,23 @@ mod tests {
                 "resumeCapability":"resume","sourceKind":"cli","titleSource":"prompt",
                 "firstPrompt":"f".repeat(300),"lastPrompt":"l".repeat(300),"lastReply":"r".repeat(400)})
         };
+        let subagent = |i: usize| {
+            let mut log = session(100 + i);
+            log["sourceKind"] = json!("subagent");
+            log["resumeCapability"] = json!("history-only");
+            log["at"] = json!(format!("2026-10-29T{:02}:00:00.000Z", i % 24));
+            log
+        };
+        let mut items = serde_json::Map::new();
+        for i in 0..20 {
+            items.insert(
+                format!("codex:{i}"),
+                json!({"id":format!("codex:{i}"),"connector":"codex","cwd":project(0),
+                "file":format!("{}/.codex/sessions/{i}.jsonl", home.display()),"at":at(i),"bytes":90_000,"lines":400,
+                "prompts":8,"firstPrompt":"p".repeat(400),"lastPrompt":"q".repeat(400),"lastReply":"r".repeat(400),
+                "cwds":["c".repeat(200)],"prs":["https://github.com/example/p/pull/1"]}),
+            );
+        }
         let mut nodes = serde_json::Map::new();
         for i in 0..60 {
             let tasks: Vec<Value> = (0..20)
@@ -1145,6 +1223,8 @@ mod tests {
                 .collect();
             let issues = if i % 2 == 0 {
                 json!([{"code":"no-remote","severity":"high","title":"No remote","detail":"10 commits exist only on this disk"}])
+            } else if i % 6 == 1 {
+                json!([{"code":"no-remote","severity":"high","title":"No remote","muted":true}])
             } else {
                 json!([])
             };
@@ -1157,7 +1237,8 @@ mod tests {
                 "tasks":tasks,"notes":"Notes about the project. ".repeat(120),
                 "readme":{"raw":"readme text ".repeat(5000),"title":"P","tagline":"A tagline","file":"README.md","sections":["Install"]},
                 "stack":{"labels":["Rust","React"]},"archivePlan":{"dest":"/mnt/archive/p"},
-                "agents":{"claude":[format!("claude-{i}")],"items":[]}}));
+                "agents":{"claude":[format!("claude-{i}")],
+                    "items":if i == 0 { json!((0..20).map(|k| format!("codex:{k}")).collect::<Vec<_>>()) } else { json!([]) }}}));
         }
         let reports: Vec<Value> = (0..22)
             .map(|i| json!({"id":format!("2026-10-{:02}-report-{i}.md", 1 + i),"title":format!("Report {i}: {}", "title words ".repeat(6)),
@@ -1167,12 +1248,13 @@ mod tests {
                 "openCount":i % 9 + usize::from(i % 9 == 8) * 3,"closedCount":1}))
             .collect();
         let mut claude = serde_json::Map::new();
+        let logs: Vec<Value> = (0..64).map(session).chain((0..30).map(subagent)).collect();
         claude.insert(
             "claude-0".into(),
             json!({"dir":"p0","path":project(0),"name":"p0","memory":"memory","bytes":1,
-            "sessions":(0..64).map(session).collect::<Vec<_>>(),"gone":["x".repeat(1000)],"cwds":["y".repeat(1000)]}),
+            "sessions":logs,"subagentLogs":30,"gone":["x".repeat(1000)],"cwds":["y".repeat(1000)]}),
         );
-        let snapshot = json!({"nodes":nodes,"sessions":(0..64).map(session).collect::<Vec<_>>(),"claude":claude,"items":{},
+        let snapshot = json!({"nodes":nodes,"sessions":logs,"claude":claude,"items":items,
             "reports":reports,"reportsDir":{"path":format!("{}/notes", home.display()),"total":22},"proposals":[],
             "warnings":[{"code":"claude-cleanup","severity":"high","title":"Claude Code deletes session logs after 30 days"}]});
         let mut service = Service::new(env);
@@ -1202,10 +1284,20 @@ mod tests {
         let details = call(&mut service, "project_details", &json!({"project":big})).unwrap();
         assert!(details["readme"].get("raw").is_none());
         assert_eq!(details["readme"]["truncated"], true);
-        assert_eq!(details["agentSessionCount"], 64);
-        assert_eq!(details["agentSessions"].as_array().unwrap().len(), 10);
+        assert_eq!(details["agentSessionCount"], 64, "conversations, not the subagent logs they ran");
+        let sessions = details["agentSessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 10);
+        assert!(sessions.iter().all(|s| s["sourceKind"] != "subagent" && s.get("lastReply").is_none()));
         assert_eq!(details["sessions"][0]["sessionCount"], 64);
         assert!(details["sessions"][0].get("sessions").is_none());
+        assert_eq!(details["agentItemCount"], 20);
+        let items = details["agentItems"].as_array().unwrap();
+        assert_eq!(items.len(), 10);
+        assert!(
+            items.iter().all(|i| i["connector"] == "codex" && i.get("lastReply").is_none() && i.get("cwds").is_none())
+        );
+        assert_eq!(items[0]["firstPrompt"].as_str().unwrap().chars().count(), 121, "the start of the first prompt");
+        assert!(details["agents"].get("items").is_none(), "the item ids are not listed a second time");
         assert!(details["reports"][0].get("projects").is_none());
     }
 
@@ -1242,9 +1334,16 @@ mod tests {
         assert!(words["entries"].as_array().unwrap().iter().all(|e| string(e, "title").contains("p1")));
         let projects = call(&mut service, "list_projects", &json!({"limit":5,"offset":5})).unwrap();
         assert_eq!((projects["projects"].as_array().unwrap().len(), projects["total"].clone()), (5, json!(60)));
-        let attention = call(&mut service, "needs_attention", &json!({})).unwrap();
-        assert_eq!(attention["projects"][0]["issues"][0]["severity"], "high", "work that could be lost comes first");
-        assert!(attention["projects"][0].get("tasks").is_none());
+        let attention = call(&mut service, "needs_attention", &json!({"limit":200})).unwrap();
+        let first = &attention["projects"][0];
+        assert_eq!(first["issues"][0]["severity"], "high", "work that could be lost comes first");
+        assert!(first["issues"][0]["muted"].is_null(), "a muted check doesn't count as work at risk");
+        assert!(first.get("tasks").is_none());
+        let ranks: Vec<bool> = array(&attention["projects"])
+            .iter()
+            .map(|n| array(&n["issues"]).iter().any(|i| i["severity"] == "high" && i["muted"] != true))
+            .collect();
+        assert!(ranks.windows(2).all(|w| w[0] >= w[1]), "every live high check before the rest");
         let reports = call(&mut service, "list_reports", &json!({"limit":5,"offset":20})).unwrap();
         assert_eq!((reports["reports"].as_array().unwrap().len(), reports["total"].clone()), (2, json!(22)));
         assert_eq!(reports["more"], false);

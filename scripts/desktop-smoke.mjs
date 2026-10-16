@@ -141,7 +141,10 @@ async function wait(label, condition, timeout = 45_000) {
     `Timed out: ${label}${lastError ? ` (${lastError.message})` : ""}`,
   );
 }
-/** Waits until no scan, history refresh or project Git check has run for 750 ms, so the next click is not dropped. */
+/**
+ * Waits until no scan, history refresh or project Git check has run for 1.2 s, so the next click is not dropped.
+ * Longer than the 900 ms the app's watcher holds file events (src-tauri/src/app/mod.rs) before it starts a refresh.
+ */
 async function settled(label) {
   let idleSince;
   await wait(label, async () => {
@@ -151,7 +154,7 @@ async function settled(label) {
       return false;
     }
     idleSince ??= Date.now();
-    return Date.now() - idleSince >= 750;
+    return Date.now() - idleSince >= 1_200;
   });
 }
 /** wait() for what a dialog submits: the dialog's own error alert ends it at once, instead of a timeout hiding it. */

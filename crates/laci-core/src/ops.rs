@@ -216,7 +216,8 @@ pub(crate) fn busy_in(paths: &[PathBuf]) -> Vec<Value> {
             if !paths.iter().any(|p| cwd.starts_with(p)) || process::is_own_child(pid) {
                 return None;
             }
-            let name = fs::read_to_string(e.path().join("comm")).unwrap_or_default().trim().to_owned();
+            // A process that is gone by now no longer holds the folder.
+            let name = fs::read_to_string(e.path().join("comm")).ok()?.trim().to_owned();
             Some(json!({"pid":pid,"name":name,"cwd":cwd}))
         })
         .collect()

@@ -190,18 +190,37 @@ function makeHome() {
     try {
       mkdirSync(`/tmp/${name}`);
       const home = realpathSync(`/tmp/${name}`);
-      if (home.length !== DEMO_HOME.length)
-        throw new Error(`${home} is not as long as ${DEMO_HOME}`);
-      return home;
+      if (home.length === DEMO_HOME.length) return home;
+      rmSync(home, { recursive: true });
+      throw new Error(`${home} is not as long as ${DEMO_HOME}`);
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }
   }
 }
 
+/** A C compiler is a small thing to ask for, but its absence should say so. */
+function compile(source, library) {
+  const cc = process.env.CC ?? "cc";
+  try {
+    execFileSync(
+      cc,
+      ["-shared", "-fPIC", "-O1", "-o", library, source, "-ldl"],
+      {
+        stdio: ["ignore", "ignore", "inherit"],
+      },
+    );
+  } catch (error) {
+    throw new Error(
+      `Stopping the engine's clock needs a C compiler (${cc}): ${error.message}`,
+    );
+  }
+}
+
 const tmp = realpathSync(mkdtempSync(path.join(os.tmpdir(), "laci-fixtures-")));
-const home = makeHome();
+let home;
 try {
+  home = makeHome();
   const git = onPath("git");
   const tools = path.join(tmp, "tools");
   mkdirSync(tools);
@@ -221,13 +240,7 @@ try {
   }
   const clock = path.join(tmp, "clock.so");
   writeFileSync(path.join(tmp, "clock.c"), CLOCK);
-  execFileSync(
-    process.env.CC ?? "cc",
-    ["-shared", "-fPIC", "-O1", "-o", clock, path.join(tmp, "clock.c"), "-ldl"],
-    {
-      stdio: ["ignore", "ignore", "inherit"],
-    },
-  );
+  compile(path.join(tmp, "clock.c"), clock);
   const recorded = path.join(tmp, "recorded.json");
   execFileSync(exampleBinary(), [home, recorded], {
     env: {
@@ -254,7 +267,8 @@ try {
   );
   console.log(`Wrote ${path.relative(root, output)}`);
 } finally {
-  if (keep) console.log(`Kept ${home}`);
-  else rmSync(home, { recursive: true, force: true });
-  rmSync(tmp, { recursive: true, force: true });
+  if (keep) console.log(`Kept ${home} and ${tmp}`);
+  else
+    for (const folder of [home, tmp])
+      if (folder) rmSync(folder, { recursive: true, force: true });
 }

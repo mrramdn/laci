@@ -1,14 +1,19 @@
 // A believable fake HOME for screenshots and demos: clients, a thesis, side projects, agent history,
 // a half-done move and an orphan. Usage: node scripts/demo.ts <dir>  then  LACI_HOME=<dir> pnpm dev
+// LACI_DEMO_NOW (an ISO time) pins "now", so the same home comes out on every run.
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readdirSync, utimesSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, readdirSync, truncateSync, utimesSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
+const started = Date.now()
 const home = path.resolve(process.argv[2] ?? 'demo-home')
 const P = (...p: string[]) => path.join(home, 'project', ...p)
 const enc = (p: string) => p.replace(/[^A-Za-z0-9]/g, '-')
 const DAY = 86400000
-const ago = (d: number) => new Date(Date.now() - d * DAY).toISOString()
+const pinned = process.env.LACI_DEMO_NOW ? Date.parse(process.env.LACI_DEMO_NOW) : undefined
+if (pinned !== undefined && Number.isNaN(pinned)) throw new Error(`LACI_DEMO_NOW is not a date: ${process.env.LACI_DEMO_NOW}`)
+const now = () => pinned ?? Date.now()
+const ago = (d: number) => new Date(now() - d * DAY).toISOString()
 const put = (file: string, text: string) => {
   mkdirSync(path.dirname(file), { recursive: true })
   writeFileSync(file, text)
@@ -19,7 +24,7 @@ const ACME_SESSION = '5f0c2a1e-8d4b-4c7a-9e21-3b6d0f9a7c42'
 
 /** Set every file's mtime (outside .git) to `daysAgo`, so activity dates look lived-in. */
 function age(dir: string, daysAgo: number) {
-  const t = new Date(Date.now() - daysAgo * DAY)
+  const t = new Date(now() - daysAgo * DAY)
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     if (e.name === '.git') continue
     const p = path.join(dir, e.name)
@@ -53,7 +58,7 @@ function sessions(dir: string, list: { id: string; cwd: string; title: string; d
   for (const s of list) {
     const f = path.join(d, `${s.id}.jsonl`)
     put(f, line({ type: 'user', cwd: s.cwd, sessionId: s.id, timestamp: ago(s.daysAgo), gitBranch: 'main' }) + line({ type: 'ai-title', aiTitle: s.title, sessionId: s.id }))
-    const t = new Date(Date.now() - s.daysAgo * DAY)
+    const t = new Date(now() - s.daysAgo * DAY)
     utimesSync(f, t, t)
   }
   for (const m of memory) put(path.join(d, 'memory', m), `- ${m.replace('.md', '')}\n`)
@@ -71,7 +76,7 @@ repo(acme, {
   '.env.example': 'DATABASE_URL=\nMIDTRANS_SERVER_KEY=\nNEXT_PUBLIC_SITE_URL=\n',
   'docker-compose.yml': 'services:\n  db:\n    image: postgres:16\n',
   'src/app/page.tsx': 'export default function Page() { return null }\n',
-  '.laci.md': '---\nstatus: active\npriority: high\ndeadline: ' + new Date(Date.now() + 5 * DAY).toISOString().slice(0, 10) + '\n---\n\n## Next\n- [ ] Fix checkout total on mobile Safari\n- [ ] Send staging link to the client\n\n## Notes\nClient wants the launch before the coffee expo. Midtrans sandbox keys are in 1Password.\n',
+  '.laci.md': '---\nstatus: active\npriority: high\ndeadline: ' + new Date(now() + 5 * DAY).toISOString().slice(0, 10) + '\n---\n\n## Next\n- [ ] Fix checkout total on mobile Safari\n- [ ] Send staging link to the client\n\n## Notes\nClient wants the launch before the coffee expo. Midtrans sandbox keys are in 1Password.\n',
 }, [[80, 'chore: scaffold next app'], [60, 'feat: product catalog'], [41, 'feat: cart'], [30, 'feat: midtrans checkout'], [16, 'fix: stock sync'], [9, 'feat: order emails'], [3, 'fix: checkout rounding'], [1, 'feat: promo codes']], 'git@github.com:acme/acme-store.git')
 put(path.join(acme, 'src/app/checkout.tsx'), 'export const Checkout = () => null\n')
 // Sessions started at the old path: the folder was moved into clients/ by hand, the logs never followed.
@@ -111,7 +116,9 @@ repo(habit, {
 }, [[210, 'init expo'], [180, 'feat: streaks'], [150, 'feat: reminders']])
 mkdirSync(path.join(habit, 'node_modules'), { recursive: true })
 // A sparse file: shows up as 420 MB of reclaimable space without using the disk.
-execFileSync('truncate', ['-s', '420M', path.join(habit, 'node_modules', '.demo-weight')])
+const weight = path.join(habit, 'node_modules', '.demo-weight')
+writeFileSync(weight, '')
+truncateSync(weight, 420 * 1024 * 1024)
 age(habit, 150)
 
 const dots = P('side', 'dotfiles')
@@ -131,13 +138,13 @@ sessions(P('old-portfolio'), [{ id: 'o1', cwd: P('old-portfolio'), title: 'Portf
 // in Settings to see them.
 const reports = path.join(home, 'Documents', 'agent-reports')
 const dayOf = (daysAgo: number) => {
-  const t = new Date(Date.now() - daysAgo * DAY)
+  const t = new Date(now() - daysAgo * DAY)
   return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
 }
 function report(daysAgo: number, slug: string, text: string) {
   const file = path.join(reports, `${dayOf(daysAgo)}-${slug}.md`)
   put(file, text.replace(/\{day\}/g, dayOf(daysAgo)))
-  const t = new Date(Date.now() - daysAgo * DAY + 3 * 3600_000)
+  const t = new Date(now() - daysAgo * DAY + 3 * 3600_000)
   utimesSync(file, t, t)
   return path.basename(file)
 }
@@ -280,5 +287,13 @@ k6 run --vus 300 --duration 15m load/quiz.js
 
 // A neutral prompt for terminal screenshots (login shells read ~/.bash_profile).
 put(path.join(home, '.bash_profile'), "PS1='\\W $ '\n")
+
+/** A pinned clock reaches everything the run wrote: what has no age of its own, and the folders that gained entries. */
+function settle(p: string) {
+  const stat = lstatSync(p)
+  if (stat.mtimeMs >= started - 1000 && stat.mtimeMs <= Date.now() + 1000) utimesSync(p, new Date(pinned!), new Date(pinned!))
+  if (stat.isDirectory()) for (const name of readdirSync(p)) settle(path.join(p, name))
+}
+if (pinned !== undefined) settle(home)
 
 console.log(home)

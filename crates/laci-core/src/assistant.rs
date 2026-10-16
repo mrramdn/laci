@@ -43,7 +43,8 @@ The goal of this session: I end with a short list of what to do next that I agre
 with me in the language I use.
 
 1. Read what is open: open_items (to-dos and report items), needs_attention (work that could be lost, deadlines) \
-and tidy_suggestions (cleanups). Read a report only when an item needs its context.
+and tidy_suggestions (cleanups). open_items answers a page at a time: while it says more, call it again with \
+offset. Read a report only when an item needs its context.
 2. Check items against reality before you call them done: the git log, the pull request, the file. If you can't \
 check, keep the item open.
 3. Propose, in a few short lists:

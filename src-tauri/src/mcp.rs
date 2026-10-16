@@ -18,7 +18,7 @@ impl ServerHandler for Mcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_prompts().build())
             .with_server_info(Implementation::new("laci",env!("CARGO_PKG_VERSION")))
-            .with_instructions("Use laci for moving projects so their agent history travels with them. Destructive tools return a plan first; show it to the user before calling with confirm: true. open_items lists every open to-do and report item; change to-dos with complete_task, edit_task, delete_task and move_task, and close report items with close_report_item, so each change shows in Laci's Log with Undo. Reports from earlier sessions are in list_reports and project_details; read a report's file for its full text. The review prompt goes through everything open with the user.")
+            .with_instructions("Use laci for moving projects so their agent history travels with them. Destructive tools return a plan first; show it to the user before calling with confirm: true. Lists answer a page at a time: when more is true, call again with offset. open_items lists the open to-dos and report items, the most pressing projects first; change to-dos with complete_task, edit_task, delete_task and move_task, and close report items with close_report_item, so each change shows in Laci's Log with Undo. recent_changes reads the Log, narrowed by project or words, and gives the ids undo_change needs. Reports from earlier sessions are in list_reports and project_details; read a report's file for its full text. The review prompt goes through everything open with the user.")
     }
     async fn list_prompts(
         &self,
@@ -94,10 +94,11 @@ impl ServerHandler for Mcp {
             })
         })
         .await;
+        // Compact JSON: indentation alone made answers a fifth to a third longer.
         let result = match result {
-            Ok(Ok(value)) => CallToolResult::success(vec![ContentBlock::text(
-                serde_json::to_string_pretty(&value).unwrap_or_default(),
-            )]),
+            Ok(Ok(value)) => {
+                CallToolResult::success(vec![ContentBlock::text(serde_json::to_string(&value).unwrap_or_default())])
+            }
             Ok(Err(error)) => CallToolResult::error(vec![ContentBlock::text(error)]),
             Err(error) => CallToolResult::error(vec![ContentBlock::text(format!("The engine stopped: {error}"))]),
         };
@@ -169,38 +170,12 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                 .collect();
             let mut nodes = nodes;
             nodes.sort_by(|a, b| string(&b["lastActivity"], "at").cmp(string(&a["lastActivity"], "at")));
-            Ok(json!(nodes))
+            Ok(Page::of(args, 30).answer("projects", nodes))
         }
         "project_details" => {
-            let mut n = project(service, string(args, "project"))?;
+            let n = project(service, string(args, "project"))?;
             let s = service.snapshot()?;
-            n["agentSessions"] = json!(
-                array(&s["sessions"])
-                    .into_iter()
-                    .filter(|session| session["cwd"]
-                        .as_str()
-                        .is_some_and(|cwd| Path::new(cwd).starts_with(string(&n, "path"))))
-                    .collect::<Vec<_>>()
-            );
-            n["sessions"] = json!(
-                array(&n["agents"]["claude"])
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(|id| s["claude"][id].clone())
-                    .collect::<Vec<_>>()
-            );
-            n["agentItems"] = json!(
-                array(&n["agents"]["items"])
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(|id| s["items"][id].clone())
-                    .collect::<Vec<_>>()
-            );
-            if s["reportsDir"].is_object() {
-                let under = Path::new(string(&n, "path")).to_owned();
-                n["reports"] = laci_core::reports::list(&service.env, &s, Some(&under), None, 3)?["reports"].clone();
-            }
-            Ok(n)
+            details(&service.env, &s, n)
         }
         "list_reports" => {
             let under = match args["project"].as_str() {
@@ -208,22 +183,85 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                 None => None,
             };
             let s = service.snapshot()?;
-            laci_core::reports::list(&service.env, &s, under.as_deref(), args["query"].as_str(), 20)
+            let page = Page::of(args, 10);
+            let mut out = laci_core::reports::list(
+                &service.env,
+                &s,
+                under.as_deref(),
+                args["query"].as_str(),
+                page.offset,
+                page.limit,
+            )?;
+            out["offset"] = json!(page.offset);
+            Ok(out)
         }
         "needs_attention" => {
             let s = service.snapshot()?;
-            let projects: Vec<_> = s["nodes"]
+            let worst = |n: &Value| {
+                array(&n["issues"])
+                    .iter()
+                    .map(|i| match string(i, "severity") {
+                        "high" => 0,
+                        "med" => 1,
+                        _ => 2,
+                    })
+                    .min()
+                    .unwrap_or(3)
+            };
+            let soonest = |n: &Value| match string(&n["meta"], "deadline") {
+                "" => "9999".to_owned(),
+                day => day.to_owned(),
+            };
+            let mut nodes: Vec<&Value> = s["nodes"]
                 .as_object()
                 .into_iter()
                 .flatten()
                 .map(|(_, n)| n)
                 .filter(|n| !array(&n["issues"]).is_empty() || array(&n["tasks"]).iter().any(|t| t["done"] == false))
-                .map(|n| compact(n, Tasks::Open))
                 .collect();
-            Ok(json!({"projects":projects,"warnings":s["warnings"]}))
+            // Work that could be lost first, then the nearest deadline, then the latest activity.
+            nodes.sort_by(|a, b| {
+                (worst(a), soonest(a), std::cmp::Reverse(string(&a["lastActivity"], "at"))).cmp(&(
+                    worst(b),
+                    soonest(b),
+                    std::cmp::Reverse(string(&b["lastActivity"], "at")),
+                ))
+            });
+            // The to-dos themselves are in open_items; repeating them here doubled what a review reads first.
+            let projects = nodes.into_iter().map(|n| compact(n, Tasks::Count)).collect();
+            let mut out = Page::of(args, 30).answer("projects", projects);
+            out["warnings"] = s["warnings"].clone();
+            Ok(out)
         }
         "tidy_suggestions" => Ok(service.snapshot()?["proposals"].clone()),
-        "recent_changes" => service.request_as("log", args, "agent"),
+        "recent_changes" => {
+            let log = service.request_as("log", &json!({}), "agent")?;
+            let under = match args["project"].as_str().filter(|p| !p.is_empty()) {
+                Some(raw) => Some(match project(service, raw) {
+                    Ok(node) => string(&node, "path").to_owned(),
+                    // A moved or deleted project is gone from the scan, while its changes stay in the Log.
+                    Err(_) if raw.starts_with('/') || raw.starts_with('~') => {
+                        paths::expand(raw, &service.env.home).to_string_lossy().into_owned()
+                    }
+                    Err(error) => return Err(error),
+                }),
+                None => None,
+            };
+            let words = words(args);
+            let entries: Vec<Value> = array(&log["entries"])
+                .into_iter()
+                .filter(|e| under.as_deref().is_none_or(|p| Path::new(string(e, "path")).starts_with(p)))
+                .filter(|e| args["undoable"] != true || e["canUndo"] == true)
+                .filter(|e| {
+                    let text = format!("{} {} {}", string(e, "title"), string(e, "detail"), string(e, "path"));
+                    has_words(&words, &text)
+                })
+                .map(|e| change(&e))
+                .collect();
+            let mut out = Page::of(args, 30).answer("entries", entries);
+            out["file"] = log["file"].clone();
+            Ok(out)
+        }
         "undo_change" => {
             let id = string(args, "id");
             let entries = array(&service.request_as("log", &json!({}), "agent")?["entries"]);
@@ -232,7 +270,7 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                 // A move can be named by its journal id, which is what `move_project` returns.
                 let shown = entry
                     .or_else(|| entries.iter().find(|e| e["journal"] == id))
-                    .ok_or("Unknown change. Use recent_changes to find its id.")?;
+                    .ok_or("Unknown change. Find its id with recent_changes, narrowed by project or words.")?;
                 if shown["canUndo"] != true {
                     return Err("That change can no longer be undone".into());
                 }
@@ -436,7 +474,10 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             } else {
                 format!("{}\n\n{}", string(&node, "notes"), string(args, "notes"))
             };
-            Ok(compact(&service.request_as("notes", &json!({"id":node["id"],"text":text}), "agent")?, Tasks::All))
+            Ok(compact(
+                &service.request_as("notes", &json!({"id":node["id"],"text":text}), "agent")?,
+                Tasks::AllWithNotes,
+            ))
         }
         _ => Err("Unknown tool".into()),
     }
@@ -446,10 +487,11 @@ use std::path::Path;
 /// Which of a project's to-dos a compact answer carries.
 #[derive(Clone, Copy)]
 enum Tasks {
-    /// All of them, with the notes: the answer to a change.
+    /// All of them: the answer to a change.
     All,
-    /// The open ones.
-    Open,
+    /// All of them, with the notes: the answer to write_notes. Other changes leave the notes out, which were
+    /// most of each answer on a project with long notes.
+    AllWithNotes,
     /// Only how many are open.
     Count,
 }
@@ -472,19 +514,156 @@ fn compact(n: &Value, tasks: Tasks) -> Value {
             "remotes":array(&g["remotes"]).iter().map(|r| r["web"].clone()).collect::<Vec<_>>()});
     }
     let all = array(&n["tasks"]);
-    let open: Vec<&Value> = all.iter().filter(|t| t["done"] == false).collect();
-    out["openTasks"] = json!(open.len());
+    out["openTasks"] = json!(all.iter().filter(|t| t["done"] == false).count());
     match tasks {
-        Tasks::All => {
-            out["tasks"] = json!(all);
-            if !n["notes"].is_null() {
+        Tasks::All | Tasks::AllWithNotes => {
+            if matches!(tasks, Tasks::AllWithNotes) && !n["notes"].is_null() {
                 out["notes"] = n["notes"].clone();
             }
+            out["tasks"] = json!(all);
         }
-        Tasks::Open => out["tasks"] = json!(open),
         Tasks::Count => {}
     }
     out
+}
+/// One page of a list, from the `limit` and `offset` arguments. validate_args has already checked their ranges.
+struct Page {
+    offset: usize,
+    limit: usize,
+}
+impl Page {
+    fn of(args: &Value, default: usize) -> Self {
+        Self {
+            offset: args["offset"].as_u64().unwrap_or(0) as usize,
+            limit: args["limit"].as_u64().map_or(default, |n| n as usize),
+        }
+    }
+    /// `{<key>: this page, total, offset, more}`, so an agent knows whether to ask for the next page.
+    fn answer(&self, key: &str, items: Vec<Value>) -> Value {
+        let total = items.len();
+        let shown: Vec<Value> = items.into_iter().skip(self.offset).take(self.limit).collect();
+        let more = self.offset + shown.len() < total;
+        json!({key:shown,"total":total,"offset":self.offset,"more":more})
+    }
+}
+fn words(args: &Value) -> Vec<String> {
+    string(args, "query").split_whitespace().map(str::to_lowercase).collect()
+}
+fn has_words(words: &[String], text: &str) -> bool {
+    let text = text.to_lowercase();
+    words.iter().all(|w| text.contains(w.as_str()))
+}
+/// `text` cut to at most `max` characters, marked with an ellipsis when cut.
+fn clip(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        Some((at, _)) => format!("{}…", &text[..at]),
+        None => text.to_owned(),
+    }
+}
+/// A Log entry as an agent reads it: what happened and whether it can be undone, without the stored undo data
+/// (a notes change keeps the whole previous notes there, which made the Log too long to read).
+fn change(e: &Value) -> Value {
+    let mut out = json!({});
+    for key in ["id", "at", "by", "title", "path", "canUndo", "journal", "undoes", "error"] {
+        if !e[key].is_null() {
+            out[key] = e[key].clone();
+        }
+    }
+    if let Some(detail) = e["detail"].as_str() {
+        out["detail"] = json!(clip(detail, 300));
+    }
+    if e["state"].as_str().is_some_and(|state| state != "applied") {
+        out["state"] = e["state"].clone();
+    }
+    if e["superseded"] == true {
+        out["superseded"] = json!(true);
+    }
+    if let Some(steps) = e["steps"].as_array() {
+        out["steps"] = json!(steps.len());
+    }
+    out
+}
+/// The newest `max` of `items` by their `at` time.
+fn newest(mut items: Vec<Value>, max: usize) -> Vec<Value> {
+    items.sort_by(|a, b| string(b, "at").cmp(string(a, "at")));
+    items.truncate(max);
+    items
+}
+/// project_details: the project without the parts that made it too long for an agent. The README is cut to its
+/// start (the file is named for the rest), Claude history folders lose their per-session lists, and only the newest
+/// sessions and agent items are listed, with how many there are in all.
+fn details(env: &Env, s: &Value, mut n: Value) -> Result<Value, String> {
+    const README: usize = 2000;
+    const NEWEST: usize = 10;
+    if let Some(raw) = n["readme"]["raw"].as_str() {
+        let cut = raw.chars().count() > README;
+        n["readme"]["text"] = json!(clip(raw, README));
+        n["readme"]["truncated"] = json!(cut);
+    }
+    if let Some(readme) = n["readme"].as_object_mut() {
+        readme.remove("raw");
+    }
+    let path = string(&n, "path").to_owned();
+    let sessions: Vec<Value> = array(&s["sessions"])
+        .into_iter()
+        .filter(|session| session["cwd"].as_str().is_some_and(|cwd| Path::new(cwd).starts_with(&path)))
+        .map(|session| {
+            let mut out = json!({});
+            for key in [
+                "id",
+                "sessionId",
+                "provider",
+                "connector",
+                "title",
+                "at",
+                "startedAt",
+                "endedAt",
+                "prompts",
+                "filesChanged",
+                "branch",
+                "cwd",
+                "file",
+            ] {
+                if !session[key].is_null() {
+                    out[key] = session[key].clone();
+                }
+            }
+            out
+        })
+        .collect();
+    n["agentSessionCount"] = json!(sessions.len());
+    n["agentSessions"] = json!(newest(sessions, NEWEST));
+    n["sessions"] = json!(
+        array(&n["agents"]["claude"])
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|id| {
+                let mut record = s["claude"][id].clone();
+                record["sessionCount"] = json!(array(&record["sessions"]).len());
+                if let Some(record) = record.as_object_mut() {
+                    for heavy in ["sessions", "gone", "cwds"] {
+                        record.remove(heavy);
+                    }
+                }
+                record
+            })
+            .collect::<Vec<_>>()
+    );
+    let items: Vec<Value> =
+        array(&n["agents"]["items"]).iter().filter_map(Value::as_str).map(|id| s["items"][id].clone()).collect();
+    n["agentItemCount"] = json!(items.len());
+    n["agentItems"] = json!(newest(items, NEWEST));
+    if s["reportsDir"].is_object() {
+        let mut reports = laci_core::reports::list(env, s, Some(Path::new(&path)), None, 0, 3)?["reports"].clone();
+        for report in reports.as_array_mut().into_iter().flatten() {
+            if let Some(report) = report.as_object_mut() {
+                report.remove("projects");
+                report.remove("sessions");
+            }
+        }
+        n["reports"] = reports;
+    }
+    Ok(n)
 }
 /// The one checkbox of a project whose text holds `query`, among those `wanted` accepts.
 fn checkbox(node: &Value, query: &str, wanted: impl Fn(&Value) -> bool) -> Result<Value, String> {
@@ -502,21 +681,18 @@ fn checkbox(node: &Value, query: &str, wanted: impl Fn(&Value) -> bool) -> Resul
         _ => Err("More than one checkbox matches; use more of its text".into()),
     }
 }
-/// Every open to-do and report item, the most pressing projects first: priority, then the nearest deadline,
-/// then the latest activity.
+/// The open to-dos and report items, the most pressing projects first: priority, then the nearest deadline,
+/// then the latest activity. A page at a time; each report's title, date, file and projects are listed once, in
+/// `reports`, instead of on every item.
 fn open_items(service: &mut Service, args: &Value) -> Result<Value, String> {
-    const LIMIT: usize = 300;
     let s = service.snapshot()?;
     let only = match args["project"].as_str().filter(|p| !p.is_empty()) {
         Some(raw) => Some(string(&project(service, raw)?, "path").to_owned()),
         None => None,
     };
     let kind = string(args, "kind");
-    let words: Vec<String> = string(args, "query").split_whitespace().map(str::to_lowercase).collect();
-    let fits = |text: &str| {
-        let text = text.to_lowercase();
-        words.iter().all(|w| text.contains(w))
-    };
+    let words = words(args);
+    let fits = |text: &str| has_words(&words, text);
     let rank = |n: &Value| match string(&n["meta"], "priority") {
         "high" => 0,
         "medium" => 1,
@@ -567,33 +743,51 @@ fn open_items(service: &mut Service, args: &Value) -> Result<Value, String> {
             }
         }
     }
+    let mut reports = serde_json::Map::new();
+    let mut hidden_items = 0;
     if kind.is_empty() || kind == "report" {
         for r in array(&s["reports"]) {
             let projects = array(&r["projects"]);
             if only.as_deref().is_some_and(|p| !projects.iter().any(|x| x.as_str() == Some(p))) {
                 continue;
             }
+            let mut listed = false;
             for (i, text) in array(&r["open"]).iter().enumerate() {
                 if !fits(&format!("{} {}", text.as_str().unwrap_or(""), string(&r, "title"))) {
                     continue;
                 }
-                items.push(json!({"kind":"report","report":r["id"],"reportTitle":r["title"],"date":r["date"],
-                    "item":i + 1,"text":text,"projects":projects,"file":r["file"]}));
+                items.push(json!({"kind":"report","report":r["id"],"item":i + 1,"text":text}));
+                listed = true;
             }
+            if !listed {
+                continue;
+            }
+            let mut detail = json!({"title":r["title"],"date":r["date"],"file":r["file"],"projects":projects});
+            // A report lists its first open items; words can't match the rest, so they are only counted without.
             let shown = array(&r["open"]).len() as u64;
-            if r["openCount"].as_u64().unwrap_or(0) > shown && words.is_empty() {
-                items.push(json!({"kind":"report","report":r["id"],"reportTitle":r["title"],"date":r["date"],
-                    "more":r["openCount"].as_u64().unwrap_or(0) - shown,
-                    "note":"More open items than shown; close some, or read the report's file for the rest"}));
+            let hidden = r["openCount"].as_u64().unwrap_or(0).saturating_sub(shown);
+            if hidden > 0 && words.is_empty() {
+                detail["hidden"] = json!(hidden);
+                hidden_items += hidden as usize;
             }
+            reports.insert(string(&r, "id").to_owned(), detail);
         }
     }
     let todos = items.iter().filter(|i| i["kind"] == "todo").count();
-    let more = items.len() > LIMIT;
-    items.truncate(LIMIT);
-    Ok(
-        json!({"items":items,"todos":todos,"reportItems":array(&s["reports"]).iter().filter_map(|r| r["openCount"].as_u64()).sum::<u64>(),"more":more}),
-    )
+    let report_items = items.len() - todos + hidden_items;
+    let mut out = Page::of(args, 50).answer("items", items);
+    let on_page: std::collections::HashSet<String> =
+        array(&out["items"]).iter().filter_map(|i| i["report"].as_str().map(str::to_owned)).collect();
+    reports.retain(|id, _| on_page.contains(id));
+    if reports.values().any(|r| r["hidden"].is_u64()) {
+        out["note"] = json!(
+            "A report shows its first open items; reports[id].hidden counts the rest. Close some, or read the report's file"
+        );
+    }
+    out["reports"] = Value::Object(reports);
+    out["todos"] = json!(todos);
+    out["reportItems"] = json!(report_items);
+    Ok(out)
 }
 fn prompts() -> Vec<Prompt> {
     vec![
@@ -639,18 +833,36 @@ fn validate_args(name: &str, args: &Value) -> Result<(), String> {
         if rule.is_null() {
             return Err(format!("Unknown argument {key}"));
         }
-        let valid = match string(rule, "type") {
+        // A type is one name or a list of them, such as close_report_item's item: its number or words from it.
+        let types: Vec<&str> = match &rule["type"] {
+            Value::Array(names) => names.iter().filter_map(Value::as_str).collect(),
+            name => name.as_str().into_iter().collect(),
+        };
+        let valid = types.iter().any(|kind| match *kind {
             "string" => value.is_string(),
             "boolean" => value.is_boolean(),
+            "integer" => value.is_i64() || value.is_u64(),
             _ => false,
-        };
+        });
         if !valid {
-            return Err(format!("Invalid {key}: expected {}", string(rule, "type")));
+            return Err(format!("Invalid {key}: expected {}", types.join(" or ")));
         }
         if let Some(choices) = rule["enum"].as_array()
             && !choices.contains(value)
         {
-            return Err(format!("Invalid {key}"));
+            let named: Vec<String> = choices.iter().map(Value::to_string).collect();
+            return Err(format!("Invalid {key}: use one of {}", named.join(", ")));
+        }
+        // A whole number past i64 is still a number; it counts as too large rather than skipping the check.
+        if let Some(number) = value.as_i64().or_else(|| value.as_u64().map(|_| i64::MAX)) {
+            let (low, high) = (rule["minimum"].as_i64(), rule["maximum"].as_i64());
+            if low.is_some_and(|n| number < n) || high.is_some_and(|n| number > n) {
+                return Err(match (low, high) {
+                    (Some(low), Some(high)) => format!("Invalid {key}: use {low} to {high}"),
+                    (Some(low), None) => format!("Invalid {key}: use {low} or more"),
+                    _ => format!("Invalid {key}: too large"),
+                });
+            }
         }
         if let Some(text) = value.as_str() {
             let length = text.chars().count();
@@ -667,30 +879,41 @@ fn tools() -> Vec<Tool> {
     let text = json!({"type":"string"});
     let boolean = json!({"type":"boolean"});
     let project = json!({"type":"string","description":"Absolute path, ~/path, or unique project name"});
+    let limit = |default: u64, max: u64| json!({"type":"integer","minimum":1,"maximum":max,"description":format!("How many to return (default {default})")});
+    let offset =
+        json!({"type":"integer","minimum":0,"description":"How many to skip; use when the last answer said more"});
     let definitions = [
         (
             "list_projects",
-            "List projects, filtered by status, work at risk, or search words",
-            json!({"filter":{"type":"string","enum":["all","active","idle","dormant","archived","at_risk"]},"query":text}),
+            "List projects, filtered by status, work at risk, or search words; the most recently active first",
+            json!({"filter":{"type":"string","enum":["all","active","idle","dormant","archived","at_risk"]},"query":text,
+                "limit":limit(30, 200),"offset":offset}),
             vec![],
         ),
         (
             "list_reports",
             "Reports agents wrote after earlier sessions, newest first: summary, open items and the file to read",
-            json!({"project":project,"query":{"type":"string","minLength":1,"maxLength":200,"description":"Words that must all appear in the report"}}),
+            json!({"project":project,"query":{"type":"string","minLength":1,"maxLength":200,"description":"Words that must all appear in the report"},
+                "limit":limit(10, 50),"offset":offset}),
             vec![],
         ),
         (
             "project_details",
-            "Git, stack, README, to-dos, agent history, session reports and archive plan",
+            "Git, stack, the start of the README, to-dos, notes, the newest agent sessions, session reports and archive plan",
             json!({"project":project}),
             vec!["project"],
         ),
-        ("needs_attention", "Work at risk, deadlines, open tasks and warnings", json!({}), vec![]),
+        (
+            "needs_attention",
+            "Work at risk, deadlines, open to-do counts and warnings, the worst first; the to-dos themselves are in open_items",
+            json!({"limit":limit(30, 200),"offset":offset}),
+            vec![],
+        ),
         (
             "open_items",
-            "Every open to-do and every open item of the session reports, the most pressing projects first",
-            json!({"project":project,"kind":{"type":"string","enum":["","todo","report"]},"query":{"type":"string","maxLength":200,"description":"Words that must all appear"}}),
+            "Open to-dos and open items of the session reports, the most pressing projects first, a page at a time",
+            json!({"project":project,"kind":{"type":"string","enum":["","todo","report"]},"query":{"type":"string","maxLength":200,"description":"Words that must all appear"},
+                "limit":limit(50, 300),"offset":offset}),
             vec![],
         ),
         (
@@ -715,7 +938,7 @@ fn tools() -> Vec<Tool> {
             "close_report_item",
             "Close an open item of a session report as done, dropped or moved, or open it again. Laci keeps this itself and never writes to the reports folder",
             json!({"report":{"type":"string","description":"The report's id (its file name), or words from its title"},
-                "item":{"type":"string","description":"The item's number among the report's open items (closed ones, for state open), or words from it"},
+                "item":{"type":["string","integer"],"description":"The item's number among the report's open items (closed ones, for state open), or words from it"},
                 "state":{"type":"string","enum":["","done","dropped","moved","open"]},
                 "note":{"type":"string","maxLength":300}}),
             vec!["report", "item"],
@@ -775,7 +998,15 @@ fn tools() -> Vec<Tool> {
             json!({"parent":text,"name":text,"from":{"type":"string","enum":["empty","template","clone"]},"summary":{"type":"string","maxLength":300},"template":text,"url":text,"remote":{"type":"string","enum":["none","github","gitlab","both"]},"confirm":boolean}),
             vec!["parent", "name"],
         ),
-        ("recent_changes", "Read the change log and which entries can be undone", json!({}), vec![]),
+        (
+            "recent_changes",
+            "Read the change log, newest first, and which entries can be undone",
+            json!({"project":{"type":"string","description":"Only changes under this project: absolute path, ~/path, or unique project name"},
+                "query":{"type":"string","maxLength":200,"description":"Words that must all appear in the title, detail or path"},
+                "undoable":{"type":"boolean","description":"Only changes that can still be undone"},
+                "limit":limit(30, 100),"offset":offset}),
+            vec![],
+        ),
         (
             "undo_change",
             "Undo a journaled move or a current Log entry; requires confirm after preview",
@@ -802,12 +1033,220 @@ fn tools() -> Vec<Tool> {
                 .with_annotations(
                     ToolAnnotations::new()
                         .read_only(readonly)
+                        // A delete or a rewrite isn't additive, even with Undo in the Log.
                         .destructive(
-                            ["move_project", "archive_project", "delete_project", "apply_suggestion", "undo_change"]
-                                .contains(&name),
+                            [
+                                "move_project",
+                                "archive_project",
+                                "delete_project",
+                                "apply_suggestion",
+                                "undo_change",
+                                "delete_task",
+                                "edit_task",
+                                "move_task",
+                                "write_notes",
+                            ]
+                            .contains(&name),
                         )
                         .open_world(matches!(name, "create_project" | "delete_project")),
                 )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn whole_number_arguments_are_checked_against_their_range() {
+        assert!(validate_args("recent_changes", &json!({"limit":5,"offset":0})).is_ok());
+        for bad in [
+            json!({"limit":0}),
+            json!({"limit":101}),
+            json!({"limit":"5"}),
+            json!({"limit":2.5}),
+            json!({"limit":u64::MAX}),
+            json!({"offset":-1}),
+        ] {
+            let error = validate_args("recent_changes", &bad).unwrap_err();
+            assert!(error.starts_with("Invalid limit") || error.starts_with("Invalid offset"), "{bad}: {error}");
+        }
+        assert!(validate_args("close_report_item", &json!({"report":"r","item":2})).is_ok());
+        assert!(validate_args("close_report_item", &json!({"report":"r","item":"some words"})).is_ok());
+        let error = validate_args("close_report_item", &json!({"report":"r","item":true})).unwrap_err();
+        assert!(error.contains("string or integer"), "{error}");
+        let error = validate_args("set_project_fields", &json!({"project":"p","status":"nope"})).unwrap_err();
+        assert!(error.contains("\"paused\""), "{error}");
+    }
+
+    #[test]
+    fn a_log_entry_is_read_without_its_undo_data() {
+        let entry = json!({"id":"a","at":"2026-10-16T00:00:00.000Z","by":"agent","title":"Edited the notes of alpha",
+            "key":"notes:/p","path":"/p","detail":"é".repeat(400),"state":"applied","superseded":false,"canUndo":true,
+            "undo":{"type":"notes","text":"y".repeat(18_000)},"steps":[1,2]});
+        let shown = change(&entry);
+        for gone in ["undo", "key", "state", "superseded"] {
+            assert!(shown.get(gone).is_none(), "{gone}");
+        }
+        assert_eq!(shown["canUndo"], true);
+        assert_eq!(shown["steps"], 2);
+        assert_eq!(shown["detail"].as_str().unwrap().chars().count(), 301, "300 characters and the ellipsis");
+        assert_eq!(change(&json!({"state":"undone","superseded":true}))["state"], "undone");
+    }
+
+    #[test]
+    fn a_page_says_whether_there_is_more() {
+        let items: Vec<Value> = (0..5).map(|i| json!(i)).collect();
+        let first = Page::of(&json!({"limit":2}), 30).answer("items", items.clone());
+        assert_eq!(
+            (first["items"].clone(), first["total"].clone(), first["more"].clone()),
+            (json!([0, 1]), json!(5), json!(true))
+        );
+        let last = Page::of(&json!({"limit":2,"offset":4}), 30).answer("items", items.clone());
+        assert_eq!((last["items"].clone(), last["more"].clone()), (json!([4]), json!(false)));
+        let past = Page::of(&json!({"offset":9}), 30).answer("items", items);
+        assert_eq!((past["items"].clone(), past["more"].clone()), (json!([]), json!(false)));
+    }
+
+    /// A home about twice as busy as a real one: 60 projects with 20 to-dos each, one with a 60 KB README and 64
+    /// agent sessions, 22 session reports, and 300 Log entries that each keep 18 KB of previous notes.
+    fn busy_home() -> (tempfile::TempDir, Service, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_path_buf();
+        let env = Env::for_home(home.clone());
+        let at = |i: usize| format!("2026-10-{:02}T{:02}:00:00.000Z", 1 + i % 28, i % 24);
+        let project = |i: usize| format!("{}/project/p{i}", home.display());
+        let mut log = String::new();
+        for i in 0..300 {
+            log += &json!({"id":format!("e{i}"),"at":at(i),"by":"agent","title":format!("Edited the notes of p{}", i % 60),
+                "key":format!("notes:{}", project(i % 60)),"path":project(i % 60),
+                "undo":{"type":"notes","id":project(i % 60),"text":"n".repeat(18_000)}})
+            .to_string();
+            log.push('\n');
+        }
+        std::fs::create_dir_all(&env.data_dir).unwrap();
+        std::fs::write(env.data_dir.join("activity.jsonl"), log).unwrap();
+        let session = |i: usize| {
+            json!({"id":format!("s{i}"),"sessionId":format!("00000000-0000-0000-0000-{i:012}"),"provider":"claude",
+                "connector":"claude","title":"A session title of a few words","at":at(i),"startedAt":at(i),"endedAt":at(i),
+                "updatedAt":at(i),"prompts":12,"filesChanged":4,"branch":"main","cwd":project(0),"activeSeconds":900,
+                "bytes":120_000,"file":format!("{}/.claude/projects/p0/{i}.jsonl", home.display()),"parentId":null,
+                "resumeCapability":"resume","sourceKind":"cli","titleSource":"prompt",
+                "firstPrompt":"f".repeat(300),"lastPrompt":"l".repeat(300),"lastReply":"r".repeat(400)})
+        };
+        let mut nodes = serde_json::Map::new();
+        for i in 0..60 {
+            let tasks: Vec<Value> = (0..20)
+                .map(|t| {
+                    json!({"done":t % 3 == 0,"file":".laci.md","kind":"check","line":5 + t,"section":"Next",
+                    "text":format!("To-do {t} of p{i}: {}", "a few more words ".repeat(8))})
+                })
+                .collect();
+            let issues = if i % 2 == 0 {
+                json!([{"code":"no-remote","severity":"high","title":"No remote","detail":"10 commits exist only on this disk"}])
+            } else {
+                json!([])
+            };
+            nodes.insert(project(i), json!({"id":project(i),"path":project(i),"name":format!("p{i}"),"label":format!("p{i}"),
+                "kind":"project","type":"code","archived":false,"status":{"auto":true,"value":"active"},
+                "meta":{"priority":"high","deadline":"2026-11-01"},"issues":issues,
+                "lastActivity":{"at":at(i),"source":"files"},"summary":{"text":"What this project is about, in a line. ".repeat(4)},
+                "git":{"branch":"main","upstream":"origin/main","ahead":2,"behind":0,"dirty":3,"commits":120,
+                    "lastCommitAt":at(i),"remotes":[{"web":"https://github.com/example/p"}]},
+                "tasks":tasks,"notes":"Notes about the project. ".repeat(120),
+                "readme":{"raw":"readme text ".repeat(5000),"title":"P","tagline":"A tagline","file":"README.md","sections":["Install"]},
+                "stack":{"labels":["Rust","React"]},"archivePlan":{"dest":"/mnt/archive/p"},
+                "agents":{"claude":[format!("claude-{i}")],"items":[]}}));
+        }
+        let reports: Vec<Value> = (0..22)
+            .map(|i| json!({"id":format!("2026-10-{:02}-report-{i}.md", 1 + i),"title":format!("Report {i}: {}", "title words ".repeat(6)),
+                "date":"2026-10-15","file":format!("{}/notes/2026-10-{:02}-report-{i}.md", home.display(), 1 + i),
+                "projects":(0..4).map(|p| project((i + p) % 60)).collect::<Vec<_>>(),"sessions":["a","b"],
+                "summary":"s".repeat(400),"open":(0..i % 9).map(|k| format!("Open item {k}: {}", "words ".repeat(20))).collect::<Vec<_>>(),
+                "openCount":i % 9 + usize::from(i % 9 == 8) * 3,"closedCount":1}))
+            .collect();
+        let mut claude = serde_json::Map::new();
+        claude.insert(
+            "claude-0".into(),
+            json!({"dir":"p0","path":project(0),"name":"p0","memory":"memory","bytes":1,
+            "sessions":(0..64).map(session).collect::<Vec<_>>(),"gone":["x".repeat(1000)],"cwds":["y".repeat(1000)]}),
+        );
+        let snapshot = json!({"nodes":nodes,"sessions":(0..64).map(session).collect::<Vec<_>>(),"claude":claude,"items":{},
+            "reports":reports,"reportsDir":{"path":format!("{}/notes", home.display()),"total":22},"proposals":[],
+            "warnings":[{"code":"claude-cleanup","severity":"high","title":"Claude Code deletes session logs after 30 days"}]});
+        let mut service = Service::new(env);
+        service.current = Some(snapshot);
+        (dir, service, project(0))
+    }
+
+    #[test]
+    fn every_read_answer_fits_an_agent_on_a_busy_home() {
+        let (_dir, mut service, big) = busy_home();
+        for (name, args) in [
+            ("list_projects", json!({})),
+            ("list_reports", json!({})),
+            ("needs_attention", json!({})),
+            ("open_items", json!({})),
+            ("open_items", json!({"kind":"report"})),
+            ("tidy_suggestions", json!({})),
+            ("recent_changes", json!({})),
+            ("project_details", json!({"project":big})),
+        ] {
+            let answer = call(&mut service, name, &args).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let size = serde_json::to_string(&answer).unwrap().len();
+            assert!(size < 25_000, "{name} {args}: {size} characters");
+        }
+        let changes = call(&mut service, "recent_changes", &json!({"limit":100})).unwrap();
+        assert!(!serde_json::to_string(&changes).unwrap().contains("nnnnnnnn"), "no undo data in the Log answer");
+        let details = call(&mut service, "project_details", &json!({"project":big})).unwrap();
+        assert!(details["readme"].get("raw").is_none());
+        assert_eq!(details["readme"]["truncated"], true);
+        assert_eq!(details["agentSessionCount"], 64);
+        assert_eq!(details["agentSessions"].as_array().unwrap().len(), 10);
+        assert_eq!(details["sessions"][0]["sessionCount"], 64);
+        assert!(details["sessions"][0].get("sessions").is_none());
+        assert!(details["reports"][0].get("projects").is_none());
+    }
+
+    #[test]
+    fn lists_page_and_filter_on_a_busy_home() {
+        let (_dir, mut service, big) = busy_home();
+        let first = call(&mut service, "open_items", &json!({})).unwrap();
+        assert_eq!(first["items"].as_array().unwrap().len(), 50);
+        assert_eq!(first["more"], true);
+        let total = first["total"].as_u64().unwrap() as usize;
+        let mut seen = 0;
+        let mut offset = 0;
+        loop {
+            let page = call(&mut service, "open_items", &json!({"offset":offset,"limit":300})).unwrap();
+            seen += page["items"].as_array().unwrap().len();
+            for item in page["items"].as_array().unwrap().iter().filter(|i| i["kind"] == "report") {
+                let id = string(item, "report");
+                assert!(page["reports"][id]["title"].is_string(), "every report on a page is described once");
+                assert!(item.get("projects").is_none() && item.get("reportTitle").is_none());
+            }
+            if page["more"] != true {
+                break;
+            }
+            offset += 300;
+        }
+        assert_eq!(seen, total);
+        let reports = call(&mut service, "open_items", &json!({"kind":"report"})).unwrap();
+        assert_eq!(reports["todos"], 0);
+        assert!(reports["reportItems"].as_u64().unwrap() > 0);
+        let changes = call(&mut service, "recent_changes", &json!({"project":big,"limit":100})).unwrap();
+        assert!(changes["entries"].as_array().unwrap().iter().all(|e| string(e, "path") == big));
+        assert!(changes["total"].as_u64().unwrap() > 0);
+        let words = call(&mut service, "recent_changes", &json!({"query":"notes p1"})).unwrap();
+        assert!(words["entries"].as_array().unwrap().iter().all(|e| string(e, "title").contains("p1")));
+        let projects = call(&mut service, "list_projects", &json!({"limit":5,"offset":5})).unwrap();
+        assert_eq!((projects["projects"].as_array().unwrap().len(), projects["total"].clone()), (5, json!(60)));
+        let attention = call(&mut service, "needs_attention", &json!({})).unwrap();
+        assert_eq!(attention["projects"][0]["issues"][0]["severity"], "high", "work that could be lost comes first");
+        assert!(attention["projects"][0].get("tasks").is_none());
+        let reports = call(&mut service, "list_reports", &json!({"limit":5,"offset":20})).unwrap();
+        assert_eq!((reports["reports"].as_array().unwrap().len(), reports["total"].clone()), (2, json!(22)));
+        assert_eq!(reports["more"], false);
+    }
 }

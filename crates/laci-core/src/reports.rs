@@ -734,8 +734,16 @@ pub fn request(env: &Env, snapshot: &Value, apps: &Value, name: &str, body: &Val
     }
 }
 
-/// Reports for an agent: newest first, those linked to a project under `under`, matching `query` if given.
-pub fn list(env: &Env, snapshot: &Value, under: Option<&Path>, query: Option<&str>, limit: usize) -> Result<Value> {
+/// Reports for an agent: newest first, those linked to a project under `under`, matching `query` if given, `limit`
+/// of them from `offset`.
+pub fn list(
+    env: &Env,
+    snapshot: &Value,
+    under: Option<&Path>,
+    query: Option<&str>,
+    offset: usize,
+    limit: usize,
+) -> Result<Value> {
     let Some(dir) = snapshot.get("reportsDir").filter(|d| d.is_object()) else {
         return Ok(
             json!({"folder":null,"reports":[],"more":false,"note":"No reports folder is set in Laci's Settings"}),
@@ -762,14 +770,17 @@ pub fn list(env: &Env, snapshot: &Value, under: Option<&Path>, query: Option<&st
     let mut snippets: HashMap<String, Value> = HashMap::new();
     if let Some(query) = query {
         let ids: Vec<&str> = reports.iter().filter_map(|r| r["id"].as_str()).collect();
-        for hit in search(env, snapshot, &ids, query, limit + 1)? {
+        // Every match, so the total is right on every page; search() still keeps to its time and size budgets.
+        for hit in search(env, snapshot, &ids, query, ids.len())? {
             snippets.insert(hit["id"].as_str().unwrap_or("").to_owned(), hit["snippet"].clone());
         }
         reports.retain(|r| snippets.contains_key(r["id"].as_str().unwrap_or("")));
     }
-    let more = reports.len() > limit;
+    let total = reports.len();
+    let more = total > offset.saturating_add(limit);
     let out: Vec<Value> = reports
         .into_iter()
+        .skip(offset)
         .take(limit)
         .map(|r| {
             let mut out = json!({});
@@ -786,7 +797,7 @@ pub fn list(env: &Env, snapshot: &Value, under: Option<&Path>, query: Option<&st
             out
         })
         .collect();
-    Ok(json!({"folder":{"path":dir["path"],"total":dir["total"]},"reports":out,"more":more}))
+    Ok(json!({"folder":{"path":dir["path"],"total":dir["total"]},"reports":out,"total":total,"more":more}))
 }
 
 #[cfg(test)]

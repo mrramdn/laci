@@ -225,32 +225,34 @@ pub(crate) fn busy_in(paths: &[PathBuf]) -> Vec<Value> {
 /// How long a change waits for Git that another program runs in the folder, such as a second Laci or an editor.
 /// Such a read is over in moments; Git that is still there after this, or anything else, keeps the folder in use.
 const GIT_WAIT: Duration = Duration::from_secs(3);
-/// [`busy_in`] for changes: while Git is all that is in the folder, it looks again for up to [`GIT_WAIT`].
-/// What is shown before a change uses [`busy_in`], which never waits.
-pub(crate) fn busy_after_git(paths: &[PathBuf]) -> Vec<Value> {
+/// [`busy_in`] for checks that decide something. A process counts only if it is still in the folder a moment
+/// later, so one that is just passing through, such as a helper of another Laci still starting, doesn't make the
+/// folder busy. While Git is all that stays, it looks again for up to [`GIT_WAIT`].
+pub(crate) fn still_busy(paths: &[PathBuf]) -> Vec<Value> {
     let started = Instant::now();
-    loop {
-        let busy = busy_in(paths);
-        let git = |b: &Value| b["name"].as_str().is_some_and(|name| name.starts_with("git"));
-        if busy.is_empty() || !busy.iter().all(git) || started.elapsed() >= GIT_WAIT {
-            return busy;
-        }
+    let mut seen = busy_in(paths);
+    while !seen.is_empty() {
         thread::sleep(Duration::from_millis(100));
+        let lasting: Vec<Value> =
+            busy_in(paths).into_iter().filter(|b| seen.iter().any(|s| s["pid"] == b["pid"])).collect();
+        let git = |b: &Value| b["name"].as_str().is_some_and(|name| name.starts_with("git"));
+        if lasting.is_empty() || !lasting.iter().all(git) || started.elapsed() >= GIT_WAIT {
+            return lasting;
+        }
+        seen = lasting;
     }
+    seen
+}
+/// What holds a folder, for an error: "name (pid N), …".
+pub(crate) fn holders(busy: &[Value]) -> String {
+    busy.iter()
+        .map(|b| format!("{} (pid {})", b["name"].as_str().unwrap_or("process"), b["pid"]))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 fn guard(paths: &[PathBuf]) -> Result<()> {
-    let busy = busy_after_git(paths);
-    if busy.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "In use by {}. Close it first.",
-            busy.iter()
-                .map(|b| format!("{} (pid {})", b["name"].as_str().unwrap_or("process"), b["pid"]))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))
-    }
+    let busy = still_busy(paths);
+    if busy.is_empty() { Ok(()) } else { Err(format!("In use by {}. Close it first.", holders(&busy))) }
 }
 
 struct Tx<'a> {
@@ -1223,6 +1225,16 @@ mod tests {
         assert!(busy_in(folder).iter().any(|b| b["pid"] == pid && b["name"] == "git"));
         guard(folder).unwrap();
         assert!(other.0.try_wait().unwrap().is_some(), "the change went ahead once that Git was done");
+    }
+
+    #[test]
+    fn a_process_passing_through_does_not_make_a_folder_busy() {
+        let (_temp, project, _git) = fixture();
+        let brief = Outside::start(Path::new("sleep"), &["0.05"], &project);
+        started(&project, "sleep", |pid| pid == brief.0.id());
+        let checked = Instant::now();
+        guard(std::slice::from_ref(&project)).unwrap();
+        assert!(checked.elapsed() < Duration::from_secs(1), "{:?}", checked.elapsed());
     }
 
     #[test]

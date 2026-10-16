@@ -135,8 +135,9 @@ fn check(dir: &Path) -> Result<String> {
             ));
         }
     }
-    if !ops::busy_in(&[dir.to_owned()]).is_empty() {
-        return Err("This project is in use by a running process. Close it first.".into());
+    let busy = ops::still_busy(&[dir.to_owned()]);
+    if !busy.is_empty() {
+        return Err(format!("This project is in use by {}. Close it first.", ops::holders(&busy)));
     }
     Ok(remote.to_owned())
 }
@@ -180,7 +181,7 @@ pub fn trash(env: &Env, node: &Value) -> Result<()> {
         let dir = paths::workspace_path(string(node, "path"), env)?;
         // Git that another program runs there gets a moment to finish first, so what it wrote is verified below,
         // and anything still in the folder after that makes the check refuse.
-        ops::busy_after_git(std::slice::from_ref(&dir));
+        ops::still_busy(std::slice::from_ref(&dir));
         let current = plan(env, node)?;
         if current["allowed"] != true {
             return Err(current["checks"][0]["detail"].as_str().unwrap_or("Project removal was blocked").to_owned());

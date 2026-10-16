@@ -567,30 +567,40 @@ async function modularRegressions() {
           archiveRoot,
           `${path.basename(source)}-chosen`,
         );
+        // WebDriver's clear never reaches React: a refresh landing between it and the typing (the Settings save
+        // just before starts two scans) re-renders the field with the default destination, and the typed path
+        // ends up appended to it. Let the scans finish first, and check the field holds exactly this path.
+        await settled("scans after the Settings change settle before typing");
         await type('[aria-label="Archive destination"]', destination);
         await wait("custom archive preview ready", () =>
-          execute(() => {
+          execute((expected) => {
+            const field = document.querySelector(
+              '[aria-label="Archive destination"]',
+            );
             const button = [
               ...document.querySelectorAll(".dialog .df button"),
             ].find((b) => b.textContent.trim() === "Archive");
             return (
+              field?.value === expected &&
               button &&
               !button.disabled &&
               document
                 .querySelector(".dialog .ops")
                 ?.textContent.includes("-chosen")
             );
-          }),
+          }, destination),
         );
         await shot("modular-archive");
         await settled("scan and project Git checks settle before Archive");
         await click(".dialog .df button", "Archive", true);
         await waitAccepted("custom archive accepted", async () => {
           const current = await snapshot();
-          return (
-            !current.historyPending &&
-            current.nodes[destination]?.archived &&
-            !current.nodes[source]
+          const moved = current.nodes[destination];
+          if (!current.historyPending && moved?.archived && !current.nodes[source])
+            return true;
+          // wait() keeps the last error, so a timeout says what was still missing.
+          throw new Error(
+            `historyPending ${current.historyPending}, destination ${moved ? (moved.archived ? "archived" : "not archived") : "missing"}, source ${current.nodes[source] ? "still listed" : "gone"}`,
           );
         });
         assert.ok(

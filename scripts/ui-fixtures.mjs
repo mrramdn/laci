@@ -140,7 +140,7 @@ function sorted(value) {
 }
 
 function tidy(raw, home, leaks) {
-  // The home appears as itself and, in the names of Claude's history folders, with dashes for
+  // The home appears as itself and, in the names of an agent's history folders, with dashes for
   // every character that is not a letter or a digit.
   const swap = (text) =>
     text

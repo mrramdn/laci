@@ -1,0 +1,4208 @@
+{
+  "agent/mcp": {
+    "agents": [
+      {
+        "add": "claude mcp add laci --scope user -- /usr/bin/laci mcp",
+        "command": "claude",
+        "file": "~/.claude.json",
+        "how": "command",
+        "installed": true,
+        "laci": "/usr/bin/laci",
+        "name": "Claude Code",
+        "provider": "claude",
+        "remove": "claude mcp remove laci --scope user",
+        "state": "missing",
+        "supported": true
+      },
+      {
+        "add": "codex mcp add laci -- /usr/bin/laci mcp",
+        "command": "codex",
+        "file": "~/.codex/config.toml",
+        "how": "command",
+        "installed": true,
+        "laci": "/usr/bin/laci",
+        "name": "Codex",
+        "provider": "codex",
+        "remove": "codex mcp remove laci",
+        "state": "missing",
+        "supported": true
+      }
+    ]
+  },
+  "agent/models": {
+    "antigravity": {
+      "continue": true,
+      "customModel": false,
+      "defaultEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "discovery": "unavailable",
+      "executable": "agy",
+      "installed": false,
+      "launch": true,
+      "listed": false,
+      "message": "Default uses the provider's own settings. Load models to choose another one.",
+      "models": [],
+      "name": "Antigravity",
+      "prompt": true,
+      "provider": "antigravity",
+      "remembered": {
+        "effort": null,
+        "model": null
+      },
+      "resume": true
+    },
+    "claude": {
+      "continue": true,
+      "customModel": true,
+      "defaultEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "discovery": "aliases",
+      "executable": "claude",
+      "installed": true,
+      "launch": true,
+      "listed": true,
+      "message": "Model names are Claude Code aliases; which ones work depends on your account. Default keeps what Claude Code is set to. A custom model ID uses Default effort.",
+      "models": [
+        {
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "id": "fable",
+          "label": "Fable"
+        },
+        {
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "id": "opus",
+          "label": "Opus"
+        },
+        {
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "id": "sonnet",
+          "label": "Sonnet"
+        },
+        {
+          "efforts": [],
+          "id": "haiku",
+          "label": "Haiku"
+        }
+      ],
+      "name": "Claude Code",
+      "prompt": true,
+      "provider": "claude",
+      "remembered": {
+        "effort": null,
+        "model": null
+      },
+      "resume": true
+    },
+    "codex": {
+      "continue": true,
+      "customModel": false,
+      "defaultEfforts": [],
+      "discovery": "unavailable",
+      "executable": "codex",
+      "installed": true,
+      "launch": true,
+      "listed": false,
+      "message": "Default uses the provider's own settings. Load models to choose another one.",
+      "models": [],
+      "name": "Codex",
+      "prompt": true,
+      "provider": "codex",
+      "remembered": {
+        "effort": null,
+        "model": null
+      },
+      "resume": true
+    }
+  },
+  "apps": {
+    "editor": "code",
+    "files": "dolphin",
+    "terminal": "kitty"
+  },
+  "archive/plan": {
+    "/home/demo/project/clients/acme-store": {
+      "checks": [
+        {
+          "code": "dirty",
+          "severity": "med",
+          "title": "1 uncommitted change"
+        },
+        {
+          "code": "unpushed",
+          "detail": "main has no upstream, and no remote has them",
+          "severity": "med",
+          "title": "8 commits not pushed"
+        }
+      ],
+      "dest": "/home/demo/project/_archive/clients/acme-store",
+      "ops": [
+        {
+          "from": "~/project/clients/acme-store",
+          "kind": "move",
+          "label": "Move folder",
+          "to": "~/project/_archive/clients/acme-store"
+        },
+        {
+          "detail": "2 sessions · 3 memory files · 532 B",
+          "from": "~/project/clients/acme-store",
+          "kind": "rename",
+          "label": "Move Claude sessions + memory",
+          "to": "~/project/_archive/clients/acme-store"
+        },
+        {
+          "detail": "2 lines → ~/project/_archive/clients/acme-store",
+          "kind": "rewrite",
+          "label": "Rewrite cwd in Claude logs"
+        },
+        {
+          "detail": ".laci.md",
+          "kind": "keep",
+          "label": "Travels with the folder"
+        },
+        {
+          "kind": "write",
+          "label": "Set status: archived",
+          "to": "~/project/_archive/clients/acme-store/.laci.md"
+        },
+        {
+          "kind": "write",
+          "label": "Write undo journal",
+          "to": "~/.local/share/laci/journal/"
+        }
+      ]
+    },
+    "/home/demo/project/clients/kopi-landing": {
+      "checks": [
+        {
+          "code": "no-remote",
+          "detail": "3 commits exist only on this disk",
+          "severity": "high",
+          "title": "No remote"
+        },
+        {
+          "code": "dirty",
+          "severity": "med",
+          "title": "1 uncommitted change"
+        }
+      ],
+      "dest": "/home/demo/project/_archive/clients/kopi-landing",
+      "ops": [
+        {
+          "from": "~/project/clients/kopi-landing",
+          "kind": "move",
+          "label": "Move folder",
+          "to": "~/project/_archive/clients/kopi-landing"
+        },
+        {
+          "detail": "1 sessions · 0 memory files · 217 B",
+          "from": "~/project/clients/kopi-landing",
+          "kind": "rename",
+          "label": "Move Claude sessions + memory",
+          "to": "~/project/_archive/clients/kopi-landing"
+        },
+        {
+          "detail": "1 line → ~/project/_archive/clients/kopi-landing",
+          "kind": "rewrite",
+          "label": "Rewrite cwd in Claude logs"
+        },
+        {
+          "detail": "1 line in 1 file",
+          "kind": "rewrite",
+          "label": "Rewrite paths in Codex logs"
+        },
+        {
+          "detail": ".laci.md",
+          "kind": "keep",
+          "label": "Travels with the folder"
+        },
+        {
+          "kind": "write",
+          "label": "Set status: archived",
+          "to": "~/project/_archive/clients/kopi-landing/.laci.md"
+        },
+        {
+          "kind": "write",
+          "label": "Write undo journal",
+          "to": "~/.local/share/laci/journal/"
+        }
+      ]
+    },
+    "/home/demo/project/infra-notes": {
+      "checks": [],
+      "dest": "/home/demo/project/_archive/infra-notes",
+      "ops": [
+        {
+          "from": "~/project/infra-notes",
+          "kind": "move",
+          "label": "Move folder",
+          "to": "~/project/_archive/infra-notes"
+        },
+        {
+          "detail": "1 sessions · 0 memory files · 223 B",
+          "from": "~/project/infra-notes",
+          "kind": "rename",
+          "label": "Move Claude sessions + memory",
+          "to": "~/project/_archive/infra-notes"
+        },
+        {
+          "detail": "1 line → ~/project/_archive/infra-notes",
+          "kind": "rewrite",
+          "label": "Rewrite cwd in Claude logs"
+        },
+        {
+          "detail": ".laci.md",
+          "kind": "keep",
+          "label": "Travels with the folder"
+        },
+        {
+          "kind": "write",
+          "label": "Set status: archived",
+          "to": "~/project/_archive/infra-notes/.laci.md"
+        },
+        {
+          "kind": "write",
+          "label": "Write undo journal",
+          "to": "~/.local/share/laci/journal/"
+        }
+      ]
+    },
+    "/home/demo/project/side/dotfiles": {
+      "checks": [
+        {
+          "code": "unpushed",
+          "detail": "main has no upstream, and no remote has them",
+          "severity": "med",
+          "title": "2 commits not pushed"
+        }
+      ],
+      "dest": "/home/demo/project/_archive/side/dotfiles",
+      "ops": [
+        {
+          "from": "~/project/side/dotfiles",
+          "kind": "move",
+          "label": "Move folder",
+          "to": "~/project/_archive/side/dotfiles"
+        },
+        {
+          "detail": ".laci.md",
+          "kind": "keep",
+          "label": "Travels with the folder"
+        },
+        {
+          "kind": "write",
+          "label": "Set status: archived",
+          "to": "~/project/_archive/side/dotfiles/.laci.md"
+        },
+        {
+          "kind": "write",
+          "label": "Write undo journal",
+          "to": "~/.local/share/laci/journal/"
+        }
+      ]
+    },
+    "/home/demo/project/side/habit-app": {
+      "checks": [
+        {
+          "code": "no-remote",
+          "detail": "3 commits exist only on this disk",
+          "severity": "high",
+          "title": "No remote"
+        }
+      ],
+      "dest": "/home/demo/project/_archive/side/habit-app",
+      "ops": [
+        {
+          "from": "~/project/side/habit-app",
+          "kind": "move",
+          "label": "Move folder",
+          "to": "~/project/_archive/side/habit-app"
+        },
+        {
+          "detail": ".laci.md",
+          "kind": "keep",
+          "label": "Travels with the folder"
+        },
+        {
+          "kind": "write",
+          "label": "Set status: archived",
+          "to": "~/project/_archive/side/habit-app/.laci.md"
+        },
+        {
+          "detail": "440 MB (node_modules)",
+          "kind": "delete",
+          "label": "Optional: delete deps & build output"
+        },
+        {
+          "kind": "write",
+          "label": "Write undo journal",
+          "to": "~/.local/share/laci/journal/"
+        }
+      ]
+    },
+    "/home/demo/project/thesis/campus-lms": {
+      "checks": [
+        {
+          "code": "unpushed",
+          "detail": "main has no upstream, and no remote has them",
+          "severity": "med",
+          "title": "5 commits not pushed"
+        },
+        {
+          "code": "stash",
+          "detail": "Stashes are easy to lose and never pushed",
+          "severity": "med",
+          "title": "1 forgotten stash"
+        }
+      ],
+      "dest": "/home/demo/project/_archive/thesis/campus-lms",
+      "ops": [
+        {
+          "from": "~/project/thesis/campus-lms",
+          "kind": "move",
+          "label": "Move folder",
+          "to": "~/project/_archive/thesis/campus-lms"
+        },
+        {
+          "detail": "1 sessions · 0 memory files · 207 B",
+          "from": "~/project/thesis/campus-lms",
+          "kind": "rename",
+          "label": "Move Claude sessions + memory",
+          "to": "~/project/_archive/thesis/campus-lms"
+        },
+        {
+          "detail": "1 line → ~/project/_archive/thesis/campus-lms",
+          "kind": "rewrite",
+          "label": "Rewrite cwd in Claude logs"
+        },
+        {
+          "detail": ".laci.md",
+          "kind": "keep",
+          "label": "Travels with the folder"
+        },
+        {
+          "kind": "write",
+          "label": "Set status: archived",
+          "to": "~/project/_archive/thesis/campus-lms/.laci.md"
+        },
+        {
+          "kind": "write",
+          "label": "Write undo journal",
+          "to": "~/.local/share/laci/journal/"
+        }
+      ]
+    }
+  },
+  "assistant/prompt": {
+    "review": {
+      "projectPath": "/home/demo",
+      "prompt": "Help me go through everything open across my projects, using Laci, my project manager. Laci's MCP server is called \"laci\". If its tools aren't available here, tell me and stop: Laci's Agents page can set it up.\n\nThe goal of this session: I end with a short list of what to do next that I agree with, and less clutter. Talk with me in the language I use.\n\n1. Read what is open: open_items (to-dos and report items), needs_attention (work that could be lost, deadlines) and tidy_suggestions (cleanups). open_items answers a page at a time: while it says more, call it again with offset. Read a report only when an item needs its context.\n2. Check items against reality before you call them done: the git log, the pull request, the file. If you can't check, keep the item open.\n3. Propose, in a few short lists:\n   - done items to tick (complete_task) and report items to close (close_report_item);\n   - duplicates and stale items to delete (delete_task), long items to split (edit_task, add_next_step), items in the wrong project to move (move_task);\n   - three to five things to focus on this week, and why;\n   - questions only I can answer, each with two to four options.\n4. Change nothing until I agree. Then make the changes with Laci's tools, so they show in Laci's Log with Undo. Don't edit .laci.md by hand.\n5. Work that belongs to one project isn't done in this session: leave it as a to-do in that project, so I can start it with \"Work on it\" in Laci.\n6. Moves, archives and cleanups go through Laci too (move_project, archive_project, apply_suggestion): show me the plan first, and confirm only after I say yes.\n\nToday is Thursday 8 October 2026. Laci knows 6 projects, 4 open to-dos, 10 open report items, 1 deadline due in the next 14 days and 0 overdue."
+    },
+    "tasks": [
+      {
+        "file": ".laci.md",
+        "id": "/home/demo/project/clients/acme-store",
+        "reply": {
+          "projectPath": "/home/demo/project/clients/acme-store",
+          "prompt": "Work on this to-do in acme-store (~/project/clients/acme-store):\n\n  Fix checkout total on mobile Safari\n\nIt is listed in .laci.md:8, under \"Next\". The project's priority high, deadline 2026-10-13.\n\nReports from earlier sessions in this project, newest first. Read them if the to-do needs their context:\n- 2026-10-07 · Checkout total wrong on mobile Safari (~/Documents/agent-reports/2026-10-07-checkout-total-on-mobile-safari.md)\n\nFirst check where things stand: part of it may be done already. Ask me before anything destructive or outward-facing, such as deleting, pushing, deploying or sending messages. If it turns out to be several things, say so, and split it with Laci's edit_task and add_next_step. When it is done, tick it in Laci: complete_task with project \"/home/demo/project/clients/acme-store\" and text \"Fix checkout total on mobile Safari\"."
+        },
+        "text": "Fix checkout total on mobile Safari"
+      },
+      {
+        "file": ".laci.md",
+        "id": "/home/demo/project/clients/acme-store",
+        "reply": {
+          "projectPath": "/home/demo/project/clients/acme-store",
+          "prompt": "Work on this to-do in acme-store (~/project/clients/acme-store):\n\n  Send staging link to the client\n\nIt is listed in .laci.md:9, under \"Next\". The project's priority high, deadline 2026-10-13.\n\nReports from earlier sessions in this project, newest first. Read them if the to-do needs their context:\n- 2026-10-07 · Checkout total wrong on mobile Safari (~/Documents/agent-reports/2026-10-07-checkout-total-on-mobile-safari.md)\n\nFirst check where things stand: part of it may be done already. Ask me before anything destructive or outward-facing, such as deleting, pushing, deploying or sending messages. If it turns out to be several things, say so, and split it with Laci's edit_task and add_next_step. When it is done, tick it in Laci: complete_task with project \"/home/demo/project/clients/acme-store\" and text \"Send staging link to the client\"."
+        },
+        "text": "Send staging link to the client"
+      },
+      {
+        "file": "NOTES.md",
+        "id": "/home/demo/project/infra-notes",
+        "reply": {
+          "projectPath": "/home/demo/project/infra-notes",
+          "prompt": "Work on this to-do in infra-notes (~/project/infra-notes):\n\n  Rotate the SSH keys on the staging droplet\n\nIt is listed in NOTES.md:4, under \"Server notes › Open\".\n\nReports from earlier sessions in this project, newest first. Read them if the to-do needs their context:\n- 2026-10-03 · Why the droplet keeps running out of memory (~/Documents/agent-reports/2026-10-03-droplet-memory-and-swap.md)\n\nFirst check where things stand: part of it may be done already. Ask me before anything destructive or outward-facing, such as deleting, pushing, deploying or sending messages. If it turns out to be several things, say so, and split it with Laci's edit_task and add_next_step. When it is done, tick it in Laci: complete_task with project \"/home/demo/project/infra-notes\" and text \"Rotate the SSH keys on the staging droplet\"."
+        },
+        "text": "Rotate the SSH keys on the staging droplet"
+      },
+      {
+        "file": "NOTES.md",
+        "id": "/home/demo/project/infra-notes",
+        "reply": {
+          "projectPath": "/home/demo/project/infra-notes",
+          "prompt": "Work on this to-do in infra-notes (~/project/infra-notes):\n\n  Renew the SSL cert before it expires\n\nIt is listed in NOTES.md:5, under \"Server notes › Open\".\n\nReports from earlier sessions in this project, newest first. Read them if the to-do needs their context:\n- 2026-10-03 · Why the droplet keeps running out of memory (~/Documents/agent-reports/2026-10-03-droplet-memory-and-swap.md)\n\nFirst check where things stand: part of it may be done already. Ask me before anything destructive or outward-facing, such as deleting, pushing, deploying or sending messages. If it turns out to be several things, say so, and split it with Laci's edit_task and add_next_step. When it is done, tick it in Laci: complete_task with project \"/home/demo/project/infra-notes\" and text \"Renew the SSL cert before it expires\"."
+        },
+        "text": "Renew the SSL cert before it expires"
+      },
+      {
+        "file": "HANDOFF.md",
+        "id": "/home/demo/project/thesis/campus-lms",
+        "reply": {
+          "projectPath": "/home/demo/project/thesis/campus-lms",
+          "prompt": "Work on this to-do in campus-lms (~/project/thesis/campus-lms):\n\n  Finish the grading export (CSV + PDF)\n\nIt is listed in HANDOFF.md:4, under \"Handoff › Next steps\".\n\nReports from earlier sessions in this project, newest first. Read them if the to-do needs their context:\n- 2026-09-19 · Grading export to PDF (~/Documents/agent-reports/2026-09-19-grading-export-to-pdf.md)\n- 2026-08-25 · Grading model and rubrics (~/Documents/agent-reports/2026-08-25-grading-model-and-rubrics.md)\n\nFirst check where things stand: part of it may be done already. Ask me before anything destructive or outward-facing, such as deleting, pushing, deploying or sending messages. If it turns out to be several things, say so, and split it with Laci's edit_task and add_next_step. When it is done, tick it in Laci: complete_task with project \"/home/demo/project/thesis/campus-lms\" and text \"Finish the grading export (CSV + PDF)\"."
+        },
+        "text": "Finish the grading export (CSV + PDF)"
+      },
+      {
+        "file": "HANDOFF.md",
+        "id": "/home/demo/project/thesis/campus-lms",
+        "reply": {
+          "projectPath": "/home/demo/project/thesis/campus-lms",
+          "prompt": "Work on this to-do in campus-lms (~/project/thesis/campus-lms):\n\n  Load test the quiz page with 300 students\n\nIt is listed in HANDOFF.md:5, under \"Handoff › Next steps\".\n\nReports from earlier sessions in this project, newest first. Read them if the to-do needs their context:\n- 2026-09-19 · Grading export to PDF (~/Documents/agent-reports/2026-09-19-grading-export-to-pdf.md)\n- 2026-08-25 · Grading model and rubrics (~/Documents/agent-reports/2026-08-25-grading-model-and-rubrics.md)\n\nFirst check where things stand: part of it may be done already. Ask me before anything destructive or outward-facing, such as deleting, pushing, deploying or sending messages. If it turns out to be several things, say so, and split it with Laci's edit_task and add_next_step. When it is done, tick it in Laci: complete_task with project \"/home/demo/project/thesis/campus-lms\" and text \"Load test the quiz page with 300 students\"."
+        },
+        "text": "Load test the quiz page with 300 students"
+      },
+      {
+        "file": "HANDOFF.md",
+        "id": "/home/demo/project/thesis/campus-lms",
+        "reply": {
+          "projectPath": "/home/demo/project/thesis/campus-lms",
+          "prompt": "Work on this to-do in campus-lms (~/project/thesis/campus-lms):\n\n  Write chapter 4 results from the load test\n\nIt is listed in HANDOFF.md:6, under \"Handoff › Next steps\".\n\nReports from earlier sessions in this project, newest first. Read them if the to-do needs their context:\n- 2026-09-19 · Grading export to PDF (~/Documents/agent-reports/2026-09-19-grading-export-to-pdf.md)\n- 2026-08-25 · Grading model and rubrics (~/Documents/agent-reports/2026-08-25-grading-model-and-rubrics.md)\n\nFirst check where things stand: part of it may be done already. Ask me before anything destructive or outward-facing, such as deleting, pushing, deploying or sending messages. If it turns out to be several things, say so, and split it with Laci's edit_task and add_next_step. When it is done, tick it in Laci: complete_task with project \"/home/demo/project/thesis/campus-lms\" and text \"Write chapter 4 results from the load test\"."
+        },
+        "text": "Write chapter 4 results from the load test"
+      }
+    ]
+  },
+  "delete/plan": {
+    "/home/demo/project/_archive/old-portfolio": {
+      "allowed": false,
+      "checks": [
+        {
+          "code": "delete-blocked",
+          "detail": "Could not verify the remote. Nothing was removed. git failed: fatal: transport 'ssh' not allowed",
+          "severity": "high",
+          "title": "This project cannot be removed yet"
+        },
+        {
+          "code": "ignored-files",
+          "detail": "The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo.",
+          "severity": "med",
+          "title": "Ignored files are not backed up by Git"
+        }
+      ],
+      "ops": [
+        {
+          "from": "/home/demo/project/_archive/old-portfolio",
+          "kind": "delete",
+          "label": "Move the project folder to system Trash"
+        },
+        {
+          "detail": "External session logs and memory are preserved. They may appear as detached history until the folder is restored.",
+          "kind": "keep",
+          "label": "Keep agent history outside the project"
+        }
+      ],
+      "path": "/home/demo/project/_archive/old-portfolio"
+    },
+    "/home/demo/project/clients/acme-store": {
+      "allowed": false,
+      "checks": [
+        {
+          "code": "delete-blocked",
+          "detail": "Commit or back up local changes and untracked files first",
+          "severity": "high",
+          "title": "This project cannot be removed yet"
+        },
+        {
+          "code": "ignored-files",
+          "detail": "The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo.",
+          "severity": "med",
+          "title": "Ignored files are not backed up by Git"
+        }
+      ],
+      "ops": [
+        {
+          "from": "/home/demo/project/clients/acme-store",
+          "kind": "delete",
+          "label": "Move the project folder to system Trash"
+        },
+        {
+          "detail": "External session logs and memory are preserved. They may appear as detached history until the folder is restored.",
+          "kind": "keep",
+          "label": "Keep agent history outside the project"
+        }
+      ],
+      "path": "/home/demo/project/clients/acme-store"
+    },
+    "/home/demo/project/clients/kopi-landing": {
+      "allowed": false,
+      "checks": [
+        {
+          "code": "delete-blocked",
+          "detail": "Commit or back up local changes and untracked files first",
+          "severity": "high",
+          "title": "This project cannot be removed yet"
+        },
+        {
+          "code": "ignored-files",
+          "detail": "The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo.",
+          "severity": "med",
+          "title": "Ignored files are not backed up by Git"
+        }
+      ],
+      "ops": [
+        {
+          "from": "/home/demo/project/clients/kopi-landing",
+          "kind": "delete",
+          "label": "Move the project folder to system Trash"
+        },
+        {
+          "detail": "External session logs and memory are preserved. They may appear as detached history until the folder is restored.",
+          "kind": "keep",
+          "label": "Keep agent history outside the project"
+        }
+      ],
+      "path": "/home/demo/project/clients/kopi-landing"
+    },
+    "/home/demo/project/infra-notes": {
+      "allowed": false,
+      "checks": [
+        {
+          "code": "delete-blocked",
+          "detail": "Only a standalone Git project can be removed here. Linked worktrees and submodules must be managed with Git.",
+          "severity": "high",
+          "title": "This project cannot be removed yet"
+        },
+        {
+          "code": "ignored-files",
+          "detail": "The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo.",
+          "severity": "med",
+          "title": "Ignored files are not backed up by Git"
+        }
+      ],
+      "ops": [
+        {
+          "from": "/home/demo/project/infra-notes",
+          "kind": "delete",
+          "label": "Move the project folder to system Trash"
+        },
+        {
+          "detail": "External session logs and memory are preserved. They may appear as detached history until the folder is restored.",
+          "kind": "keep",
+          "label": "Keep agent history outside the project"
+        }
+      ],
+      "path": "/home/demo/project/infra-notes"
+    },
+    "/home/demo/project/side/dotfiles": {
+      "allowed": false,
+      "checks": [
+        {
+          "code": "delete-blocked",
+          "detail": "Could not verify the remote. Nothing was removed. git failed: fatal: transport 'ssh' not allowed",
+          "severity": "high",
+          "title": "This project cannot be removed yet"
+        },
+        {
+          "code": "ignored-files",
+          "detail": "The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo.",
+          "severity": "med",
+          "title": "Ignored files are not backed up by Git"
+        }
+      ],
+      "ops": [
+        {
+          "from": "/home/demo/project/side/dotfiles",
+          "kind": "delete",
+          "label": "Move the project folder to system Trash"
+        },
+        {
+          "detail": "External session logs and memory are preserved. They may appear as detached history until the folder is restored.",
+          "kind": "keep",
+          "label": "Keep agent history outside the project"
+        }
+      ],
+      "path": "/home/demo/project/side/dotfiles"
+    },
+    "/home/demo/project/side/habit-app": {
+      "allowed": false,
+      "checks": [
+        {
+          "code": "delete-blocked",
+          "detail": "This project has no remote backup",
+          "severity": "high",
+          "title": "This project cannot be removed yet"
+        },
+        {
+          "code": "ignored-files",
+          "detail": "The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo.",
+          "severity": "med",
+          "title": "Ignored files are not backed up by Git"
+        }
+      ],
+      "ops": [
+        {
+          "from": "/home/demo/project/side/habit-app",
+          "kind": "delete",
+          "label": "Move the project folder to system Trash"
+        },
+        {
+          "detail": "External session logs and memory are preserved. They may appear as detached history until the folder is restored.",
+          "kind": "keep",
+          "label": "Keep agent history outside the project"
+        }
+      ],
+      "path": "/home/demo/project/side/habit-app"
+    },
+    "/home/demo/project/thesis/campus-lms": {
+      "allowed": false,
+      "checks": [
+        {
+          "code": "delete-blocked",
+          "detail": "This project has stashes that are only stored locally",
+          "severity": "high",
+          "title": "This project cannot be removed yet"
+        },
+        {
+          "code": "ignored-files",
+          "detail": "The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo.",
+          "severity": "med",
+          "title": "Ignored files are not backed up by Git"
+        }
+      ],
+      "ops": [
+        {
+          "from": "/home/demo/project/thesis/campus-lms",
+          "kind": "delete",
+          "label": "Move the project folder to system Trash"
+        },
+        {
+          "detail": "External session logs and memory are preserved. They may appear as detached history until the folder is restored.",
+          "kind": "keep",
+          "label": "Keep agent history outside the project"
+        }
+      ],
+      "path": "/home/demo/project/thesis/campus-lms"
+    }
+  },
+  "health": {
+    "/home/demo/project/_archive/old-portfolio": {
+      "changes": [],
+      "changesMore": 0,
+      "recent": [
+        {
+          "at": "2026-01-21T09:00:00.000Z",
+          "author": "demo",
+          "hash": "37e7929",
+          "subject": "feat: projects page"
+        },
+        {
+          "at": "2025-12-12T09:00:00.000Z",
+          "author": "demo",
+          "hash": "f6de84a",
+          "subject": "init"
+        }
+      ],
+      "stashes": [],
+      "unpushed": []
+    },
+    "/home/demo/project/clients/acme-store": {
+      "changes": [
+        {
+          "code": "??",
+          "path": "src/app/checkout.tsx"
+        }
+      ],
+      "changesMore": 0,
+      "recent": [
+        {
+          "at": "2026-10-07T09:00:00.000Z",
+          "author": "demo",
+          "hash": "66808bb",
+          "subject": "feat: promo codes"
+        },
+        {
+          "at": "2026-10-05T09:00:00.000Z",
+          "author": "demo",
+          "hash": "c43978b",
+          "subject": "fix: checkout rounding"
+        },
+        {
+          "at": "2026-09-29T09:00:00.000Z",
+          "author": "demo",
+          "hash": "f13d87e",
+          "subject": "feat: order emails"
+        },
+        {
+          "at": "2026-09-22T09:00:00.000Z",
+          "author": "demo",
+          "hash": "39c9d96",
+          "subject": "fix: stock sync"
+        },
+        {
+          "at": "2026-09-08T09:00:00.000Z",
+          "author": "demo",
+          "hash": "57a88a8",
+          "subject": "feat: midtrans checkout"
+        },
+        {
+          "at": "2026-08-28T09:00:00.000Z",
+          "author": "demo",
+          "hash": "43c1182",
+          "subject": "feat: cart"
+        },
+        {
+          "at": "2026-08-09T09:00:00.000Z",
+          "author": "demo",
+          "hash": "d68beaa",
+          "subject": "feat: product catalog"
+        },
+        {
+          "at": "2026-07-20T09:00:00.000Z",
+          "author": "demo",
+          "hash": "0ab68e9",
+          "subject": "chore: scaffold next app"
+        }
+      ],
+      "stashes": [],
+      "unpushed": []
+    },
+    "/home/demo/project/clients/kopi-landing": {
+      "changes": [
+        {
+          "code": "??",
+          "path": "src/"
+        }
+      ],
+      "changesMore": 0,
+      "recent": [
+        {
+          "at": "2026-10-06T09:00:00.000Z",
+          "author": "demo",
+          "hash": "b28e91e",
+          "subject": "feat: contact form"
+        },
+        {
+          "at": "2026-10-02T09:00:00.000Z",
+          "author": "demo",
+          "hash": "91d03f9",
+          "subject": "feat: hero and menu"
+        },
+        {
+          "at": "2026-09-26T09:00:00.000Z",
+          "author": "demo",
+          "hash": "d9fc739",
+          "subject": "init"
+        }
+      ],
+      "stashes": [],
+      "unpushed": []
+    },
+    "/home/demo/project/infra-notes": {
+      "changes": [],
+      "recent": [],
+      "stashes": [],
+      "unpushed": []
+    },
+    "/home/demo/project/side/dotfiles": {
+      "changes": [],
+      "changesMore": 0,
+      "recent": [
+        {
+          "at": "2026-09-30T09:00:00.000Z",
+          "author": "demo",
+          "hash": "ca68e1d",
+          "subject": "hyprland: new binds"
+        },
+        {
+          "at": "2026-08-29T09:00:00.000Z",
+          "author": "demo",
+          "hash": "aa7a13b",
+          "subject": "init"
+        }
+      ],
+      "stashes": [],
+      "unpushed": []
+    },
+    "/home/demo/project/side/habit-app": {
+      "changes": [],
+      "changesMore": 0,
+      "recent": [
+        {
+          "at": "2026-05-11T09:00:00.000Z",
+          "author": "demo",
+          "hash": "2901064",
+          "subject": "feat: reminders"
+        },
+        {
+          "at": "2026-04-11T09:00:00.000Z",
+          "author": "demo",
+          "hash": "d892e04",
+          "subject": "feat: streaks"
+        },
+        {
+          "at": "2026-03-12T09:00:00.000Z",
+          "author": "demo",
+          "hash": "e4e70f1",
+          "subject": "init expo"
+        }
+      ],
+      "stashes": [],
+      "unpushed": []
+    },
+    "/home/demo/project/thesis/campus-lms": {
+      "changes": [],
+      "changesMore": 0,
+      "recent": [
+        {
+          "at": "2026-09-18T09:00:00.000Z",
+          "author": "demo",
+          "hash": "f277ac1",
+          "subject": "wip: export"
+        },
+        {
+          "at": "2026-08-25T09:00:00.000Z",
+          "author": "demo",
+          "hash": "b32eae4",
+          "subject": "feat: grading"
+        },
+        {
+          "at": "2026-07-30T09:00:00.000Z",
+          "author": "demo",
+          "hash": "f853ab2",
+          "subject": "feat: assignments"
+        },
+        {
+          "at": "2026-07-05T09:00:00.000Z",
+          "author": "demo",
+          "hash": "f3e040d",
+          "subject": "feat: courses"
+        },
+        {
+          "at": "2026-06-10T09:00:00.000Z",
+          "author": "demo",
+          "hash": "665e221",
+          "subject": "init laravel"
+        }
+      ],
+      "stashes": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "ref": "stash@{0}",
+          "subject": "On main: half-done export"
+        }
+      ],
+      "unpushed": []
+    }
+  },
+  "log": {
+    "entries": [
+      {
+        "at": "2026-10-08T09:00:00.000Z",
+        "by": "app",
+        "canUndo": true,
+        "detail": "Folders: added ~/project · Reports folder: ~/Documents/agent-reports · AI tools: Claude Code on, Codex on",
+        "id": "2026-10-08T09-00-00-000Z-1",
+        "key": "settings",
+        "state": "applied",
+        "superseded": false,
+        "title": "Changed settings",
+        "undo": {
+          "apps": {},
+          "archiveDir": null,
+          "presets": [],
+          "reportsDir": null,
+          "rootIdentities": null,
+          "roots": null,
+          "terminalTarget": null,
+          "type": "config"
+        }
+      }
+    ],
+    "file": "~/.local/share/laci/laci.log"
+  },
+  "ls": {
+    "/home/demo": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": ".bash_profile",
+          "path": "/home/demo/.bash_profile",
+          "size": 12
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": ".cache",
+          "path": "/home/demo/.cache",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": ".claude",
+          "path": "/home/demo/.claude",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": ".codex",
+          "path": "/home/demo/.codex",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": ".config",
+          "path": "/home/demo/.config",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": ".local",
+          "path": "/home/demo/.local",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "Documents",
+          "path": "/home/demo/Documents",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "project",
+          "path": "/home/demo/project",
+          "size": 4096
+        }
+      ],
+      "path": "/home/demo"
+    },
+    "/home/demo/Documents": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "agent-reports",
+          "path": "/home/demo/Documents/agent-reports",
+          "size": 4096
+        }
+      ],
+      "path": "/home/demo/Documents"
+    },
+    "/home/demo/Documents/agent-reports": {
+      "entries": [
+        {
+          "at": "2026-08-25T12:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "2026-08-25-grading-model-and-rubrics.md",
+          "path": "/home/demo/Documents/agent-reports/2026-08-25-grading-model-and-rubrics.md",
+          "size": 353
+        },
+        {
+          "at": "2026-09-19T12:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "2026-09-19-grading-export-to-pdf.md",
+          "path": "/home/demo/Documents/agent-reports/2026-09-19-grading-export-to-pdf.md",
+          "size": 1812
+        },
+        {
+          "at": "2026-09-30T12:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "2026-09-30-hyprland-binds.md",
+          "path": "/home/demo/Documents/agent-reports/2026-09-30-hyprland-binds.md",
+          "size": 249
+        },
+        {
+          "at": "2026-10-03T12:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "2026-10-03-droplet-memory-and-swap.md",
+          "path": "/home/demo/Documents/agent-reports/2026-10-03-droplet-memory-and-swap.md",
+          "size": 537
+        },
+        {
+          "at": "2026-10-05T12:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "2026-10-05-email-filters.md",
+          "path": "/home/demo/Documents/agent-reports/2026-10-05-email-filters.md",
+          "size": 258
+        },
+        {
+          "at": "2026-10-06T12:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "2026-10-06-kopi-hero-and-contact-form.md",
+          "path": "/home/demo/Documents/agent-reports/2026-10-06-kopi-hero-and-contact-form.md",
+          "size": 593
+        },
+        {
+          "at": "2026-10-07T12:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "2026-10-07-checkout-total-on-mobile-safari.md",
+          "path": "/home/demo/Documents/agent-reports/2026-10-07-checkout-total-on-mobile-safari.md",
+          "size": 995
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "README.md",
+          "path": "/home/demo/Documents/agent-reports/README.md",
+          "size": 74
+        }
+      ],
+      "path": "/home/demo/Documents/agent-reports"
+    },
+    "/home/demo/project": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "_archive",
+          "path": "/home/demo/project/_archive",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "clients",
+          "path": "/home/demo/project/clients",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "infra-notes",
+          "path": "/home/demo/project/infra-notes",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "side",
+          "path": "/home/demo/project/side",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "thesis",
+          "path": "/home/demo/project/thesis",
+          "size": 4096
+        }
+      ],
+      "path": "/home/demo/project"
+    },
+    "/home/demo/project/_archive": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": true,
+          "link": false,
+          "name": "old-portfolio",
+          "path": "/home/demo/project/_archive/old-portfolio",
+          "size": 4096
+        }
+      ],
+      "path": "/home/demo/project/_archive"
+    },
+    "/home/demo/project/_archive/old-portfolio": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": ".git",
+          "path": "/home/demo/project/_archive/old-portfolio/.git",
+          "size": 4096
+        },
+        {
+          "at": "2026-01-21T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": ".history",
+          "path": "/home/demo/project/_archive/old-portfolio/.history",
+          "size": 2
+        },
+        {
+          "at": "2026-01-21T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "README.md",
+          "path": "/home/demo/project/_archive/old-portfolio/README.md",
+          "size": 41
+        },
+        {
+          "at": "2026-01-21T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "package.json",
+          "path": "/home/demo/project/_archive/old-portfolio/package.json",
+          "size": 181
+        }
+      ],
+      "path": "/home/demo/project/_archive/old-portfolio"
+    },
+    "/home/demo/project/clients": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": true,
+          "link": false,
+          "name": "acme-store",
+          "path": "/home/demo/project/clients/acme-store",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": true,
+          "link": false,
+          "name": "kopi-landing",
+          "path": "/home/demo/project/clients/kopi-landing",
+          "size": 4096
+        }
+      ],
+      "path": "/home/demo/project/clients"
+    },
+    "/home/demo/project/clients/acme-store": {
+      "entries": [
+        {
+          "at": "2026-10-07T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": ".env.example",
+          "path": "/home/demo/project/clients/acme-store/.env.example",
+          "size": 57
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": ".git",
+          "path": "/home/demo/project/clients/acme-store/.git",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-07T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": ".history",
+          "path": "/home/demo/project/clients/acme-store/.history",
+          "size": 2
+        },
+        {
+          "at": "2026-10-07T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": ".laci.md",
+          "path": "/home/demo/project/clients/acme-store/.laci.md",
+          "size": 246
+        },
+        {
+          "at": "2026-10-07T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "README.md",
+          "path": "/home/demo/project/clients/acme-store/README.md",
+          "size": 220
+        },
+        {
+          "at": "2026-10-07T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "docker-compose.yml",
+          "path": "/home/demo/project/clients/acme-store/docker-compose.yml",
+          "size": 39
+        },
+        {
+          "at": "2026-10-07T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "package.json",
+          "path": "/home/demo/project/clients/acme-store/package.json",
+          "size": 271
+        },
+        {
+          "at": "2026-10-07T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "pnpm-lock.yaml",
+          "path": "/home/demo/project/clients/acme-store/pnpm-lock.yaml",
+          "size": 0
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "src",
+          "path": "/home/demo/project/clients/acme-store/src",
+          "size": 4096
+        }
+      ],
+      "path": "/home/demo/project/clients/acme-store"
+    },
+    "/home/demo/project/clients/acme-store/src": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "app",
+          "path": "/home/demo/project/clients/acme-store/src/app",
+          "size": 4096
+        }
+      ],
+      "path": "/home/demo/project/clients/acme-store/src"
+    },
+    "/home/demo/project/clients/acme-store/src/app": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "checkout.tsx",
+          "path": "/home/demo/project/clients/acme-store/src/app/checkout.tsx",
+          "size": 35
+        },
+        {
+          "at": "2026-10-07T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "page.tsx",
+          "path": "/home/demo/project/clients/acme-store/src/app/page.tsx",
+          "size": 47
+        }
+      ],
+      "path": "/home/demo/project/clients/acme-store/src/app"
+    },
+    "/home/demo/project/clients/kopi-landing": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": ".git",
+          "path": "/home/demo/project/clients/kopi-landing/.git",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-06T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": ".history",
+          "path": "/home/demo/project/clients/kopi-landing/.history",
+          "size": 2
+        },
+        {
+          "at": "2026-10-06T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "README.md",
+          "path": "/home/demo/project/clients/kopi-landing/README.md",
+          "size": 86
+        },
+        {
+          "at": "2026-10-06T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "package.json",
+          "path": "/home/demo/project/clients/kopi-landing/package.json",
+          "size": 197
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "src",
+          "path": "/home/demo/project/clients/kopi-landing/src",
+          "size": 4096
+        }
+      ],
+      "path": "/home/demo/project/clients/kopi-landing"
+    },
+    "/home/demo/project/clients/kopi-landing/src": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "pages",
+          "path": "/home/demo/project/clients/kopi-landing/src/pages",
+          "size": 4096
+        }
+      ],
+      "path": "/home/demo/project/clients/kopi-landing/src"
+    },
+    "/home/demo/project/clients/kopi-landing/src/pages": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "index.astro",
+          "path": "/home/demo/project/clients/kopi-landing/src/pages/index.astro",
+          "size": 22
+        }
+      ],
+      "path": "/home/demo/project/clients/kopi-landing/src/pages"
+    },
+    "/home/demo/project/infra-notes": {
+      "entries": [
+        {
+          "at": "2026-10-03T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "NOTES.md",
+          "path": "/home/demo/project/infra-notes/NOTES.md",
+          "size": 136
+        }
+      ],
+      "path": "/home/demo/project/infra-notes"
+    },
+    "/home/demo/project/side": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": true,
+          "link": false,
+          "name": "dotfiles",
+          "path": "/home/demo/project/side/dotfiles",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": true,
+          "link": false,
+          "name": "habit-app",
+          "path": "/home/demo/project/side/habit-app",
+          "size": 4096
+        }
+      ],
+      "path": "/home/demo/project/side"
+    },
+    "/home/demo/project/side/dotfiles": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": ".git",
+          "path": "/home/demo/project/side/dotfiles/.git",
+          "size": 4096
+        },
+        {
+          "at": "2026-09-30T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": ".history",
+          "path": "/home/demo/project/side/dotfiles/.history",
+          "size": 2
+        },
+        {
+          "at": "2026-09-30T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "README.md",
+          "path": "/home/demo/project/side/dotfiles/README.md",
+          "size": 46
+        },
+        {
+          "at": "2026-09-30T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "install.sh",
+          "path": "/home/demo/project/side/dotfiles/install.sh",
+          "size": 10
+        }
+      ],
+      "path": "/home/demo/project/side/dotfiles"
+    },
+    "/home/demo/project/side/habit-app": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": ".git",
+          "path": "/home/demo/project/side/habit-app/.git",
+          "size": 4096
+        },
+        {
+          "at": "2026-05-11T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": ".gitignore",
+          "path": "/home/demo/project/side/habit-app/.gitignore",
+          "size": 14
+        },
+        {
+          "at": "2026-05-11T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": ".history",
+          "path": "/home/demo/project/side/habit-app/.history",
+          "size": 2
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": "node_modules",
+          "path": "/home/demo/project/side/habit-app/node_modules",
+          "size": 4096
+        },
+        {
+          "at": "2026-05-11T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "package.json",
+          "path": "/home/demo/project/side/habit-app/package.json",
+          "size": 242
+        }
+      ],
+      "path": "/home/demo/project/side/habit-app"
+    },
+    "/home/demo/project/side/habit-app/node_modules": {
+      "entries": [
+        {
+          "at": "2026-05-11T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": ".demo-weight",
+          "path": "/home/demo/project/side/habit-app/node_modules/.demo-weight",
+          "size": 440401920
+        }
+      ],
+      "path": "/home/demo/project/side/habit-app/node_modules"
+    },
+    "/home/demo/project/thesis": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": true,
+          "link": false,
+          "name": "campus-lms",
+          "path": "/home/demo/project/thesis/campus-lms",
+          "size": 4096
+        }
+      ],
+      "path": "/home/demo/project/thesis"
+    },
+    "/home/demo/project/thesis/campus-lms": {
+      "entries": [
+        {
+          "at": "2026-09-18T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": ".env.example",
+          "path": "/home/demo/project/thesis/campus-lms/.env.example",
+          "size": 43
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "link": false,
+          "name": ".git",
+          "path": "/home/demo/project/thesis/campus-lms/.git",
+          "size": 4096
+        },
+        {
+          "at": "2026-09-18T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": ".history",
+          "path": "/home/demo/project/thesis/campus-lms/.history",
+          "size": 2
+        },
+        {
+          "at": "2026-09-18T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "HANDOFF.md",
+          "path": "/home/demo/project/thesis/campus-lms/HANDOFF.md",
+          "size": 157
+        },
+        {
+          "at": "2026-09-18T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "README.md",
+          "path": "/home/demo/project/thesis/campus-lms/README.md",
+          "size": 112
+        },
+        {
+          "at": "2026-09-18T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "artisan",
+          "path": "/home/demo/project/thesis/campus-lms/artisan",
+          "size": 0
+        },
+        {
+          "at": "2026-09-18T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "composer.json",
+          "path": "/home/demo/project/thesis/campus-lms/composer.json",
+          "size": 41
+        },
+        {
+          "at": "2026-09-18T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "link": false,
+          "name": "docker-compose.yml",
+          "path": "/home/demo/project/thesis/campus-lms/docker-compose.yml",
+          "size": 93
+        }
+      ],
+      "path": "/home/demo/project/thesis/campus-lms"
+    }
+  },
+  "ls/newest": {
+    "/home/demo": {
+      ".cache": "2026-10-08T09:00:00.000Z",
+      ".claude": "2026-10-08T09:00:00.000Z",
+      ".codex": "2026-10-08T09:00:00.000Z",
+      ".config": "2026-10-08T09:00:00.000Z",
+      ".local": "2026-10-08T09:00:00.000Z",
+      "Documents": "2026-10-08T09:00:00.000Z",
+      "project": "2026-10-08T09:00:00.000Z"
+    },
+    "/home/demo/Documents": {
+      "agent-reports": "2026-10-08T09:00:00.000Z"
+    },
+    "/home/demo/Documents/agent-reports": {},
+    "/home/demo/project": {
+      "_archive": "2026-01-21T09:00:00.000Z",
+      "clients": "2026-10-08T09:00:00.000Z",
+      "infra-notes": "2026-10-03T09:00:00.000Z",
+      "side": "2026-09-30T09:00:00.000Z",
+      "thesis": "2026-09-18T09:00:00.000Z"
+    },
+    "/home/demo/project/_archive": {
+      "old-portfolio": "2026-01-21T09:00:00.000Z"
+    },
+    "/home/demo/project/_archive/old-portfolio": {
+      ".git": "2026-10-08T09:00:00.000Z"
+    },
+    "/home/demo/project/clients": {
+      "acme-store": "2026-10-08T09:00:00.000Z",
+      "kopi-landing": "2026-10-08T09:00:00.000Z"
+    },
+    "/home/demo/project/clients/acme-store": {
+      ".git": "2026-10-08T09:00:00.000Z",
+      "src": "2026-10-08T09:00:00.000Z"
+    },
+    "/home/demo/project/clients/acme-store/src": {
+      "app": "2026-10-08T09:00:00.000Z"
+    },
+    "/home/demo/project/clients/acme-store/src/app": {},
+    "/home/demo/project/clients/kopi-landing": {
+      ".git": "2026-10-08T09:00:00.000Z",
+      "src": "2026-10-08T09:00:00.000Z"
+    },
+    "/home/demo/project/clients/kopi-landing/src": {
+      "pages": "2026-10-08T09:00:00.000Z"
+    },
+    "/home/demo/project/clients/kopi-landing/src/pages": {},
+    "/home/demo/project/infra-notes": {},
+    "/home/demo/project/side": {
+      "dotfiles": "2026-09-30T09:00:00.000Z",
+      "habit-app": "2026-05-11T09:00:00.000Z"
+    },
+    "/home/demo/project/side/dotfiles": {
+      ".git": "2026-10-08T09:00:00.000Z"
+    },
+    "/home/demo/project/side/habit-app": {
+      ".git": "2026-10-08T09:00:00.000Z",
+      "node_modules": "2026-05-11T09:00:00.000Z"
+    },
+    "/home/demo/project/side/habit-app/node_modules": {},
+    "/home/demo/project/thesis": {
+      "campus-lms": "2026-09-18T09:00:00.000Z"
+    },
+    "/home/demo/project/thesis/campus-lms": {
+      ".git": "2026-10-08T09:00:00.000Z"
+    }
+  },
+  "meta": {
+    "home": "/home/demo",
+    "now": "2026-10-08T09:00:00.000Z"
+  },
+  "new/info": {
+    "hosts": {
+      "github": true,
+      "gitlab": false
+    },
+    "recipes": [
+      {
+        "args": [
+          "create",
+          "vite@latest",
+          "{name}",
+          "--template",
+          "{template}",
+          "--no-interactive"
+        ],
+        "download": true,
+        "id": "vite",
+        "name": "Vite",
+        "program": "pnpm",
+        "runtime": "node"
+      }
+    ],
+    "templates": [],
+    "templatesDir": "~/.config/laci/templates"
+  },
+  "reports/read": {
+    "2026-08-25-grading-model-and-rubrics.md": {
+      "file": "/home/demo/Documents/agent-reports/2026-08-25-grading-model-and-rubrics.md",
+      "id": "2026-08-25-grading-model-and-rubrics.md",
+      "raw": "# Grading model and rubrics\n\n- **Date:** 2026-08-25\n- **Session:** ~/project/thesis/campus-lms · Claude Code\n- **Projects:** ~/project/thesis/campus-lms\n\n## Summary\nDesigned how grades are stored: a rubric per assignment, a score per criterion, and a weighted total computed when it is read.\n\n## Open\n- Export the grades for the school's report cards.\n"
+    },
+    "2026-09-19-grading-export-to-pdf.md": {
+      "file": "/home/demo/Documents/agent-reports/2026-09-19-grading-export-to-pdf.md",
+      "id": "2026-09-19-grading-export-to-pdf.md",
+      "raw": "# Grading export to PDF\n\n- **Date:** 2026-09-19\n- **Session:** ~/project/thesis/campus-lms · Claude Code\n- **Projects:** ~/project/thesis/campus-lms\n\n## Summary\nStarted the grading export the school asked for: one CSV for the office and one PDF report card per student. The CSV works; the PDF is half done and stashed. This continues [the grading model](2026-08-25-grading-model-and-rubrics.md).\n\n## What was done\n- `app/Export.php` builds the CSV from the weighted totals, one row per student and course.\n- The PDF layout follows the school's paper report card: the student's name, the class, then one table per course.\n- Chose DomPDF over a headless browser: it runs inside the PHP container, so the school's server needs nothing new.\n\n## Decisions\n- Grades are rounded to whole numbers only on the report card. The CSV keeps two decimals, because the office recalculates class ranks from it.\n- A course without a score is left out of the report card instead of showing zero.\n- Report cards are generated on request, not stored: the rubric can change until the term closes.\n\n## Load test plan\nThe quiz page must hold 300 students at once on exam day. The plan for chapter 4:\n\n1. Seed a course with 300 students and a 40-question quiz.\n2. Run k6 with 300 virtual users answering a question every 20 seconds.\n3. Measure the 95th percentile response time and the database's connection count.\n4. Repeat with Redis caching the quiz questions.\n\n```sh\nk6 run --vus 300 --duration 15m load/quiz.js\n```\n\n## State now\n- The CSV export works and is tested against last term's grades.\n- The PDF export is in a stash named \"half-done export\".\n- Nothing of this is deployed.\n\n## Open\n1. Finish the PDF report card from the stash.\n2. Load test the quiz page with 300 students.\n3. Write chapter 4 from the load test results.\n"
+    },
+    "2026-09-30-hyprland-binds.md": {
+      "file": "/home/demo/Documents/agent-reports/2026-09-30-hyprland-binds.md",
+      "id": "2026-09-30-hyprland-binds.md",
+      "raw": "# New Hyprland binds\n\n- **Date:** 2026-09-30\n- **Session:** ~/project/side/dotfiles · Claude Code\n- **Projects:** ~/project/side/dotfiles\n\n## Summary\nMoved window focus to Super+HJKL and added a bind for the screenshot tool.\n\n## Open\nNothing open.\n"
+    },
+    "2026-10-03-droplet-memory-and-swap.md": {
+      "file": "/home/demo/Documents/agent-reports/2026-10-03-droplet-memory-and-swap.md",
+      "id": "2026-10-03-droplet-memory-and-swap.md",
+      "raw": "# Why the droplet keeps running out of memory\n\n- **Date:** 2026-10-03\n- **Session:** ~/project/infra-notes · Claude Code\n- **Projects:** ~/project/infra-notes/NOTES.md\n\n## Summary\nThe staging droplet has 1 GB of memory and Postgres plus two Node apps. Added 2 GB of swap and capped Postgres; the out-of-memory kills stopped.\n\n## State now\nSwap is on and survives a reboot. Memory peaks at 840 MB under the nightly import.\n\n## Open\n- Rotate the SSH keys on the staging droplet.\n- Renew the SSL certificate before it expires on the 30th.\n"
+    },
+    "2026-10-05-email-filters.md": {
+      "file": "/home/demo/Documents/agent-reports/2026-10-05-email-filters.md",
+      "id": "2026-10-05-email-filters.md",
+      "raw": "# Email filters for the work inbox\n\n- **Date:** 2026-10-05\n- **Session:** ~ · Claude Code\n- **Projects:** Gmail (work account)\n\n## Summary\nSorted the work inbox: six filters label invoices, client mail and newsletters as they arrive.\n\n## Open\nNothing open.\n"
+    },
+    "2026-10-06-kopi-hero-and-contact-form.md": {
+      "file": "/home/demo/Documents/agent-reports/2026-10-06-kopi-hero-and-contact-form.md",
+      "id": "2026-10-06-kopi-hero-and-contact-form.md",
+      "raw": "# Kopi landing: hero copy and contact form\n\n- **Date:** 2026-10-06\n- **Session:** ~/project/clients/kopi-landing · Codex\n- **Projects:** Kopi Landing, the Astro site\n\n## Summary\nWrote the hero copy in Indonesian and English and added a contact form that posts to the shop's WhatsApp.\n\n## What was done\n- Hero and menu sections in `src/pages/index.astro`.\n- The form opens WhatsApp with the message filled in; no server needed.\n\n## State now\nBuilds with `pnpm build`; not deployed yet.\n\n## Open\n- The shop's opening hours for the footer.\n- Photos of the real menu instead of the placeholders.\n"
+    },
+    "2026-10-07-checkout-total-on-mobile-safari.md": {
+      "file": "/home/demo/Documents/agent-reports/2026-10-07-checkout-total-on-mobile-safari.md",
+      "id": "2026-10-07-checkout-total-on-mobile-safari.md",
+      "raw": "# Checkout total wrong on mobile Safari\n\n- **Date:** 2026-10-07\n- **Session:** `~/project/clients/acme-store` · `5f0c2a1e-8d4b-4c7a-9e21-3b6d0f9a7c42`\n- **Projects:** ~/project/clients/acme-store\n\n## Summary\nSafari on iOS showed a checkout total one rupiah off. The cart rounded each line before adding them up; it now adds first and rounds once, as Midtrans does. Fixed, tested on Safari, Chrome and Firefox, and deployed to staging.\n\n## What was done\n- `src/app/checkout.tsx`: the total is computed in whole rupiah and rounded once.\n- A test for a cart of three discounted items (`pnpm test checkout`).\n- Staging redeployed at [acme-coffee-staging.example](https://acme-coffee-staging.example).\n\n## State now\n- Staging shows the right total on Safari, Chrome and Firefox.\n- Production still rounds per line. The release waits for the client.\n\n## Open\n- Send the staging link to the client and ask for the go to release.\n- Promo codes stack with the expo discount; ask whether that is wanted.\n"
+    }
+  },
+  "setup/discover": {
+    "candidates": [
+      {
+        "path": "/home/demo/project",
+        "repos": 6
+      },
+      {
+        "path": "/home/demo/Documents",
+        "repos": 0
+      }
+    ],
+    "limited": false
+  },
+  "setup/info": {
+    "apps": {
+      "editor": "code",
+      "files": "dolphin",
+      "terminal": "kitty"
+    },
+    "archiveDir": "",
+    "candidates": [],
+    "configured": true,
+    "custom": 0,
+    "installed": {
+      "editor": [
+        "code",
+        "zed"
+      ],
+      "files": [
+        "dolphin",
+        "thunar"
+      ],
+      "terminal": [
+        "kitty",
+        "foot"
+      ]
+    },
+    "presets": [
+      "claude",
+      "codex"
+    ],
+    "reportsDir": "/home/demo/Documents/agent-reports",
+    "rootStatus": [
+      {
+        "available": true,
+        "device": 2049,
+        "inode": 1000,
+        "path": "/home/demo/project"
+      }
+    ],
+    "roots": [
+      "/home/demo/project"
+    ],
+    "terminalTarget": "internal"
+  },
+  "snapshot": {
+    "backup": {
+      "auto": false
+    },
+    "claude": {
+      "-home-demo-project-clients-acme-store": {
+        "bytes": 532,
+        "cwds": {
+          "/home/demo/project/acme-store": 1,
+          "/home/demo/project/clients/acme-store": 1
+        },
+        "dir": "/home/demo/.claude/projects/-home-demo-project-clients-acme-store",
+        "gone": [
+          "/home/demo/project/acme-store"
+        ],
+        "memory": [
+          "MEMORY.md",
+          "client-preferences.md",
+          "deploy.md"
+        ],
+        "name": "-home-demo-project-clients-acme-store",
+        "ownershipComplete": true,
+        "path": "/home/demo/project/clients/acme-store",
+        "sessions": [
+          {
+            "at": "2026-10-07T09:00:00.000Z",
+            "branch": "main",
+            "bytes": 285,
+            "cwd": "/home/demo/project/clients/acme-store",
+            "endedAt": "2026-10-07T09:00:00.000Z",
+            "file": "/home/demo/.claude/projects/-home-demo-project-clients-acme-store/5f0c2a1e-8d4b-4c7a-9e21-3b6d0f9a7c42.jsonl",
+            "filesChanged": 0,
+            "id": "5f0c2a1e-8d4b-4c7a-9e21-3b6d0f9a7c42",
+            "parentId": null,
+            "prompts": 0,
+            "provider": "claude",
+            "resumeCapability": "supported",
+            "sessionId": "5f0c2a1e-8d4b-4c7a-9e21-3b6d0f9a7c42",
+            "sourceKind": "cli",
+            "startedAt": "2026-10-07T09:00:00.000Z",
+            "title": "Checkout total wrong on mobile",
+            "titleSource": "provider",
+            "updatedAt": "2026-10-07T09:00:00.000Z"
+          },
+          {
+            "at": "2026-09-08T09:00:00.000Z",
+            "branch": "main",
+            "bytes": 208,
+            "cwd": "/home/demo/project/acme-store",
+            "endedAt": "2026-09-08T09:00:00.000Z",
+            "file": "/home/demo/.claude/projects/-home-demo-project-clients-acme-store/a1.jsonl",
+            "filesChanged": 0,
+            "id": "a1",
+            "parentId": null,
+            "prompts": 0,
+            "provider": "claude",
+            "resumeCapability": "history-only",
+            "sessionId": "a1",
+            "sourceKind": "cli",
+            "startedAt": "2026-09-08T09:00:00.000Z",
+            "title": "Midtrans checkout integration",
+            "titleSource": "provider",
+            "updatedAt": "2026-09-08T09:00:00.000Z"
+          }
+        ],
+        "subagentLogs": 0
+      },
+      "-home-demo-project-clients-kopi-landing": {
+        "bytes": 217,
+        "cwds": {
+          "/home/demo/project/clients/kopi-landing": 1
+        },
+        "dir": "/home/demo/.claude/projects/-home-demo-project-clients-kopi-landing",
+        "gone": [],
+        "memory": [],
+        "name": "-home-demo-project-clients-kopi-landing",
+        "ownershipComplete": true,
+        "path": "/home/demo/project/clients/kopi-landing",
+        "sessions": [
+          {
+            "at": "2026-10-06T09:00:00.000Z",
+            "branch": "main",
+            "bytes": 217,
+            "cwd": "/home/demo/project/clients/kopi-landing",
+            "endedAt": "2026-10-06T09:00:00.000Z",
+            "file": "/home/demo/.claude/projects/-home-demo-project-clients-kopi-landing/k1.jsonl",
+            "filesChanged": 0,
+            "id": "k1",
+            "parentId": null,
+            "prompts": 0,
+            "provider": "claude",
+            "resumeCapability": "history-only",
+            "sessionId": "k1",
+            "sourceKind": "cli",
+            "startedAt": "2026-10-06T09:00:00.000Z",
+            "title": "Hero section copy and layout",
+            "titleSource": "provider",
+            "updatedAt": "2026-10-06T09:00:00.000Z"
+          }
+        ],
+        "subagentLogs": 0
+      },
+      "-home-demo-project-infra-notes": {
+        "bytes": 223,
+        "cwds": {
+          "/home/demo/project/infra-notes": 1
+        },
+        "dir": "/home/demo/.claude/projects/-home-demo-project-infra-notes",
+        "gone": [],
+        "memory": [],
+        "name": "-home-demo-project-infra-notes",
+        "ownershipComplete": true,
+        "path": "/home/demo/project/infra-notes",
+        "sessions": [
+          {
+            "at": "2026-10-03T09:00:00.000Z",
+            "branch": "main",
+            "bytes": 223,
+            "cwd": "/home/demo/project/infra-notes",
+            "endedAt": "2026-10-03T09:00:00.000Z",
+            "file": "/home/demo/.claude/projects/-home-demo-project-infra-notes/n1.jsonl",
+            "filesChanged": 0,
+            "id": "n1",
+            "parentId": null,
+            "prompts": 0,
+            "provider": "claude",
+            "resumeCapability": "history-only",
+            "sessionId": "n1",
+            "sourceKind": "cli",
+            "startedAt": "2026-10-03T09:00:00.000Z",
+            "title": "Why the droplet keeps running out of memory",
+            "titleSource": "provider",
+            "updatedAt": "2026-10-03T09:00:00.000Z"
+          }
+        ],
+        "subagentLogs": 0
+      },
+      "-home-demo-project-old-portfolio": {
+        "availability": "missing",
+        "bytes": 214,
+        "cwds": {
+          "/home/demo/project/old-portfolio": 1
+        },
+        "dir": "/home/demo/.claude/projects/-home-demo-project-old-portfolio",
+        "gone": [
+          "/home/demo/project/old-portfolio"
+        ],
+        "memory": [
+          "MEMORY.md"
+        ],
+        "name": "-home-demo-project-old-portfolio",
+        "ownershipComplete": true,
+        "sessions": [
+          {
+            "at": "2026-09-12T09:00:00.000Z",
+            "branch": "main",
+            "bytes": 205,
+            "cwd": "/home/demo/project/old-portfolio",
+            "endedAt": "2026-09-12T09:00:00.000Z",
+            "file": "/home/demo/.claude/projects/-home-demo-project-old-portfolio/o1.jsonl",
+            "filesChanged": 0,
+            "id": "o1",
+            "parentId": null,
+            "prompts": 0,
+            "provider": "claude",
+            "resumeCapability": "history-only",
+            "sessionId": "o1",
+            "sourceKind": "cli",
+            "startedAt": "2026-09-12T09:00:00.000Z",
+            "title": "Portfolio projects grid",
+            "titleSource": "provider",
+            "updatedAt": "2026-09-12T09:00:00.000Z"
+          }
+        ],
+        "subagentLogs": 0
+      },
+      "-home-demo-project-thesis-campus-lms": {
+        "bytes": 207,
+        "cwds": {
+          "/home/demo/project/thesis/campus-lms": 1
+        },
+        "dir": "/home/demo/.claude/projects/-home-demo-project-thesis-campus-lms",
+        "gone": [],
+        "memory": [],
+        "name": "-home-demo-project-thesis-campus-lms",
+        "ownershipComplete": true,
+        "path": "/home/demo/project/thesis/campus-lms",
+        "sessions": [
+          {
+            "at": "2026-09-19T09:00:00.000Z",
+            "branch": "main",
+            "bytes": 207,
+            "cwd": "/home/demo/project/thesis/campus-lms",
+            "endedAt": "2026-09-19T09:00:00.000Z",
+            "file": "/home/demo/.claude/projects/-home-demo-project-thesis-campus-lms/l1.jsonl",
+            "filesChanged": 0,
+            "id": "l1",
+            "parentId": null,
+            "prompts": 0,
+            "provider": "claude",
+            "resumeCapability": "history-only",
+            "sessionId": "l1",
+            "sourceKind": "cli",
+            "startedAt": "2026-09-19T09:00:00.000Z",
+            "title": "Grading export to PDF",
+            "titleSource": "provider",
+            "updatedAt": "2026-09-19T09:00:00.000Z"
+          }
+        ],
+        "subagentLogs": 0
+      }
+    },
+    "configured": true,
+    "connectors": [
+      {
+        "about": "5 project folders · 6 sessions",
+        "builtin": true,
+        "bytes": 1393,
+        "capabilities": {
+          "continue": true,
+          "launch": true,
+          "mcp": true,
+          "modelDiscovery": "aliases",
+          "resume": true,
+          "titles": true
+        },
+        "command": "claude",
+        "count": 6,
+        "id": "claude",
+        "link": {
+          "dir": "/home/demo/.claude/projects",
+          "kind": "named",
+          "naming": "dashes"
+        },
+        "moves": "Its folder is renamed and paths in the logs are rewritten",
+        "name": "Claude Code",
+        "present": true,
+        "provider": "claude",
+        "where": "~/.claude/projects"
+      },
+      {
+        "about": "Sessions, titles and provider-aware resume",
+        "builtin": true,
+        "bytes": 123,
+        "capabilities": {
+          "continue": true,
+          "launch": true,
+          "mcp": true,
+          "modelDiscovery": "on-demand",
+          "resume": true,
+          "titles": true
+        },
+        "command": "codex",
+        "count": 1,
+        "id": "codex",
+        "link": {
+          "dir": "/home/demo/.codex/sessions",
+          "ext": ".jsonl",
+          "field": "cwd",
+          "kind": "cwd"
+        },
+        "moves": "Paths in the logs are rewritten",
+        "name": "Codex",
+        "present": true,
+        "provider": "codex",
+        "where": "~/.codex/sessions"
+      }
+    ],
+    "dismissed": [],
+    "global": {
+      "claude": [],
+      "items": []
+    },
+    "home": "/home/demo",
+    "host": "demo",
+    "items": {
+      "codex:2026/10/04/rollout-kopi.jsonl": {
+        "at": "2026-10-08T09:00:00.000Z",
+        "bytes": 123,
+        "connector": "codex",
+        "cwd": "/home/demo/project/clients/kopi-landing",
+        "cwds": {
+          "/home/demo/project/clients/kopi-landing": 1
+        },
+        "file": "/home/demo/.codex/sessions/2026/10/04/rollout-kopi.jsonl",
+        "filesChanged": 0,
+        "id": "codex:2026/10/04/rollout-kopi.jsonl",
+        "lines": 1,
+        "ownershipComplete": true,
+        "parentId": null,
+        "prompts": 0,
+        "provider": "codex",
+        "resumeCapability": "history-only",
+        "sessionId": "",
+        "sourceKind": "cli",
+        "title": "Untitled session",
+        "titleSource": "fallback",
+        "updatedAt": "2026-10-08T09:00:00.000Z"
+      }
+    },
+    "nodes": {
+      "/home/demo/project": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [],
+          "items": []
+        },
+        "archived": false,
+        "children": [
+          "/home/demo/project/_archive",
+          "/home/demo/project/clients",
+          "/home/demo/project/infra-notes",
+          "/home/demo/project/side",
+          "/home/demo/project/thesis"
+        ],
+        "createdAt": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "folder"
+        },
+        "id": "/home/demo/project",
+        "issues": [],
+        "kind": "folder",
+        "label": "project",
+        "lastActivity": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "inside"
+        },
+        "meta": {},
+        "name": "project",
+        "path": "/home/demo/project",
+        "sidecar": false,
+        "stableId": "p:d9f8d9070f1c",
+        "status": {
+          "auto": true,
+          "value": "active"
+        },
+        "taskFiles": [],
+        "tasks": []
+      },
+      "/home/demo/project/_archive": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [],
+          "items": []
+        },
+        "archived": true,
+        "children": [
+          "/home/demo/project/_archive/old-portfolio"
+        ],
+        "createdAt": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "folder"
+        },
+        "id": "/home/demo/project/_archive",
+        "issues": [],
+        "kind": "folder",
+        "label": "_archive",
+        "lastActivity": {
+          "at": "2026-01-21T09:00:00.000Z",
+          "source": "inside"
+        },
+        "meta": {},
+        "name": "_archive",
+        "parent": "/home/demo/project",
+        "path": "/home/demo/project/_archive",
+        "sidecar": false,
+        "stableId": "p:5717ea03fbb4",
+        "status": {
+          "auto": true,
+          "value": "archived"
+        },
+        "taskFiles": [],
+        "tasks": []
+      },
+      "/home/demo/project/_archive/old-portfolio": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [],
+          "items": []
+        },
+        "archived": true,
+        "children": [],
+        "createdAt": {
+          "at": "2025-12-12T09:00:00.000Z",
+          "source": "first commit"
+        },
+        "git": {
+          "ahead": 0,
+          "authors": 1,
+          "behind": 0,
+          "branch": "main",
+          "commits": 2,
+          "deleted": 0,
+          "dirty": 0,
+          "firstCommitAt": "2025-12-12T09:00:00.000Z",
+          "lastCommitAt": "2026-01-21T09:00:00.000Z",
+          "lastSubject": "feat: projects page",
+          "localOnly": 2,
+          "remotes": [
+            {
+              "host": "github.com",
+              "name": "origin",
+              "url": "git@github.com:me/portfolio-v1.git",
+              "web": "https://github.com/me/portfolio-v1"
+            }
+          ],
+          "rootCommit": "f6de84a81bde03f2da514abab8abc2e90d818e00",
+          "stashes": 0,
+          "upstream": "",
+          "weekly": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "worktree": false
+        },
+        "id": "/home/demo/project/_archive/old-portfolio",
+        "issues": [
+          {
+            "code": "unpushed",
+            "detail": "main has no upstream, and no remote has them",
+            "severity": "med",
+            "title": "2 commits not pushed"
+          }
+        ],
+        "kind": "project",
+        "label": "old-portfolio",
+        "lastActivity": {
+          "at": "2026-01-21T09:00:00.000Z",
+          "source": "commit"
+        },
+        "meta": {},
+        "name": "old-portfolio",
+        "ownActivity": {
+          "at": "2026-01-21T09:00:00.000Z",
+          "source": "commit"
+        },
+        "parent": "/home/demo/project/_archive",
+        "path": "/home/demo/project/_archive/old-portfolio",
+        "readme": {
+          "file": "README.md",
+          "images": 0,
+          "links": [],
+          "raw": "# Portfolio v1\n\nMy first portfolio site.\n",
+          "sections": [],
+          "tagline": "My first portfolio site.",
+          "template": false,
+          "title": "Portfolio v1",
+          "weakTitle": false
+        },
+        "sidecar": false,
+        "size": {
+          "parts": [],
+          "reclaimable": 0,
+          "total": 29265
+        },
+        "stableId": "git:f6de84a81bde",
+        "stack": {
+          "ci": [],
+          "deploy": [],
+          "description": null,
+          "env": [],
+          "files": 3,
+          "labels": [
+            "Next.js"
+          ],
+          "languages": [
+            {
+              "files": 1,
+              "name": "Markdown"
+            }
+          ],
+          "newest": "2026-01-21T09:00:00.000Z",
+          "packageManager": "",
+          "scripts": [
+            {
+              "cmd": "next dev",
+              "name": "dev"
+            },
+            {
+              "cmd": "next build",
+              "name": "build"
+            },
+            {
+              "cmd": "eslint .",
+              "name": "lint"
+            }
+          ],
+          "services": []
+        },
+        "status": {
+          "auto": true,
+          "value": "archived"
+        },
+        "summary": {
+          "source": "README.md",
+          "text": "My first portfolio site."
+        },
+        "taskFiles": [],
+        "tasks": [],
+        "type": "code"
+      },
+      "/home/demo/project/clients": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [],
+          "items": []
+        },
+        "archived": false,
+        "children": [
+          "/home/demo/project/clients/acme-store",
+          "/home/demo/project/clients/kopi-landing"
+        ],
+        "createdAt": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "folder"
+        },
+        "id": "/home/demo/project/clients",
+        "issues": [],
+        "kind": "folder",
+        "label": "clients",
+        "lastActivity": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "inside"
+        },
+        "meta": {},
+        "name": "clients",
+        "parent": "/home/demo/project",
+        "path": "/home/demo/project/clients",
+        "sidecar": false,
+        "stableId": "p:a30e6a37abb2",
+        "status": {
+          "auto": true,
+          "value": "active"
+        },
+        "taskFiles": [],
+        "tasks": []
+      },
+      "/home/demo/project/clients/acme-store": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [
+            "-home-demo-project-clients-acme-store"
+          ],
+          "items": []
+        },
+        "archivePlan": {
+          "checks": [
+            {
+              "code": "dirty",
+              "severity": "med",
+              "title": "1 uncommitted change"
+            },
+            {
+              "code": "unpushed",
+              "detail": "main has no upstream, and no remote has them",
+              "severity": "med",
+              "title": "8 commits not pushed"
+            }
+          ],
+          "dest": "/home/demo/project/_archive/clients/acme-store",
+          "ops": [
+            {
+              "from": "~/project/clients/acme-store",
+              "kind": "move",
+              "label": "Move folder",
+              "to": "~/project/_archive/clients/acme-store"
+            },
+            {
+              "detail": "2 sessions · 3 memory files · 532 B",
+              "from": "~/project/clients/acme-store",
+              "kind": "rename",
+              "label": "Move Claude sessions + memory",
+              "to": "~/project/_archive/clients/acme-store"
+            },
+            {
+              "detail": "2 lines → ~/project/_archive/clients/acme-store",
+              "kind": "rewrite",
+              "label": "Rewrite cwd in Claude logs"
+            },
+            {
+              "detail": ".laci.md",
+              "kind": "keep",
+              "label": "Travels with the folder"
+            },
+            {
+              "kind": "write",
+              "label": "Set status: archived",
+              "to": "~/project/_archive/clients/acme-store/.laci.md"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
+        "archived": false,
+        "children": [],
+        "createdAt": {
+          "at": "2026-07-20T09:00:00.000Z",
+          "source": "first commit"
+        },
+        "git": {
+          "ahead": 0,
+          "authors": 1,
+          "behind": 0,
+          "branch": "main",
+          "commits": 8,
+          "deleted": 0,
+          "dirty": 1,
+          "firstCommitAt": "2026-07-20T09:00:00.000Z",
+          "lastCommitAt": "2026-10-07T09:00:00.000Z",
+          "lastSubject": "feat: promo codes",
+          "localOnly": 8,
+          "remotes": [
+            {
+              "host": "github.com",
+              "name": "origin",
+              "url": "git@github.com:acme/acme-store.git",
+              "web": "https://github.com/acme/acme-store"
+            }
+          ],
+          "rootCommit": "0ab68e90cb983d62bb153f45113c646abc3a45d9",
+          "stashes": 0,
+          "upstream": "",
+          "weekly": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            1,
+            0,
+            0,
+            1,
+            1,
+            0,
+            1,
+            1,
+            2
+          ],
+          "worktree": false
+        },
+        "id": "/home/demo/project/clients/acme-store",
+        "issues": [
+          {
+            "code": "dirty",
+            "severity": "med",
+            "title": "1 uncommitted change"
+          },
+          {
+            "code": "unpushed",
+            "detail": "main has no upstream, and no remote has them",
+            "severity": "med",
+            "title": "8 commits not pushed"
+          },
+          {
+            "code": "due-soon",
+            "severity": "med",
+            "title": "Due in 5 days"
+          },
+          {
+            "code": "stale-cwd",
+            "detail": "1 line still says ~/project/acme-store",
+            "severity": "low",
+            "title": "Agent logs point to an old path"
+          }
+        ],
+        "kind": "project",
+        "label": "acme-store",
+        "lastActivity": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "files"
+        },
+        "meta": {
+          "deadline": "2026-10-13",
+          "priority": "high",
+          "status": "active"
+        },
+        "name": "acme-store",
+        "notes": "Client wants the launch before the coffee expo. Midtrans sandbox keys are in 1Password.",
+        "ownActivity": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "files"
+        },
+        "parent": "/home/demo/project/clients",
+        "path": "/home/demo/project/clients/acme-store",
+        "readme": {
+          "file": "README.md",
+          "images": 0,
+          "links": [
+            {
+              "label": "acme-coffee.example",
+              "url": "https://acme-coffee.example"
+            }
+          ],
+          "raw": "# Acme Store\n\nHeadless storefront for Acme Coffee: product catalog, cart and Midtrans checkout, on Next.js and Prisma.\n\n## Setup\n\n```sh\npnpm install\npnpm dev\n```\n\nLive: [acme-coffee.example](https://acme-coffee.example)\n",
+          "sections": [
+            "Setup"
+          ],
+          "tagline": "Headless storefront for Acme Coffee: product catalog, cart and Midtrans checkout, on Next.js and Prisma.",
+          "template": false,
+          "title": "Acme Store",
+          "weakTitle": false
+        },
+        "sidecar": true,
+        "size": {
+          "parts": [],
+          "reclaimable": 0,
+          "total": 36355
+        },
+        "stableId": "git:0ab68e90cb98",
+        "stack": {
+          "ci": [],
+          "deploy": [],
+          "description": null,
+          "env": [
+            "DATABASE_URL",
+            "MIDTRANS_SERVER_KEY",
+            "NEXT_PUBLIC_SITE_URL"
+          ],
+          "files": 9,
+          "labels": [
+            "Next.js",
+            "Prisma",
+            "Tailwind",
+            "TypeScript",
+            "Docker Compose"
+          ],
+          "languages": [
+            {
+              "files": 2,
+              "name": "Markdown"
+            },
+            {
+              "files": 2,
+              "name": "TypeScript"
+            }
+          ],
+          "newest": "2026-10-08T09:00:00.000Z",
+          "packageManager": "pnpm",
+          "scripts": [
+            {
+              "cmd": "next dev",
+              "name": "dev"
+            },
+            {
+              "cmd": "next build",
+              "name": "build"
+            },
+            {
+              "cmd": "eslint .",
+              "name": "lint"
+            }
+          ],
+          "services": [
+            "postgres"
+          ]
+        },
+        "status": {
+          "auto": false,
+          "value": "active"
+        },
+        "summary": {
+          "source": "README.md",
+          "text": "Headless storefront for Acme Coffee: product catalog, cart and Midtrans checkout, on Next.js and Prisma."
+        },
+        "taskFiles": [
+          {
+            "at": "2026-10-07T09:00:00.000Z",
+            "done": 0,
+            "file": ".laci.md",
+            "open": 2
+          }
+        ],
+        "tasks": [
+          {
+            "done": false,
+            "file": ".laci.md",
+            "kind": "check",
+            "line": 8,
+            "section": "Next",
+            "text": "Fix checkout total on mobile Safari"
+          },
+          {
+            "done": false,
+            "file": ".laci.md",
+            "kind": "check",
+            "line": 9,
+            "section": "Next",
+            "text": "Send staging link to the client"
+          }
+        ],
+        "type": "code"
+      },
+      "/home/demo/project/clients/kopi-landing": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [
+            "-home-demo-project-clients-kopi-landing"
+          ],
+          "items": [
+            "codex:2026/10/04/rollout-kopi.jsonl"
+          ]
+        },
+        "archivePlan": {
+          "checks": [
+            {
+              "code": "no-remote",
+              "detail": "3 commits exist only on this disk",
+              "severity": "high",
+              "title": "No remote"
+            },
+            {
+              "code": "dirty",
+              "severity": "med",
+              "title": "1 uncommitted change"
+            }
+          ],
+          "dest": "/home/demo/project/_archive/clients/kopi-landing",
+          "ops": [
+            {
+              "from": "~/project/clients/kopi-landing",
+              "kind": "move",
+              "label": "Move folder",
+              "to": "~/project/_archive/clients/kopi-landing"
+            },
+            {
+              "detail": "1 sessions · 0 memory files · 217 B",
+              "from": "~/project/clients/kopi-landing",
+              "kind": "rename",
+              "label": "Move Claude sessions + memory",
+              "to": "~/project/_archive/clients/kopi-landing"
+            },
+            {
+              "detail": "1 line → ~/project/_archive/clients/kopi-landing",
+              "kind": "rewrite",
+              "label": "Rewrite cwd in Claude logs"
+            },
+            {
+              "detail": "1 line in 1 file",
+              "kind": "rewrite",
+              "label": "Rewrite paths in Codex logs"
+            },
+            {
+              "detail": ".laci.md",
+              "kind": "keep",
+              "label": "Travels with the folder"
+            },
+            {
+              "kind": "write",
+              "label": "Set status: archived",
+              "to": "~/project/_archive/clients/kopi-landing/.laci.md"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
+        "archived": false,
+        "children": [],
+        "createdAt": {
+          "at": "2026-09-26T09:00:00.000Z",
+          "source": "first commit"
+        },
+        "git": {
+          "ahead": 0,
+          "authors": 1,
+          "behind": 0,
+          "branch": "main",
+          "commits": 3,
+          "deleted": 0,
+          "dirty": 1,
+          "firstCommitAt": "2026-09-26T09:00:00.000Z",
+          "lastCommitAt": "2026-10-06T09:00:00.000Z",
+          "lastSubject": "feat: contact form",
+          "localOnly": 0,
+          "remotes": [],
+          "rootCommit": "d9fc739a2b2eb80e554e33123959590a1ff2836d",
+          "stashes": 0,
+          "upstream": "",
+          "weekly": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            2
+          ],
+          "worktree": false
+        },
+        "id": "/home/demo/project/clients/kopi-landing",
+        "issues": [
+          {
+            "code": "no-remote",
+            "detail": "3 commits exist only on this disk",
+            "severity": "high",
+            "title": "No remote"
+          },
+          {
+            "code": "dirty",
+            "severity": "med",
+            "title": "1 uncommitted change"
+          }
+        ],
+        "kind": "project",
+        "label": "kopi-landing",
+        "lastActivity": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "files"
+        },
+        "meta": {},
+        "name": "kopi-landing",
+        "ownActivity": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "files"
+        },
+        "parent": "/home/demo/project/clients",
+        "path": "/home/demo/project/clients/kopi-landing",
+        "readme": {
+          "file": "README.md",
+          "images": 0,
+          "links": [],
+          "raw": "# Kopi Landing\n\nOne-page landing site for a coffee shop in Bandung, built with Astro.\n",
+          "sections": [],
+          "tagline": "One-page landing site for a coffee shop in Bandung, built with Astro.",
+          "template": false,
+          "title": "Kopi Landing",
+          "weakTitle": false
+        },
+        "sidecar": false,
+        "size": {
+          "parts": [],
+          "reclaimable": 0,
+          "total": 29924
+        },
+        "stableId": "git:d9fc739a2b2e",
+        "stack": {
+          "ci": [],
+          "deploy": [],
+          "description": null,
+          "env": [],
+          "files": 4,
+          "labels": [
+            "Astro",
+            "Tailwind"
+          ],
+          "languages": [
+            {
+              "files": 1,
+              "name": "Astro"
+            },
+            {
+              "files": 1,
+              "name": "Markdown"
+            }
+          ],
+          "newest": "2026-10-08T09:00:00.000Z",
+          "packageManager": "",
+          "scripts": [
+            {
+              "cmd": "astro dev",
+              "name": "dev"
+            },
+            {
+              "cmd": "astro build",
+              "name": "build"
+            },
+            {
+              "cmd": "astro preview",
+              "name": "preview"
+            }
+          ],
+          "services": []
+        },
+        "status": {
+          "auto": true,
+          "value": "active"
+        },
+        "summary": {
+          "source": "README.md",
+          "text": "One-page landing site for a coffee shop in Bandung, built with Astro."
+        },
+        "taskFiles": [],
+        "tasks": [],
+        "type": "code"
+      },
+      "/home/demo/project/infra-notes": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [
+            "-home-demo-project-infra-notes"
+          ],
+          "items": []
+        },
+        "archivePlan": {
+          "checks": [],
+          "dest": "/home/demo/project/_archive/infra-notes",
+          "ops": [
+            {
+              "from": "~/project/infra-notes",
+              "kind": "move",
+              "label": "Move folder",
+              "to": "~/project/_archive/infra-notes"
+            },
+            {
+              "detail": "1 sessions · 0 memory files · 223 B",
+              "from": "~/project/infra-notes",
+              "kind": "rename",
+              "label": "Move Claude sessions + memory",
+              "to": "~/project/_archive/infra-notes"
+            },
+            {
+              "detail": "1 line → ~/project/_archive/infra-notes",
+              "kind": "rewrite",
+              "label": "Rewrite cwd in Claude logs"
+            },
+            {
+              "detail": ".laci.md",
+              "kind": "keep",
+              "label": "Travels with the folder"
+            },
+            {
+              "kind": "write",
+              "label": "Set status: archived",
+              "to": "~/project/_archive/infra-notes/.laci.md"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
+        "archived": false,
+        "children": [],
+        "createdAt": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "folder"
+        },
+        "id": "/home/demo/project/infra-notes",
+        "issues": [],
+        "kind": "project",
+        "label": "infra-notes",
+        "lastActivity": {
+          "at": "2026-10-03T09:00:00.000Z",
+          "source": "files"
+        },
+        "meta": {},
+        "name": "infra-notes",
+        "ownActivity": {
+          "at": "2026-10-03T09:00:00.000Z",
+          "source": "files"
+        },
+        "parent": "/home/demo/project",
+        "path": "/home/demo/project/infra-notes",
+        "sidecar": false,
+        "size": {
+          "parts": [],
+          "reclaimable": 0,
+          "total": 136
+        },
+        "stableId": "p:f46000fb0f0b",
+        "stack": {
+          "ci": [],
+          "deploy": [],
+          "description": null,
+          "env": [],
+          "files": 1,
+          "labels": [],
+          "languages": [
+            {
+              "files": 1,
+              "name": "Markdown"
+            }
+          ],
+          "newest": "2026-10-03T09:00:00.000Z",
+          "packageManager": "",
+          "scripts": [],
+          "services": []
+        },
+        "status": {
+          "auto": true,
+          "value": "active"
+        },
+        "taskFiles": [
+          {
+            "at": "2026-10-03T09:00:00.000Z",
+            "done": 1,
+            "file": "NOTES.md",
+            "open": 2
+          }
+        ],
+        "tasks": [
+          {
+            "done": false,
+            "file": "NOTES.md",
+            "kind": "check",
+            "line": 4,
+            "section": "Server notes › Open",
+            "text": "Rotate the SSH keys on the staging droplet"
+          },
+          {
+            "done": false,
+            "file": "NOTES.md",
+            "kind": "check",
+            "line": 5,
+            "section": "Server notes › Open",
+            "text": "Renew the SSL cert before it expires"
+          },
+          {
+            "done": true,
+            "file": "NOTES.md",
+            "kind": "check",
+            "line": 6,
+            "section": "Server notes › Open",
+            "text": "Add 2 GB swap"
+          }
+        ],
+        "type": "docs"
+      },
+      "/home/demo/project/side": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [],
+          "items": []
+        },
+        "archived": false,
+        "children": [
+          "/home/demo/project/side/dotfiles",
+          "/home/demo/project/side/habit-app"
+        ],
+        "createdAt": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "folder"
+        },
+        "id": "/home/demo/project/side",
+        "issues": [],
+        "kind": "folder",
+        "label": "side",
+        "lastActivity": {
+          "at": "2026-09-30T09:00:00.000Z",
+          "source": "inside"
+        },
+        "meta": {},
+        "name": "side",
+        "parent": "/home/demo/project",
+        "path": "/home/demo/project/side",
+        "sidecar": false,
+        "stableId": "p:c6426af13a4f",
+        "status": {
+          "auto": true,
+          "value": "active"
+        },
+        "taskFiles": [],
+        "tasks": []
+      },
+      "/home/demo/project/side/dotfiles": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [],
+          "items": []
+        },
+        "archivePlan": {
+          "checks": [
+            {
+              "code": "unpushed",
+              "detail": "main has no upstream, and no remote has them",
+              "severity": "med",
+              "title": "2 commits not pushed"
+            }
+          ],
+          "dest": "/home/demo/project/_archive/side/dotfiles",
+          "ops": [
+            {
+              "from": "~/project/side/dotfiles",
+              "kind": "move",
+              "label": "Move folder",
+              "to": "~/project/_archive/side/dotfiles"
+            },
+            {
+              "detail": ".laci.md",
+              "kind": "keep",
+              "label": "Travels with the folder"
+            },
+            {
+              "kind": "write",
+              "label": "Set status: archived",
+              "to": "~/project/_archive/side/dotfiles/.laci.md"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
+        "archived": false,
+        "children": [],
+        "createdAt": {
+          "at": "2026-08-29T09:00:00.000Z",
+          "source": "first commit"
+        },
+        "git": {
+          "ahead": 0,
+          "authors": 1,
+          "behind": 0,
+          "branch": "main",
+          "commits": 2,
+          "deleted": 0,
+          "dirty": 0,
+          "firstCommitAt": "2026-08-29T09:00:00.000Z",
+          "lastCommitAt": "2026-09-30T09:00:00.000Z",
+          "lastSubject": "hyprland: new binds",
+          "localOnly": 2,
+          "remotes": [
+            {
+              "host": "github.com",
+              "name": "origin",
+              "url": "git@github.com:me/dotfiles.git",
+              "web": "https://github.com/me/dotfiles"
+            }
+          ],
+          "rootCommit": "aa7a13b435e60f5d404a57e26e3b23a1c710022b",
+          "stashes": 0,
+          "upstream": "",
+          "weekly": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            1,
+            0
+          ],
+          "worktree": false
+        },
+        "id": "/home/demo/project/side/dotfiles",
+        "issues": [
+          {
+            "code": "unpushed",
+            "detail": "main has no upstream, and no remote has them",
+            "severity": "med",
+            "title": "2 commits not pushed"
+          }
+        ],
+        "kind": "project",
+        "label": "dotfiles",
+        "lastActivity": {
+          "at": "2026-09-30T09:00:00.000Z",
+          "source": "commit"
+        },
+        "meta": {},
+        "name": "dotfiles",
+        "ownActivity": {
+          "at": "2026-09-30T09:00:00.000Z",
+          "source": "commit"
+        },
+        "parent": "/home/demo/project/side",
+        "path": "/home/demo/project/side/dotfiles",
+        "readme": {
+          "file": "README.md",
+          "images": 0,
+          "links": [],
+          "raw": "# dotfiles\n\nHyprland, kitty and shell config.\n",
+          "sections": [],
+          "tagline": "Hyprland, kitty and shell config.",
+          "template": false,
+          "title": "dotfiles",
+          "weakTitle": false
+        },
+        "sidecar": false,
+        "size": {
+          "parts": [],
+          "reclaimable": 0,
+          "total": 28988
+        },
+        "stableId": "git:aa7a13b435e6",
+        "stack": {
+          "ci": [],
+          "deploy": [],
+          "description": null,
+          "env": [],
+          "files": 3,
+          "labels": [],
+          "languages": [
+            {
+              "files": 1,
+              "name": "Markdown"
+            },
+            {
+              "files": 1,
+              "name": "Shell"
+            }
+          ],
+          "newest": "2026-09-30T09:00:00.000Z",
+          "packageManager": "",
+          "scripts": [],
+          "services": []
+        },
+        "status": {
+          "auto": true,
+          "value": "active"
+        },
+        "summary": {
+          "source": "README.md",
+          "text": "Hyprland, kitty and shell config."
+        },
+        "taskFiles": [],
+        "tasks": [],
+        "type": "docs"
+      },
+      "/home/demo/project/side/habit-app": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [],
+          "items": []
+        },
+        "archivePlan": {
+          "checks": [
+            {
+              "code": "no-remote",
+              "detail": "3 commits exist only on this disk",
+              "severity": "high",
+              "title": "No remote"
+            }
+          ],
+          "dest": "/home/demo/project/_archive/side/habit-app",
+          "ops": [
+            {
+              "from": "~/project/side/habit-app",
+              "kind": "move",
+              "label": "Move folder",
+              "to": "~/project/_archive/side/habit-app"
+            },
+            {
+              "detail": ".laci.md",
+              "kind": "keep",
+              "label": "Travels with the folder"
+            },
+            {
+              "kind": "write",
+              "label": "Set status: archived",
+              "to": "~/project/_archive/side/habit-app/.laci.md"
+            },
+            {
+              "detail": "440 MB (node_modules)",
+              "kind": "delete",
+              "label": "Optional: delete deps & build output"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
+        "archived": false,
+        "children": [],
+        "createdAt": {
+          "at": "2026-03-12T09:00:00.000Z",
+          "source": "first commit"
+        },
+        "git": {
+          "ahead": 0,
+          "authors": 1,
+          "behind": 0,
+          "branch": "main",
+          "commits": 3,
+          "deleted": 0,
+          "dirty": 0,
+          "firstCommitAt": "2026-03-12T09:00:00.000Z",
+          "lastCommitAt": "2026-05-11T09:00:00.000Z",
+          "lastSubject": "feat: reminders",
+          "localOnly": 0,
+          "remotes": [],
+          "rootCommit": "e4e70f16bb5b85a737930955443610a187908301",
+          "stashes": 0,
+          "upstream": "",
+          "weekly": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "worktree": false
+        },
+        "id": "/home/demo/project/side/habit-app",
+        "issues": [
+          {
+            "code": "no-remote",
+            "detail": "3 commits exist only on this disk",
+            "severity": "high",
+            "title": "No remote"
+          },
+          {
+            "code": "no-readme",
+            "detail": "Summary falls back to package.json or stays empty",
+            "severity": "low",
+            "title": "No README"
+          }
+        ],
+        "kind": "project",
+        "label": "habit-app",
+        "lastActivity": {
+          "at": "2026-05-11T09:00:00.000Z",
+          "source": "commit"
+        },
+        "meta": {},
+        "name": "habit-app",
+        "ownActivity": {
+          "at": "2026-05-11T09:00:00.000Z",
+          "source": "commit"
+        },
+        "parent": "/home/demo/project/side",
+        "path": "/home/demo/project/side/habit-app",
+        "sidecar": false,
+        "size": {
+          "parts": [
+            {
+              "bytes": 440401920,
+              "path": "node_modules"
+            }
+          ],
+          "reclaimable": 440401920,
+          "total": 440431751
+        },
+        "stableId": "git:e4e70f16bb5b",
+        "stack": {
+          "ci": [],
+          "deploy": [],
+          "description": "Tiny habit tracker for my phone",
+          "env": [],
+          "files": 3,
+          "labels": [
+            "Expo",
+            "React Native"
+          ],
+          "languages": [],
+          "newest": "2026-05-11T09:00:00.000Z",
+          "packageManager": "",
+          "scripts": [
+            {
+              "cmd": "expo start",
+              "name": "start"
+            },
+            {
+              "cmd": "expo run:android",
+              "name": "android"
+            }
+          ],
+          "services": []
+        },
+        "status": {
+          "auto": true,
+          "value": "dormant"
+        },
+        "summary": {
+          "source": "package.json",
+          "text": "Tiny habit tracker for my phone"
+        },
+        "taskFiles": [],
+        "tasks": [],
+        "type": "code"
+      },
+      "/home/demo/project/thesis": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [],
+          "items": []
+        },
+        "archived": false,
+        "children": [
+          "/home/demo/project/thesis/campus-lms"
+        ],
+        "createdAt": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "folder"
+        },
+        "id": "/home/demo/project/thesis",
+        "issues": [],
+        "kind": "folder",
+        "label": "thesis",
+        "lastActivity": {
+          "at": "2026-09-19T09:00:00.000Z",
+          "source": "inside"
+        },
+        "meta": {},
+        "name": "thesis",
+        "parent": "/home/demo/project",
+        "path": "/home/demo/project/thesis",
+        "sidecar": false,
+        "stableId": "p:2188a8bba1a2",
+        "status": {
+          "auto": true,
+          "value": "idle"
+        },
+        "taskFiles": [],
+        "tasks": []
+      },
+      "/home/demo/project/thesis/campus-lms": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [
+            "-home-demo-project-thesis-campus-lms"
+          ],
+          "items": []
+        },
+        "archivePlan": {
+          "checks": [
+            {
+              "code": "unpushed",
+              "detail": "main has no upstream, and no remote has them",
+              "severity": "med",
+              "title": "5 commits not pushed"
+            },
+            {
+              "code": "stash",
+              "detail": "Stashes are easy to lose and never pushed",
+              "severity": "med",
+              "title": "1 forgotten stash"
+            }
+          ],
+          "dest": "/home/demo/project/_archive/thesis/campus-lms",
+          "ops": [
+            {
+              "from": "~/project/thesis/campus-lms",
+              "kind": "move",
+              "label": "Move folder",
+              "to": "~/project/_archive/thesis/campus-lms"
+            },
+            {
+              "detail": "1 sessions · 0 memory files · 207 B",
+              "from": "~/project/thesis/campus-lms",
+              "kind": "rename",
+              "label": "Move Claude sessions + memory",
+              "to": "~/project/_archive/thesis/campus-lms"
+            },
+            {
+              "detail": "1 line → ~/project/_archive/thesis/campus-lms",
+              "kind": "rewrite",
+              "label": "Rewrite cwd in Claude logs"
+            },
+            {
+              "detail": ".laci.md",
+              "kind": "keep",
+              "label": "Travels with the folder"
+            },
+            {
+              "kind": "write",
+              "label": "Set status: archived",
+              "to": "~/project/_archive/thesis/campus-lms/.laci.md"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
+        "archived": false,
+        "children": [],
+        "createdAt": {
+          "at": "2026-06-10T09:00:00.000Z",
+          "source": "first commit"
+        },
+        "git": {
+          "ahead": 0,
+          "authors": 1,
+          "behind": 0,
+          "branch": "main",
+          "commits": 5,
+          "deleted": 0,
+          "dirty": 0,
+          "firstCommitAt": "2026-06-10T09:00:00.000Z",
+          "lastCommitAt": "2026-09-18T09:00:00.000Z",
+          "lastSubject": "wip: export",
+          "localOnly": 5,
+          "remotes": [
+            {
+              "host": "gitlab.com",
+              "name": "origin",
+              "url": "git@gitlab.com:me/campus-lms.git",
+              "web": "https://gitlab.com/me/campus-lms"
+            }
+          ],
+          "rootCommit": "665e2216844982c779fde27760a73c7db511fd4c",
+          "stashes": 1,
+          "upstream": "",
+          "weekly": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "worktree": false
+        },
+        "id": "/home/demo/project/thesis/campus-lms",
+        "issues": [
+          {
+            "code": "unpushed",
+            "detail": "main has no upstream, and no remote has them",
+            "severity": "med",
+            "title": "5 commits not pushed"
+          },
+          {
+            "code": "stash",
+            "detail": "Stashes are easy to lose and never pushed",
+            "severity": "med",
+            "title": "1 forgotten stash"
+          },
+          {
+            "code": "old-handoff",
+            "detail": "last edited 20 days ago",
+            "severity": "low",
+            "title": "HANDOFF.md: 3 open items"
+          }
+        ],
+        "kind": "project",
+        "label": "campus-lms",
+        "lastActivity": {
+          "at": "2026-09-19T09:00:00.000Z",
+          "source": "agent"
+        },
+        "meta": {},
+        "name": "campus-lms",
+        "ownActivity": {
+          "at": "2026-09-18T09:00:00.000Z",
+          "source": "commit"
+        },
+        "parent": "/home/demo/project/thesis",
+        "path": "/home/demo/project/thesis/campus-lms",
+        "readme": {
+          "file": "README.md",
+          "images": 0,
+          "links": [],
+          "raw": "# Campus LMS\n\nLearning management system for my thesis: courses, assignments and grading for a boarding school.\n",
+          "sections": [],
+          "tagline": "Learning management system for my thesis: courses, assignments and grading for a boarding school.",
+          "template": false,
+          "title": "Campus LMS",
+          "weakTitle": false
+        },
+        "sidecar": false,
+        "size": {
+          "parts": [],
+          "reclaimable": 0,
+          "total": 33739
+        },
+        "stableId": "git:665e22168449",
+        "stack": {
+          "ci": [],
+          "deploy": [],
+          "description": null,
+          "env": [
+            "APP_KEY",
+            "DB_HOST",
+            "DB_PASSWORD",
+            "REDIS_HOST"
+          ],
+          "files": 7,
+          "labels": [
+            "Laravel",
+            "Docker Compose"
+          ],
+          "languages": [
+            {
+              "files": 2,
+              "name": "Markdown"
+            }
+          ],
+          "newest": "2026-09-18T09:00:00.000Z",
+          "packageManager": "",
+          "scripts": [],
+          "services": [
+            "php",
+            "postgres",
+            "redis"
+          ]
+        },
+        "status": {
+          "auto": true,
+          "value": "idle"
+        },
+        "summary": {
+          "source": "README.md",
+          "text": "Learning management system for my thesis: courses, assignments and grading for a boarding school."
+        },
+        "taskFiles": [
+          {
+            "at": "2026-09-18T09:00:00.000Z",
+            "done": 0,
+            "file": "HANDOFF.md",
+            "open": 3
+          }
+        ],
+        "tasks": [
+          {
+            "done": false,
+            "file": "HANDOFF.md",
+            "kind": "list",
+            "line": 4,
+            "section": "Handoff › Next steps",
+            "text": "Finish the grading export (CSV + PDF)"
+          },
+          {
+            "done": false,
+            "file": "HANDOFF.md",
+            "kind": "list",
+            "line": 5,
+            "section": "Handoff › Next steps",
+            "text": "Load test the quiz page with 300 students"
+          },
+          {
+            "done": false,
+            "file": "HANDOFF.md",
+            "kind": "list",
+            "line": 6,
+            "section": "Handoff › Next steps",
+            "text": "Write chapter 4 results from the load test"
+          }
+        ],
+        "type": "code"
+      }
+    },
+    "orphans": {
+      "claude": [
+        "-home-demo-project-old-portfolio"
+      ],
+      "items": []
+    },
+    "proposals": [
+      {
+        "action": {
+          "dir": "/home/demo/.claude/projects/-home-demo-project-old-portfolio",
+          "pairs": [
+            [
+              "/home/demo/project/old-portfolio",
+              "/home/demo/project/_archive/old-portfolio"
+            ]
+          ],
+          "target": "/home/demo/.claude/projects/-home-demo-project--archive-old-portfolio",
+          "type": "reconnect-claude"
+        },
+        "category": "reconnect",
+        "confidence": "high",
+        "id": "reconnect:-home-demo-project-old-portfolio",
+        "nodeId": "/home/demo/project/_archive/old-portfolio",
+        "ops": [
+          {
+            "detail": "1 session + 1 memory file",
+            "from": "~/project/old-portfolio",
+            "kind": "rename",
+            "label": "Move Claude sessions + memory",
+            "to": "~/project/_archive/old-portfolio"
+          },
+          {
+            "detail": "1 line → ~/project/_archive/old-portfolio",
+            "kind": "rewrite",
+            "label": "Rewrite cwd in Claude logs"
+          }
+        ],
+        "title": "Reconnect 1 session + 1 memory file to old-portfolio",
+        "why": "The folder was moved into _archive, but its agent history stayed at the old address. Claude cannot find these at the new address."
+      },
+      {
+        "action": {
+          "items": [
+            {
+              "dir": "/home/demo/.claude/projects/-home-demo-project-clients-acme-store",
+              "pairs": [
+                [
+                  "/home/demo/project/acme-store",
+                  "/home/demo/project/clients/acme-store"
+                ]
+              ]
+            }
+          ],
+          "type": "rewrite-claude"
+        },
+        "category": "migration",
+        "confidence": "high",
+        "id": "migration:stale-cwd",
+        "ops": [
+          {
+            "detail": "1 line",
+            "from": "~/project/acme-store",
+            "kind": "rewrite",
+            "label": "~/project/clients/acme-store",
+            "to": "~/project/clients/acme-store"
+          }
+        ],
+        "title": "Finish 1 half-done move",
+        "why": "These session folders were renamed after a move, but their logs still record the old path. Search, stats and the next move would get it wrong."
+      },
+      {
+        "action": {
+          "paths": [
+            "/home/demo/project/side/habit-app/node_modules"
+          ],
+          "type": "clear"
+        },
+        "category": "space",
+        "confidence": "high",
+        "id": "space:inactive",
+        "ops": [
+          {
+            "detail": "440 MB · node_modules",
+            "kind": "delete",
+            "label": "habit-app"
+          }
+        ],
+        "title": "Free 440 MB from 1 inactive project",
+        "why": "Dependencies and build output in archived or dormant projects. They are deleted for good; a fresh install or build brings them back."
+      },
+      {
+        "action": {
+          "nodeId": "/home/demo/project/side/habit-app",
+          "type": "archive"
+        },
+        "category": "status",
+        "confidence": "med",
+        "id": "archive:/home/demo/project/side/habit-app",
+        "nodeId": "/home/demo/project/side/habit-app",
+        "ops": [
+          {
+            "from": "~/project/side/habit-app",
+            "kind": "move",
+            "label": "Move folder",
+            "to": "~/project/_archive/side/habit-app"
+          },
+          {
+            "detail": ".laci.md",
+            "kind": "keep",
+            "label": "Travels with the folder"
+          },
+          {
+            "kind": "write",
+            "label": "Set status: archived",
+            "to": "~/project/_archive/side/habit-app/.laci.md"
+          },
+          {
+            "detail": "440 MB (node_modules)",
+            "kind": "delete",
+            "label": "Optional: delete deps & build output"
+          },
+          {
+            "kind": "write",
+            "label": "Write undo journal",
+            "to": "~/.local/share/laci/journal/"
+          }
+        ],
+        "title": "Archive habit-app?",
+        "why": "No commits, file changes or agent sessions for 150 days."
+      }
+    ],
+    "reports": [
+      {
+        "bytes": 995,
+        "date": "2026-10-07",
+        "file": "/home/demo/Documents/agent-reports/2026-10-07-checkout-total-on-mobile-safari.md",
+        "id": "2026-10-07-checkout-total-on-mobile-safari.md",
+        "modified": "2026-10-07T12:00:00.000Z",
+        "open": [
+          "Send the staging link to the client and ask for the go to release.",
+          "Promo codes stack with the expo discount; ask whether that is wanted."
+        ],
+        "openCount": 2,
+        "projects": [
+          "/home/demo/project/clients/acme-store"
+        ],
+        "scope": "~/project/clients/acme-store",
+        "sessions": [
+          "5f0c2a1e-8d4b-4c7a-9e21-3b6d0f9a7c42"
+        ],
+        "summary": "Safari on iOS showed a checkout total one rupiah off. The cart rounded each line before adding them up; it now adds first and rounds once, as Midtrans does. Fixed, tested on Safari, Chrome and Firefox, and deployed to staging.",
+        "title": "Checkout total wrong on mobile Safari"
+      },
+      {
+        "bytes": 593,
+        "date": "2026-10-06",
+        "file": "/home/demo/Documents/agent-reports/2026-10-06-kopi-hero-and-contact-form.md",
+        "id": "2026-10-06-kopi-hero-and-contact-form.md",
+        "modified": "2026-10-06T12:00:00.000Z",
+        "open": [
+          "The shop's opening hours for the footer.",
+          "Photos of the real menu instead of the placeholders."
+        ],
+        "openCount": 2,
+        "projects": [
+          "/home/demo/project/clients/kopi-landing"
+        ],
+        "scope": "Kopi Landing, the Astro site",
+        "sessions": [],
+        "summary": "Wrote the hero copy in Indonesian and English and added a contact form that posts to the shop's WhatsApp.",
+        "title": "Kopi landing: hero copy and contact form"
+      },
+      {
+        "bytes": 258,
+        "date": "2026-10-05",
+        "file": "/home/demo/Documents/agent-reports/2026-10-05-email-filters.md",
+        "id": "2026-10-05-email-filters.md",
+        "modified": "2026-10-05T12:00:00.000Z",
+        "open": [],
+        "openCount": 0,
+        "projects": [],
+        "scope": "Gmail (work account)",
+        "sessions": [],
+        "summary": "Sorted the work inbox: six filters label invoices, client mail and newsletters as they arrive.",
+        "title": "Email filters for the work inbox"
+      },
+      {
+        "bytes": 537,
+        "date": "2026-10-03",
+        "file": "/home/demo/Documents/agent-reports/2026-10-03-droplet-memory-and-swap.md",
+        "id": "2026-10-03-droplet-memory-and-swap.md",
+        "modified": "2026-10-03T12:00:00.000Z",
+        "open": [
+          "Rotate the SSH keys on the staging droplet.",
+          "Renew the SSL certificate before it expires on the 30th."
+        ],
+        "openCount": 2,
+        "projects": [
+          "/home/demo/project/infra-notes"
+        ],
+        "scope": "~/project/infra-notes/NOTES.md",
+        "sessions": [],
+        "summary": "The staging droplet has 1 GB of memory and Postgres plus two Node apps. Added 2 GB of swap and capped Postgres; the out-of-memory kills stopped.",
+        "title": "Why the droplet keeps running out of memory"
+      },
+      {
+        "bytes": 249,
+        "date": "2026-09-30",
+        "file": "/home/demo/Documents/agent-reports/2026-09-30-hyprland-binds.md",
+        "id": "2026-09-30-hyprland-binds.md",
+        "modified": "2026-09-30T12:00:00.000Z",
+        "open": [],
+        "openCount": 0,
+        "projects": [
+          "/home/demo/project/side/dotfiles"
+        ],
+        "scope": "~/project/side/dotfiles",
+        "sessions": [],
+        "summary": "Moved window focus to Super+HJKL and added a bind for the screenshot tool.",
+        "title": "New Hyprland binds"
+      },
+      {
+        "bytes": 1812,
+        "date": "2026-09-19",
+        "file": "/home/demo/Documents/agent-reports/2026-09-19-grading-export-to-pdf.md",
+        "id": "2026-09-19-grading-export-to-pdf.md",
+        "modified": "2026-09-19T12:00:00.000Z",
+        "open": [
+          "Finish the PDF report card from the stash.",
+          "Load test the quiz page with 300 students.",
+          "Write chapter 4 from the load test results."
+        ],
+        "openCount": 3,
+        "projects": [
+          "/home/demo/project/thesis/campus-lms"
+        ],
+        "scope": "~/project/thesis/campus-lms",
+        "sessions": [],
+        "summary": "Started the grading export the school asked for: one CSV for the office and one PDF report card per student. The CSV works; the PDF is half done and stashed. This continues the grading model.",
+        "title": "Grading export to PDF"
+      },
+      {
+        "bytes": 353,
+        "date": "2026-08-25",
+        "file": "/home/demo/Documents/agent-reports/2026-08-25-grading-model-and-rubrics.md",
+        "id": "2026-08-25-grading-model-and-rubrics.md",
+        "modified": "2026-08-25T12:00:00.000Z",
+        "open": [
+          "Export the grades for the school's report cards."
+        ],
+        "openCount": 1,
+        "projects": [
+          "/home/demo/project/thesis/campus-lms"
+        ],
+        "scope": "~/project/thesis/campus-lms",
+        "sessions": [],
+        "summary": "Designed how grades are stored: a rubric per assignment, a score per criterion, and a weighted total computed when it is read.",
+        "title": "Grading model and rubrics"
+      }
+    ],
+    "reportsDir": {
+      "path": "/home/demo/Documents/agent-reports",
+      "total": 7
+    },
+    "rootIds": [
+      "/home/demo/project"
+    ],
+    "rootStatus": [
+      {
+        "available": true,
+        "device": 2049,
+        "inode": 1000,
+        "path": "/home/demo/project"
+      }
+    ],
+    "roots": [
+      "/home/demo/project"
+    ],
+    "scannedAt": "2026-10-08T09:00:00.000Z",
+    "sessions": [
+      {
+        "at": "2026-10-08T09:00:00.000Z",
+        "bytes": 123,
+        "connector": "codex",
+        "cwd": "/home/demo/project/clients/kopi-landing",
+        "cwds": {
+          "/home/demo/project/clients/kopi-landing": 1
+        },
+        "file": "/home/demo/.codex/sessions/2026/10/04/rollout-kopi.jsonl",
+        "filesChanged": 0,
+        "id": "codex:2026/10/04/rollout-kopi.jsonl",
+        "lines": 1,
+        "ownershipComplete": true,
+        "parentId": null,
+        "prompts": 0,
+        "provider": "codex",
+        "resumeCapability": "history-only",
+        "sessionId": "",
+        "sourceKind": "cli",
+        "title": "Untitled session",
+        "titleSource": "fallback",
+        "updatedAt": "2026-10-08T09:00:00.000Z"
+      },
+      {
+        "at": "2026-10-07T09:00:00.000Z",
+        "branch": "main",
+        "bytes": 285,
+        "connector": "claude",
+        "cwd": "/home/demo/project/clients/acme-store",
+        "endedAt": "2026-10-07T09:00:00.000Z",
+        "file": "/home/demo/.claude/projects/-home-demo-project-clients-acme-store/5f0c2a1e-8d4b-4c7a-9e21-3b6d0f9a7c42.jsonl",
+        "filesChanged": 0,
+        "id": "5f0c2a1e-8d4b-4c7a-9e21-3b6d0f9a7c42",
+        "parentId": null,
+        "prompts": 0,
+        "provider": "claude",
+        "resumeCapability": "supported",
+        "sessionId": "5f0c2a1e-8d4b-4c7a-9e21-3b6d0f9a7c42",
+        "sourceKind": "cli",
+        "startedAt": "2026-10-07T09:00:00.000Z",
+        "title": "Checkout total wrong on mobile",
+        "titleSource": "provider",
+        "updatedAt": "2026-10-07T09:00:00.000Z"
+      },
+      {
+        "at": "2026-10-06T09:00:00.000Z",
+        "branch": "main",
+        "bytes": 217,
+        "connector": "claude",
+        "cwd": "/home/demo/project/clients/kopi-landing",
+        "endedAt": "2026-10-06T09:00:00.000Z",
+        "file": "/home/demo/.claude/projects/-home-demo-project-clients-kopi-landing/k1.jsonl",
+        "filesChanged": 0,
+        "id": "k1",
+        "parentId": null,
+        "prompts": 0,
+        "provider": "claude",
+        "resumeCapability": "history-only",
+        "sessionId": "k1",
+        "sourceKind": "cli",
+        "startedAt": "2026-10-06T09:00:00.000Z",
+        "title": "Hero section copy and layout",
+        "titleSource": "provider",
+        "updatedAt": "2026-10-06T09:00:00.000Z"
+      },
+      {
+        "at": "2026-10-03T09:00:00.000Z",
+        "branch": "main",
+        "bytes": 223,
+        "connector": "claude",
+        "cwd": "/home/demo/project/infra-notes",
+        "endedAt": "2026-10-03T09:00:00.000Z",
+        "file": "/home/demo/.claude/projects/-home-demo-project-infra-notes/n1.jsonl",
+        "filesChanged": 0,
+        "id": "n1",
+        "parentId": null,
+        "prompts": 0,
+        "provider": "claude",
+        "resumeCapability": "history-only",
+        "sessionId": "n1",
+        "sourceKind": "cli",
+        "startedAt": "2026-10-03T09:00:00.000Z",
+        "title": "Why the droplet keeps running out of memory",
+        "titleSource": "provider",
+        "updatedAt": "2026-10-03T09:00:00.000Z"
+      },
+      {
+        "at": "2026-09-19T09:00:00.000Z",
+        "branch": "main",
+        "bytes": 207,
+        "connector": "claude",
+        "cwd": "/home/demo/project/thesis/campus-lms",
+        "endedAt": "2026-09-19T09:00:00.000Z",
+        "file": "/home/demo/.claude/projects/-home-demo-project-thesis-campus-lms/l1.jsonl",
+        "filesChanged": 0,
+        "id": "l1",
+        "parentId": null,
+        "prompts": 0,
+        "provider": "claude",
+        "resumeCapability": "history-only",
+        "sessionId": "l1",
+        "sourceKind": "cli",
+        "startedAt": "2026-09-19T09:00:00.000Z",
+        "title": "Grading export to PDF",
+        "titleSource": "provider",
+        "updatedAt": "2026-09-19T09:00:00.000Z"
+      },
+      {
+        "at": "2026-09-12T09:00:00.000Z",
+        "branch": "main",
+        "bytes": 205,
+        "connector": "claude",
+        "cwd": "/home/demo/project/old-portfolio",
+        "endedAt": "2026-09-12T09:00:00.000Z",
+        "file": "/home/demo/.claude/projects/-home-demo-project-old-portfolio/o1.jsonl",
+        "filesChanged": 0,
+        "id": "o1",
+        "parentId": null,
+        "prompts": 0,
+        "provider": "claude",
+        "resumeCapability": "history-only",
+        "sessionId": "o1",
+        "sourceKind": "cli",
+        "startedAt": "2026-09-12T09:00:00.000Z",
+        "title": "Portfolio projects grid",
+        "titleSource": "provider",
+        "updatedAt": "2026-09-12T09:00:00.000Z"
+      },
+      {
+        "at": "2026-09-08T09:00:00.000Z",
+        "branch": "main",
+        "bytes": 208,
+        "connector": "claude",
+        "cwd": "/home/demo/project/acme-store",
+        "endedAt": "2026-09-08T09:00:00.000Z",
+        "file": "/home/demo/.claude/projects/-home-demo-project-clients-acme-store/a1.jsonl",
+        "filesChanged": 0,
+        "id": "a1",
+        "parentId": null,
+        "prompts": 0,
+        "provider": "claude",
+        "resumeCapability": "history-only",
+        "sessionId": "a1",
+        "sourceKind": "cli",
+        "startedAt": "2026-09-08T09:00:00.000Z",
+        "title": "Midtrans checkout integration",
+        "titleSource": "provider",
+        "updatedAt": "2026-09-08T09:00:00.000Z"
+      }
+    ],
+    "suggestions": [
+      {
+        "about": "CLI history and last conversations; full conversation titles are unavailable",
+        "found": false,
+        "id": "antigravity",
+        "launch": true,
+        "name": "Antigravity",
+        "where": "~/.gemini/antigravity-cli"
+      }
+    ],
+    "terminalTarget": "internal",
+    "tookMs": 40,
+    "unmatched": [],
+    "warnings": [
+      {
+        "code": "claude-cleanup",
+        "detail": "Your oldest surviving session is from 2026-09-08. Memory files are kept, conversation history is not.",
+        "severity": "high",
+        "title": "Claude Code deletes session logs after 30 days"
+      }
+    ]
+  },
+  "storage": {
+    "dir": "~/.local/share/laci",
+    "parts": [
+      {
+        "about": "Kept so Undo in the Log can put them back. Freeing it makes those deletions final.",
+        "bytes": 0,
+        "free": 0,
+        "id": "removed",
+        "label": "Deleted sessions and quarantined history"
+      },
+      {
+        "about": "Copies of agent logs and settings taken before a move rewrote them. Copies older than 7 days can go; those moves can then no longer be undone.",
+        "bytes": 0,
+        "free": 0,
+        "id": "undo",
+        "label": "Undo copies of moved projects"
+      },
+      {
+        "about": "Copies of your agents' sessions, so a tool that deletes old logs cannot lose them. Nothing is removed from it.",
+        "bytes": 0,
+        "free": 0,
+        "id": "history",
+        "label": "Agent history backup"
+      },
+      {
+        "about": "Web data of the old Electron app in ~/.config/laci. Laci 2 does not read it.",
+        "bytes": 0,
+        "free": 0,
+        "id": "legacy",
+        "label": "Files left by Laci 1"
+      },
+      {
+        "about": "What Undo needs to know about each change.",
+        "bytes": 12288,
+        "free": 0,
+        "id": "journal",
+        "label": "Change journal and Log"
+      },
+      {
+        "about": "Rebuilt by the next scan.",
+        "bytes": 524288,
+        "free": 0,
+        "id": "cache",
+        "label": "Scan cache"
+      }
+    ],
+    "total": 536576
+  }
+}

@@ -4,6 +4,27 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-10-16
+
+MCP answers an agent can read in full, and an archive that no longer trips over Laci's own Git.
+
+### Fixed
+
+- **MCP answers fit an agent's context.** On a busy home `recent_changes` answered with 404,000 characters, more than Claude Code accepts, and `project_details` (up to 178,000) and `open_items` (52,000) were cut off or saved to a file. On the same home they are now 12,500, 20,000 and 15,000.
+  - The read tools answer a page at a time. `limit` sets the size of a page, the answer says `total` and `more`, and `offset` gives the next page. `list_projects`, `needs_attention` and `recent_changes` give 30 at a time, `open_items` 50 and `list_reports` 10.
+  - `recent_changes` leaves out the undo data, where a notes change kept the whole previous notes. Long details are cut to 300 characters. It narrows by `project`, words (`query`) or `undoable`, so an agent can find the id `undo_change` needs.
+  - `project_details` gives the first 2,000 characters of the README, the newest 10 agent sessions and items with a count of all, and Claude history folders without their per-session lists. Notes stay whole.
+  - `open_items` names each report's title, date, file and projects once, in `reports`, instead of on every item.
+  - `needs_attention` counts each project's open to-dos instead of listing them (they are in `open_items`) and lists the worst problems first.
+  - Answers to changes leave out the project's notes, except the answer to `write_notes`. Answers are compact JSON.
+- `close_report_item` accepts the item number that `open_items` gives.
+- **Archive, move and Move to Trash no longer fail with "In use by git" during a background scan.** Laci's own Git, which scans run inside each project, no longer counts as using the folder. Git that another program runs there, such as the desktop app's scan while an agent archives through the MCP server, gets up to 3 seconds to finish. A shell, an editor or any other program still blocks the change at once. This was also behind the desktop check "custom archive accepted" failing now and then; that check now waits until scans are done, stops at once on the dialog's error, and CI keeps a screenshot, the page text and the end of the log when a check fails.
+
+### Changed
+
+- `list_projects` answers with `projects`, `total`, `offset` and `more` instead of a bare list.
+- `delete_task`, `edit_task`, `move_task` and `write_notes` are marked as destructive for MCP clients: they delete or overwrite, even with Undo in the Log.
+
 ## [2.5.0] - 2026-10-15
 
 An agent that goes through everything open with you, and to-dos you can hand to one.

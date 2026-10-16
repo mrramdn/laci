@@ -11,7 +11,7 @@ laci shows every folder like a file manager, and for each project it adds its gi
   <img alt="The Today view: work that could be lost, projects to pick up again, and open to-dos" src="docs/screenshots/today-light.png">
 </picture>
 
-> Status: 2.5.0, Linux x86-64. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
+> Status: 2.5.1, Linux x86-64. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
 
 ## Contents
 

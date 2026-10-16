@@ -19,6 +19,8 @@ const compilerOptions = {
   module: ts.ModuleKind.CommonJS,
   target: ts.ScriptTarget.ES2022,
   jsx: ts.JsxEmit.ReactJSX,
+  // As in ui/tsconfig.json: `import raw from "./file.json"` gets the file, not an empty `default`.
+  esModuleInterop: true,
 };
 
 /** The file a relative import names: with its extension, or as a folder's index. */
@@ -40,7 +42,7 @@ function find(base) {
  *
  * - `deps` replaces imports by the text of the specifier, such as `{"./api": stub}`. Any other
  *   import of a package is the real one from ui/node_modules, and a relative one is compiled and
- *   run the same way.
+ *   run the same way (a JSON file is read).
  * - `globals` are names the file may use without importing them, such as `document`.
  */
 export function load(file, deps = {}, globals = {}) {
@@ -51,6 +53,7 @@ export function load(file, deps = {}, globals = {}) {
     const known = modules.get(absolute);
     if (known) return known.exports;
     const source = readFileSync(absolute, "utf8");
+    if (absolute.endsWith(".json")) return JSON.parse(source);
     const compiled = ts.transpileModule(source, {
       compilerOptions,
       fileName: absolute,

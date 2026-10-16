@@ -1,7 +1,12 @@
 //! Project removal is explicit and uses system Trash; remote names alone are not a backup.
 use crate::{Result, env::Env, git::Repo, ops, paths, process, service::string, sidecar};
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, fs, path::Path, time::Duration};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
     let mut options = vec![
@@ -85,7 +90,7 @@ fn local_backup(dir: &Path, remote: &Path) -> Result<()> {
     Ok(())
 }
 
-fn check(dir: &Path) -> Result<String> {
+fn check(dir: &Path, busy_in: impl Fn(&[PathBuf]) -> Vec<Value>) -> Result<String> {
     local_head(dir)?;
     let names = git(dir, &["remote"])?;
     let remote = names
@@ -135,14 +140,17 @@ fn check(dir: &Path) -> Result<String> {
             ));
         }
     }
-    let busy = ops::busy_in(&[dir.to_owned()]);
-    if !busy.is_empty() {
+    if !busy_in(&[dir.to_owned()]).is_empty() {
         return Err("This project is in use by a running process. Close it first.".into());
     }
     Ok(remote.to_owned())
 }
 
 pub fn plan(env: &Env, node: &Value) -> Result<Value> {
+    plan_with(env, node, ops::busy_in)
+}
+
+fn plan_with(env: &Env, node: &Value, busy_in: impl Fn(&[PathBuf]) -> Vec<Value>) -> Result<Value> {
     if node["kind"] != "project" {
         return Err("Pick a project to remove".into());
     }
@@ -154,7 +162,7 @@ pub fn plan(env: &Env, node: &Value) -> Result<Value> {
     if [&env.home, &env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|p| p.starts_with(&dir)) {
         return Err("This folder contains Laci settings or recovery data and cannot be removed".into());
     }
-    let verified = check(&dir);
+    let verified = check(&dir, busy_in);
     let (allowed, mut checks) = match verified {
         Ok(remote) => (
             true,
@@ -178,7 +186,8 @@ pub fn plan(env: &Env, node: &Value) -> Result<Value> {
 
 pub fn trash(env: &Env, node: &Value) -> Result<()> {
     ops::with_lock(env, || {
-        let current = plan(env, node)?;
+        // Unlike the plan shown first, removal gives Git that another program runs there a moment to finish.
+        let current = plan_with(env, node, ops::busy_after_git)?;
         if current["allowed"] != true {
             return Err(current["checks"][0]["detail"].as_str().unwrap_or("Project removal was blocked").to_owned());
         }

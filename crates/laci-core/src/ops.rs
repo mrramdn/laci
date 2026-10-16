@@ -10,7 +10,8 @@ use std::{
         Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -210,7 +211,9 @@ pub(crate) fn busy_in(paths: &[PathBuf]) -> Vec<Value> {
                 return None;
             }
             let cwd = fs::read_link(e.path().join("cwd")).ok()?;
-            if !paths.iter().any(|p| cwd.starts_with(p)) {
+            // Laci's own helpers, such as a scan's `git status`, don't hold the folder; terminals and apps it opens
+            // still do. Checked after the read: a helper's pid is unlisted before it can be reused.
+            if !paths.iter().any(|p| cwd.starts_with(p)) || process::is_own_child(pid) {
                 return None;
             }
             let name = fs::read_to_string(e.path().join("comm")).unwrap_or_default().trim().to_owned();
@@ -218,8 +221,24 @@ pub(crate) fn busy_in(paths: &[PathBuf]) -> Vec<Value> {
         })
         .collect()
 }
+/// How long a change waits for Git that another program runs in the folder, such as a second Laci or an editor.
+/// Such a read is over in moments; Git that is still there after this, or anything else, keeps the folder in use.
+const GIT_WAIT: Duration = Duration::from_secs(3);
+/// [`busy_in`] for changes: while Git is all that is in the folder, it looks again for up to [`GIT_WAIT`].
+/// What is shown before a change uses [`busy_in`], which never waits.
+pub(crate) fn busy_after_git(paths: &[PathBuf]) -> Vec<Value> {
+    let started = Instant::now();
+    loop {
+        let busy = busy_in(paths);
+        let git = |b: &Value| b["name"].as_str().is_some_and(|name| name.starts_with("git"));
+        if busy.is_empty() || !busy.iter().all(git) || started.elapsed() >= GIT_WAIT {
+            return busy;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
 fn guard(paths: &[PathBuf]) -> Result<()> {
-    let busy = busy_in(paths);
+    let busy = busy_after_git(paths);
     if busy.is_empty() {
         Ok(())
     } else {
@@ -1094,4 +1113,129 @@ pub fn backup_state(env: &Env) -> Option<Value> {
     state["at"].as_str()?;
     state["dest"] = json!(data(env, "history").ok()?);
     Some(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::{Child, Command};
+
+    /// A project folder and a stand-in for Git: `git`, a link to the shell. A program written here to start could
+    /// fail with "Text file busy" while another test starts a process.
+    fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        // /proc names working folders with links resolved.
+        let root = temp.path().canonicalize().unwrap();
+        let (project, git) = (root.join("project"), root.join("bin/git"));
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(root.join("bin")).unwrap();
+        std::os::unix::fs::symlink("/bin/sh", &git).unwrap();
+        (temp, project, git)
+    }
+
+    /// Arguments that keep `git` in the folder it starts in for `seconds`. It sleeps in a child outside the folder,
+    /// so it is the only process inside.
+    fn stay(seconds: &str) -> [&str; 4] {
+        ["-c", "(cd / && exec sleep \"$1\") & wait", "git", seconds]
+    }
+
+    /// Every process working in `dir`, with its name, Laci's own helpers included.
+    fn inside(dir: &Path) -> Vec<(u32, String)> {
+        files::entries(Path::new("/proc"))
+            .into_iter()
+            .filter_map(|e| {
+                let pid = e.file_name().to_string_lossy().parse().ok()?;
+                fs::read_link(e.path().join("cwd")).ok().filter(|cwd| cwd.starts_with(dir))?;
+                Some((pid, fs::read_to_string(e.path().join("comm")).ok()?.trim().to_owned()))
+            })
+            .collect()
+    }
+
+    /// The pid of the process in `dir` that `pick` accepts, once /proc names it `name`. Right after a spawn, the
+    /// child can still carry its parent's name for a moment.
+    fn started(dir: &Path, name: &str, pick: impl Fn(u32) -> bool) -> u32 {
+        let since = Instant::now();
+        loop {
+            if let Some((pid, _)) = inside(dir).into_iter().find(|(pid, found)| found == name && pick(*pid)) {
+                return pid;
+            }
+            assert!(since.elapsed() < Duration::from_secs(5), "no {name} started in {}", dir.display());
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Started without [`process::run_env`], like Git from another Laci or a terminal. Killed and reaped when the
+    /// test ends, also when it fails.
+    struct Outside(Child);
+    impl Outside {
+        fn start(program: &Path, args: &[&str], cwd: &Path) -> Self {
+            Self(Command::new(program).args(args).current_dir(cwd).spawn().unwrap())
+        }
+    }
+    impl Drop for Outside {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn git_that_laci_runs_itself_never_makes_a_folder_busy() {
+        let (_temp, project, git) = fixture();
+        let folder = std::slice::from_ref(&project);
+        let program = git.to_str().unwrap();
+        let scan = || process::run_env(program, &stay("2"), Some(project.as_path()), Duration::from_secs(10), &[]);
+        thread::scope(|scope| {
+            let scan = scope.spawn(scan);
+            let pid = started(&project, "git", process::is_own_child);
+            assert!(busy_in(folder).iter().all(|b| b["pid"] != pid));
+            let checked = Instant::now();
+            guard(folder).unwrap();
+            assert!(checked.elapsed() < Duration::from_secs(1), "nothing waits for Laci's own Git");
+            assert!(process::is_own_child(pid), "it was still running");
+            scan.join().unwrap().unwrap();
+            assert!(!process::is_own_child(pid), "a finished helper is forgotten");
+        });
+    }
+
+    #[test]
+    fn a_helper_is_forgotten_when_it_runs_out_of_time() {
+        let (_temp, project, _git) = fixture();
+        let slow = || process::run_env("sleep", &["30"], Some(project.as_path()), Duration::from_secs(2), &[]);
+        thread::scope(|scope| {
+            let slow = scope.spawn(slow);
+            let pid = started(&project, "sleep", process::is_own_child);
+            assert!(slow.join().unwrap().unwrap_err().contains("took too long"));
+            assert!(!process::is_own_child(pid));
+            assert!(inside(&project).is_empty(), "killed and reaped");
+        });
+    }
+
+    #[test]
+    fn a_change_waits_a_moment_for_git_that_another_program_runs() {
+        let (_temp, project, git) = fixture();
+        let folder = std::slice::from_ref(&project);
+        // Another Laci's scan: Git in the folder that is not a helper of this process.
+        let mut other = Outside::start(&git, &stay("0.5"), &project);
+        let pid = other.0.id();
+        started(&project, "git", |found| found == pid);
+        assert!(busy_in(folder).iter().any(|b| b["pid"] == pid && b["name"] == "git"));
+        guard(folder).unwrap();
+        assert!(other.0.try_wait().unwrap().is_some(), "the change went ahead once that Git was done");
+    }
+
+    #[test]
+    fn anything_besides_git_in_the_folder_makes_it_busy_at_once() {
+        let (_temp, project, git) = fixture();
+        // Stands for a terminal Laci opened there: its own child, but not a helper. Git beside it changes nothing.
+        let shell = Outside::start(Path::new("sleep"), &["30"], &project);
+        let other = Outside::start(&git, &stay("2"), &project);
+        started(&project, "sleep", |pid| pid == shell.0.id());
+        started(&project, "git", |pid| pid == other.0.id());
+        let checked = Instant::now();
+        let error = guard(std::slice::from_ref(&project)).unwrap_err();
+        assert!(checked.elapsed() < GIT_WAIT / 3, "no wait while something besides Git is there");
+        assert!(error.starts_with("In use by ") && error.ends_with(". Close it first."), "{error}");
+        assert!(error.contains(&format!("sleep (pid {})", shell.0.id())), "{error}");
+    }
 }

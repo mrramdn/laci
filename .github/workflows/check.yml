@@ -37,6 +37,8 @@ jobs:
       - run: cargo build -p laci --features custom-protocol
       - run: node scripts/mcp-smoke.mjs target/debug/laci
       - name: Native window smoke check
+        env:
+          LACI_SMOKE_DIAGNOSTICS: ${{ runner.temp }}/laci-smoke-diagnostics
         run: |
           cargo install tauri-driver --locked
           # GIO compares the source filesystem with the real HOME when choosing Trash.
@@ -51,6 +53,8 @@ jobs:
       - name: Validate production packages
         run: node scripts/package-smoke.mjs /tmp/laci-package-proof
       - name: Native production package regression
+        env:
+          LACI_SMOKE_DIAGNOSTICS: ${{ runner.temp }}/laci-smoke-diagnostics
         run: |
           laci_fixture_dir="$(mktemp -d "$HOME/laci-packaged-qa.XXXXXX")"
           trap 'rm -rf "$laci_fixture_dir"' EXIT
@@ -59,6 +63,13 @@ jobs:
           for laci_suite in onboarding watcher modular; do
             xvfb-run -a dbus-run-session -- bash scripts/native-smoke.sh /tmp/laci-package-proof/appimage/squashfs-root/AppRun "$laci_suite"
           done
+      - name: Upload native smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: laci-smoke-diagnostics
+          path: ${{ runner.temp }}/laci-smoke-diagnostics
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: laci-linux

@@ -1,6 +1,7 @@
 // A believable fake HOME for screenshots and demos: clients, a thesis, side projects, agent history,
 // a half-done move and an orphan. Usage: node scripts/demo.ts <dir>  then  LACI_HOME=<dir> pnpm dev
-// LACI_DEMO_NOW (an ISO time) pins "now", so the same home comes out on every run.
+// LACI_DEMO_NOW (an ISO time) pins "now", so the same home comes out on every run. Set TZ too: the
+// report file names hold the local date.
 import { execFileSync } from 'node:child_process'
 import { lstatSync, mkdirSync, readdirSync, truncateSync, utimesSync, writeFileSync } from 'node:fs'
 import path from 'node:path'

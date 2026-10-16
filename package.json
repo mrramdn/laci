@@ -22,6 +22,9 @@
     "lint": "pnpm -C ui lint && pnpm -C ui build && cargo fmt --all -- --check && cargo clippy --workspace --all-targets --features custom-protocol -- -D warnings",
     "test:core": "cargo test -p laci-core",
     "test:desktop": "node scripts/desktop-smoke.mjs",
+    "test:preview": "node scripts/ui-preview-check.mjs",
+    "ui:fixtures": "node scripts/ui-fixtures.mjs",
+    "ui:preview": "pnpm -C ui dev",
     "build:binary": "pnpm -C ui build && cargo build -p laci --features custom-protocol --release"
   },
   "devDependencies": {

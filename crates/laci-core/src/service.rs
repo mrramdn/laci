@@ -166,6 +166,7 @@ pub fn mutates(name: &str) -> bool {
             | "undo"
             | "log/undo"
             | "theme"
+            | "design"
             | "setup/save"
             | "new"
             | "new/template"
@@ -817,6 +818,29 @@ impl Service {
                 })?;
                 Ok(json!({"theme":theme}))
             }
+            "design" => {
+                let design = string(b, "design");
+                if !["simple", "detailed"].contains(&design) {
+                    return Err("Unknown design".into());
+                }
+                ops::with_lock(&self.env, || {
+                    let mut c = config::load(&self.env);
+                    c["design"] = json!(design);
+                    config::save(&self.env, &c)
+                })?;
+                Ok(json!({"design":design}))
+            }
+            // The saved choices the window shows. Its start-up script is fixed when the window opens, so the page
+            // asks here after a reload.
+            "prefs" => {
+                let c = config::load(&self.env);
+                Ok(json!({
+                    "theme":c["theme"],"design":c["design"],"updates":c["updates"],
+                    "configured":c["roots"].is_array(),
+                    "configPath":paths::tilde(&self.env.config_dir.join("config.json"),&self.env.home),
+                    "os":std::env::consts::OS
+                }))
+            }
             "setup/info" => self.setup_info(),
             "setup/discover" => self.discover_roots(),
             "setup/save" => {
@@ -1352,4 +1376,52 @@ fn external_terminal(app: &str, cwd: &Path, cmd: Option<&str>, confirm: bool) ->
         args.extend(["bash".into(), "-lc".into(), script.into(), cmd.into()]);
     }
     detach(app, &args, cwd)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn design_saves_only_the_two_designs_and_leaves_no_log_entry() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let mut service = Service::new(env.clone());
+        assert!(mutates("design") && !changes_history("design") && !mutates("prefs"));
+        for design in ["simple", "detailed"] {
+            assert_eq!(service.request("design", &json!({"design":design})).unwrap(), json!({"design":design}));
+            assert_eq!(config::load(&env)["design"], design);
+        }
+        let saved = fs::read(env.config_dir.join("config.json")).unwrap();
+        for body in [json!({"design":"Simple"}), json!({"design":"classic"}), json!({"design":""}), json!({})] {
+            assert_eq!(service.request("design", &body).unwrap_err(), "Unknown design");
+        }
+        assert_eq!(fs::read(env.config_dir.join("config.json")).unwrap(), saved);
+        assert!(activity::read_log(&env, 100).is_empty());
+    }
+
+    #[test]
+    fn prefs_reads_the_saved_choices_without_writing() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let mut service = Service::new(env.clone());
+        let os = std::env::consts::OS;
+        let path = "~/.config/laci/config.json";
+        assert_eq!(
+            service.request("prefs", &json!({})).unwrap(),
+            json!({"theme":null,"design":null,"updates":null,"configured":false,"configPath":path,"os":os})
+        );
+        assert!(!env.config_dir.join("config.json").exists());
+        config::save(&env, &json!({"roots":["~/project"],"theme":"dark","design":"detailed","updates":"off"})).unwrap();
+        assert_eq!(
+            service.request("prefs", &json!({})).unwrap(),
+            json!({"theme":"dark","design":"detailed","updates":"off","configured":true,"configPath":path,"os":os})
+        );
+        config::save(&env, &json!({"roots":[],"theme":"blue","design":"classic","updates":"weekly"})).unwrap();
+        assert_eq!(
+            service.request("prefs", &json!({})).unwrap(),
+            json!({"theme":null,"design":null,"updates":null,"configured":true,"configPath":path,"os":os})
+        );
+        assert!(activity::read_log(&env, 100).is_empty());
+    }
 }

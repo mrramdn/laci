@@ -37,6 +37,12 @@ pub fn load(env: &Env) -> Value {
     if !matches!(c["theme"].as_str(), Some("light" | "dark")) {
         c.as_object_mut().expect("config object").remove("theme");
     }
+    if !matches!(c["design"].as_str(), Some("simple" | "detailed")) {
+        c.as_object_mut().expect("config object").remove("design");
+    }
+    if !matches!(c["updates"].as_str(), Some("daily" | "off")) {
+        c.as_object_mut().expect("config object").remove("updates");
+    }
     if !c["roots"].is_array() {
         c.as_object_mut().expect("config object").remove("roots");
     }
@@ -220,5 +226,21 @@ mod tests {
         assert_eq!(cfg["custom"][0]["link"]["dir"], "~/history");
         assert_eq!(cfg["apps"]["editor"], "code");
         assert!(validate_connector(&env, &json!({"name":"Bad","link":{"kind":"inside","path":"../history"}})).is_err());
+    }
+    #[test]
+    fn unknown_design_and_update_choices_are_dropped_and_known_ones_kept() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        for (design, updates) in [("simple", "daily"), ("detailed", "off")] {
+            save(&env, &json!({"roots":[],"design":design,"updates":updates})).unwrap();
+            let cfg = load(&env);
+            assert_eq!((cfg["design"].as_str(), cfg["updates"].as_str()), (Some(design), Some(updates)));
+        }
+        for bad in [json!("Simple"), json!("classic"), json!(""), json!(true), json!({"design":"simple"})] {
+            save(&env, &json!({"roots":[],"theme":"dark","design":bad,"updates":bad})).unwrap();
+            let cfg = load(&env);
+            assert!(cfg.get("design").is_none() && cfg.get("updates").is_none(), "{bad}");
+            assert_eq!(cfg["theme"], "dark");
+        }
     }
 }

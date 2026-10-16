@@ -23,6 +23,7 @@ tempfile = "3"
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-build = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
 portable-pty = "0.9"
 notify = "8"
 clap = { version = "4", features = ["derive"] }

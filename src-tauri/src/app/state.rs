@@ -224,7 +224,9 @@ mod tests {
         assert!(engine.begin_creation().is_err());
         // This must fail before entering the global file-change lock held by the generator.
         assert!(engine.execute("theme", &json!({"theme":"dark"})).unwrap_err().contains("being created"));
+        assert!(engine.execute("design", &json!({"design":"simple"})).unwrap_err().contains("being created"));
         assert!(engine.execute("log", &json!({})).is_ok());
+        assert!(engine.execute("prefs", &json!({})).is_ok());
         let running = engine.prepare(Refresh::full());
         assert!(engine.install(&running, json!({"nodes":{},"proposals":[{"id":"partial"}]})));
         assert!(engine.history_pending);

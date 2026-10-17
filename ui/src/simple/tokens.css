@@ -1,0 +1,179 @@
+/* Simple's colours, type, shape, depth and motion (design-research §3.5). They apply only while
+   <html data-design="simple">, so Detailed keeps its own. This sheet is small and loads with the first
+   one, inside @layer simple; Simple's layout and its font load with its window.
+   Teal is the brand and means "safe". Amber and red are for problems only, always with an icon and
+   words. Turmeric belongs to the mark and is never used here.
+   scripts/contrast-check.mjs reads the colours below, so keep each one a plain #rrggbb.
+   The dark blocks use :where() so they weigh the same as the light one, and the contrast block that
+   comes last wins in either theme. */
+:root[data-design="simple"] {
+  --canvas: #fbf8f3;
+  --surface: #ffffff;
+  --sunken: #f3eee6;
+  --hover: #f3eee6;
+  --active: #eae3d8;
+  --line: #e6ded2;
+  --line-strong: #8c8174;
+  --ink: #26211c;
+  --ink-2: #5e554b;
+  --ink-3: #71675c;
+  --brand: #0e7268;
+  --brand-fill: #0e7268;
+  --brand-hover: #0b5d55;
+  --on-brand: #ffffff;
+  --brand-soft: #e2f1ee;
+  --brand-ink: #0a5a52;
+  --attention-soft: #fff1d6;
+  --attention-text: #8a4b00;
+  --attention-icon: #b26200;
+  --risk-soft: #fde8e5;
+  --risk-text: #a12a1f;
+  --risk-icon: #c2362a;
+  --sand: #e9dcc8;
+  --scrim: rgba(24, 21, 18, 0.4);
+  --shadow-card: 0 1px 2px rgba(38, 33, 28, 0.06);
+  --shadow-menu: 0 8px 24px -4px rgba(38, 33, 28, 0.14);
+  --shadow-dialog: 0 24px 64px -12px rgba(38, 33, 28, 0.22);
+
+  /* Type: Plus Jakarta Sans, with Geist Mono only inside details. */
+  --font: "Plus Jakarta Sans Variable", ui-sans-serif, system-ui, -apple-system,
+    sans-serif;
+  --text-display: 700 28px/36px var(--font);
+  --text-title: 700 22px/30px var(--font);
+  --text-section: 650 17px/24px var(--font);
+  --text-body: 400 15px/22px var(--font);
+  --text-button: 600 14px/20px var(--font);
+  --text-caption: 500 13px/18px var(--font);
+
+  /* Shape and space: a 4 px grid. */
+  --radius-chip: 999px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-sheet: 16px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Focus: 2 px of brand, 2 px away from the control. */
+  --focus-width: 2px;
+  --focus-offset: 2px;
+
+  /* Motion: press and hover, expanding and toasts, sheets and pages. */
+  --ease-in: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.3, 0, 1, 1);
+  --time-press: 100ms;
+  --time-expand: 180ms;
+  --time-sheet: 240ms;
+
+  /* Detailed's names, so the parts both designs share (dialogs, the palette, the toast) look Simple. */
+  --bg: var(--surface);
+  --sidebar: var(--canvas);
+  --subtle: var(--sunken);
+  --surface-hover: var(--hover);
+  --surface-active: var(--active);
+  --border: var(--line);
+  --border-strong: var(--line-strong);
+  --text: var(--ink);
+  --muted: var(--ink-2);
+  --faint: var(--ink-3);
+  --accent: var(--brand);
+  --accent-soft: var(--brand-soft);
+  --accent-hover: var(--brand-hover);
+  --on-accent: var(--on-brand);
+  --green: var(--brand);
+  --green-soft: var(--brand-soft);
+  --green-text: var(--brand-ink);
+  --amber: var(--attention-icon);
+  --amber-soft: var(--attention-soft);
+  --amber-text: var(--attention-text);
+  --red: var(--risk-icon);
+  --red-soft: var(--risk-soft);
+  --red-text: var(--risk-text);
+  --shadow-sm: var(--shadow-card);
+  --shadow-md: var(--shadow-menu);
+  --shadow-lg: var(--shadow-dialog);
+  --sans: var(--font);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-design="simple"]:where(:not([data-theme="light"])) {
+    --canvas: #181512;
+    --surface: #221e1a;
+    --sunken: #12100d;
+    --hover: #2b2621;
+    --active: #352f29;
+    --line: #39322b;
+    --line-strong: #7d7266;
+    --ink: #f2ede6;
+    --ink-2: #bdb3a7;
+    --ink-3: #a0968a;
+    --brand: #3cc4b4;
+    --brand-fill: #2bb3a3;
+    --brand-hover: #3cc4b4;
+    --on-brand: #0b1f1c;
+    --brand-soft: #133a35;
+    --brand-ink: #7fddd1;
+    --attention-soft: #3a2a10;
+    --attention-text: #f4b860;
+    --attention-icon: #e9a23b;
+    --risk-soft: #3d1a16;
+    --risk-text: #ff8f80;
+    --risk-icon: #f26b5b;
+    --sand: #3b332a;
+    --scrim: rgba(8, 6, 4, 0.6);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-menu: 0 8px 24px -4px rgba(0, 0, 0, 0.5);
+    --shadow-dialog: 0 24px 64px -12px rgba(0, 0, 0, 0.6);
+    color-scheme: dark;
+  }
+}
+:root[data-design="simple"]:where([data-theme="dark"]) {
+  --canvas: #181512;
+  --surface: #221e1a;
+  --sunken: #12100d;
+  --hover: #2b2621;
+  --active: #352f29;
+  --line: #39322b;
+  --line-strong: #7d7266;
+  --ink: #f2ede6;
+  --ink-2: #bdb3a7;
+  --ink-3: #a0968a;
+  --brand: #3cc4b4;
+  --brand-fill: #2bb3a3;
+  --brand-hover: #3cc4b4;
+  --on-brand: #0b1f1c;
+  --brand-soft: #133a35;
+  --brand-ink: #7fddd1;
+  --attention-soft: #3a2a10;
+  --attention-text: #f4b860;
+  --attention-icon: #e9a23b;
+  --risk-soft: #3d1a16;
+  --risk-text: #ff8f80;
+  --risk-icon: #f26b5b;
+  --sand: #3b332a;
+  --scrim: rgba(8, 6, 4, 0.6);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-menu: 0 8px 24px -4px rgba(0, 0, 0, 0.5);
+  --shadow-dialog: 0 24px 64px -12px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+/* More contrast, asked for by the system: secondary text becomes full ink and every line strong.
+   Simple's layout outlines its tinted chips then. */
+@media (prefers-contrast: more) {
+  :root[data-design="simple"] {
+    --ink-2: var(--ink);
+    --ink-3: var(--ink);
+    --line: var(--line-strong);
+  }
+}
+:root[data-design="simple"] body {
+  background: var(--canvas);
+  color: var(--ink);
+}

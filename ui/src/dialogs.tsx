@@ -22,6 +22,9 @@ import type { ArchivePlan, Change, DeletePlan, Link } from "./types";
 const NewProject = lazy(() =>
   import("./new-project").then((module) => ({ default: module.NewProject })),
 );
+const HelpDialog = lazy(() =>
+  import("./help").then((module) => ({ default: module.HelpDialog })),
+);
 function close() {
   useApp.setState({ modal: null });
 }
@@ -231,6 +234,10 @@ export function Dialogs() {
   const modal = useApp((s) => s.modal);
   return modal?.kind === "shortcuts" ? (
     <Shortcuts />
+  ) : modal?.kind === "help" ? (
+    <Suspense fallback={null}>
+      <HelpDialog />
+    </Suspense>
   ) : modal?.kind === "archive" ? (
     <Archive key={modal.id} id={modal.id} />
   ) : modal?.kind === "delete" ? (

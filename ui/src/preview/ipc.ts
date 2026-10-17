@@ -99,6 +99,8 @@ const undoers = new Map<string, () => void>();
 const dismissed = new Map<string, Proposal>();
 let job: { state: CreationJob; started: number; acknowledged: boolean } | null =
   null;
+/** Files each project's .gitignore gained through "Keep these out", for `secrets/check` to leave out. */
+let keptOut: Map<string, Set<string>>;
 
 const node = (id: string): Node =>
   snapshot.nodes[id] ??
@@ -309,6 +311,102 @@ function dismiss(body: Body) {
   revision++;
   return { ok: true };
 }
+/**
+ * What `secrets/check` finds in the demo projects, by name only: a .env that isn't ignored yet, and
+ * a credentials file that is already in a saved version. The engine's own list of names decides in
+ * the app; these are the cases the window has to show.
+ */
+const SECRETS: Record<string, { path: string; tracked: boolean }[]> = {
+  "clients/kopi-landing": [{ path: ".env", tracked: false }],
+  "side/habit-app": [
+    { path: ".env", tracked: false },
+    { path: "android/key.properties", tracked: false },
+  ],
+  "thesis/campus-lms": [
+    { path: "server/firebase-credentials.json", tracked: true },
+  ],
+};
+/**
+ * Ignored files only this computer has, which `delete/plan` lists as `unbacked`: what an online
+ * copy can't give back. Build and dependency folders are left out, as the engine does.
+ */
+const UNBACKED: Record<string, string[]> = {
+  "clients/kopi-landing": [".env"],
+  "clients/acme-store": [".env.local", "uploads/test-orders.csv"],
+  "side/habit-app": [".env", "android/key.properties"],
+  "thesis/campus-lms": [
+    "server/firebase-credentials.json",
+    "data/grades-2026.sqlite",
+  ],
+};
+const relative = (id: string) =>
+  id.replace(`${fixtures.meta.home}/project/`, "");
+function secretsCheck(body: Body) {
+  const n = node(text(body, "id"));
+  const kept = keptOut.get(n.id) ?? new Set();
+  const files = (SECRETS[relative(n.id)] ?? []).filter(
+    (file) => file.tracked || !kept.has(file.path),
+  );
+  return { files, more: 0 };
+}
+function keepOut(body: Body): Change {
+  const n = node(text(body, "id"));
+  const files = Array.isArray(body.files)
+    ? (body.files as unknown[]).filter(
+        (file): file is string => typeof file === "string",
+      )
+    : [];
+  if (!files.length) fail("Choose the files to keep out");
+  const kept = keptOut.get(n.id) ?? new Set<string>();
+  keptOut.set(n.id, kept);
+  const added = files.filter((file) => !kept.has(file));
+  for (const file of added) kept.add(file);
+  const names = added.length === 1 ? added[0] : `${added.length} files`;
+  const entry = record(
+    `Added ${names} to .gitignore in ${n.name}`,
+    () => {
+      for (const file of added) kept.delete(file);
+    },
+    { path: n.path, detail: added.join(", ") },
+  );
+  entry.journal = entry.id;
+  return {
+    revision: ++revision,
+    journal: { id: entry.id, title: entry.title, canUndo: true },
+  };
+}
+/**
+ * The engine's prompt for fixing a check with an AI: what to do, and what never to do
+ * (design-research §3.7).
+ */
+const FIX_ASKS: Record<string, (name: string) => string> = {
+  "no-remote": (name) =>
+    `Back up this project online. Check that files that look like secrets are in .gitignore and were never committed; if they were, stop and tell me. Use \`gh repo create ${name} --private --source . --remote origin --push\`.`,
+  "no-commits": () =>
+    "Save a first version of this project: commit what is here. First check that files that look like secrets (.env files, keys, credentials) are in .gitignore; if one would be committed, stop and tell me.",
+  "no-git": () =>
+    "Turn on version history for this project, then add a .gitignore that keeps out secrets, dependencies and build output. Do not commit anything yet; tell me what you would commit.",
+  dirty: () =>
+    "Save the changes in this project as a version: look at what changed, then commit it with a clear message. Check that no file that looks like a secret is part of it; if one is, stop and tell me.",
+  unpushed: () =>
+    "Upload the saved versions of this project to its online copy. Check first that none of them contains a file that looks like a secret; if one does, stop and tell me.",
+  diverged: () =>
+    "This project and its online copy both have new versions. Combine them: fetch, then merge the local work with the online copy, and resolve conflicts with me.",
+  stash: () =>
+    "This project has changes set aside (a stash). Show me what each one holds, and help me decide whether to apply it to a new branch or drop it. Drop nothing without asking.",
+};
+function fixPrompt(body: Body) {
+  const n = node(text(body, "id"));
+  const code = text(body, "code");
+  const ask = FIX_ASKS[code] ?? fail("Laci has no fix for that check");
+  if (!n.issues.some((issue) => issue.code === code))
+    fail("Nothing to fix: the check is gone. Refresh and try again.");
+  return {
+    projectPath: n.path,
+    prompt: `${ask(n.name)} Never force-push, rewrite history, or delete files or branches. Show each command before running it.`,
+  };
+}
+
 function clean(body: Body): Change {
   const n = node(text(body, "id"));
   const size = n.size ?? fail("Nothing to clean in this project");
@@ -583,8 +681,14 @@ const reads: Record<string, Handler> = {
   health: (body) => lookup(fixtures.health, text(body, "id"), "health data"),
   "archive/plan": (body) =>
     lookup(fixtures["archive/plan"], text(body, "id"), "archive plan"),
-  "delete/plan": (body) =>
-    lookup(fixtures["delete/plan"], text(body, "id"), "Trash plan"),
+  "delete/plan": (body) => {
+    const id = text(body, "id");
+    return {
+      ...lookup(fixtures["delete/plan"], id, "Trash plan"),
+      unbacked: { files: UNBACKED[relative(id)] ?? [], more: 0 },
+    };
+  },
+  "secrets/check": secretsCheck,
   ls: (body) => {
     const path = text(body, "path");
     if (fixtures.ls[path]) return fixtures.ls[path];
@@ -596,6 +700,7 @@ const reads: Record<string, Handler> = {
   "assistant/prompt": (body) => {
     if (text(body, "kind") === "review")
       return fixtures["assistant/prompt"].review;
+    if (text(body, "kind") === "fix") return fixPrompt(body);
     const found = fixtures["assistant/prompt"].tasks.find(
       (t) =>
         t.id === text(body, "id") &&
@@ -643,6 +748,7 @@ const writes: Record<string, Handler> = {
   },
   "proposal/dismiss": dismiss,
   "report/close": closeItem,
+  "secrets/keep-out": keepOut,
   "session/delete": deleteSessions,
   backup,
   "backup/auto": backupAuto,
@@ -745,6 +851,7 @@ export function installIpc(options: { os: Os; design: Design; theme: Theme }) {
   log = clone(fixtures.log.entries);
   storage = clone(fixtures.storage);
   mcp = clone(fixtures["agent/mcp"].agents);
+  keptOut = new Map();
   settings = { ...options };
   mockConvertFileSrc(options.os === "windows" ? "windows" : "linux");
   mockIPC(

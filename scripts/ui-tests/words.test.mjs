@@ -1,342 +1,156 @@
-// The words that depend on the system: a Trash or a Recycle Bin in the dialogs, the keys in the list of
-// shortcuts, and where config.json is. The dialogs are drawn to text for each system; on Linux
-// and macOS they say what they said before.
+// ui/src/words.ts: Simple's words follow its writing rules (design-research §3.4), every ⓘ has its
+// glossary entry, times read as words, and the system's own words come from platform.ts.
 import assert from "node:assert/strict";
-import { load, requireUi } from "../ui-module.mjs";
+import { load } from "../ui-module.mjs";
 
-const React = requireUi("react");
-const { renderToStaticMarkup } = requireUi("react-dom/server");
-const noop = () => {};
-const none = () => null;
-const SYSTEMS = ["linux", "windows", "macos"];
+const words = load("words.ts");
+const on = (os) =>
+  load("words.ts", {}, { document: { documentElement: { dataset: { os } } } });
 
-/** What a person reads in drawn HTML: no tags, and the characters React wrote as entities. */
-const plain = (html) =>
-  html
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&#x27;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ")
-    .trim();
-
-/** A store that React can read on a server: a function that also has getState, over what `read` gives. */
-function storeOf(read) {
-  const useApp = (select) => (select ? select(read()) : read());
-  return Object.assign(useApp, {
-    getState: read,
-    setState: (change) =>
-      Object.assign(
-        read(),
-        typeof change === "function" ? change(read()) : change,
-      ),
-  });
-}
-
-/** What a snapshot needs for the dialogs, with a project and a piece of orphan history. */
-function snapshotOf(system) {
-  const windows = system === "windows";
-  const home = windows ? "C:\\Users\\me" : "/home/me";
-  const project = windows
-    ? "C:\\Users\\me\\project\\acme"
-    : "/home/me/project/acme";
-  return {
-    home,
-    nodes: {
-      [project]: {
-        id: project,
-        path: project,
-        name: "acme",
-        label: "acme",
-        kind: "project",
-        size: {
-          total: 6e8,
-          reclaimable: 5e8,
-          parts: [{ path: "node_modules", bytes: 5e8 }],
-        },
-      },
-    },
-    proposals: [
-      {
-        id: "orphan-1",
-        why: "No project has this history any more.",
-        action: { type: "quarantine", moves: [{ from: `${home}/.claude/x` }] },
-      },
-    ],
-    suggestions: [],
-    connectors: [],
+/**
+ * Every text the areas of words.ts can give, with where it is: each string, and what each function
+ * gives for sample values. Text that only reaches the AI (a prompt) or a browser (an address) is
+ * left out, as are the glossary, which names the Git words on purpose, and its helpers.
+ */
+function texts() {
+  const found = [];
+  const skip = new Set(["glossary", "termOf", "findTerms", "count", "listed", "ago", "spent"]);
+  // Help says that the glossary lists the Git words; that sentence may name them.
+  const quiet = /summaryPrompt|reportUrl|wordsWas|wordsIntro/;
+  const walk = (value, where) => {
+    if (quiet.test(where)) return;
+    if (typeof value === "string") found.push([where, value]);
+    else if (typeof value === "function") {
+      const said = value(2, 3, 4);
+      if (typeof said === "string") found.push([where, said]);
+    } else if (Array.isArray(value)) value.forEach((item, i) => walk(item, `${where}[${i}]`));
+    else if (value && typeof value === "object")
+      for (const [key, item] of Object.entries(value)) walk(item, `${where}.${key}`);
   };
-}
-const projectOf = (snapshot) => Object.keys(snapshot.nodes)[0];
-
-/** The state of the page being drawn. The modules read it, so each loads once for each system. */
-let current;
-const modules = new Map();
-function dialogsOf(system) {
-  if (!modules.has(system))
-    modules.set(
-      system,
-      load(
-        "dialogs.tsx",
-        {
-          "./api": { api: async () => ({}), errorText: String },
-          "./store": {
-            useApp: storeOf(() => current),
-            changed: noop,
-            run: noop,
-            selectWhenReady: noop,
-            acknowledge: noop,
-            copyText: noop,
-            rescan: noop,
-          },
-          "./common": {
-            Icon: none,
-            Ops: none,
-            restoreFocus: noop,
-            SeverityGlyph: none,
-          },
-          "./terminal-api": {
-            closeTerminal: noop,
-            toggleTerminal: noop,
-            useTerms: storeOf(() => ({ tabs: [] })),
-          },
-          "./session-ui": {
-            AgentDialog: none,
-            DeleteSessions: none,
-            SessionDialog: none,
-          },
-          "./mcp-setup": { McpDialog: none },
-          "./select": {
-            Select: none,
-            SelectPortal: React.createContext(null),
-            selectIsOpen: () => false,
-          },
-          "./clock": { useNow: noop },
-          "./brand": { LaciMark: none },
-        },
-        {
-          document: {
-            documentElement: { dataset: { os: system } },
-            activeElement: null,
-          },
-          HTMLElement: class {},
-        },
-      ),
-    );
-  return modules.get(system);
+  for (const [name, value] of Object.entries(words)) if (!skip.has(name)) walk(value, name);
+  return found;
 }
 
-/** The dialog `modal` opens on a system, as HTML. */
-function render(system, modal) {
-  current = {
-    modal,
-    snapshot: snapshotOf(system),
-    historyPending: false,
-    working: "",
-    palette: false,
-  };
-  return renderToStaticMarkup(React.createElement(dialogsOf(system).Dialogs));
+export async function simpleSaysItInPlainWords() {
+  const all = texts();
+  assert.ok(all.length > 250, `${all.length} texts`);
+  // The words an AI and Detailed use; Simple keeps them for the ⓘ and Help's glossary.
+  const jargon =
+    /\b(commits?|committed|push(ed|es)?|pull|remotes?|stash(es)?|branch(es)?|repo|repository|merge|rebase|upstream|HEAD|diverged|uncommitted|unpushed|orphan(ed)?|quarantine|agents?|sessions?|MCP|connectors?|scan(s|ned)?|severity|git)\b/i;
+  const found = all
+    .filter(([, text]) => jargon.test(text.replaceAll("GitHub", "")))
+    .map(([where, text]) => `${where}: ${text}`);
+  assert.deepEqual(found, []);
 }
-const drawn = (system, modal) => plain(render(system, modal));
-const deleting = (system) =>
-  drawn(system, { kind: "delete", id: projectOf(snapshotOf(system)) });
 
-export async function deletingAProjectNamesTheTrashOnLinuxAndMac() {
-  for (const system of ["linux", "macos"]) {
-    const text = deleting(system);
-    assert.match(text, /Move acme to Trash\?/, system);
-    assert.match(
-      text,
-      /Moves ~\/project\/acme to the system Trash after checking its Git backup\. Agent history stored outside this project stays where it is\./,
-      system,
-    );
-    assert.match(
-      text,
-      /Restore the folder from your system Trash if you need it back\./,
-      system,
-    );
-    assert.match(text, /Cancel Move to Trash$/, system);
-    assert.doesNotMatch(text, /Recycle/, system);
+export async function simpleFollowsItsWritingRules() {
+  for (const [where, text] of texts()) {
+    // Times in words: never "23 min", "2 wk" or "3 mo".
+    assert.doesNotMatch(text, /\b\d+ ?(min|h|hr|d|wk|mo|yr)\b/, `${where}: ${text}`);
+    // Sentence case, without capitals for emphasis.
+    assert.doesNotMatch(text, /\b[A-Z]{4,}\b/, `${where}: ${text}`);
+    // The designs are Simple and Detailed: never a word that sounds like a level or a retirement.
+    assert.doesNotMatch(text, /\b(Classic|Advanced|Pro)\b/, `${where}: ${text}`);
+    // No idioms or slang that won't translate, and no exclamation.
+    assert.doesNotMatch(text, /!|\b(just kidding|oops|uh-oh|piece of cake)\b/i, `${where}: ${text}`);
   }
 }
 
-export async function deletingAProjectNamesTheRecycleBinOnWindows() {
-  const text = deleting("windows");
-  assert.match(text, /Move acme to Recycle Bin\?/);
-  assert.match(
-    text,
-    /Moves ~\\project\\acme to the Recycle Bin after checking its Git backup\. Agent history stored outside this project stays where it is\./,
+export async function everyInfoHasItsGlossaryEntry() {
+  const ids = words.glossary.map((t) => t.id);
+  assert.equal(new Set(ids).size, ids.length, "glossary ids are unique");
+  const terms = words.glossary.map((t) => t.term);
+  assert.equal(new Set(terms).size, terms.length, "glossary terms are unique");
+  for (const t of words.glossary) {
+    for (const key of ["id", "term", "info", "was"])
+      assert.ok(typeof t[key] === "string" && t[key].trim(), `${t.id}: ${key}`);
+    assert.equal(words.termOf(t.id), t);
+  }
+  // Each check the "Is it safe?" card explains points at an entry, and those name the Git word.
+  for (const [code, issue] of Object.entries(words.safety.issues)) {
+    const entry = words.termOf(issue.term);
+    assert.ok(entry, `${code}: no glossary entry "${issue.term}"`);
+    assert.equal(typeof issue.body(2), "string");
+  }
+  for (const id of ["online-copy", "saved-version", "upload", "out-of-sync", "set-aside", "history", "line-of-work"])
+    assert.match(words.termOf(id).info, /\(Git: [^)]+\)$/, id);
+}
+
+export async function everyCheckThatCanLoseWorkHasItsWords() {
+  for (const code of ["no-remote", "no-commits", "dirty", "unpushed", "diverged", "stash", "no-git"]) {
+    assert.ok(words.safety.issues[code]?.title, code);
+    assert.ok(words.safety.fixes[code], `${code}: a fix button`);
+    assert.ok(words.home.problems[code]?.("kopi-landing").includes("kopi-landing"), code);
+    assert.ok(words.fix.titles[code]?.("kopi-landing"), `${code}: a sheet title`);
+    assert.ok(words.fix.intros[code], `${code}: what the sheet says first`);
+  }
+  // One, or more than one, reads right.
+  assert.equal(
+    words.safety.issues["no-remote"].body(1),
+    "1 saved version isn’t online. If this computer breaks, it’s gone.",
   );
-  assert.match(
-    text,
-    /Restore the folder from the Recycle Bin if you need it back\./,
+  assert.equal(
+    words.safety.issues["no-remote"].body(3),
+    "3 saved versions aren’t online. If this computer breaks, they’re gone.",
   );
-  assert.match(text, /Cancel Move to Recycle Bin$/);
-  assert.doesNotMatch(text, /Trash/);
+  assert.equal(words.safety.issues.stash.body(1), "1 set of changes is put aside. It is easy to lose and never uploaded.");
 }
 
-export async function cleaningBuildOutputSaysWhereItDoesNotGo() {
-  for (const system of SYSTEMS) {
-    const text = drawn(system, {
-      kind: "clean",
-      id: projectOf(snapshotOf(system)),
-    });
-    const bin = system === "windows" ? "Recycle Bin" : "Trash";
-    assert.match(
-      text,
-      new RegExp(
-        `They don't go to the ${bin}, which would keep the space taken\\.`,
-      ),
-      system,
-    );
-    assert.match(text, /Delete the build output of acme\?/, system);
-  }
+export async function timesReadAsWords() {
+  // Three in the afternoon, local time: an hour before is still today wherever the test runs.
+  const now = new Date(2026, 9, 8, 15, 0).getTime();
+  const at = (ms) => new Date(now - ms).toISOString();
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+  const DAY = 24 * HOUR;
+  assert.equal(words.ago(undefined, now), "");
+  assert.equal(words.ago("not a time", now), "");
+  assert.equal(words.ago(at(10_000), now), "just now");
+  assert.equal(words.ago(at(MINUTE), now), "a minute ago");
+  assert.equal(words.ago(at(23 * MINUTE), now), "23 minutes ago");
+  assert.equal(words.ago(at(HOUR), now), "an hour ago");
+  assert.equal(words.ago(at(2 * DAY), now), "2 days ago");
+  assert.equal(words.ago(at(15 * DAY), now), "2 weeks ago");
+  assert.equal(words.ago(at(45 * DAY), now), "6 weeks ago");
+  assert.equal(words.ago(at(70 * DAY), now), "2 months ago");
+  assert.equal(words.ago(at(400 * DAY), now), "a year ago");
+  assert.equal(words.spent(30), "");
+  assert.equal(words.spent(40 * 60), "40 minutes");
+  assert.equal(words.spent(130 * 60), "2 hours 10 minutes");
+  assert.equal(words.spent(60 * 60), "1 hour");
+  assert.equal(words.count(1, "project"), "1 project");
+  assert.equal(words.count(2, "set of changes", "sets of changes"), "2 sets of changes");
+  assert.equal(words.listed(["a.md", "b.md", "c.md"]), "a.md, b.md and c.md");
+  assert.equal(words.listed([]), "");
 }
 
-export async function orphanHistoryOffersTheSystemsBinForRestoringByHand() {
-  const orphan = { kind: "orphan", id: "orphan-1" };
-  for (const system of ["linux", "macos"]) {
-    const text = drawn(system, orphan);
-    assert.match(
-      text,
-      /System Trash Restore manually through your system Trash\./,
-      system,
-    );
-    assert.match(text, /Quarantine history$/, system);
-  }
-  const text = drawn("windows", orphan);
-  assert.match(text, /Recycle Bin Restore manually through the Recycle Bin\./);
-  assert.doesNotMatch(text, /Trash/);
+export async function yesterdayIsTheDayBeforeNotTwentyFourHoursAgo() {
+  // Under an hour reads in minutes, even across midnight.
+  const late = new Date(2026, 9, 7, 23, 50).toISOString();
+  assert.equal(words.ago(late, new Date(2026, 9, 8, 0, 20).getTime()), "30 minutes ago");
+  // Longer than that, the local day decides: three hours ago, but before midnight, is yesterday.
+  const evening = new Date(2026, 9, 7, 22, 0).toISOString();
+  assert.equal(words.ago(evening, new Date(2026, 9, 8, 1, 0).getTime()), "yesterday");
+  assert.equal(words.ago(evening, new Date(2026, 9, 7, 23, 30).getTime()), "an hour ago");
 }
 
-export async function theShortcutsDialogListsTheKeysOfTheSystem() {
-  const rows = (system) =>
-    [
-      ...render(system, { kind: "shortcuts" }).matchAll(
-        /<div class="short-row"><span>([^<]*)<\/span><div class="short-keys">(.*?)<\/div><\/div>/g,
-      ),
-    ].map(([, label, keys]) => [
-      label,
-      [...keys.matchAll(/<kbd>([^<]*)<\/kbd>/g)].map((key) => key[1]),
-    ]);
-  const linux = rows("linux");
-  assert.deepEqual(rows("windows"), linux);
-  assert.deepEqual(linux, [
-    ["Command palette", ["Ctrl", "K"]],
-    ["Next / Prev row", ["↓", "↑"]],
-    ["Open / Select", ["↵"]],
-    ["Parent folder", ["⌫"]],
-    ["Next / Prev pane", ["F6", "Shift F6"]],
-    ["Close / Dismiss", ["Esc"]],
-    ["Toggle terminal", ["F4", "Ctrl `"]],
-    ["Toggle hidden files", ["Ctrl", "H"]],
-    ["Shortcuts help", ["?"]],
-  ]);
-  const mac = Object.fromEntries(rows("macos"));
-  assert.deepEqual(mac["Command palette"], ["⌘", "K"]);
-  assert.deepEqual(mac["Parent folder"], ["⌫", "⌘ ↑"]);
-  assert.deepEqual(mac["Toggle hidden files"], ["⌘", "⇧", "."]);
-  assert.deepEqual(mac["Settings"], ["⌘", ","]);
+export async function eachSystemGetsItsOwnWords() {
+  const trash = (os) => on(os).termOf("trash");
+  assert.equal(trash("windows").term, "Move to Recycle Bin");
+  assert.match(trash("windows").info, /Restore it from the Recycle Bin\./);
+  assert.equal(trash("macos").term, "Move to Trash");
+  assert.equal(trash("linux").term, "Move to Trash");
+  assert.equal(on("macos").shell.searchKey, "⌘K");
+  assert.equal(on("windows").shell.searchKey, "Ctrl K");
+  assert.match(on("windows").help.safe.join(" "), /Recycle Bin/);
 }
 
-// ── Where config.json is ───────────────────────────────────────────────────────────────────────────
-
-export async function theConnectorDialogSaysWhereItSavesOnEachSystem() {
-  const usual = {
-    linux: "~/.config/laci/config.json",
-    macos: "~/.config/laci/config.json",
-    windows: "~\\AppData\\Local\\io.github.mrramdn.laci\\config.json",
-  };
-  for (const system of SYSTEMS)
-    assert.match(
-      drawn(system, { kind: "connector" }),
-      new RegExp(`Saved in ${usual[system].replace(/[\\.]/g, "\\$&")} `),
-      system,
-    );
-}
-
-/** settings.tsx whose React is a stand-in that runs one component's hooks: a state cell, and effects that run when declared. */
-function configPathHook(system, reply) {
-  let cells = [];
-  let at = 0;
-  const requests = [];
-  const react = {
-    useState(initial) {
-      const cell = at++;
-      if (!(cell in cells)) cells[cell] = initial;
-      return [cells[cell], (value) => void (cells[cell] = value)];
-    },
-    useEffect(effect, deps) {
-      const cell = at++;
-      const last = cells[cell];
-      if (last && deps && deps.every((dep, i) => dep === last.deps[i])) return;
-      last?.cleanup?.();
-      cells[cell] = { deps, cleanup: effect() };
-    },
-  };
-  const { useConfigPath } = load(
-    "settings.tsx",
-    {
-      react,
-      "./api": {
-        api: async (name) => {
-          requests.push(name);
-          return reply();
-        },
-        errorText: String,
-      },
-      "./store": { useApp: noop },
-      "./select": { Select: none },
-      "./brand": { LaciMark: none },
-      "./common": { Icon: none },
-      "./clock": { useNow: noop },
-    },
-    { document: { documentElement: { dataset: { os: system } } } },
-  );
-  return {
-    requests,
-    /** Runs the component again: what a render returns. */
-    render() {
-      at = 0;
-      return useConfigPath();
-    },
-    /** A component that mounts later, on the same page. */
-    remount() {
-      cells = [];
-    },
-  };
-}
-const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-export async function theConfigPathIsTheUsualOneUntilTheDesktopSays() {
-  for (const system of SYSTEMS) {
-    const hook = configPathHook(system, async () => ({
-      configPath: "~/work/laci-home/config.json",
-    }));
-    const usual = hook.render();
-    assert.match(
-      usual,
-      system === "windows"
-        ? /^~\\AppData\\Local\\/
-        : /^~\/\.config\/laci\/config\.json$/,
-      system,
-    );
-    await settled();
-    assert.equal(hook.render(), "~/work/laci-home/config.json", system);
-    // It asked once, and a later screen of the same page asks nothing.
-    hook.remount();
-    assert.equal(hook.render(), "~/work/laci-home/config.json", system);
-    await settled();
-    assert.deepEqual(hook.requests, ["prefs"], system);
-  }
-}
-
-export async function aRefusedAnswerLeavesTheUsualPath() {
-  const hook = configPathHook("linux", async () => {
-    throw new Error("config.json can't be read");
-  });
-  assert.equal(hook.render(), "~/.config/laci/config.json");
-  await settled();
-  assert.equal(hook.render(), "~/.config/laci/config.json");
-  assert.deepEqual(hook.requests, ["prefs"]);
+export async function helpFindsAWordByAnyOfItsNames() {
+  const find = (query) => words.findTerms(query).map((t) => t.id);
+  assert.equal(find("").length, words.glossary.length);
+  // The plain word, the Git word and words of the explanation all find it.
+  assert.ok(find("online copy").includes("online-copy"));
+  assert.ok(find("remote").includes("online-copy"));
+  assert.ok(find("STASH").includes("set-aside"));
+  assert.deepEqual(find("nothing like this anywhere"), []);
 }

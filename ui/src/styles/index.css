@@ -2,3 +2,4 @@
    Rules outside a layer beat every layer, so app styles go inside one. */
 @layer base, shared, detailed, simple;
 @import "./detailed.css" layer(detailed);
+@import "../simple/tokens.css" layer(simple);

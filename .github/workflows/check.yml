@@ -176,6 +176,10 @@ jobs:
       - run: pnpm -C ui build
       - run: cargo check --workspace --all-targets --features custom-protocol
       - run: cargo clippy --workspace --all-targets --features custom-protocol -- -D warnings
+      - run: cargo test --workspace --features custom-protocol
+      - run: cargo build -p laci --features custom-protocol
+      # mcp-smoke checks that the file it is given exists, so the name ends in .exe.
+      - run: node scripts/mcp-smoke.mjs target/debug/laci.exe
 
   macos:
     needs: changes
@@ -207,10 +211,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # tauri-build embeds ui/dist.
       - run: pnpm -C ui build
+      # TMPDIR: the default one is under /var, a link, and Laci refuses to write through links.
       - run: cargo check --workspace --all-targets --features custom-protocol
         env:
           TMPDIR: ${{ runner.temp }}
       - run: cargo clippy --workspace --all-targets --features custom-protocol -- -D warnings
+        env:
+          TMPDIR: ${{ runner.temp }}
+      - run: cargo test --workspace --features custom-protocol
+        env:
+          TMPDIR: ${{ runner.temp }}
+      - run: cargo build -p laci --features custom-protocol
+      - run: node scripts/mcp-smoke.mjs target/debug/laci
         env:
           TMPDIR: ${{ runner.temp }}
 

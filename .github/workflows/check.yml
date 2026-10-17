@@ -73,6 +73,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev patchelf git libglib2.0-bin xdg-utils webkit2gtk-driver xvfb rpm libarchive-tools
       - run: pnpm install --frozen-lockfile
+      # The app icons and what the Tauri configs list. Ubuntu 24.04 packages neither resvg nor ImageMagick 7,
+      # so the comparison with a fresh render is skipped here; the other checks run.
+      - run: node scripts/brand-check.mjs
       - run: pnpm -C ui typecheck
       - run: pnpm -C ui lint
       - run: cargo fmt --all -- --check

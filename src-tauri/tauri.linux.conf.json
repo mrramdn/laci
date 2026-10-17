@@ -6,7 +6,23 @@
       "deb",
       "rpm"
     ],
+    "icon": [
+      "icons/icon.png",
+      "icons/16x16.png",
+      "icons/24x24.png",
+      "icons/32x32.png",
+      "icons/48x48.png",
+      "icons/64x64.png",
+      "icons/128x128.png"
+    ],
     "linux": {
+      "appimage": {
+        "files": {
+          "/usr/share/icons/hicolor/256x256/apps/laci.png": "icons/128x128@2x.png",
+          "/usr/share/icons/hicolor/scalable/apps/laci.svg": "icons/icon.svg",
+          "/usr/share/icons/hicolor/symbolic/apps/laci-symbolic.svg": "icons/laci-symbolic.svg"
+        }
+      },
       "deb": {
         "depends": [
           "libwebkit2gtk-4.1-0",
@@ -14,7 +30,12 @@
           "libglib2.0-bin",
           "xdg-utils"
         ],
-        "desktopTemplate": "linux/laci.desktop"
+        "desktopTemplate": "linux/laci.desktop",
+        "files": {
+          "/usr/share/icons/hicolor/256x256/apps/laci.png": "icons/128x128@2x.png",
+          "/usr/share/icons/hicolor/scalable/apps/laci.svg": "icons/icon.svg",
+          "/usr/share/icons/hicolor/symbolic/apps/laci-symbolic.svg": "icons/laci-symbolic.svg"
+        }
       },
       "rpm": {
         "depends": [
@@ -23,7 +44,12 @@
           "glib2",
           "xdg-utils"
         ],
-        "desktopTemplate": "linux/laci.desktop"
+        "desktopTemplate": "linux/laci.desktop",
+        "files": {
+          "/usr/share/icons/hicolor/256x256/apps/laci.png": "icons/128x128@2x.png",
+          "/usr/share/icons/hicolor/scalable/apps/laci.svg": "icons/icon.svg",
+          "/usr/share/icons/hicolor/symbolic/apps/laci-symbolic.svg": "icons/laci-symbolic.svg"
+        }
       }
     }
   }

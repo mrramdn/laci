@@ -39,6 +39,22 @@ function buildId(file) {
   assert.ok(id, `Missing build identity: ${file}`);
   return id;
 }
+// Every package installs these under hicolor: the PNG sizes, the scalable icon and GNOME's symbolic one.
+const iconSizes = [16, 24, 32, 48, 64, 128, 256, 512];
+const icons = [
+  ...iconSizes.map((size) => `${size}x${size}/apps/laci.png`),
+  "scalable/apps/laci.svg",
+  "symbolic/apps/laci-symbolic.svg",
+].sort();
+function pngSize(file) {
+  const data = readFileSync(file);
+  assert.ok(
+    data.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex")) &&
+      data.toString("latin1", 12, 16) === "IHDR",
+    `Not a PNG: ${file}`,
+  );
+  return `${data.readUInt32BE(16)}x${data.readUInt32BE(20)}`;
+}
 function desktopEntry(file) {
   const fields = {};
   let group = "";
@@ -127,11 +143,28 @@ try {
     })) {
       assert.equal(entry[key], value, `${kind} desktop entry: ${key}`);
     }
-    assert.ok(
-      readdirSync(path.join(extracted, "usr/share/icons/hicolor"), {
-        recursive: true,
-      }).some((name) => name.endsWith("/laci.png")),
+    const hicolor = path.join(extracted, "usr/share/icons/hicolor");
+    assert.deepEqual(
+      readdirSync(hicolor, { recursive: true })
+        .filter((name) => /\/apps\/laci[-.]/.test(name))
+        .sort(),
+      icons,
+      `${kind} icons`,
     );
+    for (const size of iconSizes) {
+      assert.equal(
+        pngSize(path.join(hicolor, `${size}x${size}/apps/laci.png`)),
+        `${size}x${size}`,
+        `${kind} icon size`,
+      );
+    }
+    for (const icon of icons.filter((name) => name.endsWith(".svg"))) {
+      assert.match(
+        readFileSync(path.join(hicolor, icon), "utf8"),
+        /^<svg /,
+        `${kind} icon: ${icon}`,
+      );
+    }
     assert.equal(run(runner, ["--version"]).trim(), `laci ${version}`);
     const fixture = path.join(output, `${kind}-fixture`);
     run(process.execPath, [path.join(root, "scripts/demo.ts"), fixture]);

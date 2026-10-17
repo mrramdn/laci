@@ -410,6 +410,7 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
               maxLength={100}
               autoComplete="off"
               placeholder="my-app"
+              aria-invalid={nameProblem ? true : undefined}
             />
           </label>
           <label className="fld">

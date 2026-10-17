@@ -676,7 +676,7 @@ interface BackupResult {
 }
 const AUTO_BACKUP_EVERY = 10 * 60 * 1000;
 let autoBackupAt = 0;
-function autoBackup(snapshot: Snapshot | null) {
+export function autoBackup(snapshot: Snapshot | null) {
   const state = snapshot?.backup;
   // `pending` is unknown until the first backup has run, and that first run is wanted too.
   if (!state?.auto || state.pending === 0) return;

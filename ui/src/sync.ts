@@ -4,6 +4,7 @@ import { api } from "./api";
 import {
   useApp,
   applyPrefs,
+  autoBackup,
   readListing,
   refreshLog,
   refreshStatus,
@@ -108,9 +109,15 @@ export function useLaciSync() {
       },
     );
     void start();
+    // A refused automatic backup (the desktop runs at most one an hour) is asked for again even when no
+    // scan arrives in between; autoBackup itself asks at most every ten minutes.
+    const backups = setInterval(() => {
+      if (live) autoBackup(useApp.getState().snapshot);
+    }, 60_000);
     return () => {
       live = false;
       unlisten?.();
+      clearInterval(backups);
     };
   }, []);
 }

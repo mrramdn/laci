@@ -69,13 +69,30 @@ const typing = (target: HTMLElement) =>
   target.matches('input,textarea,select,[role="combobox"]') ||
   target.isContentEditable;
 /**
- * Keys for the whole window, in either design: Ctrl or ⌘+K for the palette, F4 or Ctrl+` for the
- * terminal, Escape for whatever is on top, and ? or Ctrl+/ for the shortcuts.
+ * Keys for the whole window, in either design and on the first-run screen: F6 between the panes
+ * that are shown, Ctrl or ⌘+K for the palette, F4 or Ctrl+` for the terminal, Escape for whatever is
+ * on top, and ? or Ctrl+/ for the shortcuts.
  */
 export function useGlobalHotkeys() {
   useEffect(() => {
     const hotkey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
+      if (event.key === "F6" && !event.ctrlKey && !event.altKey) {
+        const state = useApp.getState();
+        const target = event.target as HTMLElement;
+        if (
+          state.modal ||
+          state.palette ||
+          state.working ||
+          selectIsOpen() ||
+          target.closest?.(".xterm")
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        nextPane(event.shiftKey ? -1 : 1);
+        return;
+      }
       const terminal =
         event.key === "F4" || (event.ctrlKey && event.key === "`");
       const palette =
@@ -121,29 +138,11 @@ export function useGlobalHotkeys() {
   }, []);
 }
 /**
- * Detailed's own keys: F6 between its panes, ↑ ↓ and Enter on list rows, Backspace for the parent
- * folder and Ctrl+H for hidden files. They come after the window's keys, which handle Escape, ?
- * and Ctrl+/ first.
+ * Detailed's own keys: ↑ ↓ and Enter on list rows, Backspace for the parent folder and Ctrl+H for
+ * hidden files. They come after the window's keys, which handle F6, Escape, ? and Ctrl+/ first.
  */
 export function useDetailedHotkeys() {
   useEffect(() => {
-    const hotkey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing) return;
-      if (event.key !== "F6" || event.ctrlKey || event.altKey) return;
-      const state = useApp.getState();
-      const target = event.target as HTMLElement;
-      if (
-        state.modal ||
-        state.palette ||
-        state.working ||
-        selectIsOpen() ||
-        target.closest?.(".xterm")
-      )
-        return;
-      event.preventDefault();
-      event.stopPropagation();
-      nextPane(event.shiftKey ? -1 : 1);
-    };
     const key = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || selectIsOpen()) return;
       const target = event.target as HTMLElement;
@@ -191,11 +190,7 @@ export function useDetailedHotkeys() {
         state.cd(parentOf(state.cwd));
       }
     };
-    window.addEventListener("keydown", hotkey, true);
     window.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("keydown", hotkey, true);
-      window.removeEventListener("keydown", key);
-    };
+    return () => window.removeEventListener("keydown", key);
   }, []);
 }

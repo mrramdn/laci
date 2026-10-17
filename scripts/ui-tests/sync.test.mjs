@@ -96,7 +96,7 @@ function start() {
         restored++;
       },
     },
-  });
+  }, { setInterval: () => 1, clearInterval: () => {} });
   useLaciSync();
   /** The oldest request of that name still waiting, or the newest. */
   const take = (name, which) => {

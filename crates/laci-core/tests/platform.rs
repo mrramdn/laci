@@ -5,8 +5,6 @@ use laci_core::platform;
 #[cfg(unix)]
 mod unix {
     use super::*;
-    use laci_core::{config, env::Env, service::Service};
-    use serde_json::json;
     use std::{
         fs::{self, File},
         io::{self, Write},
@@ -135,9 +133,13 @@ mod unix {
     }
 
     /// The copy across devices is Laci's own: it stages the copy beside the destination and removes the source only
-    /// once the copy is in place. Undo goes back the same way.
+    /// once the copy is in place. Undo goes back the same way. Linux only until macOS can tell which programs work in
+    /// a folder (the archive checks that first).
+    #[cfg(target_os = "linux")]
     #[test]
     fn an_archive_on_another_device_is_copied_over_and_undone() {
+        use laci_core::{config, env::Env, service::Service};
+        use serde_json::json;
         let (_temp, root) = folder();
         let Some(drive) = elsewhere(&root) else {
             eprintln!("No second device here; the move across devices is not checked.");

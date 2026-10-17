@@ -483,7 +483,8 @@ pub fn run(env: Env) -> Result<()> {
                 let _ = window.set_focus();
             }
         }))
-        // Only Rust opens the folder picker; the window has no dialog permission.
+        // Only Rust opens the folder picker; the window has no dialog permission. The plugin also replaces
+        // window.alert and window.confirm in the page with calls that are refused, so the UI never uses them.
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             let (sender, receiver) = mpsc::channel();
@@ -503,9 +504,19 @@ pub fn run(env: Env) -> Result<()> {
             });
             app.manage(Arc::clone(&state));
             // 1440×900 shrinks to fit the main screen's work area, title bar included, and opens centred on it.
+            // Wayland names no main screen and no work area, so there it fits the smallest screen with room for
+            // panels, and the compositor places it.
+            let (mut width, mut height) = (1440.0_f64, 900.0_f64);
+            if app.primary_monitor().ok().flatten().is_none() {
+                for monitor in app.available_monitors().unwrap_or_default() {
+                    let screen = monitor.work_area().size.to_logical::<f64>(monitor.scale_factor());
+                    width = width.min(screen.width - 64.0);
+                    height = height.min(screen.height - TITLE_BAR - 64.0);
+                }
+            }
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Laci")
-                .inner_size(1440.0, 900.0)
+                .inner_size(width.max(720.0), height.max(560.0))
                 .min_inner_size(720.0, 560.0)
                 .prevent_overflow_with_margin(tauri::LogicalSize::new(0.0, TITLE_BAR))
                 .center()

@@ -1,0 +1,20 @@
+{
+  "bundle": {
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "mrramdn",
+    "copyright": "Copyright (c) 2026 Rifki Ramdani",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "windows/installer-hooks.nsh",
+        "installerIcon": "icons/icon.ico"
+      }
+    }
+  }
+}

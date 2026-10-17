@@ -21,7 +21,7 @@ mkdir -p "$data_root/applications"
 cat > "$data_root/applications/laci.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=laci
+Name=Laci
 Comment=Projects, their git state and agent history
 Exec="$exec_path"
 Icon=$icon_path

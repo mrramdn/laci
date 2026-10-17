@@ -1,0 +1,30 @@
+{
+  "productName": "laci",
+  "bundle": {
+    "targets": [
+      "appimage",
+      "deb",
+      "rpm"
+    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "git",
+          "libglib2.0-bin",
+          "xdg-utils"
+        ],
+        "desktopTemplate": "linux/laci.desktop"
+      },
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "git",
+          "glib2",
+          "xdg-utils"
+        ],
+        "desktopTemplate": "linux/laci.desktop"
+      }
+    }
+  }
+}

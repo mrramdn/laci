@@ -47,6 +47,7 @@ fn blocked(env: &Env, node: &Value) -> String {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn live_remote_refs_allow_trash_but_ignored_files_remain_explicit() {
     let (_home, env, dir, node) = fixture();
     fs::write(dir.join(".git/info/exclude"), "secret.env\n").unwrap();
@@ -63,6 +64,7 @@ fn live_remote_refs_allow_trash_but_ignored_files_remain_explicit() {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn stale_remote_tracking_refs_and_other_local_branches_cannot_authorize_removal() {
     let (_home, env, dir, node) = fixture();
     fs::write(dir.join("README.md"), "new work\n").unwrap();
@@ -80,6 +82,7 @@ fn stale_remote_tracking_refs_and_other_local_branches_cannot_authorize_removal(
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn dirty_untracked_stash_and_unreachable_remote_are_refused_again_at_execution() {
     let (_home, env, dir, node) = fixture();
     assert_eq!(deletion::plan(&env, &node).unwrap()["allowed"], true);
@@ -155,6 +158,7 @@ fn colons_in_local_paths_cannot_bypass_the_self_backup_guard() {
 // The stand-in for git-upload-pack is a shell script.
 #[cfg(unix)]
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn local_work_created_while_the_remote_answers_prevents_trash() {
     use std::os::unix::fs::PermissionsExt;
     let (_home, env, dir, node) = fixture();
@@ -189,6 +193,7 @@ fn hidden_tracked_changes_cannot_pass_the_trash_guard() {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn shared_local_backups_must_be_independent_before_trash() {
     let (_home, env, dir, node) = fixture();
     let backup = env.home.join("backup.git");

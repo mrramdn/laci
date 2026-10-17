@@ -163,6 +163,7 @@ fn pure_trash_has_no_laci_undo_and_mixed_journals_explain_partial_recovery() {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn invalid_default_archive_keeps_review_available_with_a_valid_alternative() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));

@@ -59,6 +59,7 @@ fn v1(env: &Env, args: &[&str]) -> Value {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn rust_move_can_be_undone_by_v1_without_losing_bytes_or_time() {
     let (_temp, env) = home();
     let (snap, from, to, store, original) = fixture(&env);
@@ -76,6 +77,7 @@ fn rust_move_can_be_undone_by_v1_without_losing_bytes_or_time() {
     assert!(!to.exists());
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn v1_move_can_be_undone_by_rust_without_losing_bytes_or_time() {
     let (_temp, env) = home();
     let (_snap, from, to, store, original) = fixture(&env);
@@ -93,6 +95,7 @@ fn v1_move_can_be_undone_by_rust_without_losing_bytes_or_time() {
     assert!(!to.exists());
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn connectors_move_and_restore_while_mentions_and_inside_history_stay_intact() {
     let (_temp, env) = home();
     let (mut snap, from, to, store, original) = fixture(&env);
@@ -139,6 +142,7 @@ fn failed_history_rewrite_rolls_back_project_and_refuses_symlinks() {
     assert_eq!(journal["state"], "undone");
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn destinations_quarantine_and_undo_reject_escape_and_overwrite() {
     let (temp, env) = home();
     let (snap, from, to, _store, _original) = fixture(&env);
@@ -264,6 +268,7 @@ fn project_creation_template_validation_and_sidecar_edits_preserve_other_section
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn merging_history_restores_both_source_and_existing_destination() {
     let (_temp, env) = home();
     let (snap, from, to, store, original) = fixture(&env);

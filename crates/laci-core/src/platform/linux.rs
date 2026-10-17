@@ -39,8 +39,9 @@ pub fn processes_in(paths: &[PathBuf]) -> Result<Vec<Holder>> {
             if !paths.iter().any(|p| cwd.starts_with(p)) {
                 return None;
             }
-            // A process that is gone by now no longer holds the folder.
-            let name = fs::read_to_string(e.path().join("comm")).ok()?.trim().to_owned();
+            // A process that is gone by now no longer holds the folder. The kernel cuts the name at 15 bytes, even
+            // inside a character, so it is read as bytes: a name that isn't UTF-8 must not hide the process.
+            let name = String::from_utf8_lossy(&fs::read(e.path().join("comm")).ok()?).trim().to_owned();
             Some(Holder { pid, name, cwd })
         })
         .collect())

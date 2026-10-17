@@ -134,7 +134,8 @@ pub(crate) fn busy_in(paths: &[PathBuf]) -> Result<Vec<Value>> {
         // Laci's own helpers, such as a scan's `git status`, don't hold the folder; terminals and apps it opens
         // still do. Checked after the read: a helper's pid is unlisted before it can be reused.
         .filter(|h| !process::is_own_child(h.pid))
-        .map(|h| json!({"pid":h.pid,"name":h.name,"cwd":h.cwd}))
+        // A folder name that isn't UTF-8 must not stop the message being written.
+        .map(|h| json!({"pid":h.pid,"name":h.name,"cwd":h.cwd.to_string_lossy()}))
         .collect())
 }
 /// How long a change waits for Git that another program runs in the folder, such as a second Laci or an editor.

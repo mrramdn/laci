@@ -9,7 +9,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::{env::Env, files, paths, providers};
+use crate::{env::Env, files, paths, platform, providers};
 
 pub fn catalog(env: &Env) -> Vec<Value> {
     vec![
@@ -205,20 +205,10 @@ impl Cache {
         // Laci preserves log mtimes on purpose. Equal-length rewrites must still invalidate
         // facts, and external writers can preserve mtime too. Replacement and in-place writes
         // both change Unix ctime; the inode also detects atomic replacement on coarse clocks.
-        #[cfg(unix)]
         let changed = meta
             .as_ref()
-            .map(|m| {
-                use std::os::unix::fs::MetadataExt;
-                format!("{}:{}:{}", m.ctime(), m.ctime_nsec(), m.ino())
-            })
-            .unwrap_or_default();
-        #[cfg(not(unix))]
-        let changed = meta
-            .as_ref()
-            .and_then(|m| m.created().ok())
-            .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|m| m.as_nanos().to_string())
+            .and_then(|m| platform::change_stamp(path, m).ok())
+            .map(|stamp| format!("{}:{}:{}", stamp.changed.0, stamp.changed.1, stamp.identity.file))
             .unwrap_or_default();
         if let Some(previous) = self.values.get(&key)
             && previous["size"] == size
@@ -308,6 +298,7 @@ fn records(path: &Path, read: impl FnMut(Value)) -> bool {
 fn records_from(path: &Path, tail: bool, mut read: impl FnMut(Value)) -> bool {
     let Ok(mut file) = fs::File::open(path) else { return false };
     let Ok(before) = file.metadata() else { return false };
+    let stamp = platform::file_change_stamp(&file, &before);
     let skip = if tail { before.len().saturating_sub(METADATA_BYTES) } else { 0 };
     if file.seek(SeekFrom::Start(skip)).is_err() {
         return false;
@@ -342,13 +333,10 @@ fn records_from(path: &Path, tail: bool, mut read: impl FnMut(Value)) -> bool {
     }
     complete &= consumed >= data.len();
     // A writer changing the file during this read cannot supply complete ownership proof.
-    complete &= file.metadata().is_ok_and(|after| {
-        use std::os::unix::fs::MetadataExt;
-        after.len() == before.len()
-            && after.mtime() == before.mtime()
-            && after.mtime_nsec() == before.mtime_nsec()
-            && after.ctime() == before.ctime()
-            && after.ctime_nsec() == before.ctime_nsec()
+    complete &= stamp.is_ok_and(|stamp| {
+        file.metadata().is_ok_and(|after| {
+            after.len() == before.len() && platform::file_change_stamp(&file, &after).is_ok_and(|now| now == stamp)
+        })
     });
     complete
 }
@@ -433,7 +421,6 @@ fn session_facts(path: &Path, provider: &str) -> Value {
 /// log longer than it is never complete enough to clean up.
 fn session_facts_from(path: &Path, provider: &str, previous: Option<&Value>) -> Value {
     use std::io::BufRead;
-    use std::os::unix::fs::MetadataExt;
     let fresh = || json!({"cwds":{},"lines":0,"prompts":0,"filesChanged":0});
     let Ok(mut file) = fs::File::open(path) else {
         return json!({"cwds":{},"lines":0,"ownershipComplete":false});
@@ -442,10 +429,12 @@ fn session_facts_from(path: &Path, provider: &str, previous: Option<&Value>) -> 
         return json!({"cwds":{},"lines":0,"ownershipComplete":false});
     };
     let len = before.len();
+    // The file this read began with. Without it, nothing is resumed and the read proves nothing.
+    let inode = platform::file_change_stamp(&file, &before).ok().map(|stamp| stamp.identity.file);
     let resumed = previous.filter(|p| {
         let read = &p["_read"];
         read["reader"] == READER
-            && read["inode"] == before.ino()
+            && inode.is_some_and(|inode| read["inode"] == inode)
             && read["offset"].as_u64().is_some_and(|offset| offset <= len)
             && read["probe"]
                 .as_str()
@@ -506,7 +495,9 @@ fn session_facts_from(path: &Path, provider: &str, previous: Option<&Value>) -> 
         }
     }
     // A log that shrank or was replaced while it was read proves nothing; read it again next time.
-    let replaced = fs::metadata(path).map_or(true, |after| after.ino() != before.ino() || after.len() < offset);
+    let replaced = fs::metadata(path).map_or(true, |after| {
+        platform::identity(path, &after).map_or(true, |id| Some(id.file) != inode) || after.len() < offset
+    });
     facts["filesChanged"] = json!(changed.len());
     if facts["title"].is_null()
         && let Some(prompt) = facts["firstPrompt"].as_str()
@@ -516,7 +507,7 @@ fn session_facts_from(path: &Path, provider: &str, previous: Option<&Value>) -> 
     }
     facts["ownershipComplete"] = json!(head && parsed && valid && !pending && !replaced);
     if !replaced {
-        facts["_read"] = json!({"reader":READER,"inode":before.ino(),"offset":offset,"probe":probe(&mut file, offset),"headBytes":head_bytes,"headRecords":head_records,"head":head,"parsed":parsed,"valid":valid,"files":changed.into_iter().take(CHANGED_FILES).collect::<Vec<_>>()});
+        facts["_read"] = json!({"reader":READER,"inode":inode,"offset":offset,"probe":probe(&mut file, offset),"headBytes":head_bytes,"headRecords":head_records,"head":head,"parsed":parsed,"valid":valid,"files":changed.into_iter().take(CHANGED_FILES).collect::<Vec<_>>()});
     }
     facts
 }

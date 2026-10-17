@@ -10,7 +10,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 
-use crate::{Result, agents, config, env::Env, files, paths, readers};
+use crate::{Result, agents, config, env::Env, files, paths, platform, readers};
 
 static DOCS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^(readme|notes?|handoff|todo|tasks)[\w.-]*\.md$").expect("docs pattern"));
@@ -46,14 +46,15 @@ const CODE: &[&str] = &[
 ];
 
 fn check_root_identity(path: &Path, cfg: &Value) -> Result<()> {
-    use std::os::unix::fs::MetadataExt;
     crate::sidecar::plain_path(path)?;
     let meta = std::fs::metadata(path).map_err(|_| "Folder or drive is unavailable".to_owned())?;
     if !meta.is_dir() {
         return Err("Location is no longer a folder".into());
     }
     if let Some(expected) = cfg["rootIdentities"].get(path.to_string_lossy().as_ref())
-        && (expected["device"].as_u64() != Some(meta.dev()) || expected["inode"].as_u64() != Some(meta.ino()))
+        && platform::identity(path, &meta).ok().is_none_or(|id| {
+            expected["device"].as_u64() != Some(id.volume) || expected["inode"].as_u64() != Some(id.file)
+        })
     {
         return Err("The selected folder or drive has changed; select it again to use it".into());
     }
@@ -72,7 +73,6 @@ pub(crate) fn check_archive_destination(env: &Env, dest: &Path) -> Result<()> {
 
 /// Configured locations stay visible when a disk is disconnected or cannot be read.
 pub fn root_status(env: &Env, cfg: &Value) -> Vec<Value> {
-    use std::os::unix::fs::MetadataExt;
     roots(env, cfg)
         .into_iter()
         .map(|path| {
@@ -83,8 +83,11 @@ pub fn root_status(env: &Env, cfg: &Value) -> Vec<Value> {
                 Ok(())
             })();
             match checked {
-                Ok(()) => match std::fs::metadata(&path) {
-                    Ok(meta) => json!({"path":path,"available":true,"device":meta.dev(),"inode":meta.ino()}),
+                Ok(()) => match std::fs::metadata(&path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|meta| platform::identity(&path, &meta))
+                {
+                    Ok(id) => json!({"path":path,"available":true,"device":id.volume,"inode":id.file}),
                     Err(_) => json!({"path":path,"available":false,"reason":"Folder or drive became unavailable"}),
                 },
                 Err(reason) => json!({"path":path,"available":false,"reason":reason}),

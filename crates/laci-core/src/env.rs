@@ -1,3 +1,4 @@
+use crate::platform::{self, Dirs};
 use std::path::PathBuf;
 
 /// Locations owned by one installation, injectable for demos and tests.
@@ -15,10 +16,11 @@ pub struct Env {
 
 impl Env {
     pub fn for_home(home: PathBuf) -> Self {
+        let Dirs { config, data, cache } = Dirs::inside(&home);
         Self {
-            config_dir: home.join(".config/laci"),
-            data_dir: home.join(".local/share/laci"),
-            cache_dir: home.join(".cache/laci"),
+            config_dir: config,
+            data_dir: data,
+            cache_dir: cache,
             app_overrides: Default::default(),
             program: PathBuf::from("laci"),
             home,
@@ -27,8 +29,8 @@ impl Env {
 
     pub fn from_process() -> crate::Result<Self> {
         let home = std::env::var_os("LACI_HOME")
-            .or_else(|| std::env::var_os("HOME"))
             .map(PathBuf::from)
+            .or_else(platform::home_dir)
             .filter(|p| p.is_absolute())
             .ok_or("Set HOME to an absolute folder path")?;
         let mut env = Self::for_home(home);
@@ -47,11 +49,8 @@ impl Env {
         }
         // LACI_HOME isolates a demo without changing the caller's HOME or XDG settings.
         if std::env::var_os("LACI_HOME").is_none() {
-            for (key, dest) in [("XDG_CONFIG_HOME", &mut env.config_dir), ("XDG_CACHE_HOME", &mut env.cache_dir)] {
-                if let Some(base) = std::env::var_os(key).map(PathBuf::from).filter(|p| p.is_absolute()) {
-                    *dest = base.join("laci");
-                }
-            }
+            let Dirs { config, data, cache } = platform::user_dirs(&env.home)?;
+            (env.config_dir, env.data_dir, env.cache_dir) = (config, data, cache);
         }
         Ok(env)
     }

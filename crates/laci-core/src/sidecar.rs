@@ -1,5 +1,6 @@
 //! Edits the project's private Markdown notes without rewriting unrelated content. It writes the line ending the file
 //! mostly uses, and the lines below the frontmatter that it leaves alone keep theirs.
+pub(crate) use crate::platform::path::plain_path;
 use crate::{Result, files, git, readers};
 use regex::Regex;
 use sha2::{Digest, Sha256};
@@ -58,15 +59,6 @@ fn splice_lines(lines: &mut Vec<String>, range: Range<usize>, new: Vec<String>, 
             line.push('\r');
         }
     }
-}
-/// Reject linked files and linked ancestor directories before writing notes or task files.
-pub(crate) fn plain_path(path: &Path) -> Result<()> {
-    for p in path.ancestors() {
-        if fs::symlink_metadata(p).is_ok_and(|m| m.is_symlink()) {
-            return Err(format!("Refusing to edit linked path {}", p.display()));
-        }
-    }
-    Ok(())
 }
 /// Hands `transform` the file's text and the line ending its new lines get. A byte order mark, which some Windows
 /// editors write, is set aside so the frontmatter is still found, and written back in front.

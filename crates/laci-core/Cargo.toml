@@ -19,4 +19,6 @@ sha2.workspace = true
 rayon.workspace = true
 walkdir.workspace = true
 tempfile.workspace = true
+
+[target.'cfg(unix)'.dependencies]
 rustix.workspace = true

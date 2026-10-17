@@ -1,10 +1,17 @@
 //! Detached history is removable only when its selected, available workspace confirms absence.
-use crate::{Result, config, env::Env, paths, scan, service::string, sidecar};
+use crate::{
+    Result, config,
+    env::Env,
+    paths,
+    platform::{self, ensure_idle},
+    scan,
+    service::string,
+    sidecar,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
 
@@ -72,15 +79,18 @@ fn identity(env: &Env, source: &Path) -> Result<String> {
         if meta.is_symlink() || (!meta.is_file() && !meta.is_dir()) {
             return Err("Linked or special history files cannot be cleaned up".into());
         }
+        let stamp =
+            platform::change_stamp(entry.path(), &meta).map_err(|_| "History changed or cannot be read".to_owned())?;
+        let ((mtime, mtime_nsec), (ctime, ctime_nsec)) = (stamp.modified, stamp.changed);
         hash.update(entry.path().as_os_str().as_encoded_bytes());
         for value in [
-            meta.dev(),
-            meta.ino(),
+            stamp.identity.volume,
+            stamp.identity.file,
             meta.len(),
-            meta.mtime() as u64,
-            meta.mtime_nsec() as u64,
-            meta.ctime() as u64,
-            meta.ctime_nsec() as u64,
+            mtime as u64,
+            mtime_nsec as u64,
+            ctime as u64,
+            ctime_nsec as u64,
         ] {
             hash.update(value.to_le_bytes());
         }
@@ -205,37 +215,4 @@ pub(crate) fn revalidate(env: &Env, reviewed: &Value, fresh: &Value) -> Result<(
         }
     }
     ensure_idle(&sources.iter().map(|s| PathBuf::from(string(s, "path"))).collect::<Vec<_>>())
-}
-
-fn ensure_idle(sources: &[PathBuf]) -> Result<()> {
-    for process in fs::read_dir("/proc").map_err(|_| "Could not check running history writers".to_owned())? {
-        let process = process.map_err(|e| e.to_string())?;
-        if process.file_name().to_string_lossy().parse::<u32>().is_err() {
-            continue;
-        }
-        if fs::read_link(process.path().join("cwd")).is_ok_and(|cwd| sources.iter().any(|p| cwd.starts_with(p))) {
-            return Err("History is in use by a running process. Close it first.".into());
-        }
-        let Ok(fds) = fs::read_dir(process.path().join("fd")) else {
-            continue;
-        };
-        for fd in fds.flatten() {
-            let Ok(target) = fs::read_link(fd.path()) else {
-                continue;
-            };
-            if !sources.iter().any(|p| target.starts_with(p)) {
-                continue;
-            }
-            let info = fs::read_to_string(process.path().join("fdinfo").join(fd.file_name()))
-                .map_err(|_| "Could not verify a process using this history".to_owned())?;
-            let flags = info
-                .lines()
-                .find_map(|l| l.strip_prefix("flags:").and_then(|n| u32::from_str_radix(n.trim(), 8).ok()))
-                .ok_or("Could not verify a process using this history")?;
-            if flags & 3 != 0 {
-                return Err("History has an open writer. Stop the session before cleaning it up.".into());
-            }
-        }
-    }
-    Ok(())
 }

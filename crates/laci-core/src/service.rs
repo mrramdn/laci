@@ -1,7 +1,7 @@
 //! Application actions shared by IPC and MCP.
 use crate::{
-    Result, activity, agents, assistant, config, create, env::Env, files, ops, paths, readers, reports, scan, sidecar,
-    storage,
+    Result, activity, agents, assistant, config, create, env::Env, files, ops, paths, platform, readers, reports, scan,
+    sidecar, storage,
 };
 use serde_json::{Value, json};
 use std::{
@@ -19,8 +19,11 @@ pub fn array(value: &Value) -> Vec<Value> {
     value.as_array().cloned().unwrap_or_default()
 }
 /// App key, Settings label and built-in default.
-const APPS: [(&str, &str, &str); 3] =
-    [("terminal", "Terminal app", "kitty"), ("editor", "Editor", "code"), ("files", "File manager", "dolphin")];
+const APPS: [(&str, &str, &str); 3] = [
+    ("terminal", "Terminal app", platform::DEFAULT_APPS.terminal),
+    ("editor", "Editor", platform::DEFAULT_APPS.editor),
+    ("files", "File manager", platform::DEFAULT_APPS.files),
+];
 fn settings_detail(env: &Env, before: &Value, after: &Value) -> String {
     let mut parts = vec![];
     let roots = |c: &Value| -> Vec<String> {
@@ -710,11 +713,7 @@ impl Service {
                 Ok(json!({}))
             }
             "log/open" => {
-                detach(
-                    "xdg-open",
-                    &[self.env.data_dir.join("laci.log").to_string_lossy().into_owned()],
-                    &self.env.home,
-                )?;
+                platform::open(&self.env.data_dir.join("laci.log").to_string_lossy(), &self.env.home)?;
                 Ok(json!({"ok":true}))
             }
             "backup" => {
@@ -1044,7 +1043,7 @@ impl Service {
                 } else {
                     return Err("Only web and mail addresses can be opened".into());
                 };
-                detach("xdg-open", &[url.into()], &self.env.home)?;
+                platform::open(url, &self.env.home)?;
                 Ok(json!({"ok":true}))
             }
             "open" => self.open(b),
@@ -1231,13 +1230,13 @@ impl Service {
             if !path.exists() {
                 return Err("That file is gone".into());
             }
-            detach("xdg-open", &[path.to_string_lossy().into_owned()], path.parent().unwrap_or(&self.env.home))?;
+            platform::open(&path.to_string_lossy(), path.parent().unwrap_or(&self.env.home))?;
         } else if what == "link" {
             let node = self.place(id)?;
             let project = paths::workspace_path(string(&node, "path"), &self.env)?;
             let shown = match link_target(&project, string(b, "arg"))? {
                 LinkTarget::Open(file) => {
-                    detach("xdg-open", &[file.to_string_lossy().into_owned()], file.parent().unwrap_or(&project))?;
+                    platform::open(&file.to_string_lossy(), file.parent().unwrap_or(&project))?;
                     false
                 }
                 LinkTarget::Show(folder) => {
@@ -1315,27 +1314,11 @@ pub fn link_target(project: &Path, href: &str) -> Result<LinkTarget> {
 pub fn installed_apps() -> Value {
     let path = crate::process::host_path();
     let mut result = json!({});
-    for (kind, choices) in [
-        (
-            "terminal",
-            vec![
-                "kitty",
-                "konsole",
-                "alacritty",
-                "wezterm",
-                "foot",
-                "ghostty",
-                "gnome-terminal",
-                "xfce4-terminal",
-                "xterm",
-            ],
-        ),
-        ("editor", vec!["code", "cursor", "zed", "codium", "windsurf", "subl", "kate", "gnome-text-editor"]),
-        ("files", vec!["dolphin", "nautilus", "thunar", "nemo", "pcmanfm", "caja"]),
-    ] {
+    for (kind, choices) in platform::KNOWN_APPS {
         result[kind] = json!(
             choices
-                .into_iter()
+                .iter()
+                .copied()
                 .filter(|bin| std::env::split_paths(&path).any(|p| p.join(bin).is_file()))
                 .collect::<Vec<_>>()
         );
@@ -1358,24 +1341,7 @@ pub fn detach(program: &str, args: &[String], cwd: &Path) -> Result<()> {
     Ok(())
 }
 fn external_terminal(app: &str, cwd: &Path, cmd: Option<&str>, confirm: bool) -> Result<()> {
-    let d = cwd.to_string_lossy().into_owned();
-    let mut args = match app {
-        "kitty" => vec!["--directory".into(), d],
-        "konsole" => vec!["--workdir".into(), d],
-        "alacritty" => vec!["--working-directory".into(), d],
-        "wezterm" => vec!["start".into(), "--cwd".into(), d],
-        _ => Vec::new(),
-    };
-    if let Some(cmd) = cmd {
-        args.push(if app == "wezterm" || app == "gnome-terminal" { "--" } else { "-e" }.into());
-        let script = if confirm {
-            "printf '$ %s\\n' \"$0\"; read -r -p 'Press Enter to run, Ctrl+C to cancel ' _ && eval \"$0\"; exec \"${SHELL:-bash}\""
-        } else {
-            "eval \"$0\"; exec \"${SHELL:-bash}\""
-        };
-        args.extend(["bash".into(), "-lc".into(), script.into(), cmd.into()]);
-    }
-    detach(app, &args, cwd)
+    detach(app, &platform::terminal_script_args(app, cwd, cmd, confirm)?, cwd)
 }
 
 #[cfg(test)]

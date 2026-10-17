@@ -9,8 +9,11 @@ import {
 import type { ReactNode } from "react";
 import { api, errorText } from "./api";
 import { useApp, changed, run, selectWhenReady } from "./store";
-import { bytes, plural, tilde } from "./helpers";
+import { bytes, expandHome, isAbsolutePath, plural, tilde } from "./helpers";
+import { OS, TRASH } from "./platform";
+import { detailedList } from "./shortcuts";
 import { Icon, Ops, restoreFocus, SeverityGlyph } from "./common";
+import { useConfigPath } from "./settings";
 import { closeTerminal, useTerms } from "./terminal-api";
 import { AgentDialog, DeleteSessions, SessionDialog } from "./session-ui";
 import { McpDialog } from "./mcp-setup";
@@ -19,9 +22,27 @@ import type { ArchivePlan, Change, DeletePlan, Link } from "./types";
 const NewProject = lazy(() =>
   import("./new-project").then((module) => ({ default: module.NewProject })),
 );
+const HelpDialog = lazy(() =>
+  import("./help").then((module) => ({ default: module.HelpDialog })),
+);
 function close() {
   useApp.setState({ modal: null });
 }
+/** The system's bin written for the sentences around it: a Trash, and on Windows a Recycle Bin. */
+const BIN =
+  OS === "windows"
+    ? {
+        name: "Recycle Bin",
+        bare: "the Recycle Bin",
+        your: "the Recycle Bin",
+        the: "the Recycle Bin",
+      }
+    : {
+        name: "System Trash",
+        bare: "system Trash",
+        your: "your system Trash",
+        the: "the system Trash",
+      };
 function dialogControls(host: HTMLElement | null) {
   return Array.from(
     host?.querySelectorAll<HTMLElement>(
@@ -213,6 +234,10 @@ export function Dialogs() {
   const modal = useApp((s) => s.modal);
   return modal?.kind === "shortcuts" ? (
     <Shortcuts />
+  ) : modal?.kind === "help" ? (
+    <Suspense fallback={null}>
+      <HelpDialog />
+    </Suspense>
   ) : modal?.kind === "archive" ? (
     <Archive key={modal.id} id={modal.id} />
   ) : modal?.kind === "delete" ? (
@@ -283,7 +308,7 @@ function OrphanHistory({ id }: { id: string }) {
           changed(
             result,
             recovery === "trash"
-              ? "Moved history to Trash"
+              ? `Moved history to ${TRASH}`
               : "History quarantined",
           );
           close();
@@ -292,7 +317,7 @@ function OrphanHistory({ id }: { id: string }) {
         }
       },
       recovery === "trash"
-        ? "Moving history to Trash…"
+        ? `Moving history to ${TRASH}…`
         : "Quarantining history…",
       {
         history: true,
@@ -309,7 +334,7 @@ function OrphanHistory({ id }: { id: string }) {
           <p className={error ? "err" : ""} role={error ? "alert" : undefined}>
             {error ||
               (recovery === "trash"
-                ? "Restore history through system Trash. Laci Undo will not be available."
+                ? `Restore history through ${BIN.bare}. Laci Undo will not be available.`
                 : "Laci Undo restores quarantined history to its original location.")}
           </p>
           <button className="btn" disabled={saving} onClick={close}>
@@ -323,7 +348,7 @@ function OrphanHistory({ id }: { id: string }) {
             {saving
               ? "Moving…"
               : recovery === "trash"
-                ? "Move history to Trash"
+                ? `Move history to ${TRASH}`
                 : "Quarantine history"}
           </button>
         </>
@@ -344,11 +369,7 @@ function OrphanHistory({ id }: { id: string }) {
             "Quarantine",
             "Keep a Laci journal for exact restoration.",
           ],
-          [
-            "trash",
-            "System Trash",
-            "Restore manually through your system Trash.",
-          ],
+          ["trash", BIN.name, `Restore manually through ${BIN.your}.`],
         ].map(([value, label, detail]) => (
           <label className="choice" key={value}>
             <input
@@ -412,27 +433,6 @@ function TerminalClose({ id }: { id: string }) {
   );
 }
 function Shortcuts() {
-  const sections = [
-    [
-      "Navigation",
-      [
-        ["Command palette", ["Ctrl", "K"]],
-        ["Next / Prev row", ["↓", "↑"]],
-        ["Open / Select", ["↵"]],
-        ["Parent folder", ["⌫"]],
-        ["Next / Prev pane", ["F6", "Shift F6"]],
-        ["Close / Dismiss", ["Esc"]],
-      ],
-    ],
-    [
-      "Workspace",
-      [
-        ["Toggle terminal", ["F4", "Ctrl `"]],
-        ["Toggle hidden files", ["Ctrl", "H"]],
-        ["Shortcuts help", ["?"]],
-      ],
-    ],
-  ] as const;
   return (
     <DialogFrame
       title="Keyboard shortcuts"
@@ -446,24 +446,31 @@ function Shortcuts() {
         </>
       }
     >
-      <div className="short-grid">
-        {sections.map(([title, rows]) => (
-          <div className="short-sec" key={title}>
-            <h3>{title}</h3>
-            {rows.map(([label, keys]) => (
-              <div className="short-row" key={label}>
-                <span>{label}</span>
-                <div className="short-keys">
-                  {keys.map((key) => (
-                    <kbd key={key}>{key}</kbd>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
+      <ShortcutGrid />
     </DialogFrame>
+  );
+}
+const SHORTCUTS = detailedList(OS);
+/** Detailed's keys in its two sections, for its Keyboard shortcuts dialog and its Help. */
+export function ShortcutGrid() {
+  return (
+    <div className="short-grid">
+      {SHORTCUTS.map(([title, rows]) => (
+        <div className="short-sec" key={title}>
+          <h3>{title}</h3>
+          {rows.map(([label, keys]) => (
+            <div className="short-row" key={label}>
+              <span>{label}</span>
+              <div className="short-keys">
+                {keys.map((key) => (
+                  <kbd key={key}>{key}</kbd>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }
 function Archive({ id }: { id: string }) {
@@ -484,9 +491,8 @@ function Archive({ id }: { id: string }) {
   useEffect(() => {
     let live = true;
     const timer = window.setTimeout(() => {
-      let path = destination.trim();
-      if (path === "~" || path.startsWith("~/")) path = home + path.slice(1);
-      if (path && !path.startsWith("/")) {
+      const path = expandHome(destination.trim(), home);
+      if (path && !isAbsolutePath(path)) {
         setReview({
           destination,
           error: "Use a full destination path like ~/archive/my-project",
@@ -657,7 +663,7 @@ function CleanProject({ id }: { id: string }) {
         <>
           Deletes {parts.map((p) => p.path).join(", ")} for good, freeing{" "}
           {bytes(n.size!.reclaimable)}. The next install or build brings them
-          back. They don't go to the Trash, which would keep the space taken.
+          back. They don't go to the {TRASH}, which would keep the space taken.
         </>
       }
       footer={
@@ -719,14 +725,14 @@ function DeleteProject({ id }: { id: string }) {
         try {
           const change = await api<Change>("delete", { id, confirm: true });
           if (useApp.getState().modal === modal) close();
-          changed(change, `Moved ${n.name} to Trash`);
+          changed(change, `Moved ${n.name} to ${TRASH}`);
           if (useApp.getState().selected === id)
             useApp.setState({ selected: null, pendingSelection: null });
         } finally {
           setSaving(false);
         }
       },
-      `Moving ${n.name} to Trash…`,
+      `Moving ${n.name} to ${TRASH}…`,
       {
         history: true,
         onError: (error) => {
@@ -738,12 +744,12 @@ function DeleteProject({ id }: { id: string }) {
   }
   return (
     <DialogFrame
-      title={`Move ${n.name} to Trash?`}
+      title={`Move ${n.name} to ${TRASH}?`}
       description={
         <>
           Moves <span className="mono">{tilde(n.path, s.snapshot!.home)}</span>{" "}
-          to the system Trash after checking its Git backup. Agent history
-          stored outside this project stays where it is.
+          to {BIN.the} after checking its Git backup. Agent history stored
+          outside this project stays where it is.
         </>
       }
       footer={
@@ -753,9 +759,7 @@ function DeleteProject({ id }: { id: string }) {
               {error}
             </p>
           ) : (
-            <p>
-              Restore the folder from your system Trash if you need it back.
-            </p>
+            <p>Restore the folder from {BIN.your} if you need it back.</p>
           )}
           <button className="btn" disabled={saving} onClick={close}>
             Cancel
@@ -767,7 +771,7 @@ function DeleteProject({ id }: { id: string }) {
             }
             onClick={() => void remove()}
           >
-            {saving ? "Moving…" : "Move to Trash"}
+            {saving ? "Moving…" : `Move to ${TRASH}`}
           </button>
         </>
       }
@@ -814,6 +818,7 @@ const KINDS: [Link["kind"], string][] = [
 ];
 function ConnectorDialog() {
   const s = useApp();
+  const configPath = useConfigPath();
   const [kind, setKind] = useState<Link["kind"]>("cwd");
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
@@ -904,7 +909,7 @@ function ConnectorDialog() {
               {error}
             </p>
           ) : (
-            <p>Saved in ~/.config/laci/config.json</p>
+            <p>Saved in {configPath}</p>
           )}
           <button
             type="button"

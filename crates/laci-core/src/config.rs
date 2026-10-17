@@ -106,7 +106,7 @@ pub fn root_identities(env: &Env, roots: &Value, previous: &Value) -> Value {
         } else if let Ok(id) =
             std::fs::metadata(&path).map_err(|e| e.to_string()).and_then(|meta| platform::identity(&path, &meta))
         {
-            out[key.as_ref()] = json!({"device":id.volume,"inode":id.file});
+            out[key.as_ref()] = id.to_json();
         }
     }
     out

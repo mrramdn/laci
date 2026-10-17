@@ -1,8 +1,8 @@
 //! Linux, where Laci has run since v1. Processes are read from /proc, the Trash is gio's, files open with xdg-open,
 //! and settings and cache follow the XDG folders.
 pub use super::unix::{
-    Group, Lock, change_stamp, exited, file_change_stamp, home_dir, identity, lock, preserve, rename_noreplace,
-    spawn_group,
+    Group, IDENTITY_FIELDS, Lock, change_stamp, copy_link, exited, file_change_stamp, home_dir, identity, lock,
+    preserve, rename_noreplace, spawn_group, which,
 };
 use super::{Apps, Dirs, Holder};
 use crate::{Result, files};

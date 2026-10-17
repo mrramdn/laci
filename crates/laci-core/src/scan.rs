@@ -52,9 +52,7 @@ fn check_root_identity(path: &Path, cfg: &Value) -> Result<()> {
         return Err("Location is no longer a folder".into());
     }
     if let Some(expected) = cfg["rootIdentities"].get(path.to_string_lossy().as_ref())
-        && platform::identity(path, &meta).ok().is_none_or(|id| {
-            expected["device"].as_u64() != Some(id.volume) || expected["inode"].as_u64() != Some(id.file)
-        })
+        && platform::identity(path, &meta).ok().is_none_or(|id| !id.matches(expected))
     {
         return Err("The selected folder or drive has changed; select it again to use it".into());
     }
@@ -87,7 +85,12 @@ pub fn root_status(env: &Env, cfg: &Value) -> Vec<Value> {
                     .map_err(|e| e.to_string())
                     .and_then(|meta| platform::identity(&path, &meta))
                 {
-                    Ok(id) => json!({"path":path,"available":true,"device":id.volume,"inode":id.file}),
+                    Ok(id) => {
+                        let mut status = id.to_json();
+                        status["path"] = json!(path);
+                        status["available"] = json!(true);
+                        status
+                    }
                     Err(_) => json!({"path":path,"available":false,"reason":"Folder or drive became unavailable"}),
                 },
                 Err(reason) => json!({"path":path,"available":false,"reason":reason}),

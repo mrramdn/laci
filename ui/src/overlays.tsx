@@ -6,7 +6,9 @@ export function Overlays() {
   const toast = useApp((s) => s.toast);
   const working = useApp((s) => s.working);
   const historyPending = useApp((s) => s.historyPending);
-  const covered = useApp((s) => Boolean(s.modal || s.palette || s.working));
+  const covered = useApp((s) =>
+    Boolean(s.modal || s.palette || s.working || s.sheets),
+  );
   return (
     <>
       {toast ? (

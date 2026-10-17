@@ -1,7 +1,7 @@
 //! A bounded display snapshot must never authorize removing shared or unverified history.
 use laci_core::{config, env::Env, ops, paths, scan};
 use serde_json::{Value, json};
-use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
+use std::{fs, path::Path};
 
 fn write(path: &Path, bytes: impl AsRef<[u8]>) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -68,6 +68,8 @@ fn shared_live_and_missing_owners_block_both_cleanup_modes() {
     }
 }
 
+// Linux only until macOS and Windows can tell which programs write to the history.
+#[cfg(target_os = "linux")]
 #[test]
 fn all_missing_owners_allow_quarantine_with_exact_undo() {
     let (_temp, env, log) = fixture("codex");
@@ -105,8 +107,11 @@ fn equal_size_source_changes_invalidate_ownership_and_reviewed_cleanup() {
     }
 }
 
+// gio is Linux's Trash.
+#[cfg(target_os = "linux")]
 #[test]
 fn all_missing_owners_allow_only_checked_trash_sources() {
+    use std::{os::unix::fs::PermissionsExt, process::Command};
     const CHILD: &str = "LACI_SHARED_HISTORY_TRASH_TEST";
     if std::env::var_os(CHILD).is_none() {
         let temp = tempfile::tempdir().unwrap();
@@ -173,8 +178,11 @@ fn bounded_and_malformed_history_never_authorizes_cleanup() {
     }
 }
 
+// Unreadable files are made with Unix modes.
+#[cfg(unix)]
 #[test]
 fn claude_folder_aggregation_propagates_incomplete_and_unreadable_evidence() {
+    use std::os::unix::fs::PermissionsExt;
     for case in ["records", "unfinished", "unreadable", "unreadable-directory"] {
         let (_temp, env, log) = fixture("claude");
         write(&log, format!("{}\n", json!({"cwd":env.home.join("projects/gone")})));
@@ -212,8 +220,10 @@ fn named_folder_without_authoritative_ownership_is_never_cleanup_proof() {
     blocked_in_both_modes(&env, &folder, &snapshot);
 }
 
+#[cfg(unix)]
 #[test]
 fn unreadable_cwd_logs_invalidate_cached_cleanup_permission() {
+    use std::os::unix::fs::PermissionsExt;
     for provider in ["codex", "custom"] {
         let (_temp, env, log) = fixture(provider);
         let text = if provider == "codex" {

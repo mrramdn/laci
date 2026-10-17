@@ -1,4 +1,4 @@
-import { deadlineInfo } from "./helpers";
+import { deadlineInfo, LOCALE } from "./helpers";
 import { useNow } from "./clock";
 
 export function DeadlinePill({ deadline }: { deadline?: string }) {
@@ -9,7 +9,7 @@ export function DeadlinePill({ deadline }: { deadline?: string }) {
   return (
     <span
       className={`pill ${info.tone}`.trim()}
-      title={new Date(y, m - 1, d).toLocaleDateString("en-GB", {
+      title={new Date(y, m - 1, d).toLocaleDateString(LOCALE, {
         weekday: "long",
         day: "numeric",
         month: "long",

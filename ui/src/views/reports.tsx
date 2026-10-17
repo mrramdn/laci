@@ -8,7 +8,11 @@ import {
   base,
   bytes,
   dayLabel,
+  isWindowsPath,
   localDay,
+  LOCALE,
+  parentOf,
+  pathKey,
   plural,
   providerName,
   reportById,
@@ -16,6 +20,7 @@ import {
   reportsOfProject,
   reportsOfSessions,
   tilde,
+  trimSep,
 } from "../helpers";
 import { proseClick, renderReadme } from "../readme";
 import {
@@ -505,15 +510,25 @@ function stripHeader(raw: string) {
   return lines.slice(i).join("\n");
 }
 
-/** The report a relative link in a report names: another file in the same folder. */
-function reportLink(href: string, reports: Report[], folder: string) {
+/**
+ * The report a link in a report names: another file in the same folder, by its name or by its path.
+ */
+export function reportLink(href: string, reports: Report[], folder: string) {
   let name = href.split(/[?#]/)[0];
   try {
     name = decodeURIComponent(name);
   } catch {
     // Not encoded: taken as written.
   }
-  if (name.startsWith(folder + "/")) name = name.slice(folder.length + 1);
+  if (isWindowsPath(folder)) {
+    // Next to a Windows folder, a link may write `\` between names too, and name the folder in full
+    // with either separator and in any case.
+    if (isWindowsPath(name) && pathKey(parentOf(name)) === pathKey(folder))
+      name = base(name);
+    name = name.replace(/\\/g, "/");
+  } else if (name.startsWith(folder + "/")) {
+    name = name.slice(folder.length + 1);
+  }
   name = name.replace(/^\.\//, "");
   return name.includes("/") ? undefined : reports.find((r) => r.id === name);
 }
@@ -601,7 +616,7 @@ function ReportReader({
   const [large, setLarge] = useState(report.bytes > LARGE);
   const [loadRemote, setLoadRemote] = useState(false);
   const body = useRef<HTMLDivElement>(null);
-  const folder = dir.path.replace(/\/+$/, "");
+  const folder = trimSep(dir.path);
   const rendered = useMemo(
     () =>
       text.raw === undefined || large
@@ -655,7 +670,7 @@ function ReportReader({
         <div className="rp-meta">
           <span>
             {day
-              ? day.toLocaleDateString("en-GB", {
+              ? day.toLocaleDateString(LOCALE, {
                   weekday: "long",
                   day: "numeric",
                   month: "long",

@@ -1,15 +1,17 @@
 // Checks colour contrast with WCAG 2.2's formula: 4.5 to 1 for text, 3 to 1 for the parts of an
 // interface and for icons.
 //
-// Simple's colours are data below, from design-research §3.5 of the 3.0 plan, each pair with the
-// contrast that research measured. A Simple pair under its minimum fails the run. Detailed's colours
-// are read from its stylesheet, light and dark, and only reported: they stay as they are, so a pair
-// under its minimum is listed and not failed.
-// Usage: node scripts/contrast-check.mjs [--all] [--css <file>]
-//   --all   list every Detailed pair, not only the ones under their minimum
-//   --css   the stylesheet to read Detailed's colours from (default: ui/src/styles/detailed.css,
-//           else ui/src/style.css)
-// Exit status: 1 when a Simple pair fails or Detailed's colours cannot be read.
+// Simple's colours are read from its tokens (ui/src/simple/tokens.css), light and dark, and checked in
+// the pairs of design-research §3.5 of the 3.0 plan, each with the contrast that research measured. A
+// Simple pair under its minimum fails the run, as do a colour the pairs need that the tokens lack and
+// two dark blocks that disagree. Detailed's colours are read from its stylesheet, light and dark, and
+// only reported: they stay as they are, so a pair under its minimum is listed and not failed.
+// Usage: node scripts/contrast-check.mjs [--all] [--css <file>] [--tokens <file>]
+//   --all     list every Detailed pair, not only the ones under their minimum
+//   --css     the stylesheet to read Detailed's colours from (default: ui/src/styles/detailed.css,
+//             else ui/src/style.css)
+//   --tokens  the stylesheet to read Simple's colours from (default: ui/src/simple/tokens.css)
+// Exit status: 1 when a Simple pair fails, or either design's colours cannot be read.
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -73,118 +75,7 @@ export function contrast(foreground, background) {
 /** A ratio as shown: cut, never rounded up, so that 4.497 does not read as a pass at 4.50. */
 export const show = (ratio) => (Math.floor(ratio * 100) / 100).toFixed(2);
 
-// --- Simple, as researched ----------------------------------------------------------------------
-
-/**
- * Simple's colours (design-research §3.5): a token for each, per theme. The decorative ones have no
- * minimum and are left out: `line` (#E6DED2 light, #39322B dark) and `sand` (#E9DCC8, #3B332A).
- */
-export const SIMPLE = {
-  light: {
-    canvas: "#FBF8F3",
-    surface: "#FFFFFF",
-    sunken: "#F3EEE6",
-    "line-strong": "#8C8174",
-    ink: "#26211C",
-    "ink-2": "#5E554B",
-    "ink-3": "#71675C",
-    brand: "#0E7268",
-    "brand-fill": "#0E7268",
-    "brand-hover": "#0B5D55",
-    "on-brand": "#FFFFFF",
-    "brand-soft": "#E2F1EE",
-    "brand-ink": "#0A5A52",
-    "attention-soft": "#FFF1D6",
-    "attention-text": "#8A4B00",
-    "attention-icon": "#B26200",
-    "risk-soft": "#FDE8E5",
-    "risk-text": "#A12A1F",
-    "risk-icon": "#C2362A",
-  },
-  dark: {
-    canvas: "#181512",
-    surface: "#221E1A",
-    sunken: "#12100D",
-    "line-strong": "#7D7266",
-    ink: "#F2EDE6",
-    "ink-2": "#BDB3A7",
-    "ink-3": "#A0968A",
-    // In the dark the teal text and the teal button are two colours.
-    brand: "#3CC4B4",
-    "brand-fill": "#2BB3A3",
-    "on-brand": "#0B1F1C",
-    "brand-soft": "#133A35",
-    "brand-ink": "#7FDDD1",
-    "attention-soft": "#3A2A10",
-    "attention-text": "#F4B860",
-    "attention-icon": "#E9A23B",
-    "risk-soft": "#3D1A16",
-    "risk-text": "#FF8F80",
-    "risk-icon": "#F26B5B",
-  },
-};
-
-const T = MIN.text;
-const U = MIN.ui;
-/**
- * The pairs that must hold: a foreground, a background, the minimum, what the colour is for, and the
- * ratio the research measured for it as `[light, dark]` where it gave one. A pair whose token a theme
- * lacks (the button's hover colour in the dark) is not checked there.
- */
-export const SIMPLE_PAIRS = [
-  ["ink", "canvas", T, "body text"],
-  ["ink", "surface", T, "body text", [15.95, 14.21]],
-  ["ink", "sunken", T, "body text"],
-  ["ink-2", "canvas", T, "secondary text"],
-  ["ink-2", "surface", T, "secondary text", [7.3, 8.02]],
-  ["ink-2", "sunken", T, "secondary text", [6.32]],
-  ["ink-3", "canvas", T, "meta text"],
-  ["ink-3", "surface", T, "meta text", [5.53, 5.69]],
-  ["ink-3", "sunken", T, "meta text", [4.79]],
-  ["on-brand", "brand-fill", T, "filled button label", [5.79, 6.58]],
-  ["on-brand", "brand-hover", T, "filled button label, hovered", [7.75]],
-  ["brand", "canvas", T, "links"],
-  ["brand", "surface", T, "links", [5.79, 7.68]],
-  ["brand", "sunken", T, "links"],
-  ["brand-ink", "brand-soft", T, "Safe chip, selected item", [6.95, 7.82]],
-  ["attention-text", "attention-soft", T, "Soon chip", [6.09, 7.82]],
-  ["attention-text", "surface", T, "Soon text"],
-  ["risk-text", "risk-soft", T, "Act now chip", [6.23, 6.99]],
-  ["risk-text", "surface", T, "Act now text"],
-  ["line-strong", "surface", U, "input borders", [3.81, 3.52]],
-  ["line-strong", "canvas", U, "input borders"],
-  ["brand", "canvas", U, "focus ring"],
-  ["brand", "surface", U, "focus ring"],
-  ["brand-fill", "canvas", U, "filled button edge"],
-  ["brand-fill", "surface", U, "filled button edge"],
-  ["attention-icon", "surface", U, "Soon icon", [4.53, 7.64]],
-  ["attention-icon", "attention-soft", U, "Soon icon on its chip"],
-  ["risk-icon", "surface", U, "Act now icon", [5.45, 5.54]],
-  ["risk-icon", "risk-soft", U, "Act now icon on its chip"],
-];
-
-/** One row for each pair and theme: what was measured, against what it has to be. */
-export function simpleRows(colors = SIMPLE, pairs = SIMPLE_PAIRS) {
-  const rows = [];
-  for (const [theme, tokens] of Object.entries(colors))
-    for (const [fg, bg, min, use, measured] of pairs) {
-      if (!tokens[fg] || !tokens[bg]) continue;
-      const ratio = contrast(parseColor(tokens[fg]), parseColor(tokens[bg]));
-      rows.push({
-        theme,
-        fg,
-        bg,
-        use,
-        min,
-        ratio,
-        ok: ratio >= min,
-        measured: measured?.[theme === "light" ? 0 : 1],
-      });
-    }
-  return rows;
-}
-
-// --- Detailed, read from its stylesheet ----------------------------------------------------------
+// --- Reading a stylesheet -------------------------------------------------------------------------
 
 /** The top-level rules of `css` as `{ prelude, body }`, with comments gone. */
 function rules(css) {
@@ -225,11 +116,11 @@ function declarations(body) {
 }
 
 /**
- * Detailed's colour tokens as the stylesheet writes them: `light` (`:root`), `dark` (the explicit
- * `:root[data-theme="dark"]`) and `systemDark` (the same under `prefers-color-scheme: dark`, for
- * a system set to dark). Each is a map from a token name, without `--`, to its text.
+ * The tokens a stylesheet writes in its three places: `light` (`base`), `dark` (`base` with the
+ * explicit dark theme, `dark` below) and `systemDark` (`base` for a system set to dark, inside
+ * `@media (prefers-color-scheme: dark)`). Each is a map from a token name, without `--`, to its text.
  */
-export function readTokens(css) {
+function readThree(css, { base, dark, systemDark }) {
   const top = rules(css);
   const merge = (list) => Object.assign({}, ...list.map((r) => declarations(r.body)));
   const at = (list, selector) =>
@@ -238,20 +129,152 @@ export function readTokens(css) {
     .filter((r) => /^@media\s*\(\s*prefers-color-scheme\s*:\s*dark\s*\)$/.test(r.prelude))
     .flatMap((r) => rules(r.body));
   return {
-    light: merge(at(top, ":root")),
-    dark: merge(at(top, ':root[data-theme="dark"]')),
-    systemDark: merge(at(media, ':root:not([data-theme="light"])')),
+    light: merge(at(top, base)),
+    dark: merge(at(top, dark)),
+    systemDark: merge(at(media, systemDark)),
   };
 }
 
-/** `name` of a token map as a colour, following `var(--other)`; null when it is not a colour. */
-export function colorOf(tokens, name, seen = new Set()) {
+/** `name` of a token map as its text, following `var(--other)`; undefined when it isn't there. */
+export function textOf(tokens, name, seen = new Set()) {
   const value = tokens[name];
-  if (value === undefined || seen.has(name)) return null;
+  if (value === undefined || seen.has(name)) return undefined;
   const alias = /^var\(\s*--([\w-]+)\s*\)$/.exec(value);
-  return alias
-    ? colorOf(tokens, alias[1], new Set([...seen, name]))
-    : parseColor(value);
+  return alias ? textOf(tokens, alias[1], new Set([...seen, name])) : value;
+}
+
+/** `name` of a token map as a colour, following `var(--other)`; null when it is not a colour. */
+export function colorOf(tokens, name) {
+  const text = textOf(tokens, name);
+  return text === undefined ? null : parseColor(text);
+}
+
+/** The dark colours written twice (for the system, and for the choice in Settings) that differ. */
+function drift(tokens) {
+  return Object.keys({ ...tokens.dark, ...tokens.systemDark }).filter(
+    (name) => tokens.dark[name] !== tokens.systemDark[name],
+  );
+}
+
+// --- Simple, read from its tokens --------------------------------------------------------------
+
+const SIMPLE_ROOT = ':root[data-design="simple"]';
+
+/**
+ * Simple's tokens as ui/src/simple/tokens.css writes them: `light`, `dark` (with `data-theme="dark"`)
+ * and `systemDark` (under `prefers-color-scheme: dark`, unless the light theme is chosen).
+ */
+export function readSimpleTokens(css) {
+  return readThree(css, {
+    base: SIMPLE_ROOT,
+    dark: `${SIMPLE_ROOT}:where([data-theme="dark"])`,
+    systemDark: `${SIMPLE_ROOT}:where(:not([data-theme="light"]))`,
+  });
+}
+
+const T = MIN.text;
+const U = MIN.ui;
+/**
+ * The pairs that must hold: a foreground, a background, the minimum, what the colour is for, and the
+ * ratio the research measured for it as `[light, dark]` where it gave one. The decorative colours
+ * (`line`, `sand`) have no minimum and are left out.
+ */
+export const SIMPLE_PAIRS = [
+  ["ink", "canvas", T, "body text"],
+  ["ink", "surface", T, "body text", [15.95, 14.21]],
+  ["ink", "sunken", T, "body text"],
+  ["ink", "active", T, "a count in the sidebar"],
+  ["ink-2", "canvas", T, "secondary text"],
+  ["ink-2", "surface", T, "secondary text", [7.3, 8.02]],
+  ["ink-2", "sunken", T, "secondary text", [6.32]],
+  ["ink-2", "hover", T, "a place pointed at"],
+  ["ink-3", "canvas", T, "meta text"],
+  ["ink-3", "surface", T, "meta text", [5.53, 5.69]],
+  ["ink-3", "sunken", T, "meta text", [4.79]],
+  ["on-brand", "brand-fill", T, "filled button label", [5.79, 6.58]],
+  ["on-brand", "brand-hover", T, "filled button label, hovered", [7.75]],
+  ["brand", "canvas", T, "links"],
+  ["brand", "surface", T, "links", [5.79, 7.68]],
+  ["brand", "sunken", T, "links"],
+  ["brand-ink", "brand-soft", T, "Safe chip, selected place", [6.95, 7.82]],
+  ["attention-text", "attention-soft", T, "Soon chip", [6.09, 7.82]],
+  ["attention-text", "surface", T, "Soon text"],
+  ["risk-text", "risk-soft", T, "Act now chip", [6.23, 6.99]],
+  ["risk-text", "surface", T, "Act now text"],
+  ["line-strong", "surface", U, "input borders", [3.81, 3.52]],
+  ["line-strong", "canvas", U, "input borders"],
+  ["brand", "canvas", U, "focus ring"],
+  ["brand", "surface", U, "focus ring"],
+  ["brand-fill", "canvas", U, "filled button edge"],
+  ["brand-fill", "surface", U, "filled button edge"],
+  ["attention-icon", "surface", U, "Soon icon", [4.53, 7.64]],
+  ["attention-icon", "attention-soft", U, "Soon icon on its chip"],
+  ["risk-icon", "surface", U, "Act now icon", [5.45, 5.54]],
+  ["risk-icon", "risk-soft", U, "Act now icon on its chip"],
+];
+
+/**
+ * Simple's colours per theme, `{ light, dark }`, each a map from a token the pairs name to its text.
+ * Dark only overrides: what it leaves out comes from light.
+ */
+export function simpleColors(tokens, pairs = SIMPLE_PAIRS) {
+  const names = new Set(pairs.flatMap(([fg, bg]) => [fg, bg]));
+  const themes = { light: tokens.light, dark: { ...tokens.light, ...tokens.dark } };
+  return Object.fromEntries(
+    Object.entries(themes).map(([theme, set]) => [
+      theme,
+      Object.fromEntries(
+        [...names].flatMap((name) => {
+          const text = textOf(set, name);
+          return text === undefined ? [] : [[name, text]];
+        }),
+      ),
+    ]),
+  );
+}
+
+/** One row for each pair and theme: what was measured, against what it has to be. */
+export function simpleRows(colors, pairs = SIMPLE_PAIRS) {
+  const rows = [];
+  for (const [theme, tokens] of Object.entries(colors))
+    for (const [fg, bg, min, use, measured] of pairs) {
+      const foreground = parseColor(tokens[fg] ?? "");
+      const background = parseColor(tokens[bg] ?? "");
+      if (!foreground || !background) continue;
+      const ratio = contrast(foreground, background);
+      rows.push({
+        theme,
+        fg,
+        bg,
+        use,
+        min,
+        ratio,
+        ok: ratio >= min,
+        measured: measured?.[theme === "light" ? 0 : 1],
+      });
+    }
+  return rows;
+}
+
+/** Where Simple's colours are written. */
+export function simpleCss(base = root) {
+  const file = path.join(base, "ui", "src", "simple", "tokens.css");
+  return existsSync(file) ? file : undefined;
+}
+
+// --- Detailed, read from its stylesheet ----------------------------------------------------------
+
+/**
+ * Detailed's colour tokens as the stylesheet writes them: `light` (`:root`), `dark` (the explicit
+ * `:root[data-theme="dark"]`) and `systemDark` (the same under `prefers-color-scheme: dark`, for
+ * a system set to dark). Each is a map from a token name, without `--`, to its text.
+ */
+export function readTokens(css) {
+  return readThree(css, {
+    base: ":root",
+    dark: ':root[data-theme="dark"]',
+    systemDark: ':root:not([data-theme="light"])',
+  });
 }
 
 const SURFACES = ["bg", "sidebar", "subtle", "surface", "surface-hover", "surface-active"];
@@ -323,28 +346,54 @@ const line = (row, under) =>
   `${row.fg} on ${row.bg} (${row.use})`;
 
 /**
- * Runs the check. Returns `{ failed, lines }`: whether the run fails, and what it said. `css` is
- * the text of Detailed's stylesheet, or undefined when there is none. `colors` are Simple's.
+ * Runs the check. Returns `{ failed, lines }`: whether the run fails, and what it said. `css` and
+ * `tokens` are the texts of Detailed's stylesheet and of Simple's tokens, or undefined when there is
+ * none. `colors` stands in for Simple's colours as `simpleColors` gives them.
  */
-export function check({ css, cssName = "the stylesheet", all = false, colors = SIMPLE } = {}) {
+export function check({
+  css,
+  cssName = "the stylesheet",
+  tokens,
+  tokensName = "the tokens",
+  all = false,
+  colors,
+} = {}) {
   const lines = [];
   const say = (text = "") => lines.push(text);
   let failed = false;
 
-  const simple = simpleRows(colors);
-  say(`Simple (design-research §3.5): ${simple.length} pairs`);
-  for (const theme of Object.keys(colors)) {
-    say(`  ${theme}`);
-    for (const row of simple.filter((r) => r.theme === theme))
-      say(`    ${line(row, "FAIL")}`);
+  const simple = tokens === undefined ? null : readSimpleTokens(tokens);
+  if (!colors && !simple) {
+    failed = true;
+    say("Simple: no tokens found (ui/src/simple/tokens.css).");
+  } else {
+    const palette = colors ?? simpleColors(simple);
+    const names = [...new Set(SIMPLE_PAIRS.flatMap(([fg, bg]) => [fg, bg]))];
+    const lacking = names.filter((name) => !parseColor(palette.light?.[name] ?? ""));
+    const rows = simpleRows(palette);
+    say(`Simple (${tokensName}): ${rows.length} pairs`);
+    for (const theme of Object.keys(palette)) {
+      say(`  ${theme}`);
+      for (const row of rows.filter((r) => r.theme === theme))
+        say(`    ${line(row, "FAIL")}`);
+    }
+    const bad = rows.filter((row) => !row.ok);
+    if (bad.length || lacking.length) failed = true;
+    say(
+      bad.length
+        ? `Simple: ${bad.length} of ${rows.length} pairs are under their minimum.`
+        : `Simple: all ${rows.length} pairs meet their minimum.`,
+    );
+    if (lacking.length)
+      say(`Simple: ${tokensName} has no colour for ${lacking.map((n) => `--${n}`).join(", ")}.`);
+    const differ = simple ? drift(simple) : [];
+    if (differ.length) {
+      failed = true;
+      say(
+        `Simple: the dark colours differ between the system's and the explicit block: ${differ.join(", ")}`,
+      );
+    }
   }
-  const bad = simple.filter((row) => !row.ok);
-  if (bad.length) failed = true;
-  say(
-    bad.length
-      ? `Simple: ${bad.length} of ${simple.length} pairs are under their minimum.`
-      : `Simple: all ${simple.length} pairs meet their minimum.`,
-  );
 
   say();
   if (css === undefined) {
@@ -352,9 +401,9 @@ export function check({ css, cssName = "the stylesheet", all = false, colors = S
     say("Detailed: no stylesheet found (ui/src/styles/detailed.css or ui/src/style.css).");
     return { failed, lines };
   }
-  const tokens = readTokens(css);
+  const detailed = readTokens(css);
   // The dark block only overrides: whatever it leaves out comes from `:root`.
-  const themes = { light: tokens.light, dark: { ...tokens.light, ...tokens.dark } };
+  const themes = { light: detailed.light, dark: { ...detailed.light, ...detailed.dark } };
   const missing = Object.entries(themes).filter(([, set]) => !colorOf(set, "text"));
   if (missing.length) {
     failed = true;
@@ -369,24 +418,25 @@ export function check({ css, cssName = "the stylesheet", all = false, colors = S
   for (const theme of Object.keys(themes))
     for (const row of shown.filter((r) => r.theme === theme))
       say(`  ${theme.padEnd(5)} ${line(row, "low ")}`);
-  // The same dark colours are written twice, for the system and for the choice in Settings.
-  const drift = Object.keys({ ...tokens.dark, ...tokens.systemDark }).filter(
-    (name) => tokens.dark[name] !== tokens.systemDark[name],
-  );
-  if (drift.length)
+  const differ = drift(detailed);
+  if (differ.length)
     say(
-      `Detailed: the dark colours differ between the system's and the explicit block: ${drift.join(", ")}`,
+      `Detailed: the dark colours differ between the system's and the explicit block: ${differ.join(", ")}`,
     );
   return { failed, lines };
 }
 
 function main(argv) {
-  const css = argv.includes("--css")
-    ? argv[argv.indexOf("--css") + 1]
-    : detailedCss();
+  const option = (name, fallback) =>
+    argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback;
+  const read = (file) => (file && existsSync(file) ? readFileSync(file, "utf8") : undefined);
+  const css = option("--css", detailedCss());
+  const tokens = option("--tokens", simpleCss());
   const { failed, lines } = check({
-    css: css && existsSync(css) ? readFileSync(css, "utf8") : undefined,
+    css: read(css),
     cssName: css ? path.relative(root, path.resolve(css)) : undefined,
+    tokens: read(tokens),
+    tokensName: tokens ? path.relative(root, path.resolve(tokens)) : undefined,
     all: argv.includes("--all"),
   });
   console.log(lines.join("\n"));

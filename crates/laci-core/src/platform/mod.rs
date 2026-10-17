@@ -5,7 +5,9 @@
 //! `linux`, `macos` and `windows` each answer every call here; `unix` holds what Linux and macOS share, and `path`
 //! the rules for paths.
 use crate::Result;
+use serde_json::{Value, json};
 use std::{
+    ffi::OsStr,
     fs::{File, Metadata},
     io,
     path::{Path, PathBuf},
@@ -66,8 +68,33 @@ impl Dirs {
 pub struct Identity {
     /// The device or volume that holds the file.
     pub volume: u64,
-    /// The file on that volume.
-    pub file: u64,
+    /// The file on that volume: its inode, or on Windows its 128-bit file ID.
+    pub file: u128,
+}
+impl Identity {
+    /// The file number as JSON: a number, as Laci v1 wrote inodes, and text when it needs more than 64 bits, as a
+    /// file ID on ReFS can.
+    pub fn file_json(&self) -> Value {
+        u64::try_from(self.file).map_or_else(|_| Value::from(self.file.to_string()), Value::from)
+    }
+    /// The file number [`Identity::file_json`] wrote, if `value` is one.
+    pub fn file_from_json(value: &Value) -> Option<u128> {
+        match value {
+            Value::String(text) => text.parse().ok().filter(|file| u64::try_from(*file).is_err()),
+            value => value.as_u64().map(u128::from),
+        }
+    }
+    /// The identity as config.json keeps it for a scan location: `{"device", "inode"}` on Linux and macOS, as Laci
+    /// v1 wrote it, and `{"volume", "file"}` on Windows.
+    pub fn to_json(&self) -> Value {
+        let [volume, file] = os::IDENTITY_FIELDS;
+        json!({volume: self.volume, file: self.file_json()})
+    }
+    /// Whether `recorded`, as [`Identity::to_json`] wrote it, names this file.
+    pub fn matches(&self, recorded: &Value) -> bool {
+        let [volume, file] = os::IDENTITY_FIELDS;
+        recorded[volume].as_u64() == Some(self.volume) && Self::file_from_json(&recorded[file]) == Some(self.file)
+    }
 }
 
 /// When a file last changed, as exactly as the OS records it, in seconds and nanoseconds. Writing moves `modified`;
@@ -123,8 +150,8 @@ pub fn file_change_stamp(file: &File, meta: &Metadata) -> Result<Stamp> {
     os::file_change_stamp(file, meta)
 }
 
-/// Takes the change lock in the file at `path`, which Laci v1 reads too: one window, command or agent changes files
-/// at a time. While another holds it, this fails at once with a message for the user.
+/// Takes the change lock in the file at `path`, which Laci v1 reads too on Linux: one window, command or agent changes
+/// files at a time. While another holds it, this fails at once with a message for the user.
 pub fn lock(path: PathBuf) -> Result<Lock> {
     os::lock(path)
 }
@@ -143,6 +170,17 @@ pub fn rename_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
 /// Gives `dest` the permissions and the access and modification times in `meta`.
 pub fn preserve(meta: &Metadata, dest: &Path) -> Result<()> {
     os::preserve(meta, dest)
+}
+
+/// Makes `dest` a link to where the link `src` leads, as a copy of a folder keeps its links.
+pub fn copy_link(src: &Path, dest: &Path) -> Result<()> {
+    os::copy_link(src, dest)
+}
+
+/// Where `path`, a list of folders as in PATH, finds the program `program`: the first folder with it as a file that
+/// can run. On Windows the name may also end in one of PATHEXT's extensions.
+pub fn which(program: &str, path: &OsStr) -> Option<PathBuf> {
+    os::which(program, path)
 }
 
 /// Whether `child`, a program Laci started, has finished. It stays unreaped, so its process id can't go to another

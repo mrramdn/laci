@@ -3887,3 +3887,77 @@ textarea.notes:focus {
     display: inline-flex;
   }
 }
+
+/* The window can be 720 px wide now, so the narrow rules above matter. From 880 px down the
+   project's details are a sheet over the list, as they already were below 860 px: docked, they
+   left the list 488 px, and its badges and buttons were cut short. */
+@media (max-width: 880px) {
+  .app {
+    grid-template-columns: 52px minmax(0, 1fr);
+    grid-template-areas: "side main" "side term";
+  }
+  .insp {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(400px, calc(100vw - 52px));
+    z-index: 20;
+    box-shadow: var(--shadow-lg);
+  }
+  /* The address beside a link is wider than the 64 px that a session's time gets. */
+  .insp .sess > .m {
+    width: auto;
+    min-width: 64px;
+    max-width: 50%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Today's quick-jump chips keep their words; the header takes a second line when they don't fit. */
+  .chip-stat {
+    white-space: nowrap;
+  }
+  .head:has(.quick-stats) {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 46px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    row-gap: 6px;
+  }
+  .head:has(.quick-stats) > .quick-stats ~ .btn {
+    margin-left: auto;
+  }
+  /* Filters wrap onto a second line instead of sliding out of view. */
+  .filterbar {
+    flex-wrap: wrap;
+    overflow: visible;
+    row-gap: 6px;
+  }
+  /* The spacer gives up its share of the room, so the search box keeps the width it had. */
+  .filterbar .grow {
+    flex: 0;
+  }
+  .filterbar .showbar {
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .filterbar .scope {
+    flex: 1 0 100%;
+    text-align: right;
+  }
+  .filterbar .log-search {
+    flex: 1 1 160px;
+    max-width: 240px;
+    margin-left: auto;
+  }
+  /* A storage row's explanation wraps; its box cut it off with no ellipsis. */
+  .item .name > .faint {
+    white-space: normal;
+  }
+  /* A terminal dragged tall in a big window stays within what dragging allows (85%) in a small one. */
+  .term:not(.max) {
+    max-height: 85vh;
+  }
+}

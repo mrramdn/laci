@@ -1,12 +1,9 @@
 //! Cleanup proposals must remain safe across offline disks, reconnects and stale review snapshots.
 use laci_core::{activity, config, env::Env, ops, paths, service::Service};
 use serde_json::{Value, json};
-use std::{
-    fs,
-    io::{BufRead, BufReader},
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::{fs, path::Path};
+
+mod support;
 
 fn write(path: &Path, bytes: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -87,7 +84,7 @@ fn reconnect_stale_bytes_and_symlinks_reject_reviewed_cleanup() {
         match case {
             "reconnect" => fs::create_dir(env.home.join("projects/gone")).unwrap(),
             "edited" => write(&history.join("memory/notes.md"), "new session content"),
-            "symlink" => std::os::unix::fs::symlink(&env.home, history.join("linked")).unwrap(),
+            "symlink" => support::link_dir(&env.home, &history.join("linked")),
             "outside" => config::save(&env, &json!({"roots":[],"presets":["claude"]})).unwrap(),
             _ => unreachable!(),
         }
@@ -98,8 +95,14 @@ fn reconnect_stale_bytes_and_symlinks_reject_reviewed_cleanup() {
     }
 }
 
+// Linux only until macOS and Windows can tell which programs write to the history.
+#[cfg(target_os = "linux")]
 #[test]
 fn open_history_writer_blocks_cleanup_even_when_its_cwd_is_elsewhere() {
+    use std::{
+        io::{BufRead, BufReader},
+        process::{Command, Stdio},
+    };
     let (_temp, _env, history, mut service, proposal) = fixture();
     let mut child = Command::new("sh")
         .args(["-c", "exec 3>>\"$1\"; echo ready; exec sleep 30", "writer"])
@@ -117,6 +120,8 @@ fn open_history_writer_blocks_cleanup_even_when_its_cwd_is_elsewhere() {
     assert!(history.exists());
 }
 
+// Linux only until macOS and Windows can tell which programs write to the history.
+#[cfg(target_os = "linux")]
 #[test]
 fn quarantine_defaults_to_exact_restore_and_duplicate_submission_is_rejected() {
     let (_temp, env, history, mut service, proposal) = fixture();
@@ -158,6 +163,7 @@ fn pure_trash_has_no_laci_undo_and_mixed_journals_explain_partial_recovery() {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn invalid_default_archive_keeps_review_available_with_a_valid_alternative() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));
@@ -175,11 +181,13 @@ fn invalid_default_archive_keeps_review_available_with_a_valid_alternative() {
     assert!(dest.join("package.json").exists());
 }
 
+// gio is Linux's Trash.
+#[cfg(target_os = "linux")]
 #[test]
 fn system_trash_uses_checked_history_paths_and_never_offers_laci_undo() {
     const CHILD: &str = "LACI_ORPHAN_TRASH_TEST";
     if std::env::var_os(CHILD).is_none() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::{os::unix::fs::PermissionsExt, process::Command};
         let temp = tempfile::tempdir().unwrap();
         let bin = temp.path().join("bin");
         let gio = bin.join("gio");

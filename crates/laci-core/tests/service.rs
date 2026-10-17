@@ -11,6 +11,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod support;
+
 fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
@@ -278,6 +280,7 @@ fn external_gitdir_exclude_cannot_be_written_by_service_or_activity_undo() {
     assert_eq!(fs::read(project.join(".laci.md")).unwrap(), sidecar_before);
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn same_length_move_keeps_codex_history_attached_after_cached_rescan() {
     let (_temp, env, project) = fixture();
     let log = env.home.join(".codex/sessions/session.jsonl");
@@ -620,6 +623,7 @@ fn deleting_and_undoing_the_only_checkbox_preserves_file_boundaries() {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn quarantine_execution_acknowledges_the_journal_before_refresh_and_keeps_undo_compatible() {
     let (_temp, env, project) = fixture();
     let history =
@@ -1040,6 +1044,7 @@ fn old_session(env: &Env, project: &Path, id: &str, prompt: &str) -> PathBuf {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn deleted_sessions_go_to_the_quarantine_with_their_backup_copy_and_undo_brings_them_back() {
     const ID: &str = "11111111-2222-3333-4444-555555555555";
     const OTHER: &str = "22222222-2222-3333-4444-555555555555";
@@ -1148,12 +1153,13 @@ fn a_muted_check_is_marked_and_named_in_the_log() {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn build_output_is_deleted_for_good_and_a_linked_build_folder_is_left_alone() {
     let (_temp, env, project) = fixture();
     write(&project.join("node_modules/pkg/index.js"), &"x".repeat(1_500_000));
     let elsewhere = env.home.join("elsewhere/target");
     write(&elsewhere.join("debug/app"), &"x".repeat(1_500_000));
-    std::os::unix::fs::symlink(&elsewhere, project.join("target")).unwrap();
+    support::link_dir(&elsewhere, &project.join("target"));
     let mut service = loaded(&env, &project);
     let id = project.to_str().unwrap();
     let parts = service.snapshot().unwrap()["nodes"][id]["size"]["parts"].clone();

@@ -7,13 +7,14 @@
 // same pixels. The preview is built as the app is (vite build) and served from a folder.
 // Usage: node scripts/ui-preview-check.mjs [options]; --help lists them.
 //
-// Simple has no shell yet, so its screens are driven by what a person sees: the five places Home,
-// Projects, AI helpers, Clean up and Activity in the navigation, and a project found with the
-// palette. Its checks lean on two hooks that the shell gives (ui:S1):
+// Simple's screens are driven by what a person sees: the five places Home, Projects, AI helpers,
+// Clean up and Activity in the sidebar, Settings at its foot, and a project found with the palette,
+// whose ⋯ More holds Archive. Its checks lean on two hooks that the shell gives (ui:S1):
 //   data-ui="primary"  the one filled button of a screen (`.btn.primary` counts too)
 //   data-ui="status"   every status chip: an svg, img or [data-icon] inside, and words
-// Until the shell draws, `--design simple` is skipped. Change the `designs.simple` table when its
-// DOM is final.
+// A build without Simple's shell skips `--design simple`. AI helpers has no Summaries tab until
+// its page is built (ui:18), so the reports screen is noted as not shown yet. Change the
+// `designs.simple` table when the DOM it relies on changes.
 import { spawnSync } from "node:child_process";
 import {
   createReadStream,
@@ -343,7 +344,7 @@ const designs = {
       },
     },
   },
-  // Not drawn yet (ui:S1): the five places, and the way to a project's Archive through ⋯ More.
+  // The five places, Settings, and the way to a project's Archive through ⋯ More (ui:S1).
   simple: {
     // Detailed has a "Home" in its Places, so look for a place that only Simple has.
     home: (page) => simplePlace(page, "AI helpers"),

@@ -44,9 +44,11 @@ fn journal_path(env: &Env, entry: &Value, key: &str) -> Result<PathBuf> {
     if checked.is_err()
         && key == "from"
         && entry["kind"] == "move"
-        && let (Some(device), Some(inode)) = (entry["parentDevice"].as_u64(), entry["parentInode"].as_u64())
+        && let (Some(volume), Some(file)) =
+            (entry["parentDevice"].as_u64(), platform::Identity::file_from_json(&entry["parentInode"]))
     {
-        return paths::restore_workspace_root(entry[key].as_str().ok_or("Missing source path")?, env, device, inode);
+        let parent = platform::Identity { volume, file };
+        return paths::restore_workspace_root(entry[key].as_str().ok_or("Missing source path")?, env, parent);
     }
     checked
 }
@@ -85,7 +87,7 @@ pub(crate) fn copy_template(src: &Path, dest: &Path) -> Result<()> {
 fn copy_tree_inner(src: &Path, dest: &Path, skip_git: bool) -> Result<()> {
     let meta = fs::symlink_metadata(src).map_err(|e| e.to_string())?;
     if meta.is_symlink() {
-        std::os::unix::fs::symlink(fs::read_link(src).map_err(|e| e.to_string())?, dest).map_err(|e| e.to_string())?;
+        platform::copy_link(src, dest)?;
     } else if meta.is_dir() {
         fs::create_dir(dest).map_err(|e| e.to_string())?;
         for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
@@ -237,7 +239,7 @@ impl<'a> Tx<'a> {
                 return Err("Can't move the mounted workspace root itself; select a project inside it".into());
             }
             entry["parentDevice"] = json!(id.volume);
-            entry["parentInode"] = json!(id.file);
+            entry["parentInode"] = id.file_json();
         }
         self.mkdirs(dest.parent().ok_or("Missing parent")?)?;
         self.log(entry)?;
@@ -445,13 +447,20 @@ fn validate_entries(env: &Env, entries: &[Value]) -> Result<()> {
 }
 fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
     validate_entries(env, entries)?;
-    // Settings saved after a one-off archive must not be replaced by its older backup.
+    // A file changed after the change, by hand, by an agent or by Laci, or gone with a folder that moved, keeps what
+    // it has now: putting back the older bytes would lose that, or bring back the folder.
     for entry in entries {
         if let Some(expected) = entry["afterHash"].as_str() {
             let file = journal_path(env, entry, "path")?;
-            let bytes = fs::read(&file).map_err(|e| e.to_string())?;
-            if format!("{:x}", Sha256::digest(bytes)) != expected {
-                return Err("Settings changed after this archive. Restore those settings before undoing it.".into());
+            if !fs::read(&file).is_ok_and(|bytes| format!("{:x}", Sha256::digest(bytes)) == expected) {
+                return Err(if entry["scope"] == "config" {
+                    "Settings changed after this archive. Restore those settings before undoing it.".into()
+                } else {
+                    format!(
+                        "{} changed after this, or its folder moved, so Undo would lose that. Edit it by hand.",
+                        paths::tilde(&file, &env.home)
+                    )
+                });
             }
         }
     }
@@ -1033,7 +1042,8 @@ pub fn backup_state(env: &Env) -> Option<Value> {
     Some(state)
 }
 
-#[cfg(test)]
+/// These read /proc and start the shell and `sleep`, so they run on Linux alone.
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use std::process::{Child, Command};

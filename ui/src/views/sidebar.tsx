@@ -3,10 +3,12 @@ import { LaciMark } from "../brand";
 import { Icon } from "../common";
 import { useApp, readListing, setTheme, rescan } from "../store";
 import { useNow } from "../clock";
+import { withMod } from "../platform";
 import {
   base,
   cap,
   deadlinesOf,
+  LOCALE,
   plural,
   risksOf,
   todayBadge,
@@ -168,13 +170,13 @@ export function Sidebar() {
       <div className="sb-search-wrap">
         <button
           className="sb-search-bar"
-          aria-label="Search projects and actions (Ctrl K)"
-          title="Search projects and actions (Ctrl K)"
+          aria-label={`Search projects and actions (${withMod("K")})`}
+          title={`Search projects and actions (${withMod("K")})`}
           onClick={() => useApp.setState({ palette: true })}
         >
           <Icon name="search" className="sm" />
           <span>Search projects…</span>
-          <kbd>Ctrl K</kbd>
+          <kbd>{withMod("K")}</kbd>
         </button>
       </div>
       <div className="sb-scroll">
@@ -228,7 +230,7 @@ export function Sidebar() {
           onClick={rescan}
           title={
             s.error ||
-            `laci watches your folders and updates by itself. Last full scan ${new Date(snapshot.scannedAt).toLocaleTimeString("en-GB")}. Click to scan everything again.`
+            `laci watches your folders and updates by itself. Last full scan ${new Date(snapshot.scannedAt).toLocaleTimeString(LOCALE)}. Click to scan everything again.`
           }
         >
           {!s.error && (s.busy || s.historyPending) ? (

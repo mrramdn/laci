@@ -1,4 +1,4 @@
-use crate::{Result, env::Env};
+use crate::{Result, env::Env, platform::Identity};
 use std::path::{Component, Path, PathBuf};
 
 pub fn normalize(path: &Path) -> PathBuf {
@@ -81,7 +81,7 @@ pub fn workspace_path(raw: &str, env: &Env) -> Result<PathBuf> {
 }
 
 /// Only a move journal may restore a missing, explicitly selected root, and only under its original parent.
-pub(crate) fn restore_workspace_root(raw: &str, env: &Env, device: u64, inode: u64) -> Result<PathBuf> {
+pub(crate) fn restore_workspace_root(raw: &str, env: &Env, recorded: Identity) -> Result<PathBuf> {
     let path = expand(raw, &env.home);
     if !path.is_absolute() || path.starts_with(&env.home) || !workspace_roots(env).contains(&path) {
         return Err("The original workspace root is no longer selected".into());
@@ -95,7 +95,7 @@ pub(crate) fn restore_workspace_root(raw: &str, env: &Env, device: u64, inode: u
     let actual = parent.canonicalize().map_err(|e| e.to_string())?;
     let meta = std::fs::metadata(parent).map_err(|e| e.to_string())?;
     let id = crate::platform::identity(parent, &meta)?;
-    if actual != parent || !meta.is_dir() || id.volume != device || id.file != inode {
+    if actual != parent || !meta.is_dir() || id != recorded {
         return Err("The original workspace disk or parent folder has changed".into());
     }
     Ok(path)

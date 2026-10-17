@@ -1,7 +1,7 @@
 //! macOS. What POSIX gives comes from `unix`; the rest isn't written for macOS yet and fails with a plain message.
 pub use super::unix::{
-    Group, Lock, change_stamp, exited, file_change_stamp, home_dir, identity, lock, preserve, rename_noreplace,
-    spawn_group,
+    Group, IDENTITY_FIELDS, Lock, change_stamp, copy_link, exited, file_change_stamp, home_dir, identity, lock,
+    preserve, rename_noreplace, spawn_group, which,
 };
 use super::{Apps, Dirs, Holder};
 use crate::Result;

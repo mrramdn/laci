@@ -619,6 +619,11 @@ export interface HomeModel {
   comingUp: { n: Node; info: DeadlineInfo }[];
   /** Projects not archived. */
   projects: number;
+  /**
+   * Of those, the ones with no version history, such as a folder of notes: nothing of them is saved
+   * or uploaded.
+   */
+  noHistory: number;
   /** No project folder is chosen yet. */
   noFolders: boolean;
 }
@@ -648,6 +653,9 @@ export function homeModel(snapshot: Snapshot, now = new Date()): HomeModel {
       ...due.map(({ n, info }): Need => ({ kind: "due", n, due: info })),
       ...other.map(risk),
     ];
+    const projects = Object.values(snapshot.nodes).filter(
+      (n) => n.kind === "project" && !n.archived,
+    );
     return {
       main: needs[0] ?? { kind: "safe", n: today.recent[0] },
       needs,
@@ -663,9 +671,8 @@ export function homeModel(snapshot: Snapshot, now = new Date()): HomeModel {
       nextUp: today.checks.slice(0, 5),
       todos: today.checks.length,
       comingUp: today.deadlines,
-      projects: Object.values(snapshot.nodes).filter(
-        (n) => n.kind === "project" && !n.archived,
-      ).length,
+      projects: projects.length,
+      noHistory: projects.filter((n) => !n.git).length,
       noFolders: !snapshot.roots.length,
     };
   });

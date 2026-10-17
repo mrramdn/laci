@@ -7,6 +7,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+mod support;
+
 fn home() -> (tempfile::TempDir, Env) {
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");
@@ -19,7 +21,10 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 fn stamp(path: &Path) {
-    fs::File::open(path)
+    // Windows sets times only through a handle opened for writing.
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
         .unwrap()
         .set_times(
             fs::FileTimes::new()
@@ -57,6 +62,7 @@ fn v1(env: &Env, args: &[&str]) -> Value {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn rust_move_can_be_undone_by_v1_without_losing_bytes_or_time() {
     let (_temp, env) = home();
     let (snap, from, to, store, original) = fixture(&env);
@@ -74,6 +80,7 @@ fn rust_move_can_be_undone_by_v1_without_losing_bytes_or_time() {
     assert!(!to.exists());
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn v1_move_can_be_undone_by_rust_without_losing_bytes_or_time() {
     let (_temp, env) = home();
     let (_snap, from, to, store, original) = fixture(&env);
@@ -91,6 +98,7 @@ fn v1_move_can_be_undone_by_rust_without_losing_bytes_or_time() {
     assert!(!to.exists());
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn connectors_move_and_restore_while_mentions_and_inside_history_stay_intact() {
     let (_temp, env) = home();
     let (mut snap, from, to, store, original) = fixture(&env);
@@ -120,13 +128,14 @@ fn connectors_move_and_restore_while_mentions_and_inside_history_stay_intact() {
     assert_eq!(fs::read_to_string(store.join("session.jsonl")).unwrap(), original);
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn failed_history_rewrite_rolls_back_project_and_refuses_symlinks() {
     let (temp, env) = home();
     let (mut snap, from, to, _store, _original) = fixture(&env);
     let outside = temp.path().join("outside.jsonl");
     write(&outside, "{\"cwd\":\"outside\"}\n");
     let linked = env.home.join("log.jsonl");
-    std::os::unix::fs::symlink(&outside, &linked).unwrap();
+    support::link_file(&outside, &linked);
     snap["connectors"] = json!([{"id":"log","link":{"kind":"cwd","dir":env.home,"field":"cwd"}}]);
     snap["items"] = json!({"log":{"cwd":from,"file":linked,"connector":"log"}});
     assert!(ops::move_project(&env, &snap, "demo", to.to_str().unwrap(), &json!({})).is_err());
@@ -137,13 +146,14 @@ fn failed_history_rewrite_rolls_back_project_and_refuses_symlinks() {
     assert_eq!(journal["state"], "undone");
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn destinations_quarantine_and_undo_reject_escape_and_overwrite() {
     let (temp, env) = home();
     let (snap, from, to, _store, _original) = fixture(&env);
     let external = temp.path().join("external");
     fs::create_dir(&external).unwrap();
     let link = env.home.join("escape");
-    std::os::unix::fs::symlink(&external, &link).unwrap();
+    support::link_dir(&external, &link);
     assert!(ops::move_project(&env, &snap, "demo", link.join("demo").to_str().unwrap(), &json!({})).is_err());
     assert!(
         ops::apply_action(&env, &snap, "bad", &json!({"type":"quarantine","moves":[{"from":from,"to":"../escape"}]}))
@@ -162,6 +172,8 @@ fn destinations_quarantine_and_undo_reject_escape_and_overwrite() {
     assert!(to.is_dir());
     assert!(ops::undo(&env, "../escape").is_err());
 }
+// Laci v1's lock holds a process id, which Linux checks in /proc; the busy check reads /proc too.
+#[cfg(target_os = "linux")]
 #[test]
 fn compatible_pid_lock_and_busy_processes_prevent_changes() {
     let (_temp, env) = home();
@@ -179,6 +191,8 @@ fn compatible_pid_lock_and_busy_processes_prevent_changes() {
     assert!(result.unwrap_err().contains("In use"));
     assert!(from.is_dir());
 }
+// Linux cuts a program's name at 15 bytes, and a Unix file name can be bytes that aren't UTF-8.
+#[cfg(target_os = "linux")]
 #[test]
 fn busy_processes_with_names_or_folders_that_are_not_utf8_still_prevent_changes() {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
@@ -258,6 +272,7 @@ fn project_creation_template_validation_and_sidecar_edits_preserve_other_section
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn merging_history_restores_both_source_and_existing_destination() {
     let (_temp, env) = home();
     let (snap, from, to, store, original) = fixture(&env);
@@ -306,7 +321,7 @@ fn history_backup_is_incremental_preserves_time_and_ignores_links() {
     stamp(&source);
     let external = temp.path().join("secret.jsonl");
     write(&external, "external secret\n");
-    std::os::unix::fs::symlink(&external, store.join("linked.jsonl")).unwrap();
+    support::link_file(&external, &store.join("linked.jsonl"));
     let snap = json!({"connectors":[{"id":"codex","link":{"kind":"cwd","dir":store}}]});
     let first = ops::backup_history(&env, &snap).unwrap();
     assert_eq!(first["copied"], 1);

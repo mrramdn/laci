@@ -430,11 +430,11 @@ fn session_facts_from(path: &Path, provider: &str, previous: Option<&Value>) -> 
     };
     let len = before.len();
     // The file this read began with. Without it, nothing is resumed and the read proves nothing.
-    let inode = platform::file_change_stamp(&file, &before).ok().map(|stamp| stamp.identity.file);
+    let inode = platform::file_change_stamp(&file, &before).ok().map(|stamp| stamp.identity.file_json());
     let resumed = previous.filter(|p| {
         let read = &p["_read"];
         read["reader"] == READER
-            && inode.is_some_and(|inode| read["inode"] == inode)
+            && inode.as_ref().is_some_and(|inode| read["inode"] == *inode)
             && read["offset"].as_u64().is_some_and(|offset| offset <= len)
             && read["probe"]
                 .as_str()
@@ -496,7 +496,7 @@ fn session_facts_from(path: &Path, provider: &str, previous: Option<&Value>) -> 
     }
     // A log that shrank or was replaced while it was read proves nothing; read it again next time.
     let replaced = fs::metadata(path).map_or(true, |after| {
-        platform::identity(path, &after).map_or(true, |id| Some(id.file) != inode) || after.len() < offset
+        platform::identity(path, &after).map_or(true, |id| Some(id.file_json()) != inode) || after.len() < offset
     });
     facts["filesChanged"] = json!(changed.len());
     if facts["title"].is_null()

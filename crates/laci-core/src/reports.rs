@@ -984,6 +984,7 @@ mod tests {
         }
         fs::write(dir.join("bad.md"), [0xff, 0xfe, 0xfd]).unwrap();
         fs::write(dir.join("big.md"), "x".repeat(MAX_BYTES as usize + 1)).unwrap();
+        #[cfg(unix)]
         std::os::unix::fs::symlink(dir.join("2026-01-02-ok.md"), dir.join("link.md")).unwrap();
         let (found, total) = candidates(&dir);
         // Without a date in its name, a file is dated by its time: today, so first.
@@ -1003,6 +1004,7 @@ mod tests {
         assert!(snapshot.get("reportsDir").is_none() && snapshot.get("reports").is_none());
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_folder_that_moved_or_became_a_link_is_not_read() {
         let temp = tempfile::tempdir().unwrap();

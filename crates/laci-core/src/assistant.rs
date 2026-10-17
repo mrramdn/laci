@@ -1,9 +1,11 @@
-//! What Laci asks an agent to do: go through everything open with the user, or work on one to-do in its project.
-//! The desktop app starts an agent with these as its first prompt; the MCP server offers the same text as prompts.
+//! What Laci asks an agent to do: go through everything open with the user, work on one to-do in its project, or fix
+//! a Git problem a check found. The desktop app starts an agent with these as its first prompt; the MCP server offers
+//! the review and to-do text as prompts.
 use crate::{
+    Result,
     env::Env,
-    paths,
-    service::{array, string},
+    paths, scan,
+    service::{array, shell_quote, string},
 };
 use chrono::{Local, NaiveDate};
 use serde_json::Value;
@@ -126,6 +128,104 @@ with project \"{path}\" and text \"{}\".",
         string(task, "text")
     ));
     out
+}
+
+/// The limits every "Ask AI to fix it" prompt carries. A beginner can't tell a safe Git command from one that loses
+/// work, so the agent shows each one first and stops where only the user can decide.
+const LIMITS: &str = "Rules while you do this:
+- First check where things stand: it may have changed since Laci looked.
+- Show each command and say in a few words what it does before you run it.
+- Never force-push and never rewrite history: no rebase, amend or filter-branch. Never delete files or branches, \
+and never throw away changes: no reset --hard, checkout -- . or clean.
+- Before you commit or upload anything, check that files that look like secrets (.env files, private keys such as \
+*.pem, *.key or id_rsa, and credentials JSON files) are listed in .gitignore and were never committed, for example \
+with git log --all -- <file>. If one was committed, stop and tell me: don't upload anything, and don't try to remove \
+it from history yourself.
+- If something doesn't go as expected, stop and tell me what happened.
+
+Talk with me in the language I use. When you are done, tell me in a sentence or two what changed.";
+
+/// `text` as one shell word, quoted only when it has to be.
+fn word(text: &str) -> String {
+    if !text.is_empty() && text.chars().all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c)) {
+        text.to_owned()
+    } else {
+        shell_quote(text)
+    }
+}
+
+/// The first prompt for an agent that fixes the Git problem `code` in a project, as the checks name it.
+pub fn fix(env: &Env, node: &Value, code: &str) -> Result<String> {
+    let place = format!("{} ({})", string(node, "label"), paths::tilde(Path::new(string(node, "path")), &env.home));
+    let git = &node["git"];
+    let branch = string(git, "branch");
+    let upstream = string(git, "upstream");
+    let remote = git["remotes"][0]["name"].as_str().unwrap_or("origin");
+    let name = word(string(node, "name"));
+    let count = |key: &str| scan::plural(git[key].as_u64().unwrap_or(0), "saved version");
+    let first = "Make sure a .gitignore keeps out dependency folders and build output (such as node_modules or dist), \
+files that look like secrets, and system clutter such as .DS_Store, and show me the lines you add. Then commit \
+everything else as the first version, with a short message.";
+    let task = match code {
+        "no-remote" => format!(
+            "Back up {place} online. Its saved versions (commits) exist only on this computer.\n\n\
+Check that the GitHub CLI is installed and signed in (gh auth status). Then create a private repository and upload \
+everything:\n\n  gh repo create {name} --private --source . --remote origin --push\n\n\
+If I use GitLab instead, run glab repo create {name} --private, add it as the remote named origin, and push. If \
+neither tool is ready, tell me how to set one up and stop. The repository stays private unless I say otherwise."
+        ),
+        "no-git" => format!(
+            "Turn on version history for {place} and make a first saved version.\n\nRun git init in this folder. {first}"
+        ),
+        "no-commits" => format!(
+            "Make the first saved version of {place}. Git is on, but nothing is committed yet.\n\n\
+Look at what would be committed (git status). {first}"
+        ),
+        "dirty" => format!(
+            "Save the changes in {place} as a new version.\n\n\
+Look at what changed (git status and git diff --stat) and tell me in a few lines. Then commit it all with a short \
+message that says what changed. If the changes look like separate pieces of work, suggest a few commits instead and \
+ask me first."
+        ),
+        "unpushed" => {
+            let how = if branch.is_empty() {
+                "No branch is checked out. Explain how to put these versions on a branch, and ask me before you push \
+anything."
+                    .to_owned()
+            } else if upstream.is_empty() {
+                format!(
+                    "The branch {branch} isn't linked to a branch online yet (no upstream), so push it with: git push \
+-u {} {}",
+                    word(remote),
+                    word(branch)
+                )
+            } else {
+                format!("The branch {branch} tracks {upstream}, so push it with: git push")
+            };
+            format!(
+                "Upload the saved versions of {place} that are only on this computer.\n\n{how}\n\
+If the push is refused because the online copy has newer versions, stop and tell me."
+            )
+        }
+        "diverged" => {
+            let there = if upstream.is_empty() { "the online copy" } else { upstream };
+            format!(
+                "Combine the new versions of {place} on this computer with the new versions online, without losing \
+either side: this computer has {} that {there} doesn't have, and {there} has {} that this computer doesn't.\n\n\
+Fetch, then merge the online versions into this branch with git pull --no-rebase. If there are conflicts, show me \
+each one and how you would resolve it, and ask me before you commit the merge. Then push, without force.",
+                count("ahead"),
+                count("behind"),
+            )
+        }
+        "stash" => format!(
+            "Look at the changes set aside in {place} (git stash) and suggest what to do with each.\n\n\
+List them with git stash list, and show what each holds with git stash show -p stash@{{N}}. For each one, suggest \
+bringing it back, keeping it, or dropping it, and say why. Don't apply, pop or drop a stash until I say so."
+        ),
+        _ => return Err("Unknown fix".into()),
+    };
+    Ok(format!("{task}\n\n{LIMITS}"))
 }
 
 #[cfg(test)]

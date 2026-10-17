@@ -1,0 +1,4 @@
+/* The layers, lowest first. This comes first, so no sheet loaded later can change the order.
+   Rules outside a layer beat every layer, so app styles go inside one. */
+@layer base, shared, detailed, simple;
+@import "./detailed.css" layer(detailed);

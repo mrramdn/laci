@@ -120,6 +120,52 @@ export function savePref(key: string, value: unknown) {
     /* Storage can be unavailable. */
   }
 }
+// The state smoke test loads this file with ./api alone, so `cd` keeps its own copy of the path logic in
+// helpers.ts: what it takes for a Windows path, and parentOf, pathKey and within. A test checks that the
+// two agree.
+const WINDOWS_ROOT = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/]+[^\\/]+(?:[\\/]|$))/;
+const winRoot = (path: string) => WINDOWS_ROOT.exec(path)?.[0];
+const isWindowsPath = (path: string) => winRoot(path) !== undefined;
+function segments(path: string) {
+  const root = winRoot(path);
+  return (
+    root === undefined
+      ? path.split("/")
+      : path.slice(root.length).split(/[\\/]+/)
+  ).filter(Boolean);
+}
+function pathKey(path: string) {
+  const root = winRoot(path);
+  if (root === undefined) return path;
+  const head = root.startsWith("\\\\")
+    ? "//" +
+      root
+        .slice(2)
+        .replace(/[\\/]+$/, "")
+        .replace(/[\\/]+/g, "/")
+    : root.slice(0, 2);
+  const names = segments(path);
+  return (names.length ? [head, ...names].join("/") : head + "/").toLowerCase();
+}
+function parentOf(path: string) {
+  const root = winRoot(path);
+  if (root === undefined) return path.slice(0, path.lastIndexOf("/")) || "/";
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const above = trimmed
+    .slice(0, Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/")))
+    .replace(/[\\/]+$/, "");
+  return above.length < root.length ? root : above;
+}
+function within(path: string, root: string) {
+  const windows = isWindowsPath(path);
+  if (windows !== isWindowsPath(root)) return false;
+  if (!windows)
+    return (
+      path === root || path.startsWith(root.endsWith("/") ? root : root + "/")
+    );
+  const [a, b] = [pathKey(path), pathKey(root)];
+  return a === b || a.startsWith(b.endsWith("/") ? b : b + "/");
+}
 export const useApp = create<State>((set, get) => ({
   snapshot: null,
   error: null,
@@ -218,15 +264,20 @@ export const useApp = create<State>((set, get) => ({
       goToProject(path);
       return;
     }
+    // The tree opens every folder from the one holding `path` up to the root or Home that contains it.
     const next = new Set(tree);
     const place = [...(snapshot?.roots ?? []), snapshot?.home ?? "/"]
-      .filter((r) => path === r || path.startsWith(r + "/"))
+      .filter((r) => within(path, r))
       .sort((a, b) => b.length - a.length)[0];
-    let p = path.slice(0, path.lastIndexOf("/")) || "/";
-    while (place && (p === place || p.startsWith(place + "/"))) {
-      next.add(p);
-      if (p === place) break;
-      p = p.slice(0, p.lastIndexOf("/")) || "/";
+    let p = parentOf(path);
+    while (place && within(p, place)) {
+      // The tree finds the root or Home by the way the snapshot writes it.
+      const top = pathKey(p) === pathKey(place);
+      next.add(top ? place : p);
+      const above = parentOf(p);
+      // Home or the root ends it, and so does a drive or share, which is its own parent.
+      if (top || above === p) break;
+      p = above;
     }
     set({
       pendingSelection: null,

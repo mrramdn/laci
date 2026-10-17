@@ -9,7 +9,7 @@ import {
 import type { ReactNode } from "react";
 import { api, errorText } from "./api";
 import { useApp, changed, run, selectWhenReady } from "./store";
-import { bytes, plural, tilde } from "./helpers";
+import { bytes, expandHome, isAbsolutePath, plural, tilde } from "./helpers";
 import { Icon, Ops, restoreFocus, SeverityGlyph } from "./common";
 import { closeTerminal, useTerms } from "./terminal-api";
 import { AgentDialog, DeleteSessions, SessionDialog } from "./session-ui";
@@ -484,9 +484,8 @@ function Archive({ id }: { id: string }) {
   useEffect(() => {
     let live = true;
     const timer = window.setTimeout(() => {
-      let path = destination.trim();
-      if (path === "~" || path.startsWith("~/")) path = home + path.slice(1);
-      if (path && !path.startsWith("/")) {
+      const path = expandHome(destination.trim(), home);
+      if (path && !isAbsolutePath(path)) {
         setReview({
           destination,
           error: "Use a full destination path like ~/archive/my-project",

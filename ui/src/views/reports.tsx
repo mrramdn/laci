@@ -8,6 +8,7 @@ import {
   base,
   bytes,
   dayLabel,
+  isWindowsPath,
   localDay,
   plural,
   providerName,
@@ -16,6 +17,7 @@ import {
   reportsOfProject,
   reportsOfSessions,
   tilde,
+  trimSep,
 } from "../helpers";
 import { proseClick, renderReadme } from "../readme";
 import {
@@ -506,13 +508,15 @@ function stripHeader(raw: string) {
 }
 
 /** The report a relative link in a report names: another file in the same folder. */
-function reportLink(href: string, reports: Report[], folder: string) {
+export function reportLink(href: string, reports: Report[], folder: string) {
   let name = href.split(/[?#]/)[0];
   try {
     name = decodeURIComponent(name);
   } catch {
     // Not encoded: taken as written.
   }
+  // Next to a Windows folder, a link may write `\` between names too.
+  if (isWindowsPath(folder)) name = name.replace(/\\/g, "/");
   if (name.startsWith(folder + "/")) name = name.slice(folder.length + 1);
   name = name.replace(/^\.\//, "");
   return name.includes("/") ? undefined : reports.find((r) => r.id === name);
@@ -601,7 +605,7 @@ function ReportReader({
   const [large, setLarge] = useState(report.bytes > LARGE);
   const [loadRemote, setLoadRemote] = useState(false);
   const body = useRef<HTMLDivElement>(null);
-  const folder = dir.path.replace(/\/+$/, "");
+  const folder = trimSep(dir.path);
   const rendered = useMemo(
     () =>
       text.raw === undefined || large

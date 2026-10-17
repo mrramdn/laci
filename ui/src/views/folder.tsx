@@ -11,6 +11,7 @@ import { useApp, readListing, savePref, external } from "../store";
 import {
   agentCount,
   base,
+  breadcrumbs,
   bytes,
   cap,
   deadlineInfo,
@@ -19,6 +20,7 @@ import {
   parentOf,
   priorityRank,
   plural,
+  segments,
   tilde,
   within,
 } from "../helpers";
@@ -162,11 +164,7 @@ export function Folder() {
               path: n.path,
               dir: true,
               n,
-              pre: n.path
-                .slice(s.cwd.length + 1)
-                .split("/")
-                .slice(0, -1)
-                .join("/"),
+              pre: segments(n.path).slice(segments(s.cwd).length, -1).join("/"),
             }));
     const value = (row: FolderRow): string | number | undefined =>
       s.sort.key === "name"
@@ -222,22 +220,7 @@ export function Folder() {
     snapshot,
     listing,
   ]);
-  const anchor = within(s.cwd, snapshot.home)
-    ? snapshot.home
-    : ([...snapshot.roots]
-        .filter((root) => within(s.cwd, root))
-        .sort((a, b) => b.length - a.length)[0] ?? "/");
-  const rel = s.cwd
-    .slice(anchor === "/" ? 1 : anchor.length)
-    .split("/")
-    .filter(Boolean);
-  const trail = [
-    anchor,
-    ...rel.map(
-      (_, i) =>
-        `${anchor === "/" ? "" : anchor}/${rel.slice(0, i + 1).join("/")}`,
-    ),
-  ];
+  const trail = breadcrumbs(s.cwd, snapshot.home, snapshot.roots);
   const crumbLabel = (path: string, index: number) =>
     path === snapshot.home
       ? "~"

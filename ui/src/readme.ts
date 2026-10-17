@@ -2,6 +2,7 @@ import type { MouseEvent } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import { isWindowsPath, joinPath, segments } from "./helpers";
 import { toast, urlOpen } from "./store";
 
 // A README comes with the project, so it is not trusted. Only text structure gets through: no styles, classes,
@@ -39,6 +40,36 @@ export function anchorOf(fragment: string) {
   }
 }
 
+/**
+ * The file in `project` that a README's relative image path names, or nothing for a path that leads
+ * elsewhere or is none. The path is resolved as a link on a made-up host, which settles `.`, `..` and `\`;
+ * the project's own folder names go into that link so that a path may climb out and back in.
+ */
+export function imageFile(project: string, src: string) {
+  const inside = segments(project);
+  const windows = isWindowsPath(project);
+  try {
+    const folders = inside.map((name) => `${encodeURIComponent(name)}/`);
+    const url = new URL(src, `https://local.invalid/${folders.join("")}`);
+    if (url.host !== "local.invalid") return undefined;
+    const names = url.pathname
+      .split("/")
+      .filter(Boolean)
+      .map((name) => decodeURIComponent(name));
+    const rest = names.slice(inside.length);
+    const same = (a: string, b: string) =>
+      windows ? a.toLowerCase() === b.toLowerCase() : a === b;
+    if (!rest.length || !inside.every((name, i) => same(name, names[i])))
+      return undefined;
+    // A name that holds a separator would lead out of the project once it is joined to its path.
+    const separator = windows ? /[\\/:]/ : /\//;
+    if (rest.some((name) => separator.test(name))) return undefined;
+    return joinPath(project, ...rest);
+  } catch {
+    // Not a usable path.
+    return undefined;
+  }
+}
 export function renderReadme(
   raw: string,
   project: string,
@@ -71,14 +102,8 @@ export function renderReadme(
       image.replaceWith(chip);
     } else if (!/^data:image\//i.test(src)) {
       image.removeAttribute("src");
-      try {
-        const url = new URL(src, `https://local.invalid${project}/`);
-        const file = decodeURIComponent(url.pathname);
-        if (url.host === "local.invalid" && file.startsWith(project + "/"))
-          image.src = convertFileSrc(file);
-      } catch {
-        // Not a usable path: the image stays empty.
-      }
+      const file = imageFile(project, src);
+      if (file) image.src = convertFileSrc(file);
     }
   }
   const taken = new Map<string, number>();

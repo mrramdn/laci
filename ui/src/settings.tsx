@@ -4,11 +4,16 @@ import {
   agentInstruction,
   APP_NAMES,
   cap,
+  expandHome,
+  isAbsolutePath,
+  joinPath,
   plural,
   reportList,
   shortDay,
   tilde,
+  trimSep,
 } from "./helpers";
+import { OS } from "./platform";
 import { Select } from "./select";
 import { LaciMark } from "./brand";
 import { Icon } from "./common";
@@ -21,6 +26,9 @@ import type {
   Snapshot,
   TerminalTarget,
 } from "./types";
+/** Where another drive is found, for the examples of a path. */
+const OTHER_DRIVE =
+  OS === "windows" ? "D:\\" : OS === "macos" ? "/Volumes" : "/mnt";
 export function Settings({ first = false }: { first?: boolean }) {
   const s = useApp();
   const snapshot = s.snapshot!;
@@ -100,22 +108,17 @@ export function Settings({ first = false }: { first?: boolean }) {
     setter(next);
   }
   /** A typed folder as an absolute path, with ~ expanded. */
-  const full = (raw: string) => {
-    const path = raw.trim().replace(/(.)\/+$/, "$1");
-    return path === "~" || path.startsWith("~/")
-      ? snapshot.home + path.slice(1)
-      : path;
-  };
+  const full = (raw: string) => expandHome(trimSep(raw.trim()), snapshot.home);
   async function save() {
     const archivePath = full(archiveDir);
-    if (archivePath && !archivePath.startsWith("/")) {
+    if (archivePath && !isAbsolutePath(archivePath)) {
       setError(
-        "Use a full archive folder path like ~/archive or /mnt/backup/archive",
+        `Use a full archive folder path like ~/archive or ${joinPath(OTHER_DRIVE, "backup", "archive")}`,
       );
       return;
     }
     const reportsPath = full(reportsDir);
-    if (!first && reportsPath && !reportsPath.startsWith("/")) {
+    if (!first && reportsPath && !isAbsolutePath(reportsPath)) {
       setError("Use a full reports folder path like ~/notes/agent-reports");
       return;
     }
@@ -235,11 +238,11 @@ export function Settings({ first = false }: { first?: boolean }) {
               className="addrow"
               onSubmit={(e) => {
                 e.preventDefault();
-                let path = folder.trim().replace(/\/+$/, "");
-                if (!path) return;
-                if (path === "~" || path.startsWith("~/"))
-                  path = snapshot.home + path.slice(1);
-                if (!path.startsWith("/")) {
+                let path = trimSep(folder.trim());
+                // Not "/", which was never taken as a folder to scan.
+                if (!path || path === "/") return;
+                path = expandHome(path, snapshot.home);
+                if (!isAbsolutePath(path)) {
                   setError("Use a full path like ~/work");
                   return;
                 }
@@ -254,7 +257,7 @@ export function Settings({ first = false }: { first?: boolean }) {
                 className="inp mono"
                 value={folder}
                 onChange={(e) => setFolder(e.target.value)}
-                placeholder="~/work or /mnt/projects"
+                placeholder={`~/work or ${joinPath(OTHER_DRIVE, "projects")}`}
                 autoComplete="off"
                 aria-label="Another folder"
               />
@@ -497,7 +500,7 @@ function ReportsSetting({
       <div className="rp-copy">
         <button
           className="btn sm"
-          disabled={!draft.startsWith("/")}
+          disabled={!isAbsolutePath(draft)}
           onClick={() =>
             copyText(
               agentInstruction(tilde(draft, snapshot.home)),

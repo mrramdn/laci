@@ -77,7 +77,7 @@ impl Fence {
 }
 pub fn parse_meta(text: &str) -> Value {
     let mut meta = json!({});
-    let normalized = text.replace("\r\n", "\n");
+    let normalized = text.strip_prefix('\u{feff}').unwrap_or(text).replace("\r\n", "\n");
     if let Some(body) = normalized.strip_prefix("---\n").and_then(|t| t.split_once("\n---").map(|p| p.0)) {
         for line in body.lines() {
             if let Some((key, value)) = line.split_once(':') {

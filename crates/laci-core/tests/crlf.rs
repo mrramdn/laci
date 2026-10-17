@@ -341,3 +341,58 @@ fn the_exclude_file_gets_the_ending_it_already_uses() {
     sidecar::ensure_excluded(temp.path()).unwrap();
     assert_eq!(read(&temp.path().join(".git/info/exclude")), ".laci.md\n");
 }
+
+#[test]
+fn a_value_with_three_dashes_inside_keeps_the_frontmatter_whole() {
+    // The block closes at a `---` that starts a line, so this summary is a value, not the end of the block.
+    let source = "---\nsummary: v1 --- v2\nstatus: active\n---\n\n## Next\n\n- [ ] one\n";
+    edited(source, "---\nsummary: v1 --- v2\nstatus: active\npriority: high\n---\n\n## Next\n\n- [ ] one\n", |dir| {
+        sidecar::set_meta(dir, "priority", "high").unwrap()
+    });
+    edited(source, "---\nsummary: v1 --- v2\nstatus: active\n---\n\n## Next\n\n- [ ] one\n- [ ] two\n", |dir| {
+        sidecar::add_next(dir, "two").unwrap()
+    });
+    edited(
+        source,
+        "---\nsummary: v1 --- v2\nstatus: active\n---\n\n## Next\n\n- [ ] one\n\n## Notes\n\nhello\n",
+        |dir| sidecar::set_notes(dir, "hello").unwrap(),
+    );
+    let meta = readers::parse_meta("---\nsummary: v1 --- v2\nstatus: active\n---\n");
+    assert_eq!((meta["summary"].as_str(), meta["status"].as_str()), (Some("v1 --- v2"), Some("active")));
+}
+
+#[test]
+fn a_field_change_next_to_a_value_with_three_dashes_undoes_to_the_same_bytes() {
+    for crlf in [false, true] {
+        let (_temp, env, project) = fixture(crlf);
+        let file = project.join(".laci.md");
+        let source = ending("---\nsummary: v1 --- v2\nstatus: active\n---\n\n## Next\n\n- [ ] Write docs\n", crlf);
+        write(&file, &source);
+        let mut service = loaded(&env, &project);
+        service.request("meta", &json!({"id":project,"key":"priority","value":"high"})).unwrap();
+        let meta = readers::parse_meta(&read(&file));
+        assert_eq!(meta["summary"].as_str(), Some("v1 --- v2"), "{}", name(crlf));
+        undo_latest(&mut service, &format!("meta:{}:priority", project.display()));
+        assert_eq!(read(&file), source, "{}", name(crlf));
+    }
+}
+
+#[test]
+fn a_byte_order_mark_stays_first_and_the_frontmatter_is_still_found() {
+    for crlf in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join(".laci.md");
+        write(&file, &format!("\u{feff}{}", ending("---\nstatus: active\n---\n\n## Next\n\n- [ ] one\n", crlf)));
+        assert_eq!(readers::parse_meta(&read(&file))["status"].as_str(), Some("active"), "{}", name(crlf));
+        sidecar::set_meta(temp.path(), "priority", "high").unwrap();
+        let after = read(&file);
+        assert_eq!(
+            after,
+            format!("\u{feff}{}", ending("---\nstatus: active\npriority: high\n---\n\n## Next\n\n- [ ] one\n", crlf)),
+            "{}",
+            name(crlf)
+        );
+        let meta = readers::parse_meta(&after);
+        assert_eq!((meta["status"].as_str(), meta["priority"].as_str()), (Some("active"), Some("high")));
+    }
+}

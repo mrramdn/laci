@@ -20,8 +20,10 @@ fn ending(text: &str) -> &'static str {
     let crlf = text.matches(CRLF).count();
     if crlf > text.matches('\n').count() - crlf { CRLF } else { "\n" }
 }
+/// The frontmatter's fields and the body after it. The block closes at a `---` that starts a line, as `parse_meta`
+/// reads it, so a value such as `summary: v1 --- v2` stays whole.
 fn split(text: &str) -> (Vec<String>, String) {
-    let re = Regex::new(r"\A---\r?\n([\s\S]*?)(?:\r?\n)?---(?:\r?\n)?").expect("valid frontmatter regex");
+    let re = Regex::new(r"\A---\r?\n((?:[\s\S]*?\r?\n)??)---(?:\r?\n)?").expect("valid frontmatter regex");
     if let Some(c) = re.captures(text) {
         (c[1].lines().map(str::to_owned).collect(), text[c.get(0).unwrap().end()..].into())
     } else {
@@ -66,7 +68,8 @@ pub(crate) fn plain_path(path: &Path) -> Result<()> {
     }
     Ok(())
 }
-/// Hands `transform` the file's text and the line ending its new lines get.
+/// Hands `transform` the file's text and the line ending its new lines get. A byte order mark, which some Windows
+/// editors write, is set aside so the frontmatter is still found, and written back in front.
 fn edit(dir: &Path, transform: impl FnOnce(&str, &str) -> String) -> Result<()> {
     let path = dir.join(SIDECAR);
     plain_path(&path)?;
@@ -74,7 +77,8 @@ fn edit(dir: &Path, transform: impl FnOnce(&str, &str) -> String) -> Result<()> 
         return Err("Project folder is gone".into());
     }
     let before = if path.exists() { fs::read_to_string(&path).map_err(|e| e.to_string())? } else { TEMPLATE.into() };
-    files::replace(&path, transform(&before, ending(&before)).as_bytes())?;
+    let (bom, text) = before.strip_prefix('\u{feff}').map_or(("", before.as_str()), |rest| ("\u{feff}", rest));
+    files::replace(&path, format!("{bom}{}", transform(text, ending(text))).as_bytes())?;
     ensure_excluded(dir)
 }
 pub(crate) fn exclude_file(dir: &Path) -> Option<PathBuf> {

@@ -135,6 +135,19 @@ pub(crate) fn run_env(
     timeout: Duration,
     env: &[(&str, Option<&str>)],
 ) -> Result<String> {
+    let bytes = run_env_bytes(program, args, cwd, timeout, env)?;
+    let text = String::from_utf8(bytes).map_err(|_| "stream did not contain valid UTF-8".to_owned())?;
+    Ok(text.trim_end().into())
+}
+
+/// Like [`run_env`], with the output as the program wrote it, for lists of names that may not be valid text.
+pub(crate) fn run_env_bytes(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    timeout: Duration,
+    env: &[(&str, Option<&str>)],
+) -> Result<Vec<u8>> {
     // Files avoid pipe backpressure and reader threads surviving a child with inherited descriptors.
     let output = tempfile::tempfile().map_err(|e| e.to_string())?;
     let errors = tempfile::tempfile().map_err(|e| e.to_string())?;
@@ -166,12 +179,12 @@ pub(crate) fn run_env(
             let status = child.wait().map_err(|e| e.to_string())?;
             let mut file = if status.success() { output } else { errors };
             file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
-            let mut text = String::new();
-            file.take(16_000_000).read_to_string(&mut text).map_err(|e| e.to_string())?;
+            let mut bytes = Vec::new();
+            file.take(16_000_000).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
             return if status.success() {
-                Ok(text.trim_end().into())
+                Ok(bytes)
             } else {
-                Err(format!("{program} failed: {}", text.trim()))
+                Err(format!("{program} failed: {}", String::from_utf8_lossy(&bytes).trim()))
             };
         }
         if started.elapsed() >= timeout {

@@ -1,6 +1,6 @@
 //! Files that look like secrets, found by their names only: Laci never opens them. Before a first saved version or an
-//! upload, both designs show the ones Git would take, and "Keep these out" lists them in the project's .gitignore,
-//! with Undo.
+//! upload, both designs show the ones Git would take, including those in saved versions that aren't online yet, and
+//! "Keep these out" lists them in the project's .gitignore, with Undo.
 use crate::{
     Result, activity,
     env::Env,
@@ -11,6 +11,7 @@ use crate::{
     sidecar,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Write,
@@ -37,6 +38,10 @@ const NAMES: [&str; 13] = [
 ];
 /// How a `.env.*` file that only shows which settings to fill in ends.
 const EXAMPLES: [&str; 4] = ["example", "sample", "template", "dist"];
+/// Folders of other people's packages, whose test keys and examples would bury the project's own. Build output is
+/// checked: it is made from the project, often with copies of its secrets.
+const DEPENDENCIES: [&str; 8] =
+    ["node_modules", "vendor", ".venv", "venv", "__pycache__", ".gradle", ".dart_tool", ".parcel-cache"];
 /// How many files a check lists; `more` counts the rest.
 const SHOWN: usize = 50;
 const WAIT: Duration = Duration::from_secs(20);
@@ -64,14 +69,16 @@ fn looks_secret(name: &str) -> bool {
     NAMES.iter().any(|pattern| glob(pattern, &name)) && !example && !public
 }
 
-/// A file Git would add, or already tracks, that looks like a secret. `path` is relative to the project.
+/// A file that looks like a secret and that Git would add, or that is in a saved version: one Git tracks, or one an
+/// upload would take. `path` is relative to the project; when the name isn't valid text, `exact` is false and `path`
+/// only shows it.
 struct Found {
     path: String,
     tracked: bool,
+    exact: bool,
 }
 
-/// Every such file in the project, tracked ones first, then the shallowest. Files in dependency and build folders
-/// came from someone else, such as a package's test keys, and would bury the project's own.
+/// Every such file in the project, once each: the ones in a saved version first, then the shallowest.
 fn found(dir: &Path) -> Result<Vec<Found>> {
     // With this set, Git takes the patterns below as plain names and finds nothing.
     let literal = std::env::var("GIT_LITERAL_PATHSPECS").unwrap_or_default().to_ascii_lowercase();
@@ -91,27 +98,33 @@ fn found(dir: &Path) -> Result<Vec<Found>> {
     let specs: Vec<String> = NAMES.iter().map(|name| format!(":(glob,icase)**/{name}")).collect();
     let list = |what: &[&str], tracked: bool| -> Result<Vec<Found>> {
         let mut args: Vec<&str> = base.iter().map(String::as_str).collect();
-        args.extend(["ls-files", "-z"]);
         args.extend_from_slice(what);
         args.push("--");
         args.extend(specs.iter().map(String::as_str));
-        Ok(repo
-            .run(&args, WAIT)?
-            .split('\0')
-            .filter(|path| {
+        let listing = repo.run_bytes(&args, WAIT)?;
+        Ok(git::names(&listing)
+            .map(git::text)
+            .filter(|(path, _)| {
                 let mut parts: Vec<&str> = path.split('/').collect();
                 let name = parts.pop().unwrap_or("");
-                looks_secret(name) && !parts.iter().any(|part| files::HEAVY.contains(part))
+                looks_secret(name) && !parts.iter().any(|part| DEPENDENCIES.contains(part))
             })
-            .map(|path| Found { path: path.to_owned(), tracked })
+            .map(|(path, exact)| Found { path, tracked, exact })
             .collect())
     };
-    let mut out = list(&["--cached"], true)?;
-    out.extend(list(&["--others", "--exclude-standard"], false)?);
+    let mut out = list(&["ls-files", "-z", "--cached"], true)?;
+    out.extend(list(&["ls-files", "-z", "--others", "--exclude-standard"], false)?);
+    if scratch.is_none() {
+        // An upload takes every saved version that isn't online yet, with files Git has stopped tracking since. The
+        // stash is never uploaded.
+        let log = ["log", "-z", "--format=", "--name-only", "--diff-filter=d", "--exclude=refs/stash", "--all"];
+        out.extend(list(&[&log[..], &["--not", "--remotes"]].concat(), true)?);
+    }
     let depth = |found: &Found| found.path.matches('/').count();
     out.sort_by(|a, b| (!a.tracked, depth(a), &a.path).cmp(&(!b.tracked, depth(b), &b.path)));
-    // A file in the middle of a merge is listed once for each side.
-    out.dedup_by(|a, b| a.path == b.path);
+    // A file in the middle of a merge is listed once for each side, and one can be both saved and untracked now.
+    let mut seen = std::collections::BTreeSet::new();
+    out.retain(|found| seen.insert(found.path.clone()));
     Ok(out)
 }
 
@@ -173,7 +186,7 @@ fn create(file: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 /// Writes `after` over `file` with a journal in the form `ops` keeps, so Undo puts back the bytes `file` had, or
-/// removes it if it was new. Runs under the change lock.
+/// removes it if it was new, as long as it still holds `after`. Runs under the change lock.
 fn write_journaled(env: &Env, title: &str, file: &Path, before: Option<&[u8]>, after: &[u8]) -> Result<Value> {
     let journals = ops::data(env, "journal")?;
     let id = loop {
@@ -202,7 +215,8 @@ fn write_journaled(env: &Env, title: &str, file: &Path, before: Option<&[u8]>, a
         None => None,
     };
     let mut journal = json!({"id":id,"at":files::now(),"title":title,"state":"running","entries":[
-        {"kind":"file","path":file,"existed":before.is_some(),"backup":backup}
+        {"kind":"file","path":file,"existed":before.is_some(),"backup":backup,
+            "afterHash":format!("{:x}", Sha256::digest(after))}
     ]});
     let save = |journal: &Value| {
         let text = serde_json::to_vec_pretty(journal).map_err(|e| e.to_string())?;
@@ -264,6 +278,11 @@ pub fn keep_out(env: &Env, node: &Value, list: &Value, by: &str) -> Result<Value
                 .iter()
                 .find(|found| found.path == *path)
                 .ok_or_else(|| format!("{path} isn't on the list of files that look like secrets. Check again."))?;
+            if !found.exact {
+                return Err(format!(
+                    "The name of {path} isn't valid text, so .gitignore can't name it. Rename it, then check again."
+                ));
+            }
             if !chosen.iter().any(|known| known.path == found.path) {
                 chosen.push(found);
             }

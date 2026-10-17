@@ -178,17 +178,20 @@ fn unbacked(dir: &Path) -> Result<Value> {
         return Ok(json!({"files":[],"more":0}));
     }
     let args = ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", "--no-empty-directory"];
-    let listed = git(dir, &args).map_err(|error| format!("Could not list the ignored files. {error}"))?;
-    let local: Vec<&str> = listed
-        .split('\0')
-        .filter(|path| {
+    // Names as Git wrote them: one that isn't valid text is still listed, and its folder is still looked into.
+    let listed = Repo::at(dir)
+        .run_bytes(&args, Duration::from_secs(15))
+        .map_err(|error| format!("Could not list the ignored files. {error}"))?;
+    let local: Vec<String> = crate::git::names(&listed)
+        .filter(|name| {
+            let (path, _) = crate::git::text(name);
             let parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
-            !path.is_empty()
-                && !parts.iter().any(|part| files::HEAVY.contains(part))
+            !parts.iter().any(|part| files::HEAVY.contains(part))
                 && !parts.last().is_some_and(|name| clutter(name))
                 // Git also names a folder whose contents are all ignored, such as one with only a site's build output.
-                && (!path.ends_with('/') || holds_work(&dir.join(path)))
+                && (!path.ends_with('/') || holds_work(&crate::git::path(dir, name)))
         })
+        .map(|name| crate::git::text(name).0)
         .collect();
     Ok(json!({"files":local.iter().take(SHOWN).collect::<Vec<_>>(),"more":local.len().saturating_sub(SHOWN)}))
 }

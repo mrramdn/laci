@@ -98,6 +98,9 @@ fn secrets_are_found_by_name_whether_tracked_or_not_but_not_when_ignored() {
         // A package's test keys and a certificate bundle are someone else's, and stay off the list.
         "node_modules/pkg/test/key.pem",
         ".venv/lib/certifi/cacert.pem",
+        // Build output is made from the project, often with copies of its secrets, and Git would add it here.
+        "dist/.env.production",
+        "build/certs/server.key",
     ] {
         write(&dir.join(name), "not read");
     }
@@ -109,12 +112,56 @@ fn secrets_are_found_by_name_whether_tracked_or_not_but_not_when_ignored() {
             (".env.local", false),
             ("Service-Account-prod.json", false),
             ("deploy.pem", false),
+            ("dist/.env.production", false),
             ("keys/id_ed25519", false),
+            ("build/certs/server.key", false),
         ])
     );
     // Staged counts as tracked: the next saved version takes it.
     git(&dir, &["add", ".env"]);
     assert_eq!(listed(&env, &dir)[..2], pairs(&[(".env", true), ("config/credentials.json", true)]));
+}
+
+#[test]
+fn a_secret_in_a_saved_version_that_isnt_online_yet_is_listed() {
+    let (temp, env, dir) = fixture();
+    let remote = temp.path().join("online.git");
+    fs::create_dir(&remote).unwrap();
+    git(&remote, &["init", "-q", "--bare", "--initial-branch=main"]);
+    write(&dir.join("README.md"), "x");
+    git(&dir, &["add", "README.md"]);
+    git(&dir, &["commit", "-qm", "first"]);
+    git(&dir, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(&dir, &["push", "-q", "-u", "origin", "main"]);
+    // .env is saved, then no longer tracked and ignored, all before the upload, which would still take it.
+    write(&dir.join(".env"), "x");
+    git(&dir, &["add", ".env"]);
+    git(&dir, &["commit", "-qm", "oops"]);
+    git(&dir, &["rm", "-q", "--cached", ".env"]);
+    write(&dir.join(".gitignore"), ".env\n");
+    git(&dir, &["add", ".gitignore"]);
+    git(&dir, &["commit", "-qm", "untrack"]);
+    // A stash is never uploaded.
+    write(&dir.join("deploy.pem"), "x");
+    git(&dir, &["stash", "push", "-q", "--include-untracked"]);
+    assert_eq!(listed(&env, &dir), pairs(&[(".env", true)]));
+    // Once it is online, the next upload doesn't take it.
+    git(&dir, &["push", "-q"]);
+    assert_eq!(listed(&env, &dir), pairs(&[]));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_name_that_isnt_valid_text_is_listed_but_never_written_to_gitignore() {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+    let (_temp, env, dir) = fixture();
+    fs::write(dir.join(OsStr::from_bytes(b"caf\xe9.pem")), "x").unwrap();
+    write(&dir.join(".env"), "x");
+    assert_eq!(listed(&env, &dir), pairs(&[(".env", false), ("caf\u{FFFD}.pem", false)]));
+    let mut service = loaded(&env);
+    let refused = keep_out(&mut service, &dir, json!(["caf\u{FFFD}.pem"])).unwrap_err();
+    assert!(refused.contains("isn't valid text"), "{refused}");
+    assert!(!dir.join(".gitignore").exists());
 }
 
 #[test]
@@ -249,6 +296,55 @@ fn an_older_keep_out_waits_until_the_newer_one_is_undone() {
     assert_eq!(fs::read_to_string(dir.join(".gitignore")).unwrap(), "dist\n/.env\n");
     service.request("log/undo", &json!({"id":first["id"]})).unwrap();
     assert_eq!(fs::read_to_string(dir.join(".gitignore")).unwrap(), "dist\n");
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+fn undo_keeps_a_gitignore_that_changed_after_keep_out() {
+    for existed in [true, false] {
+        let (_temp, env, dir) = fixture();
+        if existed {
+            write(&dir.join(".gitignore"), "dist\n");
+        }
+        write(&dir.join(".env"), "x");
+        let mut service = loaded(&env);
+        let change = keep_out(&mut service, &dir, json!([".env"])).unwrap();
+        // The agent then adds lines of its own, as the fix prompt asks it to.
+        let text = fs::read_to_string(dir.join(".gitignore")).unwrap() + "node_modules/\n.env.production\n";
+        write(&dir.join(".gitignore"), &text);
+        let logged = entry(&env, &change);
+        for refused in [
+            service.request("log/undo", &json!({"id":logged["id"]})).unwrap_err(),
+            service.request("undo", &json!({"id":change["journal"]["id"]})).unwrap_err(),
+        ] {
+            assert!(refused.contains("~/project/demo/.gitignore changed after this"), "{refused}");
+        }
+        assert_eq!(fs::read_to_string(dir.join(".gitignore")).unwrap(), text, "nothing is lost");
+        assert_eq!(entry(&env, &change)["state"], "applied");
+    }
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+fn undo_after_the_project_moved_brings_back_no_folder() {
+    let (_temp, env, dir) = fixture();
+    write(&dir.join(".gitignore"), "dist\n");
+    write(&dir.join(".env"), "x");
+    let mut service = loaded(&env);
+    let change = keep_out(&mut service, &dir, json!([".env"])).unwrap();
+    let moved = env.home.join("project/moved");
+    let move_change = service.request("move", &json!({"id":dir,"destination":moved})).unwrap();
+    let refused = service.request("log/undo", &json!({"id":entry(&env, &change)["id"]})).unwrap_err();
+    assert!(refused.contains("or its folder moved"), "{refused}");
+    assert!(!dir.exists(), "the old folder isn't made again");
+    assert_eq!(fs::read_to_string(moved.join(".gitignore")).unwrap(), "dist\n/.env\n");
+    // Another project in the old place keeps its own .gitignore too.
+    write(&dir.join(".gitignore"), "target/\n");
+    assert!(service.request("undo", &json!({"id":change["journal"]["id"]})).is_err());
+    assert_eq!(fs::read_to_string(dir.join(".gitignore")).unwrap(), "target/\n");
+    fs::remove_dir_all(&dir).unwrap();
+    service.request("undo", &json!({"id":move_change["journal"]["id"]})).unwrap();
+    assert_eq!(fs::read_to_string(dir.join(".gitignore")).unwrap(), "dist\n/.env\n", "the move still undoes");
 }
 
 #[test]
@@ -422,6 +518,24 @@ fn backed_up() -> (tempfile::TempDir, Env, PathBuf, Value) {
     git(&dir, &["push", "-q", "-u", "origin", "main"]);
     let node = node(&dir);
     (temp, env, dir, node)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_trash_plan_names_ignored_files_whose_names_arent_valid_text() {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+    let (_temp, env, dir, node) = backed_up();
+    fs::write(dir.join(".git/info/exclude"), "*.old/\n").unwrap();
+    fs::write(dir.join(OsStr::from_bytes(b"caf\xe9.db")), "x").unwrap();
+    // Each folder is looked into by its own name: one holds work, the other only system clutter.
+    for (folder, file) in [(&b"\xe8.old"[..], "notes.txt"), (b"\xe9.old", ".DS_Store")] {
+        let folder = dir.join(OsStr::from_bytes(folder));
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join(file), "x").unwrap();
+    }
+    let plan = deletion::plan(&env, &node).unwrap();
+    assert_eq!(plan["allowed"], true, "{plan}");
+    assert_eq!(plan["unbacked"], json!({"files":["caf\u{FFFD}.db","\u{FFFD}.old/"],"more":0}));
 }
 
 #[test]

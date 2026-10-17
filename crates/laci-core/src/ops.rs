@@ -447,13 +447,20 @@ fn validate_entries(env: &Env, entries: &[Value]) -> Result<()> {
 }
 fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
     validate_entries(env, entries)?;
-    // Settings saved after a one-off archive must not be replaced by its older backup.
+    // A file changed after the change, by hand, by an agent or by Laci, or gone with a folder that moved, keeps what
+    // it has now: putting back the older bytes would lose that, or bring back the folder.
     for entry in entries {
         if let Some(expected) = entry["afterHash"].as_str() {
             let file = journal_path(env, entry, "path")?;
-            let bytes = fs::read(&file).map_err(|e| e.to_string())?;
-            if format!("{:x}", Sha256::digest(bytes)) != expected {
-                return Err("Settings changed after this archive. Restore those settings before undoing it.".into());
+            if !fs::read(&file).is_ok_and(|bytes| format!("{:x}", Sha256::digest(bytes)) == expected) {
+                return Err(if entry["scope"] == "config" {
+                    "Settings changed after this archive. Restore those settings before undoing it.".into()
+                } else {
+                    format!(
+                        "{} changed after this, or its folder moved, so Undo would lose that. Edit it by hand.",
+                        paths::tilde(&file, &env.home)
+                    )
+                });
             }
         }
     }

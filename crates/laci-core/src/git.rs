@@ -31,13 +31,44 @@ const ENV: [(&str, Option<&str>); 5] = [
     ("GIT_INDEX_FILE", None),
 ];
 
-fn call(dir: &Path, settings: &[String], args: &[&str], timeout: Duration) -> Result<String> {
+/// `args` after the settings every call forces.
+fn full<'a>(settings: &'a [String], args: &[&'a str]) -> Vec<&'a str> {
     let mut full = vec!["--no-pager"];
     for setting in FIXED.iter().copied().chain(settings.iter().map(String::as_str)) {
         full.extend(["-c", setting]);
     }
     full.extend_from_slice(args);
-    process::run_env("git", &full, Some(dir), timeout, &ENV)
+    full
+}
+
+fn call(dir: &Path, settings: &[String], args: &[&str], timeout: Duration) -> Result<String> {
+    process::run_env("git", &full(settings, args), Some(dir), timeout, &ENV)
+}
+
+/// The names in a `-z` listing, as Git wrote them.
+pub(crate) fn names(listing: &[u8]) -> impl Iterator<Item = &[u8]> {
+    listing.split(|byte| *byte == 0).filter(|name| !name.is_empty())
+}
+
+/// A name from a listing as text, and whether that is all of it: a name that isn't valid text shows U+FFFD in place
+/// of the bytes that aren't.
+pub(crate) fn text(name: &[u8]) -> (String, bool) {
+    match std::str::from_utf8(name) {
+        Ok(text) => (text.to_owned(), true),
+        Err(_) => (String::from_utf8_lossy(name).into_owned(), false),
+    }
+}
+
+/// Where the name `name`, relative to `dir`, leads, also when it isn't valid text.
+pub(crate) fn path(dir: &Path, name: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    let name = std::path::Path::new(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(name));
+    // Git for Windows writes names as UTF-8.
+    #[cfg(not(unix))]
+    let name = String::from_utf8_lossy(name);
+    #[cfg(not(unix))]
+    let name = Path::new(name.as_ref());
+    dir.join(name)
 }
 
 /// For commands that never read file contents (`rev-parse`, `remote`, `config`).
@@ -110,6 +141,12 @@ impl Repo {
 
     pub(crate) fn run(&self, args: &[&str], timeout: Duration) -> Result<String> {
         call(&self.dir, self.settings.as_ref().map_err(Clone::clone)?, args, timeout)
+    }
+
+    /// Like [`Repo::run`], with the output as Git wrote it: for `-z` lists of names that may not be valid text.
+    pub(crate) fn run_bytes(&self, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
+        let settings = self.settings.as_ref().map_err(Clone::clone)?;
+        process::run_env_bytes("git", &full(settings, args), Some(&self.dir), timeout, &ENV)
     }
 
     /// Output of a read, or nothing when Git fails.

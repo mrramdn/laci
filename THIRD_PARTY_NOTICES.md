@@ -10,7 +10,7 @@ It is made by `node scripts/notices.mjs` from the lockfiles. Please don't edit i
 - [Icons](#icons)
 - [Fonts](#fonts)
 - [Interface packages](#interface-packages): 48 npm packages
-- [Rust crates](#rust-crates): 362 crates for `x86_64-unknown-linux-gnu`
+- [Rust crates](#rust-crates): 366 crates for `x86_64-unknown-linux-gnu`
 
 ## Icons
 
@@ -75,6 +75,7 @@ Laci bundles these fonts. They are used under the SIL Open Font License 1.1, whi
 | --- | --- | --- | --- | --- |
 | Geist | `@fontsource/geist` | 5.3.0 | OFL-1.1 | [source](https://github.com/vercel/geist-font) |
 | Geist Mono | `@fontsource/geist-mono` | 5.3.0 | OFL-1.1 | [source](https://github.com/vercel/geist-font) |
+| Plus Jakarta Sans | `@fontsource-variable/plus-jakarta-sans` | 5.3.0 | OFL-1.1 | [source](https://github.com/tokotype/PlusJakartaSans) |
 
 ### Geist
 
@@ -178,6 +179,104 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ```text
 Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font.git) GeistMono-Italic[wght].ttf: Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font.git)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+http://scripts.sil.org/OFL
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+```
+
+### Plus Jakarta Sans
+
+```text
+Copyright 2020 The Plus Jakarta Sans Project Authors (https://github.com/tokotype/PlusJakartaSans) PlusJakartaSans-Italic[wght].ttf: Copyright 2020 The Plus Jakarta Sans Project Authors (https://github.com/tokotype/PlusJakartaSans)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
@@ -1755,6 +1854,7 @@ Crates that only run while building are included. Crates that only tests need ar
 | `regex` | 1.13.1 | MIT OR Apache-2.0 | [source](https://github.com/rust-lang/regex) |
 | `regex-automata` | 0.4.18 | MIT OR Apache-2.0 | [source](https://github.com/rust-lang/regex) |
 | `regex-syntax` | 0.8.11 | MIT OR Apache-2.0 | [source](https://github.com/rust-lang/regex) |
+| `rfd` | 0.16.0 | MIT | [source](https://github.com/PolyMeilex/rfd) |
 | `rmcp` | 3.5.1 | Apache-2.0 | [source](https://github.com/modelcontextprotocol/rust-sdk/) |
 | `rmcp-macros` | 3.5.1 | Apache-2.0 | [source](https://github.com/modelcontextprotocol/rust-sdk/) |
 | `rustc-hash` | 2.1.3 | Apache-2.0 OR MIT | [source](https://github.com/rust-lang/rustc-hash) |
@@ -1812,10 +1912,13 @@ Crates that only run while building are included. Crates that only tests need ar
 | `tauri-build` | 2.7.0 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
 | `tauri-codegen` | 2.7.0 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
 | `tauri-macros` | 2.7.0 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
+| `tauri-plugin` | 2.7.2 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
+| `tauri-plugin-dialog` | 2.8.3 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/plugins-workspace) |
+| `tauri-plugin-fs` | 2.7.1 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/plugins-workspace) |
 | `tauri-plugin-single-instance` | 2.5.2 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/plugins-workspace) |
 | `tauri-runtime` | 2.12.0 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
 | `tauri-runtime-wry` | 2.12.0 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
-| `tauri-utils` | 2.10.0 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
+| `tauri-utils` | 2.10.2 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
 | `tauri-winres` | 0.3.6 | MIT | [source](https://github.com/tauri-apps/winres) |
 | `tempfile` | 3.27.0 | MIT OR Apache-2.0 | [source](https://github.com/Stebalien/tempfile) |
 | `tendril` | 0.5.1 | MIT OR Apache-2.0 | [source](https://github.com/servo/html5ever) |
@@ -2717,9 +2820,9 @@ Used by: `async-channel` 2.5.0, `async-executor` 1.14.0, `async-io` 2.6.0, `asyn
 `rustc_version` 0.4.1, `rustix` 1.1.5, `scopeguard` 1.2.0, `serde_with` 3.24.0,
 `serde_with_macros` 3.24.0, `servo_arc` 0.4.3, `signal-hook-registry` 1.4.8, `smallvec` 1.16.2,
 `socket2` 0.6.5, `stable_deref_trait` 1.2.1, `string_cache` 0.9.0, `string_cache_codegen` 0.6.1,
-`syn` 1.0.109, `system-deps` 6.2.2, `tempfile` 3.27.0, `tendril` 0.5.1, `toml_datetime` 0.6.3,
-`tray-icon` 0.25.1, `url` 2.5.8, `uuid` 1.26.1, `version_check` 0.9.5, `web_atoms` 0.2.6,
-`wry` 0.57.0
+`syn` 1.0.109, `system-deps` 6.2.2, `tauri-plugin` 2.7.2*, `tempfile` 3.27.0, `tendril` 0.5.1,
+`toml_datetime` 0.6.3, `tray-icon` 0.25.1, `url` 2.5.8, `uuid` 1.26.1, `version_check` 0.9.5,
+`web_atoms` 0.2.6, `wry` 0.57.0
 
 ```text
                               Apache License
@@ -4719,9 +4822,10 @@ limitations under the License.
 
 Used by: `fdeflate` 0.3.7, `field-offset` 0.3.6, `miniz_oxide` 0.8.9, `miniz_oxide` 0.9.1,
 `num-conv` 0.2.2, `pin-project-lite` 0.2.17, `raw-window-handle` 0.6.2, `tauri` 2.12.0,
-`tauri-build` 2.7.0, `tauri-codegen` 2.7.0, `tauri-macros` 2.7.0,
-`tauri-plugin-single-instance` 2.5.2, `tauri-runtime` 2.12.0, `tauri-runtime-wry` 2.12.0,
-`tauri-utils` 2.10.0, `time` 0.3.55, `time-core` 0.1.9, `time-macros` 0.2.32
+`tauri-build` 2.7.0, `tauri-codegen` 2.7.0, `tauri-macros` 2.7.0, `tauri-plugin-dialog` 2.8.3,
+`tauri-plugin-fs` 2.7.1, `tauri-plugin-single-instance` 2.5.2, `tauri-runtime` 2.12.0,
+`tauri-runtime-wry` 2.12.0, `tauri-utils` 2.10.2, `time` 0.3.55, `time-core` 0.1.9,
+`time-macros` 0.2.32
 
 ```text
                                  Apache License
@@ -10850,6 +10954,34 @@ DEALINGS IN THE SOFTWARE.
 
 #### MIT License
 
+Used by: `rfd` 0.16.0
+
+```text
+MIT License
+
+Copyright (c) 2022 Bartłomiej Maryńczak
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+#### MIT License
+
 Used by: `same-file` 1.0.6
 
 ```text
@@ -11294,12 +11426,41 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #### MIT License
 
 Used by: `tauri` 2.12.0, `tauri-build` 2.7.0, `tauri-codegen` 2.7.0, `tauri-macros` 2.7.0,
-`tauri-runtime` 2.12.0, `tauri-runtime-wry` 2.12.0, `tauri-utils` 2.10.0
+`tauri-plugin-dialog` 2.8.3, `tauri-plugin-fs` 2.7.1, `tauri-runtime` 2.12.0,
+`tauri-runtime-wry` 2.12.0, `tauri-utils` 2.10.2
 
 ```text
 MIT License
 
 Copyright (c) 2017 - Present Tauri Apps Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+#### MIT License
+
+Used by: `tauri-plugin` 2.7.2*
+
+```text
+MIT License
+
+Copyright (c) Tauri Programme within The Commons Conservancy
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

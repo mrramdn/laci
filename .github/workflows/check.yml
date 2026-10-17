@@ -5,9 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# A new push cancels the older run of the same pull request. Runs on main and manual runs finish.
+# A new push cancels the older run of the same pull request. Runs on main and manual runs each get a group of
+# their own, so they finish.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -74,13 +75,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -C ui typecheck
       - run: pnpm -C ui lint
-      - run: node scripts/ui-state-smoke.mjs
       - run: cargo fmt --all -- --check
       - run: pnpm -C ui build
+      # After the build: one of its tests checks that no preview code is in ui/dist.
+      - run: node scripts/ui-state-smoke.mjs
       - run: cargo clippy --workspace --all-targets --features custom-protocol -- -D warnings
       - run: cargo test --workspace --features custom-protocol
       - run: cargo build -p laci --features custom-protocol
       - run: node scripts/mcp-smoke.mjs target/debug/laci
+      # THIRD_PARTY_NOTICES.md must list what the lockfiles bring in; `pnpm notices` writes it again.
+      - run: node scripts/notices.mjs --check
       - name: Native window smoke check
         env:
           LACI_SMOKE_DIAGNOSTICS: ${{ runner.temp }}/laci-smoke-diagnostics

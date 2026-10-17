@@ -24,7 +24,11 @@ function files(dir) {
 }
 
 export async function theBuildHoldsNoPreview(t) {
-  if (!existsSync(dist)) return t.skip("ui/dist is not built");
+  if (!existsSync(dist)) {
+    // CI builds the UI before this runs, so a missing build there means the steps were reordered.
+    assert.ok(!process.env.CI, "ui/dist is not built: build the UI before this check");
+    return t.skip("ui/dist is not built");
+  }
   for (const file of files(dist)) {
     assert.doesNotMatch(
       path.basename(file),

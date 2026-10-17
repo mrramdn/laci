@@ -582,15 +582,17 @@ export function setDesign(design: Design): boolean {
 }
 const isDesign = (value: unknown): value is Design =>
   value === "simple" || value === "detailed";
+/** The design a new install opens in: NEW_INSTALL_DESIGN in src-tauri/src/app/mod.rs, changed together. */
+export const NEW_INSTALL_DESIGN: Design = "detailed";
 /**
  * The design for the saved choices: the one saved, else Detailed for a setup from before there were
- * two designs and Simple for a new one. The desktop's start-up script decides the same way.
+ * two designs and NEW_INSTALL_DESIGN for a new one. The desktop's start-up script decides the same way.
  */
 export function effectiveDesign(
   prefs: Pick<Prefs, "design" | "configured">,
 ): Design {
   if (isDesign(prefs.design)) return prefs.design;
-  return prefs.configured ? "detailed" : "simple";
+  return prefs.configured ? "detailed" : NEW_INSTALL_DESIGN;
 }
 /**
  * Shows the choices saved in config.json, from a `prefs` reply. They win over what the page started

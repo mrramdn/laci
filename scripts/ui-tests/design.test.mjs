@@ -371,14 +371,14 @@ export async function aSetupFromBeforeTwoDesignsStaysDetailedAndIsOfferedSimple(
   assert.deepEqual(dataset, { design: "detailed", designOffer: "1" });
 }
 
-export async function aNewSetupStartsInSimple() {
-  const { useApp, applyPrefs, dataset } = store();
+export async function aNewSetupStartsInTheNewInstallDesign() {
+  const { useApp, applyPrefs, dataset, NEW_INSTALL_DESIGN } = store();
   applyPrefs(prefs({ design: null, configured: false }));
   assert.deepEqual(
     pick(useApp.getState(), "design", "designSet", "designOffer"),
-    { design: "simple", designSet: false, designOffer: false },
+    { design: NEW_INSTALL_DESIGN, designSet: false, designOffer: false },
   );
-  assert.deepEqual(dataset, { design: "simple" });
+  assert.deepEqual(dataset, { design: NEW_INSTALL_DESIGN });
 }
 
 export async function savedValuesTheWindowDoesNotKnowCountAsNotChosen() {
@@ -430,7 +430,13 @@ export async function theDesignForSavedChoicesIsTheOneTheDesktopOpensIn() {
     "detailed",
   );
   assert.equal(effectiveDesign({ design: null, configured: true }), "detailed");
-  assert.equal(effectiveDesign({ design: null, configured: false }), "simple");
+  // The desktop and the store must agree on a new install's design; change both constants together.
+  const desktop = readFileSync(
+    new URL("../../src-tauri/src/app/mod.rs", import.meta.url),
+    "utf8",
+  ).match(/const NEW_INSTALL_DESIGN: &str = "(\w+)";/)?.[1];
+  assert.ok(desktop, "NEW_INSTALL_DESIGN is in src-tauri/src/app/mod.rs");
+  assert.equal(effectiveDesign({ design: null, configured: false }), desktop);
 }
 
 // The state smoke test runs the store with only `./api` replaced, so it may import nothing else of

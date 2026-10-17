@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LaciMark } from "../brand";
 import { Icon } from "../common";
 import { useApp, readListing, setTheme, rescan } from "../store";
 import {
@@ -141,7 +142,7 @@ export function Sidebar() {
           <Icon name="layers" />
         </button>
         <span className="logo">
-          <Icon name="archive" />
+          <LaciMark size={24} />
         </span>
         <b>laci</b>
         <span className="grow" />

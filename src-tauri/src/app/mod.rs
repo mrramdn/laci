@@ -13,7 +13,11 @@ use state::{Engine, RefreshQueue, Work};
 use std::{
     collections::BTreeSet,
     path::PathBuf,
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -31,6 +35,8 @@ struct AppState {
     listings: Mutex<BTreeSet<PathBuf>>,
     /// When agent history was last read because a log changed, and whether a later read is already due.
     agents_read: Mutex<(Option<Instant>, bool)>,
+    /// The folder picker is open. On Linux it doesn't hold the window, so a second click could open another.
+    picking: AtomicBool,
 }
 type Shared = Arc<AppState>;
 /// While an agent works its log changes every second. Its history is read again at most this often, so a
@@ -157,8 +163,42 @@ impl AppState {
         }
         Ok(json!({"target":"internal","terminal":self.terminals.open_launch(&command)?}))
     }
+    /// The system's folder picker over the main window: `{path}`, or `{path: null}` when the user cancels.
+    fn pick_folder(&self, body: &Value) -> Result<Value> {
+        use tauri_plugin_dialog::DialogExt;
+        // The dialog runs on the main thread while this thread waits for it. Requests arrive on a blocking worker
+        // (see `request`); waiting on the main thread itself would freeze the app.
+        if thread::current().name() == Some("main") {
+            return Err("The folder picker can't open from the main thread".into());
+        }
+        let home = self.engine.lock().map_err(|e| e.to_string())?.service.env.home.clone();
+        let mut picker = self.handle.dialog().file();
+        if let Some(window) = self.handle.get_webview_window("main") {
+            picker = picker.set_parent(&window);
+        }
+        if let Some(title) = body["title"].as_str().map(str::trim).filter(|t| !t.is_empty()) {
+            picker = picker.set_title(title.chars().take(100).collect::<String>());
+        }
+        let start = paths::expand(string(body, "defaultPath").trim(), &home);
+        if start.is_absolute() && start.is_dir() {
+            picker = picker.set_directory(start);
+        }
+        if self.picking.swap(true, Ordering::AcqRel) {
+            return Err("The folder picker is already open".into());
+        }
+        let picked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| picker.blocking_pick_folder()));
+        self.picking.store(false, Ordering::Release);
+        let Some(picked) = picked.map_err(|_| "The folder picker closed unexpectedly".to_owned())? else {
+            return Ok(json!({"path":null}));
+        };
+        let path = picked.simplified().into_path().map_err(|e| e.to_string())?;
+        let path = path.to_str().ok_or("Laci can't use a folder whose name isn't valid text. Rename it first.")?;
+        Ok(json!({"path":path}))
+    }
     fn request(self: &Arc<Self>, name: &str, body: &Value) -> Result<Value> {
         match name {
+            // The picker waits for the user, so it never holds the engine lock.
+            "pick/folder" => return self.pick_folder(body),
             "agent/models" => {
                 let env = self.engine.lock().map_err(|e| e.to_string())?.service.env.clone();
                 if body["passive"] == true {
@@ -328,6 +368,8 @@ impl AppState {
 #[tauri::command]
 async fn request(state: State<'_, Shared>, name: String, body: Option<Value>) -> Result<Value> {
     let state = Arc::clone(state.inner());
+    // Every request runs on a blocking worker, never on the main thread: a long action or the folder picker
+    // waits here while the window keeps drawing.
     tauri::async_runtime::spawn_blocking(move || state.request(&name, &body.unwrap_or_else(|| json!({}))))
         .await
         .map_err(|e| e.to_string())?
@@ -377,8 +419,63 @@ fn term_close(state: State<'_, Shared>, id: String) {
     state.terminals.close(&id);
 }
 
+/// The design a new install opens in. It stays Detailed until the Simple shell ships; first run then asks, with
+/// Simple preselected.
+const NEW_INSTALL_DESIGN: &str = "detailed";
+
+/// The design a window opens in: the saved one, else Detailed for a setup made before designs existed and
+/// NEW_INSTALL_DESIGN for a new one.
+fn startup_design(design: &str, configured: bool) -> &'static str {
+    match design {
+        "simple" => "simple",
+        "detailed" => "detailed",
+        _ if configured => "detailed",
+        _ => NEW_INSTALL_DESIGN,
+    }
+}
+
+/// Sets `data-theme`, `data-design`, `data-design-offer` and `data-os` on the page before it paints. A value from
+/// config.json is only compared, never copied into the script. Tauri keeps this script from when the window was
+/// built, so after a switch and a reload it is stale: the page asks for `prefs` to know the saved choices.
+fn init_script(theme: &str, design: &str, configured: bool, os: &str) -> String {
+    let mut set = Vec::new();
+    if let Some(theme) = ["light", "dark"].into_iter().find(|t| *t == theme) {
+        set.push(("theme", theme));
+    }
+    set.push(("design", startup_design(design, configured)));
+    // Set up before designs existed: it stays Detailed, and the page can offer Simple until a design is saved.
+    if configured && !["simple", "detailed"].contains(&design) {
+        set.push(("designOffer", "1"));
+    }
+    if let Some(os) = ["linux", "macos", "windows"].into_iter().find(|o| *o == os) {
+        set.push(("os", os));
+    }
+    let apply: String = set.iter().map(|(key, value)| format!("d.{key}='{value}';")).collect();
+    format!(
+        "(()=>{{const apply=()=>{{const d=document.documentElement.dataset;{apply}}};\
+         document.addEventListener('DOMContentLoaded',apply);if(document.documentElement)apply();}})();"
+    )
+}
+
+/// The window's colour before the page paints, to match the design and theme it opens in.
+fn background(design: &str, light: bool) -> tauri::webview::Color {
+    let (r, g, b) = match (design, light) {
+        ("simple", true) => (0xFB, 0xF8, 0xF3),
+        ("simple", false) => (0x18, 0x15, 0x12),
+        (_, true) => (250, 250, 250),
+        (_, false) => (12, 12, 13),
+    };
+    tauri::webview::Color(r, g, b, 255)
+}
+
+/// Room for the title bar when a new window is kept inside the work area. Tauri counts it itself on Windows.
+const TITLE_BAR: f64 = if cfg!(windows) { 0.0 } else { 32.0 };
+
 pub fn run(env: Env) -> Result<()> {
-    let theme = config::load(&env)["theme"].as_str().unwrap_or("").to_owned();
+    let saved = config::load(&env);
+    let (theme, configured) = (string(&saved, "theme").to_owned(), saved["roots"].is_array());
+    let design = startup_design(string(&saved, "design"), configured);
+    let script = init_script(&theme, string(&saved, "design"), configured, std::env::consts::OS);
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
@@ -386,37 +483,56 @@ pub fn run(env: Env) -> Result<()> {
                 let _ = window.set_focus();
             }
         }))
+        // Only Rust opens the folder picker; the window has no dialog permission. The plugin also replaces
+        // window.alert and window.confirm in the page with calls that are refused, so the UI never uses them.
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             let (sender, receiver) = mpsc::channel();
             let watches = Watches::new(sender).ok();
             let service = Service::new(env);
             let queue = Arc::new(RefreshQueue::default());
             let state = Arc::new(AppState {
-                engine: Mutex::new(Engine::new(service)), queue: Arc::clone(&queue),
+                engine: Mutex::new(Engine::new(service)),
+                queue: Arc::clone(&queue),
                 handle: app.handle().clone(),
-                terminals: Terminals::default(), watches,
+                terminals: Terminals::default(),
+                watches,
                 creations: creation::Creations::default(),
                 listings: Mutex::new(BTreeSet::new()),
                 agents_read: Mutex::new((None, false)),
+                picking: AtomicBool::new(false),
             });
             app.manage(Arc::clone(&state));
-            let script = if ["light", "dark"].contains(&theme.as_str()) {
-                format!("document.addEventListener('DOMContentLoaded',()=>document.documentElement.dataset.theme='{theme}'); if(document.documentElement)document.documentElement.dataset.theme='{theme}';")
-            } else { String::new() };
+            // 1440×900 shrinks to fit the main screen's work area, title bar included, and opens centred on it.
+            // Wayland names no main screen and no work area, so there it fits the smallest screen with room for
+            // panels, and the compositor places it.
+            let (mut width, mut height) = (1440.0_f64, 900.0_f64);
+            if app.primary_monitor().ok().flatten().is_none() {
+                for monitor in app.available_monitors().unwrap_or_default() {
+                    let screen = monitor.work_area().size.to_logical::<f64>(monitor.scale_factor());
+                    width = width.min(screen.width - 64.0);
+                    height = height.min(screen.height - TITLE_BAR - 64.0);
+                }
+            }
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                .title("laci").inner_size(1440.0, 900.0).min_inner_size(880.0, 540.0)
-                .visible(false).initialization_script(script).build()?;
+                .title("Laci")
+                .inner_size(width.max(720.0), height.max(560.0))
+                .min_inner_size(720.0, 560.0)
+                .prevent_overflow_with_margin(tauri::LogicalSize::new(0.0, TITLE_BAR))
+                .center()
+                .visible(false)
+                .initialization_script(script)
+                .build()?;
             let light = theme == "light" || (theme.is_empty() && window.theme().ok() == Some(tauri::Theme::Light));
-            let color = if light {
-                tauri::webview::Color(250, 250, 250, 255)
-            } else { tauri::webview::Color(12, 12, 13, 255) };
-            window.set_background_color(Some(color))?;
+            window.set_background_color(Some(background(design, light)))?;
             window.show()?;
             let weak = Arc::downgrade(&state);
             thread::spawn(move || {
                 while let Ok(first) = receiver.recv() {
                     let changed = watch::batch(&receiver, first, Duration::from_millis(900));
-                    let Some(state) = weak.upgrade() else { break; };
+                    let Some(state) = weak.upgrade() else {
+                        break;
+                    };
                     state.changed(changed);
                 }
             });
@@ -424,7 +540,9 @@ pub fn run(env: Env) -> Result<()> {
             thread::spawn(move || {
                 loop {
                     let work = queue.take();
-                    let Some(state) = weak.upgrade() else { break; };
+                    let Some(state) = weak.upgrade() else {
+                        break;
+                    };
                     state.refresh(work);
                 }
             });
@@ -432,7 +550,13 @@ pub fn run(env: Env) -> Result<()> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            request, term_open, term_list, term_attach, term_input, term_resize, term_close
+            request,
+            term_open,
+            term_list,
+            term_attach,
+            term_input,
+            term_resize,
+            term_close
         ])
         .build(tauri::generate_context!())
         .map_err(|e| e.to_string())?
@@ -443,4 +567,60 @@ pub fn run(env: Env) -> Result<()> {
             }
         });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_saved_design_wins_and_an_earlier_setup_stays_detailed_with_an_offer() {
+        assert_eq!([startup_design("simple", true), startup_design("detailed", false)], ["simple", "detailed"]);
+        assert_eq!([startup_design("", true), startup_design("", false)], ["detailed", NEW_INSTALL_DESIGN]);
+        let upgraded = init_script("", "", true, "linux");
+        assert!(upgraded.contains("dataset;d.design='detailed';d.designOffer='1';d.os='linux';}"), "{upgraded}");
+        let fresh = init_script("dark", "", false, "macos");
+        assert!(
+            fresh.contains(&format!("dataset;d.theme='dark';d.design='{NEW_INSTALL_DESIGN}';d.os='macos';}}")),
+            "{fresh}"
+        );
+        let chosen = init_script("light", "simple", true, "windows");
+        assert!(chosen.contains("dataset;d.theme='light';d.design='simple';d.os='windows';}"), "{chosen}");
+        // Set before the first paint when the page already has a root, and again once the document is parsed.
+        assert!(
+            chosen.contains("document.addEventListener('DOMContentLoaded',apply);if(document.documentElement)apply();")
+        );
+    }
+
+    #[test]
+    fn the_startup_script_copies_no_text_from_the_config() {
+        let hostile = [
+            "dark';alert(1);'",
+            "</script><script>alert(1)</script>",
+            "x'+fetch('//example.com')+'",
+            "\"};alert(1);//",
+            "simple\\",
+            "detailed\u{2028}",
+            "Light",
+            " simple",
+        ];
+        for value in hostile {
+            for configured in [false, true] {
+                assert_eq!(
+                    init_script(value, value, configured, value),
+                    init_script("", "", configured, ""),
+                    "{value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_window_colour_follows_design_and_theme() {
+        use tauri::webview::Color;
+        assert_eq!(background("simple", true), Color(0xFB, 0xF8, 0xF3, 255));
+        assert_eq!(background("simple", false), Color(0x18, 0x15, 0x12, 255));
+        assert_eq!(background("detailed", true), Color(250, 250, 250, 255));
+        assert_eq!(background("detailed", false), Color(12, 12, 13, 255));
+    }
 }

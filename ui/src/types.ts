@@ -608,5 +608,26 @@ export type View =
   | "agents"
   | "reports"
   | "log"
-  | "settings";
+  | "settings"
+  /** Simple's page for the selected project. Detailed shows a project beside the view instead. */
+  | "project"
+  /** Simple's Help page. Detailed opens Help as a dialog. */
+  | "help";
 export type Tab = "health" | "todo" | "agents" | "readme";
+/** How much the window shows at once. */
+export type Design = "simple" | "detailed";
+/** The `prefs` reply: the choices saved in config.json. */
+export interface Prefs {
+  /** Null for the system's theme. */
+  theme: "light" | "dark" | null;
+  /** Null until the user chooses one. */
+  design: Design | null;
+  /** Null until the user chooses. */
+  updates: "daily" | "off" | null;
+  /** False until the user saves their setup. */
+  configured: boolean;
+  /** Where config.json is, with the home folder as `~`. */
+  configPath: string;
+  /** linux, macos or windows. */
+  os: string;
+}

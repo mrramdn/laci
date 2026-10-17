@@ -5,8 +5,10 @@ import type {
   ActivityLog,
   Apps,
   Change,
+  Design,
   Listing,
   Node,
+  Prefs,
   RefreshStatus,
   Snapshot,
   Tab,
@@ -18,7 +20,7 @@ export type Theme = "system" | "light" | "dark";
 export type ReportFilter = { sessions: string[] } | { project: string } | null;
 export type SortKey = "name" | "last" | "size" | "ai" | "priority" | "deadline";
 export type Modal =
-  | { kind: "shortcuts" | "connector" }
+  | { kind: "shortcuts" | "connector" | "help" }
   | { kind: "new"; job?: CreationJob }
   | { kind: "archive" | "delete" | "orphan" | "clean"; id: string }
   | { kind: "terminal-close"; id: string }
@@ -65,6 +67,13 @@ interface State {
   tab: Tab;
   fileSelected: string | null;
   theme: Theme;
+  design: Design;
+  /** config.json holds a design: the user chose one. Known once `prefsReady`. */
+  designSet: boolean;
+  /** Set up before there were two designs, and none chosen since: Detailed can offer Simple. */
+  designOffer: boolean;
+  /** The saved choices arrived. Until then design and theme are what the page started with. */
+  prefsReady: boolean;
   apps: Apps;
   terminalTarget: TerminalTarget;
   skipSetup: boolean;
@@ -129,6 +138,14 @@ export const useApp = create<State>((set, get) => ({
   tab: "health",
   fileSelected: null,
   theme: (document.documentElement.dataset.theme as Theme) || "system",
+  // The desktop sets these before the page paints; the `prefs` reply has the last word.
+  design:
+    document.documentElement.dataset.design === "simple"
+      ? "simple"
+      : "detailed",
+  designSet: false,
+  designOffer: document.documentElement.dataset.designOffer === "1",
+  prefsReady: false,
   apps: { editor: "code", files: "dolphin", terminal: "kitty" },
   terminalTarget: "internal",
   skipSetup: false,
@@ -195,7 +212,12 @@ export const useApp = create<State>((set, get) => ({
         : {},
     ),
   cd: (path) => {
-    const { snapshot, tree } = get();
+    const { snapshot, tree, design } = get();
+    // Simple shows a project on its own page, not as a folder.
+    if (design === "simple" && snapshot?.nodes[path]?.kind === "project") {
+      goToProject(path);
+      return;
+    }
     const next = new Set(tree);
     const place = [...(snapshot?.roots ?? []), snapshot?.home ?? "/"]
       .filter((r) => path === r || path.startsWith(r + "/"))
@@ -249,10 +271,14 @@ export const useApp = create<State>((set, get) => ({
 }));
 /** Views that use the whole width: they have no project details beside them. */
 export const FULL_WIDTH: readonly View[] = ["settings", "log", "reports"];
-/** Show a project's details, leaving a view that has no room for them. */
+/**
+ * Show a project's details: on the project's page in Simple, and in Detailed beside the view,
+ * leaving a view that has no room for them.
+ */
 export function goToProject(id: string, tab?: Tab) {
-  if (FULL_WIDTH.includes(useApp.getState().view))
-    useApp.getState().navigate("today");
+  const state = useApp.getState();
+  if (state.design === "simple") state.navigate("project");
+  else if (FULL_WIDTH.includes(state.view)) state.navigate("today");
   useApp.getState().select(id, tab);
 }
 export function markReportsSeen() {
@@ -482,7 +508,8 @@ export async function readListing(path: string, deep = false, force = false) {
     if (listingAgain.delete(path)) void readListing(path, deep, true);
   }
 }
-export function setTheme(theme: Theme) {
+/** Puts `theme` on the page and keeps it for the next first paint. Saving it is up to the caller. */
+function showTheme(theme: Theme) {
   const root = document.documentElement;
   if (theme === "system") delete root.dataset.theme;
   else root.dataset.theme = theme;
@@ -491,10 +518,106 @@ export function setTheme(theme: Theme) {
   } catch {
     /* Ignore storage failure. */
   }
+}
+export function setTheme(theme: Theme) {
+  showTheme(theme);
   useApp.setState({ theme });
   void api("theme", { theme: theme === "system" ? "" : theme }).catch((error) =>
     toast("Couldn’t save theme", errorText(error), { error: true }),
   );
+}
+/**
+ * Puts `design` on the page, with whether Detailed offers Simple, and keeps the design for the next
+ * first paint. Saving it is up to the caller.
+ */
+function showDesign(design: Design, offer: boolean) {
+  const root = document.documentElement;
+  root.dataset.design = design;
+  if (offer) root.dataset.designOffer = "1";
+  else delete root.dataset.designOffer;
+  try {
+    localStorage.setItem("laci:design", design);
+  } catch {
+    /* Ignore storage failure. */
+  }
+}
+/**
+ * Where a switch to `design` lands. Each view has its counterpart in the other design, except a
+ * project: Detailed's details panel becomes Simple's project page, and back in Detailed the project
+ * shows beside Today.
+ */
+function viewIn(design: Design, s: State): View {
+  if (design === "detailed")
+    return s.view === "project" || s.view === "help" ? "today" : s.view;
+  const shown = s.selected ? s.snapshot?.nodes[s.selected] : undefined;
+  return shown?.kind === "project" && !FULL_WIDTH.includes(s.view)
+    ? "project"
+    : s.view;
+}
+/**
+ * Switches the window to `design` and saves it. While a dialog is open or a change runs it does
+ * nothing and returns false, so neither loses its place.
+ */
+export function setDesign(design: Design): boolean {
+  const s = useApp.getState();
+  if (s.modal || s.working) return false;
+  const switched = design !== s.design;
+  showDesign(design, false);
+  useApp.setState({
+    design,
+    designSet: true,
+    designOffer: false,
+    ...(switched ? { view: viewIn(design, s), display: false } : {}),
+  });
+  void api("design", { design }).catch((error) =>
+    toast("Couldn’t save view", errorText(error), { error: true }),
+  );
+  // Choosing the design already shown only saves it, and a change's Undo stays in reach.
+  if (switched && !useApp.getState().toast?.undo)
+    toast(
+      design === "simple" ? "Now in Simple view" : "Now in Detailed view",
+      "Switch back at the bottom of the sidebar.",
+    );
+  return true;
+}
+const isDesign = (value: unknown): value is Design =>
+  value === "simple" || value === "detailed";
+/** The design a new install opens in: NEW_INSTALL_DESIGN in src-tauri/src/app/mod.rs, changed together. */
+export const NEW_INSTALL_DESIGN: Design = "detailed";
+/**
+ * The design for the saved choices: the one saved, else Detailed for a setup from before there were
+ * two designs and NEW_INSTALL_DESIGN for a new one. The desktop's start-up script decides the same way.
+ */
+export function effectiveDesign(
+  prefs: Pick<Prefs, "design" | "configured">,
+): Design {
+  if (isDesign(prefs.design)) return prefs.design;
+  return prefs.configured ? "detailed" : NEW_INSTALL_DESIGN;
+}
+/**
+ * Shows the choices saved in config.json, from a `prefs` reply. They win over what the page started
+ * with: the desktop fixes its start-up script when the window opens, so a reload after a switch
+ * brings back the old design and theme. Use a reply asked for before the window could be used, or
+ * it may undo a later switch.
+ */
+export function applyPrefs(prefs: Prefs) {
+  const design = effectiveDesign(prefs);
+  const designSet = isDesign(prefs.design);
+  const designOffer = prefs.configured && !designSet;
+  const theme: Theme =
+    prefs.theme === "light" || prefs.theme === "dark" ? prefs.theme : "system";
+  showTheme(theme);
+  showDesign(design, designOffer);
+  useApp.setState((s) => ({
+    theme,
+    design,
+    designSet,
+    designOffer,
+    prefsReady: true,
+    ...(design === s.design
+      ? {}
+      : { view: viewIn(design, s), display: false }),
+  }));
 }
 export function toggleExpanded(key: string) {
   useApp.setState((s) => ({

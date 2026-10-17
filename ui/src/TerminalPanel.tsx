@@ -222,6 +222,9 @@ function TerminalTab({
       cursorBlink: true,
       scrollback: 5000,
       theme: terminalTheme(),
+      // xterm's own handler for OSC 8 links asks window.confirm, which the dialog plugin replaced with a call this
+      // window may not make. Links stay inert, as before.
+      linkHandler: { activate: () => {} },
     });
     const addon = new FitAddon();
     terminal.loadAddon(addon);

@@ -3,12 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>laci</title>
+    <title>Laci</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <script>
       try {
         const t = localStorage.getItem("laci:theme");
         if (t && !document.documentElement.dataset.theme && t !== "system")
           document.documentElement.dataset.theme = t;
+        const d = localStorage.getItem("laci:design");
+        if (!document.documentElement.dataset.design && (d === "simple" || d === "detailed"))
+          document.documentElement.dataset.design = d;
       } catch {}
     </script>
   </head>

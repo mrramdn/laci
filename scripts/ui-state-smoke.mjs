@@ -1,35 +1,26 @@
 // Exercise the real store with reordered native replies, without a browser or new dependencies.
+// Every scripts/ui-tests/*.test.mjs runs here too.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { readdirSync } from "node:fs";
 import test from "node:test";
-
-const require = createRequire(new URL("../ui/package.json", import.meta.url));
-const ts = require("typescript");
-const source = readFileSync(new URL("../ui/src/store.ts", import.meta.url), "utf8");
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText;
+import { load } from "./ui-module.mjs";
 
 function store(api = () => Promise.resolve({ entries: [] })) {
-  const exports = {};
   let timerId = 0;
   const timers = new Map();
   const native = {
     api,
     errorText: (error) => error instanceof Error ? error.message : String(error),
   };
-  new Function("require", "exports", "document", "localStorage", "setTimeout", "clearTimeout", compiled)(
-    (name) => name === "./api" ? native : require(name),
-    exports,
-    { documentElement: { dataset: {} } },
-    { getItem: () => null, setItem: () => {} },
-    (callback, delay) => {
+  const exports = load("store.ts", { "./api": native }, {
+    document: { documentElement: { dataset: {} } },
+    localStorage: { getItem: () => null, setItem: () => {} },
+    setTimeout: (callback, delay) => {
       timers.set(++timerId, { callback, delay });
       return timerId;
     },
-    (id) => timers.delete(id),
-  );
+    clearTimeout: (id) => timers.delete(id),
+  });
   return { ...exports, timers };
 }
 
@@ -183,18 +174,7 @@ test("system Trash never offers Laci Undo and mixed recovery explains its limits
   );
 });
 
-const helperSource = readFileSync(
-  new URL("../ui/src/helpers.ts", import.meta.url),
-  "utf8",
-);
-const helperCompiled = ts.transpileModule(helperSource, {
-  compilerOptions: {
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2022,
-  },
-}).outputText;
-const helpers = {};
-new Function("exports", helperCompiled)(helpers);
+const helpers = load("helpers.ts");
 function session(provider, id, cwd, parentId) {
   return {
     provider,
@@ -360,3 +340,15 @@ test("reports are found by session and by project, newest first", () => {
   );
   assert.ok(helpers.agentInstruction("/notes/reports").includes("`/notes/reports`"));
 });
+
+// The tests of later changes live in scripts/ui-tests/*.test.mjs, one file for each. Every function a file
+// exports is a test, named after the function. A file can export a default function instead, which is given
+// `test` to register its own tests with.
+const testsDir = new URL("./ui-tests/", import.meta.url);
+for (const name of readdirSync(testsDir).filter((file) => file.endsWith(".test.mjs")).sort()) {
+  for (const [key, value] of Object.entries(await import(new URL(name, testsDir)))) {
+    if (typeof value !== "function") continue;
+    if (key === "default") await value(test);
+    else test(`${name}: ${key}`, value);
+  }
+}

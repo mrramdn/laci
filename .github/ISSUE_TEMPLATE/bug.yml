@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in Laci doesn't work the way it should.
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. If the problem is a security one, don't post it here. Report it privately, as the [security policy](https://github.com/mrramdn/laci/security/policy) describes.
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and version
+      description: For example Ubuntu 24.04, Fedora 42, Windows 11 or macOS 15.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Laci version
+      description: Run `laci --version`, or look at the name of the file you installed, such as `laci_2.5.1_amd64.deb`.
+      placeholder: "2.5.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: design
+    attributes:
+      label: Design
+      description: Laci 3 has two designs, Simple and Detailed. Laci 2 has only Detailed.
+      options:
+        - Simple
+        - Detailed
+        - I don't know
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of laci doctor (optional)
+      description: It lists your projects with their paths, and the text of your to-dos. Remove anything private before you paste it.
+      render: shell

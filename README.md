@@ -525,4 +525,6 @@ Scanning stays local. If you launch an agent, clone a repository, create a remot
 
 ## License
 
-Laci is licensed under the [MIT License](LICENSE).
+Laci's code is licensed under the [MIT License](LICENSE). The name "Laci" and the logo are not covered by it.
+
+The software, fonts and icons that Laci includes keep their own licenses. They are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

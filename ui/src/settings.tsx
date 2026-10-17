@@ -10,6 +10,7 @@ import {
   tilde,
 } from "./helpers";
 import { Select } from "./select";
+import { LaciMark } from "./brand";
 import { Icon } from "./common";
 import { useApp, acknowledge, changed, copyText, rescan, run } from "./store";
 import type {
@@ -156,11 +157,8 @@ export function Settings({ first = false }: { first?: boolean }) {
     <div className={`setup-in ${first ? "" : "in-app"}`}>
       {first ? (
         <>
-          <span
-            className="logo"
-            style={{ width: 28, height: 28, borderRadius: 7 }}
-          >
-            <Icon name="archive" />
+          <span className="logo">
+            <LaciMark size={64} />
           </span>
           <h1>Welcome to laci</h1>
           <p className="lead">

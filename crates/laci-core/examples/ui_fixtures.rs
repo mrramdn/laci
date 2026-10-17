@@ -41,13 +41,15 @@ fn run() -> Result<()> {
         return Err(format!("{} is not a demo home made by scripts/demo.ts", home.display()));
     }
     guard(&home)?;
+    // Counted before anything is saved there: a home with too many folders is not a demo home.
+    let project_folders = below(&home.join("project"))?;
     let now = std::env::var("LACI_DEMO_NOW").map_err(|_| "set LACI_DEMO_NOW to the time the demo home was made for")?;
     let now = DateTime::parse_from_rfc3339(&now).map_err(|e| format!("LACI_DEMO_NOW: {e}"))?.to_utc();
     if Utc::now().timestamp() != now.timestamp() {
         return Err("the clock is not stopped at LACI_DEMO_NOW. Run scripts/ui-fixtures.mjs instead".into());
     }
 
-    let mut fixtures = record(&home)?;
+    let mut fixtures = record(&home, project_folders)?;
     let stamp = now.to_rfc3339_opts(SecondsFormat::Millis, true);
     pin_times(&mut fixtures, now, &stamp);
     steady(&mut fixtures, &stamp);
@@ -70,7 +72,7 @@ fn guard(home: &Path) -> Result<()> {
     Ok(())
 }
 
-fn record(home: &Path) -> Result<Value> {
+fn record(home: &Path, project_folders: Vec<PathBuf>) -> Result<Value> {
     let mut env = Env::for_home(home.to_owned());
     // Where an installed Laci lives, so the MCP lines read like a real machine's.
     env.program = PathBuf::from("/usr/bin/laci");
@@ -113,7 +115,7 @@ fn record(home: &Path) -> Result<Value> {
     fixtures["assistant/prompt"]["tasks"] = json!(tasks);
 
     let mut folders = vec![home.to_owned(), home.join("Documents"), home.join("Documents/agent-reports")];
-    folders.extend(below(&home.join("project"))?);
+    folders.extend(project_folders);
     for folder in folders {
         let key = folder.to_string_lossy().into_owned();
         fixtures["ls"][&key] = ask("ls", json!({"path":key}))?;

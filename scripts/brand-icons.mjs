@@ -274,7 +274,18 @@ if (icons) {
   writeFileSync(path.join(icons, "icon.ico"), ico(frames));
   const icns = path.join(temp, "icns");
   run(path.join(root, "node_modules/.bin/tauri"), ["icon", path.join(src, "laci-icon-macos.svg"), "-o", icns]);
-  put(path.join(icns, "icon.icns"), "icon.icns");
+  // tauri icon writes the ICNS entries in a different order on every run. Sorted by type, the file changes only
+  // when the picture does; readers look entries up by type.
+  const family = readFileSync(path.join(icns, "icon.icns"));
+  const entries = [];
+  for (let at = 8; at < family.length; ) {
+    const length = family.readUInt32BE(at + 4);
+    assert.ok(length >= 8 && at + length <= family.length, "Malformed icon.icns from tauri icon");
+    entries.push(family.subarray(at, at + length));
+    at += length;
+  }
+  entries.sort((a, b) => Buffer.compare(a.subarray(0, 4), b.subarray(0, 4)));
+  writeFileSync(path.join(icons, "icon.icns"), Buffer.concat([family.subarray(0, 8), ...entries]));
   put(path.join(src, "laci-icon-linux.svg"), "icon.svg");
   put(path.join(src, "laci-symbolic.svg"), "laci-symbolic.svg");
   console.log(`Rendered the icon set in ${path.relative(root, icons) || icons}`);

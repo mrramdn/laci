@@ -185,11 +185,13 @@ function todo(body: Body): Node {
         section: "Next",
       });
       n.sidecar = true;
-      const gone = () =>
-        void n.tasks.splice(
-          n.tasks.findIndex((t) => t.text === added && t.line === line),
-          1,
-        );
+      const gone = () => {
+        const at = n.tasks.findIndex((t) => t.text === added && t.line === line);
+        // Already deleted: refuse as the engine does, instead of removing another to-do.
+        if (at < 0)
+          fail("It was changed again after this. Undo the newer change first.");
+        n.tasks.splice(at, 1);
+      };
       return { title: "Added a next step to {name}", undo: gone };
     }
     const at = n.tasks.findIndex(

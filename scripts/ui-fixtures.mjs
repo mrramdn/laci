@@ -251,15 +251,18 @@ try {
     stdio: ["ignore", "ignore", "inherit"],
   });
 
-  const user = os.userInfo().username;
-  const leaks = [
-    home,
-    tmp,
-    os.homedir(),
-    os.hostname(),
-    root,
-    ...(user.length > 3 ? [user] : []),
-  ];
+  // A user or host name the committed fixtures already hold ("root" in "roots", "arch" in "archive",
+  // "dev" in "pnpm dev") is a word of the demo and can't be told from a leak; the paths still can.
+  let known = "";
+  try {
+    known = readFileSync(output, "utf8");
+  } catch {
+    /* No fixtures yet: every name is checked. */
+  }
+  const names = [os.userInfo().username, os.hostname()].filter(
+    (name) => name.length > 3 && !known.includes(name),
+  );
+  const leaks = [home, tmp, os.homedir(), encode(os.homedir()), root, ...names];
   mkdirSync(path.dirname(output), { recursive: true });
   writeFileSync(
     output,

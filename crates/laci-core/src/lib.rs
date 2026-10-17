@@ -19,6 +19,7 @@ pub mod providers;
 pub mod readers;
 pub mod reports;
 pub mod scan;
+pub mod secrets;
 pub mod service;
 pub mod sidecar;
 pub mod storage;

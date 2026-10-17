@@ -1,7 +1,18 @@
 //! Project removal is explicit and uses system Trash; remote names alone are not a backup.
-use crate::{Result, env::Env, git::Repo, ops, paths, platform, service::string, sidecar};
+use crate::{Result, env::Env, files, git::Repo, ops, paths, platform, service::string, sidecar};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, fs, path::Path, time::Duration};
+
+/// How many of the files only this computer has a plan names; `more` counts the rest.
+const SHOWN: usize = 50;
+/// Files the system leaves in folders, in any case. They hold nothing of the user's.
+const CLUTTER: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
+/// How many entries a look inside an ignored folder reads before it counts the folder as holding something.
+const LOOK: usize = 10_000;
+
+fn clutter(name: &str) -> bool {
+    CLUTTER.iter().any(|known| known.eq_ignore_ascii_case(name))
+}
 
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
     let mut options = vec![
@@ -142,6 +153,46 @@ fn check(dir: &Path) -> Result<String> {
     Ok(remote.to_owned())
 }
 
+/// Whether the ignored folder `dir` holds anything but dependencies, build output and system clutter. What can't be
+/// read, or is too much to look through, counts as something.
+fn holds_work(dir: &Path) -> bool {
+    let walk = walkdir::WalkDir::new(dir).follow_links(false).into_iter().filter_entry(|entry| {
+        entry.depth() == 0
+            || !entry.file_type().is_dir()
+            || !files::HEAVY.contains(&entry.file_name().to_string_lossy().as_ref())
+    });
+    for (seen, entry) in walk.enumerate() {
+        let Ok(entry) = entry else { return true };
+        if seen >= LOOK || (!entry.file_type().is_dir() && !clutter(&entry.file_name().to_string_lossy())) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The ignored files and folders here, which the online copy can't have, without dependencies and build output: an
+/// install or a build brings those back. A folder ignored as a whole is named once.
+fn unbacked(dir: &Path) -> Result<Value> {
+    // Without Git's own folder here, a repository in a folder above would answer, and removal is refused anyway.
+    if !dir.join(".git").is_dir() {
+        return Ok(json!({"files":[],"more":0}));
+    }
+    let args = ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", "--no-empty-directory"];
+    let listed = git(dir, &args).map_err(|error| format!("Could not list the ignored files. {error}"))?;
+    let local: Vec<&str> = listed
+        .split('\0')
+        .filter(|path| {
+            let parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
+            !path.is_empty()
+                && !parts.iter().any(|part| files::HEAVY.contains(part))
+                && !parts.last().is_some_and(|name| clutter(name))
+                // Git also names a folder whose contents are all ignored, such as one with only a site's build output.
+                && (!path.ends_with('/') || holds_work(&dir.join(path)))
+        })
+        .collect();
+    Ok(json!({"files":local.iter().take(SHOWN).collect::<Vec<_>>(),"more":local.len().saturating_sub(SHOWN)}))
+}
+
 pub fn plan(env: &Env, node: &Value) -> Result<Value> {
     if node["kind"] != "project" {
         return Err("Pick a project to remove".into());
@@ -154,7 +205,9 @@ pub fn plan(env: &Env, node: &Value) -> Result<Value> {
     if [&env.home, &env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|p| p.starts_with(&dir)) {
         return Err("This folder contains Laci settings or recovery data and cannot be removed".into());
     }
-    let verified = check(&dir);
+    // Removal also waits until it is known what only this computer has: Simple asks for more before losing it.
+    let listed = unbacked(&dir);
+    let verified = check(&dir).and_then(|remote| listed.clone().map(|_| remote));
     let (allowed, mut checks) = match verified {
         Ok(remote) => (
             true,
@@ -170,7 +223,8 @@ pub fn plan(env: &Env, node: &Value) -> Result<Value> {
         ),
     };
     checks.push(json!({"code":"ignored-files","severity":"med","title":"Ignored files are not backed up by Git","detail":"The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo."}));
-    Ok(json!({"allowed":allowed,"path":dir,"checks":checks,"ops":[
+    let unbacked = listed.unwrap_or_else(|_| json!({"files":[],"more":0}));
+    Ok(json!({"allowed":allowed,"path":dir,"checks":checks,"unbacked":unbacked,"ops":[
         {"kind":"delete","label":"Move the project folder to system Trash","from":dir},
         {"kind":"keep","label":"Keep agent history outside the project","detail":"External session logs and memory are preserved. They may appear as detached history until the folder is restored."}
     ]}))

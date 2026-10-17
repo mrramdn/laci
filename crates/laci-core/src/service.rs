@@ -182,6 +182,7 @@ pub fn mutates(name: &str) -> bool {
             | "storage/free"
             | "proposal/dismiss"
             | "clean"
+            | "secrets/keep-out"
     )
 }
 
@@ -201,6 +202,7 @@ pub fn changes_history(name: &str) -> bool {
             | "backup/restore"
             | "session/delete"
             | "storage/free"
+            | "secrets/keep-out"
     )
 }
 
@@ -396,6 +398,7 @@ impl Service {
             "session/delete" | "storage/free" => Refresh { watches: true, ..Refresh::agents() },
             "proposal/dismiss" => Refresh::agents(),
             "clean" => Refresh::full(),
+            "secrets/keep-out" => Refresh { projects: BTreeSet::from([string(b, "id").into()]), ..Refresh::default() },
             "report/close" => Refresh::reports(),
             _ => Refresh::default(),
         };
@@ -568,6 +571,11 @@ impl Service {
                             json!({"prompt":assistant::work_on(&self.env, &snapshot, &node, &task),"projectPath":node["path"]}),
                         )
                     }
+                    "fix" => {
+                        let node = self.node(id)?;
+                        let prompt = assistant::fix(&self.env, &node, string(b, "code"))?;
+                        Ok(json!({"prompt":prompt,"projectPath":node["path"]}))
+                    }
                     _ => Err("Unknown prompt".into()),
                 }
             }
@@ -607,6 +615,14 @@ impl Service {
             "delete/plan" => {
                 let node = self.node(id)?;
                 crate::deletion::plan(&self.env, &node)
+            }
+            "secrets/check" => {
+                let node = self.node(id)?;
+                crate::secrets::check(&self.env, &node)
+            }
+            "secrets/keep-out" => {
+                let node = self.node(id)?;
+                crate::secrets::keep_out(&self.env, &node, &b["files"], by)
             }
             "delete" => {
                 if b["confirm"] != true {

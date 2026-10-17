@@ -9,7 +9,7 @@ const fixtures = JSON.parse(
 );
 const model = load("simple/model.ts");
 const { homeModel } = load("selectors.ts");
-const { startCountdown } = load("simple/ui/countdown.ts");
+const { startCountdown } = load("simple/ui/countdown-clock.ts");
 const ROOT = "/home/demo/project";
 const NOW = new Date(fixtures.meta.now);
 const scan = () => structuredClone(fixtures.snapshot);

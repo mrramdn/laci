@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { blocks } from "../../words";
 import { Button } from "./Button";
-import { startCountdown } from "./countdown";
-import type { Countdown as Clock } from "./countdown";
+import { startCountdown } from "./countdown-clock";
+import type { Countdown as Clock } from "./countdown-clock";
 
 /**
  * The last step before something that can't be undone: `what` happens in `seconds` seconds unless

@@ -339,7 +339,7 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             }
             if args["confirm"] != true {
                 return Ok(
-                    json!({"plan":proposal,"selectedRecovery":recovery,"hint":if recovery=="trash" {"Orphan history will move to system Trash; restore it through the file manager. Show the exact source paths before confirming."}else{"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}}),
+                    json!({"plan":preview(&proposal, args),"selectedRecovery":recovery,"hint":if recovery=="trash" {"Orphan history will move to system Trash; restore it through the file manager. Show the exact source paths before confirming."}else{"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}}),
                 );
             }
             service.request_as("apply", &json!({"id":id,"recovery":recovery}), "agent")
@@ -620,8 +620,7 @@ fn change(e: &Value) -> Value {
     out
 }
 /// A Tidy suggestion as an agent reads it in the list: what it is, why it is offered and its first operations. The
-/// rest of the operations, the action and the review token (a move and a hash for every history file of a group)
-/// are in the preview that apply_suggestion gives, which is also where the exact paths are checked.
+/// preview that apply_suggestion gives lists all of them, a page at a time.
 fn suggestion(p: &Value) -> Value {
     // Two operations keep a page of 30 inside the size budget, even when every suggestion is a long group.
     const SHOWN: usize = 2;
@@ -644,6 +643,18 @@ fn suggestion(p: &Value) -> Value {
         out["moreOps"] = json!(ops.len() - SHOWN);
     }
     out
+}
+/// A suggestion as apply_suggestion shows it before confirm: its operations a page at a time. The action and the
+/// review token (a move and a hash for each history file of a group) stay out: they make a long group unreadable,
+/// and applying checks them against the scan.
+fn preview(proposal: &Value, args: &Value) -> Value {
+    let mut plan = suggestion(proposal);
+    let page = Page::of(args, 40).answer("ops", array(&proposal["ops"]).iter().map(operation).collect());
+    plan.as_object_mut().map(|fields| fields.remove("moreOps"));
+    for key in ["ops", "total", "offset", "more"] {
+        plan[key] = page[key].clone();
+    }
+    plan
 }
 /// One operation of a suggestion, with any text over 300 characters cut: a half-done move names every old path of a
 /// session folder in one `from`.
@@ -1043,7 +1054,7 @@ fn tools() -> Vec<Tool> {
         ),
         (
             "tidy_suggestions",
-            "Cleanup suggestions, a page at a time: why each is offered and its first operations. apply_suggestion without confirm shows all the operations of one suggestion",
+            "Cleanup suggestions, a page at a time: why each is offered and its first operations. apply_suggestion without confirm lists all the operations of one suggestion, a page at a time",
             json!({"limit":limit(30, 100),"offset":offset}),
             vec![],
         ),
@@ -1091,8 +1102,9 @@ fn tools() -> Vec<Tool> {
         ),
         (
             "apply_suggestion",
-            "Apply a Tidy suggestion; requires confirm after preview",
-            json!({"id":text,"confirm":boolean,"recovery":{"type":"string","enum":["quarantine","trash"],"description":"Orphan history only; Quarantine is the default and supports Laci Undo. System Trash recovery uses the file manager."}}),
+            "Apply a Tidy suggestion; requires confirm after preview. The preview lists its operations a page at a time",
+            json!({"id":text,"confirm":boolean,"recovery":{"type":"string","enum":["quarantine","trash"],"description":"Orphan history only; Quarantine is the default and supports Laci Undo. System Trash recovery uses the file manager."},
+                "limit":limit(40, 100),"offset":offset}),
             vec!["id"],
         ),
         (
@@ -1569,6 +1581,24 @@ mod tests {
         let group = listed.iter().find(|e| string(e, "title").starts_with("500 Codex")).unwrap();
         assert_eq!((group["ops"].as_array().unwrap().len(), group["moreOps"].clone()), (2, json!(498)));
         assert_eq!(group["ops"][0]["kind"], "move");
+        // Its preview in apply_suggestion lists all 500 operations, a page at a time, without the review token.
+        let full = offered.iter().find(|p| p["id"] == group["id"]).unwrap();
+        let mut ops = Vec::new();
+        loop {
+            let plan = preview(full, &json!({"offset":ops.len()}));
+            let size = serde_json::to_string(&plan).unwrap().len();
+            assert!(size < 25_000, "preview at {}: {size} characters", ops.len());
+            for gone in ["action", "validation", "moreOps"] {
+                assert!(plan.get(gone).is_none(), "{gone}");
+            }
+            assert_eq!((plan["total"].clone(), plan["offset"].clone()), (json!(500), json!(ops.len())));
+            ops.extend(array(&plan["ops"]));
+            if plan["more"] != true {
+                break;
+            }
+        }
+        assert_eq!(ops.len(), 500);
+        assert_eq!(ops[0], group["ops"][0]);
         let reconnect = listed.iter().find(|e| string(e, "title").starts_with("Reconnect 4 sessions")).unwrap();
         assert!(reconnect["ops"].as_array().unwrap().len() == 2 && reconnect.get("moreOps").is_none());
         assert_eq!(reconnect["nodeId"], offered[0]["nodeId"]);

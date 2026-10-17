@@ -341,7 +341,10 @@ try {
   assert.ok(group.ops.every(op => op.kind === 'move' && op.from && op.to));
   const groupPreview = await client.call('apply_suggestion', { id: group.id });
   assert.equal(groupPreview.plan.ops.length, phantomSessions.length, 'The preview lists every operation');
-  assert.equal(groupPreview.plan.action.moves.length, phantomSessions.length);
+  assert.deepEqual([groupPreview.plan.total, groupPreview.plan.more], [phantomSessions.length, false]);
+  assert.equal(groupPreview.plan.action, undefined, 'The review token stays out of the preview');
+  const firstOp = await client.call('apply_suggestion', { id: group.id, limit: 1 });
+  assert.deepEqual([firstOp.plan.ops.length, firstOp.plan.more], [1, phantomSessions.length > 1]);
   assert.equal(await exists(phantomSessions[0]), true, 'A preview moves nothing');
   const first = await client.call('tidy_suggestions', { limit: 1 });
   assert.equal(first.suggestions.length, 1);

@@ -453,7 +453,9 @@ fn init_script(theme: &str, design: &str, configured: bool, os: &str) -> String 
     let apply: String = set.iter().map(|(key, value)| format!("d.{key}='{value}';")).collect();
     format!(
         "(()=>{{const apply=()=>{{const d=document.documentElement.dataset;{apply}}};\
-         document.addEventListener('DOMContentLoaded',apply);if(document.documentElement)apply();}})();"
+         document.addEventListener('DOMContentLoaded',apply);if(document.documentElement)apply();\
+         else new MutationObserver((_,o)=>{{if(document.documentElement){{o.disconnect();apply();}}}})\
+         .observe(document,{{childList:true}});}})();"
     )
 }
 
@@ -586,10 +588,12 @@ mod tests {
         );
         let chosen = init_script("light", "simple", true, "windows");
         assert!(chosen.contains("dataset;d.theme='light';d.design='simple';d.os='windows';}"), "{chosen}");
-        // Set before the first paint when the page already has a root, and again once the document is parsed.
+        // Set before the first paint when the page already has a root, else as soon as the parser adds it (WebView2
+        // runs this script before <html> exists), and again once the document is parsed.
         assert!(
             chosen.contains("document.addEventListener('DOMContentLoaded',apply);if(document.documentElement)apply();")
         );
+        assert!(chosen.contains("else new MutationObserver("), "{chosen}");
     }
 
     #[test]

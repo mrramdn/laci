@@ -21,7 +21,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # A pull request that only changes *.md or docs/** skips the build jobs. Anything else builds.
+  # A pull request that only changes *.md or docs/** skips the build jobs. Anything else builds, and so does
+  # docs/brand/src: brand-check compares it with what scripts/brand-icons.mjs writes.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -41,7 +42,7 @@ jobs:
           if [ "$EVENT" = pull_request ] && git rev-parse --verify --quiet 'HEAD^2' > /dev/null; then
             files="$(git diff --name-only --no-renames 'HEAD^1' HEAD)"
             echo "$files"
-            if [ -n "$files" ] && ! grep -qvE '^docs/|\.md$' <<< "$files"; then
+            if [ -n "$files" ] && ! grep -qvE '^docs/|\.md$' <<< "$files" && ! grep -q '^docs/brand/src/' <<< "$files"; then
               code=false
             fi
           fi
@@ -73,6 +74,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev patchelf git libglib2.0-bin xdg-utils webkit2gtk-driver xvfb rpm libarchive-tools
       - run: pnpm install --frozen-lockfile
+      # The app icons and what the Tauri configs list. Ubuntu 24.04 packages neither resvg nor ImageMagick 7,
+      # so the comparison with a fresh render is skipped here; the other checks run.
+      - run: node scripts/brand-check.mjs
       - run: pnpm -C ui typecheck
       - run: pnpm -C ui lint
       - run: cargo fmt --all -- --check

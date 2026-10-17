@@ -1,4 +1,4 @@
-use crate::Result;
+use crate::{Result, platform::exited};
 use std::{
     collections::BTreeSet,
     ffi::{OsStr, OsString},
@@ -123,13 +123,6 @@ impl Drop for Listed {
     }
 }
 
-/// Whether the child has finished, leaving it unreaped so its pid can't go to another process yet.
-fn exited(child: &Child) -> Result<bool> {
-    use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
-    let options = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
-    Ok(waitid(WaitId::Pid(Pid::from_child(child)), options).map_err(|e| e.to_string())?.is_some())
-}
-
 pub fn run(program: &str, args: &[&str], cwd: Option<&Path>, timeout: Duration) -> Result<String> {
     run_env(program, args, cwd, timeout, &[])
 }
@@ -166,7 +159,7 @@ pub(crate) fn run_env(
     let listed = Listed::new(&child);
     let started = Instant::now();
     loop {
-        if exited(&child)? {
+        if exited(&mut child)? {
             use std::io::{Read, Seek, SeekFrom};
             // Forgotten before the pid is freed, so a listed pid never names a newer process.
             drop(listed);

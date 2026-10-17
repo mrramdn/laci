@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { ago, when, FIX_LABEL } from "./helpers";
 import { useApp, toggleExpanded } from "./store";
+import { useNow } from "./clock";
 import type { Node, Op, Severity } from "./types";
 import { openTerminal } from "./terminal-api";
 export function restoreFocus(previous: HTMLElement | null) {
@@ -198,6 +199,7 @@ export function SeverityGlyph({ severity }: { severity: Severity }) {
   );
 }
 export function Time({ at, long = false }: { at?: string; long?: boolean }) {
+  useNow();
   return at ? (
     <time dateTime={at} title={new Date(at).toLocaleString("en-GB")}>
       {long ? when(at) : ago(at)}

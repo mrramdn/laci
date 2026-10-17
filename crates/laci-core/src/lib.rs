@@ -13,6 +13,7 @@ pub mod mcp_setup;
 pub mod ops;
 mod orphan;
 pub mod paths;
+pub mod platform;
 pub mod process;
 pub mod providers;
 pub mod readers;

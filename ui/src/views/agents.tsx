@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon, KindIcon, Group, Expand } from "../common";
 import { useApp, backup, run, changed, toggleExpanded } from "../store";
+import { useNow } from "../clock";
 import {
   agentCount,
   ago,
@@ -51,6 +52,7 @@ function goneFolder(dir: ClaudeDir) {
 
 export function AgentsView() {
   const s = useApp();
+  useNow();
   const snapshot = s.snapshot!;
   const sessions = allSessions(snapshot);
   const launchable = agentProviders(snapshot.connectors);
@@ -305,6 +307,7 @@ const DAY = 86_400_000;
 type Show = "all" | "short" | "old" | "outside" | "kept" | "backup";
 function SessionsSection() {
   const s = useApp();
+  const now = useNow();
   const snapshot = s.snapshot!;
   const all = allSessions(snapshot);
   const [query, setQuery] = useState("");
@@ -319,13 +322,12 @@ function SessionsSection() {
         map.set(sessionKey(session), node);
     return map;
   }, [snapshot]);
-  const list = useMemo(() => conversations(all), [all]);
+  const list = useMemo(() => conversations(all, now), [all, now]);
   const providers = [...new Set(list.map((c) => c.session.provider))];
   const anyInBackup = list.some((c) => c.session.backup);
   // A filter whose last entry went away falls back to everything, so the list never strands empty.
   const current: Show = show === "backup" && !anyInBackup ? "all" : show;
   const needle = query.trim().toLowerCase();
-  const now = Date.now();
   const shown = list.filter((c) => {
     const node = owners.get(sessionKey(c.session));
     if (agent !== "all" && c.session.provider !== agent) return false;

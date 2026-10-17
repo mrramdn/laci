@@ -417,37 +417,9 @@ fn codex_models(cwd: &Path) -> Result<Value> {
     result
 }
 
-/// Desktop terminal transports receive executable + argv directly. xfce accepts a
-/// single command string, so only that boundary uses POSIX quoting (never eval).
+/// The arguments for terminal `app` that run `command` in its folder, with its argv passed on unchanged.
 pub fn external_args(app: &str, command: &LaunchCommand) -> Result<Vec<String>> {
-    let cwd = command.cwd.to_string_lossy().into_owned();
-    let mut args: Vec<String> = match app {
-        "kitty" => vec!["--directory".into(), cwd, "--".into()],
-        "konsole" => vec!["--workdir".into(), cwd, "-e".into()],
-        "alacritty" => vec!["--working-directory".into(), cwd, "-e".into()],
-        "wezterm" => vec!["start".into(), "--cwd".into(), cwd, "--".into()],
-        "gnome-terminal" => vec![format!("--working-directory={cwd}"), "--".into()],
-        "foot" => vec![format!("--working-directory={cwd}"), "--".into()],
-        "ghostty" => vec![format!("--working-directory={cwd}"), "-e".into()],
-        "xterm" => vec!["-e".into()],
-        "xfce4-terminal" => {
-            return Ok(vec![
-                format!("--working-directory={cwd}"),
-                format!(
-                    "--command={}",
-                    std::iter::once(&command.executable)
-                        .chain(&command.args)
-                        .map(|s| quote(s))
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                ),
-            ]);
-        }
-        _ => return Err("Choose a supported external terminal in Settings".into()),
-    };
-    args.push(command.executable.clone());
-    args.extend(command.args.clone());
-    Ok(args)
+    crate::platform::terminal_args(app, &command.cwd, &command.executable, &command.args, quote)
 }
 pub fn external(app: &str, command: &LaunchCommand) -> Result<()> {
     crate::service::detach(app, &external_args(app, command)?, &command.cwd)

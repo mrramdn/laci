@@ -23,6 +23,7 @@
     "test:core": "cargo test -p laci-core",
     "test:desktop": "node scripts/desktop-smoke.mjs",
     "test:preview": "node scripts/ui-preview-check.mjs",
+    "test:contrast": "node scripts/contrast-check.mjs",
     "ui:fixtures": "node scripts/ui-fixtures.mjs",
     "ui:preview": "pnpm -C ui dev",
     "build:binary": "pnpm -C ui build && cargo build -p laci --features custom-protocol --release"

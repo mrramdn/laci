@@ -180,6 +180,31 @@ fn compatible_pid_lock_and_busy_processes_prevent_changes() {
     assert!(from.is_dir());
 }
 #[test]
+fn busy_processes_with_names_or_folders_that_are_not_utf8_still_prevent_changes() {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+    let (temp, env) = home();
+    let (snap, from, to, _store, _original) = fixture(&env);
+    let refused = |child: &mut std::process::Child| {
+        let result = ops::move_project(&env, &snap, "demo", to.to_str().unwrap(), &json!({}));
+        let _ = child.kill();
+        let _ = child.wait();
+        result
+    };
+    // The kernel keeps 15 bytes of a program's name, so this one is cut inside the "é".
+    let sleep = String::from_utf8(Command::new("which").arg("sleep").output().unwrap().stdout).unwrap();
+    let renamed = temp.path().join("aaaaaaaaaaaaaaé");
+    fs::copy(sleep.trim(), &renamed).unwrap();
+    let mut child = Command::new(&renamed).arg("30").current_dir(&from).spawn().unwrap();
+    assert!(refused(&mut child).unwrap_err().contains("In use"));
+    assert!(from.is_dir());
+    // A holder inside a folder whose name isn't UTF-8 is refused too, and later changes still run.
+    let odd = from.join(OsStr::from_bytes(b"caf\xe9"));
+    fs::create_dir(&odd).unwrap();
+    let mut child = Command::new("sleep").arg("30").current_dir(&odd).spawn().unwrap();
+    assert!(refused(&mut child).unwrap_err().contains("In use"));
+    assert_eq!(ops::with_lock(&env, || Ok(7)).unwrap(), 7);
+}
+#[test]
 fn activity_supersession_unblocks_previous_change_after_newer_undo() {
     let (_temp, env) = home();
     let dir = env.home.join("notes");

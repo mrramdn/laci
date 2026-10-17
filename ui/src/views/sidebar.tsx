@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { LaciMark } from "../brand";
 import { Icon } from "../common";
 import { useApp, readListing, setTheme, rescan } from "../store";
+import { useNow } from "../clock";
 import {
   base,
   cap,
@@ -15,6 +16,7 @@ import {
 import type { Listing, View } from "../types";
 export function Sidebar() {
   const s = useApp();
+  useNow();
   const snapshot = s.snapshot!;
   const [railOpen, setRailOpen] = useState(false);
   const [placesOpen, setPlacesOpen] = useState(false);

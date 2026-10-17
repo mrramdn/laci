@@ -39,6 +39,33 @@ function buildId(file) {
   assert.ok(id, `Missing build identity: ${file}`);
   return id;
 }
+// Every package installs these under hicolor: the PNG sizes, the scalable icon and GNOME's symbolic one.
+const iconSizes = [16, 24, 32, 48, 64, 128, 256, 512];
+const icons = [
+  ...iconSizes.map((size) => `${size}x${size}/apps/laci.png`),
+  "scalable/apps/laci.svg",
+  "symbolic/apps/laci-symbolic.svg",
+].sort();
+function pngSize(file) {
+  const data = readFileSync(file);
+  assert.ok(
+    data.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex")) &&
+      data.toString("latin1", 12, 16) === "IHDR",
+    `Not a PNG: ${file}`,
+  );
+  return `${data.readUInt32BE(16)}x${data.readUInt32BE(20)}`;
+}
+function desktopEntry(file) {
+  const fields = {};
+  let group = "";
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    const at = line.indexOf("=");
+    if (line.startsWith("[")) group = line;
+    else if (group === "[Desktop Entry]" && at > 0)
+      fields[line.slice(0, at)] = line.slice(at + 1);
+  }
+  return fields;
+}
 const releaseId = buildId(path.join(target, "release/laci"));
 const assets = readdirSync(path.join(root, "ui/dist/assets")).filter((name) =>
   /\.(js|css)$/.test(name),
@@ -71,6 +98,7 @@ try {
         path.join(extracted, "control/control"),
         "utf8",
       );
+      assert.ok(control.startsWith("Package: laci\n"));
       assert.ok(control.includes(`Version: ${version}\n`));
       for (const dependency of [
         "git",
@@ -103,17 +131,40 @@ try {
         `Missing embedded UI asset: ${asset}`,
       );
     }
-    assert.ok(
-      readFileSync(
-        path.join(extracted, "usr/share/applications/laci.desktop"),
-        "utf8",
-      ).includes("Exec=laci"),
+    // The window class and the file, binary and icon names stay "laci"; menus show "Laci".
+    const entry = desktopEntry(
+      path.join(extracted, "usr/share/applications/laci.desktop"),
     );
-    assert.ok(
-      readdirSync(path.join(extracted, "usr/share/icons/hicolor"), {
-        recursive: true,
-      }).some((name) => name.endsWith("/laci.png")),
+    for (const [key, value] of Object.entries({
+      Name: "Laci",
+      Exec: "laci",
+      Icon: "laci",
+      StartupWMClass: "laci",
+    })) {
+      assert.equal(entry[key], value, `${kind} desktop entry: ${key}`);
+    }
+    const hicolor = path.join(extracted, "usr/share/icons/hicolor");
+    assert.deepEqual(
+      readdirSync(hicolor, { recursive: true })
+        .filter((name) => /\/apps\/laci[-.]/.test(name))
+        .sort(),
+      icons,
+      `${kind} icons`,
     );
+    for (const size of iconSizes) {
+      assert.equal(
+        pngSize(path.join(hicolor, `${size}x${size}/apps/laci.png`)),
+        `${size}x${size}`,
+        `${kind} icon size`,
+      );
+    }
+    for (const icon of icons.filter((name) => name.endsWith(".svg"))) {
+      assert.match(
+        readFileSync(path.join(hicolor, icon), "utf8"),
+        /^<svg /,
+        `${kind} icon: ${icon}`,
+      );
+    }
     assert.equal(run(runner, ["--version"]).trim(), `laci ${version}`);
     const fixture = path.join(output, `${kind}-fixture`);
     run(process.execPath, [path.join(root, "scripts/demo.ts"), fixture]);

@@ -1,4 +1,4 @@
-use crate::{Result, env::Env, files, paths};
+use crate::{Result, env::Env, files, paths, platform};
 use serde_json::{Value, json};
 use std::sync::LazyLock;
 
@@ -97,15 +97,16 @@ pub(crate) fn restore_roots(env: &Env, roots: &Value) -> Result<Value> {
 
 /// Remember the selected filesystem so an empty mountpoint is not mistaken for a deleted project.
 pub fn root_identities(env: &Env, roots: &Value, previous: &Value) -> Value {
-    use std::os::unix::fs::MetadataExt;
     let mut out = json!({});
     for raw in roots.as_array().into_iter().flatten().filter_map(Value::as_str) {
         let path = paths::expand(raw, &env.home);
         let key = path.to_string_lossy();
         if let Some(old) = previous.get(key.as_ref()) {
             out[key.as_ref()] = old.clone();
-        } else if let Ok(meta) = std::fs::metadata(&path) {
-            out[key.as_ref()] = json!({"device":meta.dev(),"inode":meta.ino()});
+        } else if let Ok(id) =
+            std::fs::metadata(&path).map_err(|e| e.to_string()).and_then(|meta| platform::identity(&path, &meta))
+        {
+            out[key.as_ref()] = json!({"device":id.volume,"inode":id.file});
         }
     }
     out

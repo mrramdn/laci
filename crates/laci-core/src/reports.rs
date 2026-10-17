@@ -717,11 +717,13 @@ pub fn open(env: &Env, snapshot: &Value, apps: &Value, what: &str, id: &str) -> 
         "editor" => {
             let file = listed(env, snapshot, id)?;
             let dir = file.parent().unwrap_or(&env.home).to_owned();
-            crate::service::detach(apps["editor"].as_str().unwrap_or("code"), &[file.to_string_lossy().into()], &dir)?;
+            let app = apps["editor"].as_str().unwrap_or(crate::platform::DEFAULT_APPS.editor);
+            crate::service::detach(app, &[file.to_string_lossy().into()], &dir)?;
         }
         "folder" => {
             let dir = scanned_folder(env, snapshot)?;
-            crate::service::detach(apps["files"].as_str().unwrap_or("dolphin"), &[dir.to_string_lossy().into()], &dir)?;
+            let app = apps["files"].as_str().unwrap_or(crate::platform::DEFAULT_APPS.files);
+            crate::service::detach(app, &[dir.to_string_lossy().into()], &dir)?;
         }
         _ => return Err("Unknown action".into()),
     }

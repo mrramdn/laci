@@ -1,10 +1,9 @@
 //! Explicit recipes run as argv, with bounded output and owned-process cancellation.
-use crate::{Result, config, env::Env, ops, process, service::shell_quote};
+use crate::{Result, config, env::Env, ops, platform, process, service::shell_quote};
 use serde_json::{Value, json};
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
-    os::unix::process::CommandExt,
     path::Path,
     process::Stdio,
     sync::atomic::{AtomicBool, Ordering},
@@ -149,17 +148,15 @@ pub fn run(plan: &Plan, cwd: &Path, cancel: &AtomicBool, progress: &dyn Fn(&str)
     progress(&format!("{}\n", preview["command"].as_str().unwrap_or("")));
     let output = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
     let mut reader = output.reopen().map_err(|e| e.to_string())?;
-    let mut child = process::command(&plan.program)
+    let mut command = process::command(&plan.program);
+    command
         .args(&plan.args)
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(output.as_file().try_clone().map_err(|e| e.to_string())?)
         .stderr(output.as_file().try_clone().map_err(|e| e.to_string())?)
-        .process_group(0)
-        .env("NO_COLOR", "1")
-        .spawn()
-        .map_err(|e| format!("Couldn't start {}: {e}", plan.program))?;
-    let group = rustix::process::Pid::from_raw(child.id() as i32).ok_or("Invalid generator process")?;
+        .env("NO_COLOR", "1");
+    let mut group = platform::spawn_group(command).map_err(|e| format!("Couldn't start {}: {e}", plan.program))?;
     let started = Instant::now();
     let mut offset = 0;
     let outcome = (|| -> Result<()> {
@@ -176,21 +173,15 @@ pub fn run(plan: &Plan, cwd: &Path, cancel: &AtomicBool, progress: &dyn Fn(&str)
             }
             // Leave the leader unreaped until all its descendants have been stopped.
             // Its PID cannot be reused as an unrelated process group during cleanup.
-            use rustix::process::{WaitId, WaitIdOptions, waitid};
-            if waitid(WaitId::Pid(group), WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT)
-                .map_err(|e| e.to_string())?
-                .is_some()
-            {
+            if group.exited()? {
                 return Ok(());
             }
             thread::sleep(Duration::from_millis(40));
         }
     })();
     // A successful leader can still leave children running. Finalization must never race them.
-    let _ = rustix::process::kill_process_group(group, rustix::process::Signal::TERM);
-    thread::sleep(Duration::from_millis(150));
-    let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-    let status = child.wait().map_err(|e| e.to_string());
+    group.stop();
+    let status = group.wait().map_err(|e| e.to_string());
     drain(&mut reader, &mut offset, progress)?;
     outcome?;
     if offset > 16_000_000 {

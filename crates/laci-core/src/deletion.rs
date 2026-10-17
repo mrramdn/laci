@@ -1,5 +1,5 @@
 //! Project removal is explicit and uses system Trash; remote names alone are not a backup.
-use crate::{Result, env::Env, git::Repo, ops, paths, process, service::string, sidecar};
+use crate::{Result, env::Env, git::Repo, ops, paths, platform, service::string, sidecar};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, fs, path::Path, time::Duration};
 
@@ -135,7 +135,7 @@ fn check(dir: &Path) -> Result<String> {
             ));
         }
     }
-    let busy = ops::still_busy(&[dir.to_owned()]);
+    let busy = ops::still_busy(&[dir.to_owned()])?;
     if !busy.is_empty() {
         return Err(format!("This project is in use by {}. Close it first.", ops::holders(&busy)));
     }
@@ -181,13 +181,12 @@ pub fn trash(env: &Env, node: &Value) -> Result<()> {
         let dir = paths::workspace_path(string(node, "path"), env)?;
         // Git that another program runs there gets a moment to finish first, so what it wrote is verified below,
         // and anything still in the folder after that makes the check refuse.
-        ops::still_busy(std::slice::from_ref(&dir));
+        ops::still_busy(std::slice::from_ref(&dir))?;
         let current = plan(env, node)?;
         if current["allowed"] != true {
             return Err(current["checks"][0]["detail"].as_str().unwrap_or("Project removal was blocked").to_owned());
         }
         sidecar::plain_path(&dir)?;
-        process::run("gio", &["trash", "--", &dir.to_string_lossy()], None, Duration::from_secs(120))?;
-        Ok(())
+        platform::trash(&dir)
     })
 }

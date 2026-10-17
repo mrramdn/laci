@@ -1,10 +1,15 @@
 //! Journaled disk changes. The journal and PID lock remain readable by Laci v1.
-use crate::{Result, env::Env, files, paths, process, sidecar};
+use crate::{
+    Result,
+    env::Env,
+    files, paths,
+    platform::{self, preserve},
+    process, sidecar,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
         Mutex,
@@ -59,77 +64,10 @@ fn id() -> String {
         SEQ.fetch_add(1, Ordering::Relaxed)
     )
 }
-fn alive(pid: u32) -> bool {
-    Path::new("/proc").join(pid.to_string()).exists()
-}
-
-struct Lock {
-    file: File,
-    path: PathBuf,
-}
-impl Drop for Lock {
-    fn drop(&mut self) {
-        use std::os::unix::fs::MetadataExt;
-        if let (Ok(a), Ok(b)) = (self.file.metadata(), fs::symlink_metadata(&self.path))
-            && a.dev() == b.dev()
-            && a.ino() == b.ino()
-        {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
-}
-fn lock(env: &Env) -> Result<Lock> {
-    use rustix::fs::{FlockOperation, flock};
-    use std::os::unix::fs::MetadataExt;
+fn lock(env: &Env) -> Result<platform::Lock> {
     let path = data(env, "lock")?;
     files::private_dir(&env.data_dir)?;
-    let busy = "Another laci window or agent is changing files right now. Try again in a moment.";
-    for _ in 0..3 {
-        match OpenOptions::new().write(true).read(true).create_new(true).open(&path) {
-            Ok(file) => {
-                let mut guard = Lock { file, path };
-                flock(&guard.file, FlockOperation::NonBlockingLockExclusive).map_err(|_| busy.to_owned())?;
-                guard
-                    .file
-                    .write_all(std::process::id().to_string().as_bytes())
-                    .and_then(|_| guard.file.sync_all())
-                    .map_err(|e| e.to_string())?;
-                return Ok(guard);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                sidecar::plain_path(&path)?;
-                let Ok(mut stale) = OpenOptions::new().read(true).write(true).open(&path) else {
-                    continue;
-                };
-                flock(&stale, FlockOperation::NonBlockingLockExclusive).map_err(|_| busy.to_owned())?;
-                let mut pid = String::new();
-                stale.read_to_string(&mut pid).map_err(|e| e.to_string())?;
-                if pid.trim().parse::<u32>().is_ok_and(|pid| pid > 0 && alive(pid)) {
-                    return Err(busy.into());
-                }
-                // An empty v1 lock can be between exclusive creation and its PID write.
-                if pid.trim().is_empty()
-                    && stale
-                        .metadata()
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|t| t.elapsed().ok())
-                        .is_some_and(|age| age < Duration::from_secs(1))
-                {
-                    return Err(busy.into());
-                }
-                let a = stale.metadata().map_err(|e| e.to_string())?;
-                if let Ok(b) = fs::symlink_metadata(&path)
-                    && a.dev() == b.dev()
-                    && a.ino() == b.ino()
-                {
-                    fs::remove_file(&path).map_err(|e| e.to_string())?;
-                }
-            }
-            Err(e) => return Err(e.to_string()),
-        }
-    }
-    Err(busy.into())
+    platform::lock(path)
 }
 pub fn with_lock<T>(env: &Env, work: impl FnOnce() -> Result<T>) -> Result<T> {
     let _serial = IN_PROCESS.lock().map_err(|_| "File-change lock was interrupted".to_owned())?;
@@ -137,18 +75,6 @@ pub fn with_lock<T>(env: &Env, work: impl FnOnce() -> Result<T>) -> Result<T> {
     work()
 }
 
-fn preserve(meta: &fs::Metadata, dest: &Path) -> Result<()> {
-    let file = File::open(dest).map_err(|e| e.to_string())?;
-    file.set_permissions(meta.permissions()).map_err(|e| e.to_string())?;
-    let mut times = fs::FileTimes::new();
-    if let Ok(atime) = meta.accessed() {
-        times = times.set_accessed(atime);
-    }
-    if let Ok(mtime) = meta.modified() {
-        times = times.set_modified(mtime);
-    }
-    file.set_times(times).map_err(|e| e.to_string())
-}
 /// Copies without following links or overwriting anything; used by cross-device moves and templates.
 pub(crate) fn copy_tree(src: &Path, dest: &Path) -> Result<()> {
     copy_tree_inner(src, dest, false)
@@ -185,10 +111,9 @@ fn remove(path: &Path) -> Result<()> {
         .map_err(|e| e.to_string())
 }
 fn rename(src: &Path, dest: &Path) -> Result<()> {
-    use rustix::fs::{CWD, RenameFlags, renameat_with};
-    match renameat_with(CWD, src, CWD, dest, RenameFlags::NOREPLACE) {
+    match platform::rename_noreplace(src, dest) {
         Ok(()) => Ok(()),
-        Err(rustix::io::Errno::XDEV) => {
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
             // Copy into a private sibling first, then publish atomically. A failed copy leaves the source intact.
             let staged = tempfile::Builder::new()
                 .prefix(".laci-move-")
@@ -196,31 +121,22 @@ fn rename(src: &Path, dest: &Path) -> Result<()> {
                 .map_err(|e| e.to_string())?;
             let payload = staged.path().join("payload");
             copy_tree(src, &payload)?;
-            renameat_with(CWD, &payload, CWD, dest, RenameFlags::NOREPLACE).map_err(|e| e.to_string())?;
+            platform::rename_noreplace(&payload, dest).map_err(|e| e.to_string())?;
             remove(src)
         }
         Err(e) => Err(e.to_string()),
     }
 }
-pub(crate) fn busy_in(paths: &[PathBuf]) -> Vec<Value> {
-    files::entries(Path::new("/proc"))
+/// The processes working inside `paths`, as messages and the UI show them. Fails where Laci can't list processes.
+pub(crate) fn busy_in(paths: &[PathBuf]) -> Result<Vec<Value>> {
+    Ok(platform::processes_in(paths)?
         .into_iter()
-        .filter_map(|e| {
-            let pid = e.file_name().to_string_lossy().parse::<u32>().ok()?;
-            if pid == std::process::id() {
-                return None;
-            }
-            let cwd = fs::read_link(e.path().join("cwd")).ok()?;
-            // Laci's own helpers, such as a scan's `git status`, don't hold the folder; terminals and apps it opens
-            // still do. Checked after the read: a helper's pid is unlisted before it can be reused.
-            if !paths.iter().any(|p| cwd.starts_with(p)) || process::is_own_child(pid) {
-                return None;
-            }
-            // A process that is gone by now no longer holds the folder.
-            let name = fs::read_to_string(e.path().join("comm")).ok()?.trim().to_owned();
-            Some(json!({"pid":pid,"name":name,"cwd":cwd}))
-        })
-        .collect()
+        // Laci's own helpers, such as a scan's `git status`, don't hold the folder; terminals and apps it opens
+        // still do. Checked after the read: a helper's pid is unlisted before it can be reused.
+        .filter(|h| !process::is_own_child(h.pid))
+        // A folder name that isn't UTF-8 must not stop the message being written.
+        .map(|h| json!({"pid":h.pid,"name":h.name,"cwd":h.cwd.to_string_lossy()}))
+        .collect())
 }
 /// How long a change waits for Git that another program runs in the folder, such as a second Laci or an editor.
 /// Such a read is over in moments; Git that is still there after this, or anything else, keeps the folder in use.
@@ -228,20 +144,20 @@ const GIT_WAIT: Duration = Duration::from_secs(3);
 /// [`busy_in`] for checks that decide something. A process counts only if it is still in the folder a moment
 /// later, so one that is just passing through, such as a helper of another Laci still starting, doesn't make the
 /// folder busy. While Git is all that stays, it looks again for up to [`GIT_WAIT`].
-pub(crate) fn still_busy(paths: &[PathBuf]) -> Vec<Value> {
+pub(crate) fn still_busy(paths: &[PathBuf]) -> Result<Vec<Value>> {
     let started = Instant::now();
-    let mut seen = busy_in(paths);
+    let mut seen = busy_in(paths)?;
     while !seen.is_empty() {
         thread::sleep(Duration::from_millis(100));
         let lasting: Vec<Value> =
-            busy_in(paths).into_iter().filter(|b| seen.iter().any(|s| s["pid"] == b["pid"])).collect();
+            busy_in(paths)?.into_iter().filter(|b| seen.iter().any(|s| s["pid"] == b["pid"])).collect();
         let git = |b: &Value| b["name"].as_str().is_some_and(|name| name.starts_with("git"));
         if lasting.is_empty() || !lasting.iter().all(git) || started.elapsed() >= GIT_WAIT {
-            return lasting;
+            return Ok(lasting);
         }
         seen = lasting;
     }
-    seen
+    Ok(seen)
 }
 /// What holds a folder, for an error: "name (pid N), …".
 pub(crate) fn holders(busy: &[Value]) -> String {
@@ -251,7 +167,7 @@ pub(crate) fn holders(busy: &[Value]) -> String {
         .join(", ")
 }
 fn guard(paths: &[PathBuf]) -> Result<()> {
-    let busy = still_busy(paths);
+    let busy = still_busy(paths)?;
     if busy.is_empty() { Ok(()) } else { Err(format!("In use by {}. Close it first.", holders(&busy))) }
 }
 
@@ -315,14 +231,13 @@ impl<'a> Tx<'a> {
         }
         let mut entry = json!({"kind":"move","from":src,"to":dest});
         if !src.starts_with(&self.env.home) && paths::workspace_roots(self.env).iter().any(|root| root == src) {
-            use std::os::unix::fs::MetadataExt;
             let parent = src.parent().ok_or("Missing workspace parent")?;
-            let meta = fs::metadata(parent).map_err(|e| e.to_string())?;
-            if fs::metadata(src).map_err(|e| e.to_string())?.dev() != meta.dev() {
+            let id = platform::identity(parent, &fs::metadata(parent).map_err(|e| e.to_string())?)?;
+            if platform::identity(src, &fs::metadata(src).map_err(|e| e.to_string())?)?.volume != id.volume {
                 return Err("Can't move the mounted workspace root itself; select a project inside it".into());
             }
-            entry["parentDevice"] = json!(meta.dev());
-            entry["parentInode"] = json!(meta.ino());
+            entry["parentDevice"] = json!(id.volume);
+            entry["parentInode"] = json!(id.file);
         }
         self.mkdirs(dest.parent().ok_or("Missing parent")?)?;
         self.log(entry)?;
@@ -466,7 +381,7 @@ impl<'a> Tx<'a> {
         }
         guard(&[path.to_owned()])?;
         self.log(json!({"kind":"trash","path":path}))?;
-        process::run("gio", &["trash", "--", &path.to_string_lossy()], None, Duration::from_secs(120)).map(|_| ())
+        platform::trash(path)
     }
 }
 fn transact(env: &Env, title: &str, work: impl FnOnce(&mut Tx<'_>) -> Result<()>) -> Result<Value> {
@@ -1191,7 +1106,7 @@ mod tests {
         thread::scope(|scope| {
             let scan = scope.spawn(scan);
             let pid = started(&project, "git", process::is_own_child);
-            assert!(busy_in(folder).iter().all(|b| b["pid"] != pid));
+            assert!(busy_in(folder).unwrap().iter().all(|b| b["pid"] != pid));
             let checked = Instant::now();
             guard(folder).unwrap();
             assert!(checked.elapsed() < Duration::from_secs(1), "nothing waits for Laci's own Git");
@@ -1222,7 +1137,7 @@ mod tests {
         let mut other = Outside::start(&git, &stay("0.5"), &project);
         let pid = other.0.id();
         started(&project, "git", |found| found == pid);
-        assert!(busy_in(folder).iter().any(|b| b["pid"] == pid && b["name"] == "git"));
+        assert!(busy_in(folder).unwrap().iter().any(|b| b["pid"] == pid && b["name"] == "git"));
         guard(folder).unwrap();
         assert!(other.0.try_wait().unwrap().is_some(), "the change went ahead once that Git was done");
     }

@@ -8,6 +8,7 @@ import {
 } from "./agent-launch";
 import { DialogFrame } from "./dialogs";
 import { Icon, Time } from "./common";
+import { useNow } from "./clock";
 import {
   allSessions,
   bytes,
@@ -560,6 +561,7 @@ export function SessionDialog({
 }) {
   const snapshot = useApp((s) => s.snapshot!);
   const historyPending = useApp((s) => s.historyPending);
+  useNow();
   const all = allSessions(snapshot);
   const session = all.find(
     (item) =>
@@ -791,6 +793,7 @@ export function SessionDialog({
 /** Confirms deleting conversations: each with its earlier parts and subagent logs. */
 export function DeleteSessions({ files }: { files: string[] }) {
   const snapshot = useApp((s) => s.snapshot!);
+  useNow();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const chosen = conversations(allSessions(snapshot)).filter((c) =>

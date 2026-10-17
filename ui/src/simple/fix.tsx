@@ -1,7 +1,7 @@
 // The sheet behind every fix button: before a version is saved or uploaded, Laci looks for files
 // that look like passwords or keys (by name only) and offers to keep them out; then the user picks
 // their AI (recommended) or the command in the terminal.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errorText } from "../api";
 import { useHealth } from "../hooks";
 import { changed, run, toast, useApp } from "../store";
@@ -25,6 +25,28 @@ type Check =
 
 const SHOWN = 6;
 
+/** Asks for the check, and gives its answer or why there is none. */
+const look = (id: string): Promise<Check> =>
+  api<SecretCheck>("secrets/check", { id }).then(
+    (found): Check => ({ state: "done", found }),
+    (error): Check => ({ state: "failed", error: errorText(error) }),
+  );
+
+/**
+ * What stops the terminal: no check yet, a failed one, secret files already saved, or ones that
+ * have to be kept out first.
+ */
+function stoppedBy(check: Check) {
+  if (check.state === "checking") return fix.checking;
+  if (check.state === "failed") return fix.blockedFailed;
+  const { files } = check.found;
+  return files.some((file) => file.tracked)
+    ? fix.blockedTracked
+    : files.length
+      ? fix.blocked
+      : "";
+}
+
 /** The fix sheet, when one is open. */
 export function FixSheet() {
   const fixing = useSimple((s) => s.fixing);
@@ -42,39 +64,38 @@ function FixFor({ node, code }: { node: Node; code: string }) {
   const checks = SECRET_CHECKED.has(code);
   const [check, setCheck] = useState<Check>({ state: "checking" });
   const [attempt, setAttempt] = useState(0);
+  const mounted = useRef(false);
+  /** The terminal is waiting for a new look at the files, so another click has nothing to add. */
+  const looking = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  // Looks again whenever the project changes: an Undo or an edit can bring a secret file back while
+  // the sheet is open. The answer on the page stays until the new one is in.
   useEffect(() => {
     if (!checks) return;
     let live = true;
-    setCheck({ state: "checking" });
-    api<SecretCheck>("secrets/check", { id: node.id }).then(
-      (found) => {
-        if (live) setCheck({ state: "done", found });
-      },
-      (error) => {
-        if (live) setCheck({ state: "failed", error: errorText(error) });
-      },
-    );
+    void look(node.id).then((next) => {
+      if (live) setCheck(next);
+    });
     return () => {
       live = false;
     };
-  }, [checks, node.id, attempt]);
+  }, [checks, node, attempt]);
+  /** Shows that it is checking, and looks again. */
+  const checkAgain = () => {
+    setCheck({ state: "checking" });
+    setAttempt((n) => n + 1);
+  };
   const close = () => useSimple.setState({ fixing: null });
   const files = check.state === "done" ? check.found.files : [];
   const loose = files.filter((file) => !file.tracked);
   const tracked = files.filter((file) => file.tracked);
   const more = check.state === "done" ? check.found.more : 0;
-  // What stops the terminal: secret files to keep out first, ones already saved, or no check.
-  const blocked = !checks
-    ? ""
-    : check.state === "checking"
-      ? fix.checking
-      : check.state === "failed"
-        ? fix.blockedFailed
-        : tracked.length
-          ? fix.blockedTracked
-          : loose.length
-            ? fix.blocked
-            : "";
+  const blocked = checks ? stoppedBy(check) : "";
   const canAsk = AI_FIXES.has(code) && Boolean(ai);
   const canType = TERMINAL_FIXES.has(code);
   // The one filled button: keeping files out comes first, then the AI, else the terminal.
@@ -88,7 +109,7 @@ function FixFor({ node, code }: { node: Node; code: string }) {
           files: loose.map((file) => file.path),
         });
         changed(change, fix.keptOut, loose.map((file) => file.path).join(", "));
-        setAttempt((n) => n + 1);
+        checkAgain();
       },
       fix.keeping,
       { history: true },
@@ -97,7 +118,18 @@ function FixFor({ node, code }: { node: Node; code: string }) {
     close();
     void askFix(node.id, code);
   };
-  const myself = () => {
+  const myself = async () => {
+    if (looking.current) return;
+    if (checks) {
+      // The answer on the page may be old: an Undo or an edit can have put a secret file back since.
+      looking.current = true;
+      setCheck({ state: "checking" });
+      const fresh = await look(node.id);
+      looking.current = false;
+      if (!mounted.current) return;
+      setCheck(fresh);
+      if (stoppedBy(fresh)) return;
+    }
     close();
     void openTerminal(node.id, "fix", code).then((opened) => {
       if (opened) toast(fix.started, fix.startedHint);
@@ -146,7 +178,7 @@ function FixFor({ node, code }: { node: Node; code: string }) {
                 kind="outline"
                 small
                 icon="refresh-cw"
-                onClick={() => setAttempt((n) => n + 1)}
+                onClick={checkAgain}
               >
                 {fix.tryAgain}
               </Button>
@@ -210,7 +242,7 @@ function FixFor({ node, code }: { node: Node; code: string }) {
               kind={primary === "myself" ? "filled" : "outline"}
               icon="terminal"
               disabled={Boolean(blocked)}
-              onClick={myself}
+              onClick={() => void myself()}
             >
               {fix.myselfFor[code] ?? fix.myself}
             </Button>

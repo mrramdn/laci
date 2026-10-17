@@ -129,7 +129,7 @@ const typing = (target: HTMLElement) =>
  * Keys for the whole window, in either design and on the first-run screen: F6 between the panes
  * that are shown, Ctrl or ⌘+K for the palette, F4 or Ctrl+` for the terminal, Escape for whatever is
  * on top, and ? or Ctrl+/ for the shortcuts. On macOS ⌘ does what Ctrl does here, and ⌘+, opens
- * Settings.
+ * Settings. A dialog, or one of Simple's sheets, has the keys to itself.
  */
 export function useGlobalHotkeys() {
   useEffect(() => {
@@ -142,6 +142,7 @@ export function useGlobalHotkeys() {
           state.modal ||
           state.palette ||
           state.working ||
+          state.sheets ||
           selectIsOpen() ||
           target.closest?.(".xterm")
         )
@@ -158,7 +159,8 @@ export function useGlobalHotkeys() {
       event.preventDefault();
       event.stopPropagation();
       const state = useApp.getState();
-      if (state.modal || state.working || selectIsOpen()) return;
+      if (state.modal || state.working || state.sheets || selectIsOpen())
+        return;
       if (palette) useApp.setState({ palette: !state.palette });
       else if (state.palette) return;
       else if (settings) state.navigate("settings");
@@ -172,7 +174,7 @@ export function useGlobalHotkeys() {
       if (state.working) return;
       if (event.key === "Escape") {
         if (state.palette) useApp.setState({ palette: false });
-        else if (state.modal) return;
+        else if (state.modal || state.sheets) return;
         else if (state.display) useApp.setState({ display: false });
         else if (target.closest(".xterm")) return;
         else useApp.setState({ selected: null, pendingSelection: null });

@@ -238,10 +238,27 @@ export const home = {
   noNextStep: "There is no next step written down yet.",
   open: (name: string) => `Open ${name}`,
   safeTitle: "Everything is safe.",
-  safeBody: (projects: number) =>
-    projects === 1
-      ? "Your project is saved and online."
-      : `All ${projects} projects are saved and online.`,
+  /** What makes it safe: the projects saved and online, and the ones with no version history. */
+  safeBody: (projects: number, noHistory = 0) => {
+    const bare = Math.min(noHistory, projects);
+    const saved = projects - bare;
+    const some = (n: number) =>
+      n < projects
+        ? count(n, "project")
+        : n === 1
+          ? "Your project"
+          : `All ${n} projects`;
+    return [
+      saved
+        ? `${some(saved)} ${saved === 1 ? "is" : "are"} saved and online.`
+        : "",
+      bare
+        ? `${some(bare)} ${bare === 1 ? "has" : "have"} no version history.`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  },
   continue: (name: string) => `Continue ${name}`,
   askAi: (ai: string) => `Ask ${ai} to do it`,
   notNow: "Not now",

@@ -11,6 +11,8 @@ import {
   isWindowsPath,
   localDay,
   LOCALE,
+  parentOf,
+  pathKey,
   plural,
   providerName,
   reportById,
@@ -508,7 +510,9 @@ function stripHeader(raw: string) {
   return lines.slice(i).join("\n");
 }
 
-/** The report a relative link in a report names: another file in the same folder. */
+/**
+ * The report a link in a report names: another file in the same folder, by its name or by its path.
+ */
 export function reportLink(href: string, reports: Report[], folder: string) {
   let name = href.split(/[?#]/)[0];
   try {
@@ -516,9 +520,15 @@ export function reportLink(href: string, reports: Report[], folder: string) {
   } catch {
     // Not encoded: taken as written.
   }
-  // Next to a Windows folder, a link may write `\` between names too.
-  if (isWindowsPath(folder)) name = name.replace(/\\/g, "/");
-  if (name.startsWith(folder + "/")) name = name.slice(folder.length + 1);
+  if (isWindowsPath(folder)) {
+    // Next to a Windows folder, a link may write `\` between names too, and name the folder in full
+    // with either separator and in any case.
+    if (isWindowsPath(name) && pathKey(parentOf(name)) === pathKey(folder))
+      name = base(name);
+    name = name.replace(/\\/g, "/");
+  } else if (name.startsWith(folder + "/")) {
+    name = name.slice(folder.length + 1);
+  }
   name = name.replace(/^\.\//, "");
   return name.includes("/") ? undefined : reports.find((r) => r.id === name);
 }

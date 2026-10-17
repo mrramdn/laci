@@ -1,10 +1,9 @@
-import { useEffect, useId, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Icon, restoreFocus } from "../../common";
 import { useApp } from "../../store";
 import { blocks } from "../../words";
-import { useSimple } from "../state";
 
 const CONTROLS =
   'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,a[href],[tabindex="0"]';
@@ -52,11 +51,11 @@ export function Sheet({
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
-    useSimple.setState((s) => ({ sheets: s.sheets + 1 }));
+    useApp.setState((s) => ({ sheets: s.sheets + 1 }));
     const before = previous.current;
     return () => {
       mounted.current = false;
-      useSimple.setState((s) => ({ sheets: s.sheets - 1 }));
+      useApp.setState((s) => ({ sheets: s.sheets - 1 }));
       // The window is inert until it draws again without this sheet. A sheet mounted again at once
       // (React's development check does that) keeps the focus.
       setTimeout(() => {
@@ -64,16 +63,34 @@ export function Sheet({
       });
     };
   }, []);
-  const dismiss = () => {
+  // A control that goes away when it is used (Keep these out) takes the focus with it to the page: the
+  // sheet takes it back, so the keyboard and a screen reader stay in the sheet.
+  useEffect(() => {
+    const box = ref.current;
+    if (!box) return;
+    const watch = new MutationObserver(() => {
+      const at = document.activeElement;
+      if (!at || at === document.body) box.focus();
+    });
+    watch.observe(box, { childList: true, subtree: true });
+    return () => watch.disconnect();
+  }, []);
+  const dismiss = useCallback(() => {
     if (dismissible && !useApp.getState().working) onClose();
-  };
-  const onKey = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
+  }, [dismissible, onClose]);
+  // Escape closes the sheet wherever the focus is, as it does a dialog. A control that goes away when
+  // it is used (Keep these out) leaves the focus on the page, and the window behind must not get the key.
+  useEffect(() => {
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
       event.stopPropagation();
       dismiss();
-      return;
-    }
+    };
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  }, [dismiss]);
+  const onKey = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Tab") return;
     const items = controls(ref.current);
     if (!items.length) {

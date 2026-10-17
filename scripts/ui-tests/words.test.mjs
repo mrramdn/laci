@@ -96,6 +96,26 @@ export async function everyCheckThatCanLoseWorkHasItsWords() {
   assert.equal(words.safety.issues.stash.body(1), "1 set of changes is put aside. It is easy to lose and never uploaded.");
 }
 
+export async function homeNeverCallsAFolderWithoutVersionHistorySavedAndOnline() {
+  const body = words.home.safeBody;
+  // Every project has its history: the sentence is the one it always was.
+  assert.equal(body(1), "Your project is saved and online.");
+  assert.equal(body(6), "All 6 projects are saved and online.");
+  assert.equal(body(6, 0), "All 6 projects are saved and online.");
+  // A folder of notes is named apart from the projects that are saved.
+  assert.equal(body(6, 1), "5 projects are saved and online. 1 project has no version history.");
+  assert.equal(body(3, 2), "1 project is saved and online. 2 projects have no version history.");
+  // With nothing but notes, nothing is saved and online.
+  assert.equal(body(1, 1), "Your project has no version history.");
+  assert.equal(body(4, 4), "All 4 projects have no version history.");
+  for (const [projects, noHistory] of [[1, 1], [4, 4], [6, 1], [3, 2], [2, 3]])
+    assert.doesNotMatch(
+      body(projects, noHistory),
+      /^(All \d+ projects|Your project) (is|are) saved and online/,
+      `${projects} projects, ${noHistory} without history`,
+    );
+}
+
 export async function timesReadAsWords() {
   // Three in the afternoon, local time: an hour before is still today wherever the test runs.
   const now = new Date(2026, 9, 8, 15, 0).getTime();

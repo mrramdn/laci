@@ -102,6 +102,7 @@ export function Home() {
             main={cards.main}
             snapshot={snapshot}
             projects={model.projects}
+            noHistory={model.noHistory}
             onNotNow={notNow}
             onShowHidden={clearNotNow}
           />
@@ -168,12 +169,14 @@ function MainCard({
   main,
   snapshot,
   projects,
+  noHistory,
   onNotNow,
   onShowHidden,
 }: {
   main: HomeMain;
   snapshot: Snapshot;
   projects: number;
+  noHistory: number;
   onNotNow: (need: Need) => void;
   onShowHidden: () => void;
 }) {
@@ -213,7 +216,7 @@ function MainCard({
           ) : null
         }
       >
-        {home.safeBody(projects)}
+        {home.safeBody(projects, noHistory)}
       </Hero>
     );
   }

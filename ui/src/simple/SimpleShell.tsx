@@ -34,8 +34,9 @@ function Terminal() {
 export default function SimpleShell() {
   const view = useApp((s) => s.view);
   const selected = useApp((s) => s.selected);
-  const covered = useApp((s) => Boolean(s.modal || s.palette || s.working));
-  const sheet = useSimple((s) => s.sheets > 0);
+  const covered = useApp((s) =>
+    Boolean(s.modal || s.palette || s.working || s.sheets),
+  );
   const hasTerminals = useTerms((s) => s.tabs.length > 0);
   useSimpleKeys();
   useEffect(namePanes);
@@ -44,7 +45,7 @@ export default function SimpleShell() {
   }, [view, selected]);
   return (
     <div className="s-shell">
-      <div className="s-frame" inert={covered || sheet}>
+      <div className="s-frame" inert={covered}>
         <Nav view={view} />
         <main id="main" className="s-main" tabIndex={-1}>
           <Page view={view} />
@@ -95,8 +96,7 @@ function useSimpleKeys() {
       const target = event.target as HTMLElement;
       if (!(target instanceof HTMLElement) || target.closest(".xterm")) return;
       const state = useApp.getState();
-      if (state.modal || state.palette || state.working) return;
-      if (useSimple.getState().sheets) return;
+      if (state.modal || state.palette || state.working || state.sheets) return;
       if (event.key === "Escape") {
         event.stopPropagation();
         return;

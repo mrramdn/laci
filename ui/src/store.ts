@@ -61,6 +61,8 @@ interface State {
   working: string;
   view: View;
   cwd: string;
+  /** How many times `cd` has gone to a folder: a folder chosen again leaves `cwd` as it was. */
+  folderVisits: number;
   selected: string | null;
   /** Which row was clicked, for lists that can show one project more than once. */
   selectedRow: string | null;
@@ -79,6 +81,8 @@ interface State {
   skipSetup: boolean;
   modal: Modal;
   palette: boolean;
+  /** Simple's sheets open over its window. The window behind and the toast wait while one is. */
+  sheets: number;
   tree: Set<string>;
   listings: Record<string, Listing>;
   expanded: Record<string, boolean>;
@@ -179,6 +183,7 @@ export const useApp = create<State>((set, get) => ({
   working: "",
   view: "today",
   cwd: "",
+  folderVisits: 0,
   selected: null,
   selectedRow: null,
   tab: "health",
@@ -197,6 +202,7 @@ export const useApp = create<State>((set, get) => ({
   skipSetup: false,
   modal: null,
   palette: false,
+  sheets: 0,
   tree: new Set(),
   listings: {},
   expanded: {},
@@ -283,6 +289,7 @@ export const useApp = create<State>((set, get) => ({
       pendingSelection: null,
       view: "folder",
       cwd: path,
+      folderVisits: get().folderVisits + 1,
       fileSelected: null,
       tree: next,
       selected:

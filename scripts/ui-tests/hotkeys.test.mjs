@@ -388,6 +388,63 @@ export async function aDialogKeepsTheKeysItSwallows() {
   }
 }
 
+export async function aSimpleSheetKeepsTheKeysOfTheWindowBehindIt() {
+  for (const os of SYSTEMS) {
+    const w = page(os, { sheets: 1, selected: "/home/me/project/app" });
+    // Ctrl+K, F4 and ⌘, are taken, as with a dialog, and do nothing behind the sheet.
+    const palette = w.press("k", ctrl);
+    assert.equal(w.state.palette, false, os);
+    assert.ok(palette.defaultPrevented, os);
+    const terminal = w.press("F4");
+    assert.equal(w.calls.terminal, 0, os);
+    assert.ok(terminal.defaultPrevented, os);
+    w.press(",", cmd);
+    assert.deepEqual(w.calls.navigate, [], os);
+    // F6 is left alone: no pane behind the sheet gets the focus.
+    const panes = w.press("F6");
+    assert.equal(panes.defaultPrevented, false, os);
+    assert.equal(panes.stopped, false, os);
+    // Escape does not close the details behind it.
+    w.press("Escape");
+    assert.equal(w.state.selected, "/home/me/project/app", os);
+    // Without the sheet the same keys work.
+    w.state.sheets = 0;
+    w.press("k", ctrl);
+    assert.equal(w.state.palette, true, os);
+    w.state.palette = false;
+    w.press("F4");
+    assert.equal(w.calls.terminal, 1, os);
+    w.press("Escape");
+    assert.equal(w.state.selected, null, os);
+  }
+}
+
+export async function escapeKeepsItsLayersInDetailed() {
+  for (const os of SYSTEMS) {
+    const at = (patch) => {
+      const w = page(os, { selected: "/home/me/project/app", ...patch });
+      const escape = w.press("Escape");
+      return { state: w.state, escape };
+    };
+    // The details beside the view close first, as the key has always done.
+    const bare = at({});
+    assert.equal(bare.state.selected, null, os);
+    assert.ok(bare.escape.defaultPrevented, os);
+    // The palette, the display menu and a dialog each take it before the details do.
+    const palette = at({ palette: true });
+    assert.equal(palette.state.palette, false, os);
+    assert.equal(palette.state.selected, "/home/me/project/app", os);
+    const display = at({ display: true });
+    assert.equal(display.state.display, false, os);
+    assert.equal(display.state.selected, "/home/me/project/app", os);
+    const dialog = at({ modal: { kind: "archive", id: "x" } });
+    assert.equal(dialog.state.selected, "/home/me/project/app", os);
+    // And a change that runs leaves everything as it is.
+    const busy = at({ working: "Archiving…" });
+    assert.equal(busy.state.selected, "/home/me/project/app", os);
+  }
+}
+
 // ── The list of shortcuts ──────────────────────────────────────────────────────────────────────────
 
 const { SHORTCUTS, shortcutsFor } = load("shortcuts.ts");

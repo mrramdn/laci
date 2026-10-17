@@ -1,13 +1,12 @@
-// What only Simple keeps: the sheets open over its window, how Projects is filtered and sorted, the
-// fix sheet, and what Home hides until tomorrow. The engine's data stays in the shared store.
+// What only Simple keeps: how Projects is filtered and sorted, the fix sheet, and what Home hides
+// until tomorrow. The engine's data stays in the shared store, and so does the count of open sheets,
+// which the window's keys and the toast read as they do a dialog.
 import { create } from "zustand";
 import { pref, savePref, useApp } from "../store";
 import { hiddenToday, PROJECT_SORTS } from "./model";
 import type { ProjectFilter, ProjectSort } from "./model";
 
 interface SimpleState {
-  /** Sheets open over the window. The window is inert while any is. */
-  sheets: number;
   filter: ProjectFilter;
   sort: ProjectSort;
   query: string;
@@ -22,7 +21,6 @@ interface SimpleState {
 const savedSort = pref<string>("simple-sort", "recent");
 
 export const useSimple = create<SimpleState>(() => ({
-  sheets: 0,
   filter: "all",
   sort: PROJECT_SORTS.find((sort) => sort === savedSort) ?? "recent",
   query: "",
@@ -48,9 +46,10 @@ export function openFix(id: string, code: string) {
 }
 
 // A folder chosen in the palette lands on Projects (the store's `cd`): show that folder's projects.
+// That includes the folder chosen last, when Projects has been widened since.
 useApp.subscribe((state, previous) => {
   if (state.design !== "simple" || state.view !== "folder") return;
-  if (state.cwd === previous.cwd) return;
+  if (state.folderVisits === previous.folderVisits) return;
   const roots = state.snapshot?.roots ?? [];
   const node = state.snapshot?.nodes[state.cwd];
   const onlyRoot = roots.length === 1 && roots[0] === state.cwd;

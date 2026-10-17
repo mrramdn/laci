@@ -13,6 +13,7 @@ const fixtures = JSON.parse(
 );
 const helpers = load("helpers.ts");
 const selectors = load("selectors.ts");
+const words = load("words.ts");
 const HOME = "/home/demo";
 const ROOT = `${HOME}/project`;
 const DAY = 864e5;
@@ -906,6 +907,39 @@ export async function whenEverythingIsSafeHomeOffersTheProjectWorkedOnLast() {
   assert.equal(empty.noFolders, true);
   assert.equal(empty.main.kind, "safe");
   assert.equal(empty.main.n, undefined);
+}
+
+export async function homeSaysWhichProjectsHaveNoVersionHistory() {
+  // The demo home with every problem solved: what is left is the notes folder, which has no version history.
+  const snapshot = fixture();
+  for (const n of Object.values(snapshot.nodes))
+    if (n.kind === "project")
+      n.issues = n.issues.filter((i) => !helpers.RISK.has(i.code));
+  const at = new Date(2026, 9, 8, 12);
+  const home = selectors.homeModel(snapshot, at);
+  assert.equal(home.main.kind, "safe");
+  assert.deepEqual(home.needs, []);
+  assert.equal(home.projects, 6);
+  assert.equal(home.noHistory, 1);
+  assert.deepEqual(
+    Object.values(snapshot.nodes)
+      .filter((n) => n.kind === "project" && !n.archived && !n.git)
+      .map((n) => n.name),
+    ["infra-notes"],
+  );
+  assert.equal(
+    words.home.safeBody(home.projects, home.noHistory),
+    "5 projects are saved and online. 1 project has no version history.",
+  );
+  // An archived project is in neither number.
+  const archived = Object.values(snapshot.nodes).find((n) => n.kind === "project" && n.archived);
+  archived.git = null;
+  const same = selectors.homeModel(structuredClone(snapshot), at);
+  assert.deepEqual([same.projects, same.noHistory], [6, 1]);
+  // With history turned on, the notes are a project like the others.
+  const notes = Object.values(snapshot.nodes).find((n) => n.name === "infra-notes");
+  notes.git = structuredClone(Object.values(snapshot.nodes).find((n) => n.name === "dotfiles").git);
+  assert.equal(selectors.homeModel(structuredClone(snapshot), at).noHistory, 0);
 }
 
 export async function homeOnTheDemoHome() {

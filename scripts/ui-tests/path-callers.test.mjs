@@ -160,6 +160,41 @@ export async function aWindowsReportMayWriteItsLinksWithBackslashes() {
   assert.equal(link("other%20x.md", folder), "other x.md");
 }
 
+export async function aWindowsReportMayLinkToAnotherReportByItsFullPath() {
+  const folder = "C:\\notes\\reports";
+  // The folder in full, with either separator and whatever case the drive and the folders are in.
+  assert.equal(link("C:\\notes\\reports\\other.md", folder), "other.md");
+  assert.equal(link("C:/notes/reports/other.md", folder), "other.md");
+  assert.equal(link("c:\\NOTES\\Reports\\other.md", folder), "other.md");
+  assert.equal(link("C:\\notes/reports\\other.md", folder), "other.md");
+  assert.equal(link("C:%5Cnotes%5Creports%5Cother.md", folder), "other.md");
+  assert.equal(link("C:\\notes\\reports\\other%20x.md#top", folder), "other x.md");
+  // The folder itself may be written the other way, too.
+  assert.equal(link("C:\\notes\\reports\\other.md", "C:/notes/reports"), "other.md");
+  assert.equal(link("C:\\notes\\reports\\other.md", "c:\\Notes\\Reports"), "other.md");
+  // A share, and the top of a drive, are folders like the rest.
+  assert.equal(
+    link("\\\\nas\\files\\reports\\other.md", "\\\\nas\\files\\reports"),
+    "other.md",
+  );
+  assert.equal(link("D:\\other.md", "D:\\"), "other.md");
+  // Another folder is not this one, even when its name starts the same way.
+  for (const href of [
+    "C:\\notes\\reports2\\other.md",
+    "C:\\notes\\other.md",
+    "C:\\notes\\reports\\sub\\other.md",
+    "C:\\notes\\reports\\",
+    "C:\\notes\\reports",
+    "D:\\notes\\reports\\other.md",
+    "\\\\nas\\files\\reports\\other.md",
+    "/notes/reports/other.md",
+    "C:\\notes\\reports\\missing.md",
+  ])
+    assert.equal(link(href, folder), undefined, href);
+  // Next to a POSIX folder a Windows path is only a name.
+  assert.equal(link("C:\\notes\\reports\\other.md", "/home/me/notes/reports"), undefined);
+}
+
 // ── Where a terminal starts ────────────────────────────────────────────────────────────────────────
 
 /** terminal-api.ts with the desktop's reply stubbed, and the app state it is to read. */

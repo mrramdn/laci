@@ -20,7 +20,8 @@ export type MenuEntry = MenuItem | "-";
 /**
  * A button that opens a menu: "⋯ More", and the menus of "Continue with AI ▾", Sort, In: and the
  * theme. The arrow keys, Home, End and a first letter move through it; Escape and Tab close it and
- * give the focus back to the button; a click elsewhere closes it.
+ * give the focus back to the button; a click elsewhere, or the focus going elsewhere (F6 does that),
+ * closes it and leaves the focus where it went.
  */
 export function MoreMenu({
   label,
@@ -64,13 +65,17 @@ export function MoreMenu({
   }, [open]);
   useEffect(() => {
     if (!open) return;
-    const away = (event: PointerEvent) => {
+    const away = (event: Event) => {
       const target = event.target as Node;
       if (!menu.current?.contains(target) && !trigger.current?.contains(target))
         setOpen(false);
     };
     document.addEventListener("pointerdown", away, true);
-    return () => document.removeEventListener("pointerdown", away, true);
+    document.addEventListener("focusin", away);
+    return () => {
+      document.removeEventListener("pointerdown", away, true);
+      document.removeEventListener("focusin", away);
+    };
   }, [open]);
   const close = () => {
     setOpen(false);

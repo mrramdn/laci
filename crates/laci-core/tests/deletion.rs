@@ -6,6 +6,8 @@ use std::{
     process::Command,
 };
 
+mod support;
+
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .args(args)
@@ -95,6 +97,8 @@ fn dirty_untracked_stash_and_unreachable_remote_are_refused_again_at_execution()
     assert!(blocked(&env, &node).contains("remote backup is unavailable"));
 }
 
+// Linux only until macOS and Windows can tell which programs work in a folder.
+#[cfg(target_os = "linux")]
 #[test]
 fn worktrees_in_use_paths_and_symlinks_are_refused() {
     let (home, env, dir, node) = fixture();
@@ -130,6 +134,8 @@ fn a_project_cannot_use_itself_as_a_remote_backup() {
     }
 }
 
+// A Windows file name can't hold a colon.
+#[cfg(unix)]
 #[test]
 fn colons_in_local_paths_cannot_bypass_the_self_backup_guard() {
     let (_home, env, dir, mut node) = fixture();
@@ -146,6 +152,8 @@ fn colons_in_local_paths_cannot_bypass_the_self_backup_guard() {
     }
 }
 
+// The stand-in for git-upload-pack is a shell script.
+#[cfg(unix)]
 #[test]
 fn local_work_created_while_the_remote_answers_prevents_trash() {
     use std::os::unix::fs::PermissionsExt;
@@ -200,12 +208,14 @@ fn a_remote_object_store_linked_into_the_project_is_not_a_backup() {
     let (_home, env, dir, node) = fixture();
     let objects = env.home.join("backup.git/objects");
     fs::remove_dir_all(&objects).unwrap();
-    std::os::unix::fs::symlink(dir.join(".git/objects"), &objects).unwrap();
+    support::link_dir(&dir.join(".git/objects"), &objects);
     assert!(blocked(&env, &node).contains("Git data inside this project"));
     assert!(deletion::trash(&env, &node).is_err());
     assert!(dir.join("README.md").is_file());
 }
 
+// The stand-in for git-upload-pack is a shell script.
+#[cfg(unix)]
 #[test]
 fn hidden_changes_created_during_remote_verification_are_rechecked() {
     use std::os::unix::fs::PermissionsExt;
@@ -235,7 +245,7 @@ fn local_backups_cannot_borrow_pack_or_loose_object_subdirectories() {
         };
         let linked = backup.join("objects").join(&borrowed);
         fs::remove_dir_all(&linked).unwrap();
-        std::os::unix::fs::symlink(dir.join(".git/objects").join(&borrowed), &linked).unwrap();
+        support::link_dir(&dir.join(".git/objects").join(&borrowed), &linked);
         git(&backup, &["cat-file", "-e", "HEAD"]);
         assert!(blocked(&env, &node).contains("linked object storage"));
         assert!(deletion::trash(&env, &node).is_err());

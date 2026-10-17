@@ -11,6 +11,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod support;
+
 fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
@@ -1153,7 +1155,7 @@ fn build_output_is_deleted_for_good_and_a_linked_build_folder_is_left_alone() {
     write(&project.join("node_modules/pkg/index.js"), &"x".repeat(1_500_000));
     let elsewhere = env.home.join("elsewhere/target");
     write(&elsewhere.join("debug/app"), &"x".repeat(1_500_000));
-    std::os::unix::fs::symlink(&elsewhere, project.join("target")).unwrap();
+    support::link_dir(&elsewhere, &project.join("target"));
     let mut service = loaded(&env, &project);
     let id = project.to_str().unwrap();
     let parts = service.snapshot().unwrap()["nodes"][id]["size"]["parts"].clone();

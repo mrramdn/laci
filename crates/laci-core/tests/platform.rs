@@ -2,6 +2,8 @@
 //! fail there instead of answering.
 use laci_core::platform;
 
+mod support;
+
 #[cfg(unix)]
 mod unix {
     use super::*;
@@ -190,6 +192,22 @@ mod unix {
         assert_eq!(dirs.data, Path::new("/home/someone/.local/share/laci"));
         assert_eq!(dirs.cache, Path::new("/home/someone/.cache/laci"));
     }
+
+    #[test]
+    fn a_program_is_the_first_on_the_path_that_can_run() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_temp, root) = folder();
+        let (first, second) = (root.join("first"), root.join("second"));
+        fs::create_dir_all(first.join("folder")).unwrap();
+        fs::create_dir(&second).unwrap();
+        fs::write(first.join("tool"), "#!/bin/sh\n").unwrap();
+        fs::write(second.join("tool"), "#!/bin/sh\n").unwrap();
+        fs::set_permissions(second.join("tool"), fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::env::join_paths([&first, &second]).unwrap();
+        assert_eq!(platform::which("tool", &path), Some(second.join("tool")), "the first one can't run");
+        assert_eq!(platform::which("folder", &path), None, "a folder is no program");
+        assert_eq!(platform::which("missing", &path), None);
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -360,6 +378,189 @@ mod linux {
             let stdout = String::from_utf8_lossy(&output.stdout);
             assert!(output.status.success() && stdout.contains("1 passed"), "{case}: {stdout}");
         }
+    }
+}
+
+#[cfg(windows)]
+mod windows {
+    use super::*;
+    use std::{
+        fs::{self, OpenOptions},
+        io,
+        os::windows::fs::OpenOptionsExt,
+        path::Path,
+        process::Stdio,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    fn id(path: &Path) -> platform::Identity {
+        platform::identity(path, &fs::metadata(path).unwrap()).unwrap()
+    }
+
+    /// Waits up to twenty seconds for `found` to give something: a program can be slow to start on Windows, where
+    /// Defender looks at it first.
+    fn soon<T>(what: &str, mut found: impl FnMut() -> Option<T>) -> T {
+        let since = Instant::now();
+        loop {
+            if let Some(value) = found() {
+                return value;
+            }
+            assert!(since.elapsed() < Duration::from_secs(20), "{what}");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// A folder on another volume than `near`, when this machine has one: Cargo's target folder can be.
+    fn elsewhere(near: &Path) -> Option<tempfile::TempDir> {
+        let volume = |p: &Path| Some(platform::identity(p, &fs::metadata(p).ok()?).ok()?.volume);
+        let target = Path::new(env!("CARGO_TARGET_TMPDIR"));
+        if volume(target)? == volume(near)? {
+            return None;
+        }
+        tempfile::tempdir_in(target).ok()
+    }
+
+    #[test]
+    fn identity_is_one_per_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let (a, b) = (root.join("a"), root.join("b"));
+        fs::write(&a, "same bytes").unwrap();
+        fs::write(&b, "same bytes").unwrap();
+        fs::hard_link(&a, root.join("hard")).unwrap();
+        assert_eq!(id(&a), id(&a));
+        assert_eq!(id(&a), id(&root.join("hard")), "a second name of the same file");
+        assert_ne!(id(&a), id(&b), "another file, even with the same bytes");
+        assert_eq!(id(&a).volume, id(&b).volume);
+        let before = id(&a);
+        fs::rename(&a, root.join("moved")).unwrap();
+        assert_eq!(id(&root.join("moved")), before, "a file keeps its identity when renamed");
+        let (dir, link) = (root.join("dir"), root.join("link"));
+        fs::create_dir(&dir).unwrap();
+        support::link_dir(&dir, &link);
+        assert_eq!(id(&link), id(&dir), "a link is followed");
+        let error = platform::identity(&link, &fs::symlink_metadata(&link).unwrap()).unwrap_err();
+        assert_eq!(error, "Laci can't tell links apart on Windows yet", "the link itself");
+    }
+
+    #[test]
+    fn the_change_lock_is_exclusive_until_dropped_and_its_file_stays() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("lock");
+        let held = platform::lock(path.clone()).unwrap();
+        let Err(error) = platform::lock(path.clone()) else { panic!("a second holder") };
+        assert_eq!(error, "Another laci window or agent is changing files right now. Try again in a moment.");
+        drop(held);
+        assert!(path.is_file(), "a lock file that is being deleted can't be opened, so it stays");
+        drop(platform::lock(path.clone()).unwrap());
+        // A lock file in a linked folder is never trusted.
+        let (real, linked) = (temp.path().join("real"), temp.path().join("linked"));
+        fs::create_dir(&real).unwrap();
+        support::link_dir(&real, &linked);
+        fs::write(real.join("lock"), "").unwrap();
+        let Err(error) = platform::lock(linked.join("lock")) else { panic!("a lock in a linked folder") };
+        assert!(error.starts_with("Refusing to edit linked path"), "{error}");
+    }
+
+    #[test]
+    fn a_rename_never_replaces_and_never_copies() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let (src, taken, dest) = (root.join("src"), root.join("taken"), root.join("dest"));
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("file"), "moved").unwrap();
+        fs::write(&taken, "kept").unwrap();
+        let error = platform::rename_noreplace(&src, &taken).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{error}");
+        assert_eq!(fs::read_to_string(&taken).unwrap(), "kept");
+        assert!(src.join("file").is_file());
+        platform::rename_noreplace(&src, &dest).unwrap();
+        assert!(!src.exists());
+        assert_eq!(fs::read_to_string(dest.join("file")).unwrap(), "moved");
+        let Some(other) = elsewhere(root) else {
+            eprintln!("No second volume here; the rename across volumes is not checked.");
+            return;
+        };
+        let there = other.path().join("dest");
+        let error = platform::rename_noreplace(&dest, &there).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::CrossesDevices, "{error}");
+        assert!(dest.join("file").is_file() && !there.exists(), "nothing copied, nothing removed");
+    }
+
+    #[test]
+    fn a_link_is_never_copied() {
+        let temp = tempfile::tempdir().unwrap();
+        let (dir, link) = (temp.path().join("dir"), temp.path().join("link"));
+        fs::create_dir(&dir).unwrap();
+        support::link_dir(&dir, &link);
+        let error = platform::copy_link(&link, &temp.path().join("copy")).unwrap_err();
+        assert!(error.starts_with("Laci can't copy the link "), "{error}");
+        assert!(!temp.path().join("copy").exists());
+    }
+
+    #[test]
+    fn a_program_is_found_with_an_extension_from_pathext() {
+        let path = std::env::var_os("PATH").unwrap();
+        let found = platform::which("cmd", &path).unwrap();
+        assert!(found.file_name().unwrap().eq_ignore_ascii_case("cmd.exe"), "{}", found.display());
+        assert!(platform::which("laci-no-such-program", &path).is_none());
+    }
+
+    const FINISHED: &str = "windows::a_finished_child_is_seen_and_can_still_be_waited_for";
+
+    #[test]
+    fn a_finished_child_is_seen_and_can_still_be_waited_for() {
+        if support::role().is_some() {
+            return;
+        }
+        let mut child = support::program(FINISHED, "finish").stdout(Stdio::null()).spawn().unwrap();
+        soon("the child finishes", || platform::exited(&mut child).unwrap().then_some(()));
+        assert!(platform::exited(&mut child).unwrap(), "asking again changes nothing");
+        assert!(child.wait().unwrap().success());
+    }
+
+    const GROUP: &str = "windows::stopping_a_group_stops_what_its_program_started";
+    /// The file that the child of the group's program holds open.
+    const HELD: &str = "LACI_TEST_HELD";
+
+    #[test]
+    fn stopping_a_group_stops_what_its_program_started() {
+        match support::role().as_deref() {
+            // The group's program: starts a child, then waits for it.
+            Some("parent") => {
+                let _ = support::program(GROUP, "child").status();
+                return;
+            }
+            // Its child: holds a file open that nobody else may open, until it is stopped.
+            Some("child") => {
+                let path = std::env::var_os(HELD).unwrap();
+                let _held = OpenOptions::new().write(true).create_new(true).share_mode(0).open(path).unwrap();
+                thread::sleep(Duration::from_secs(30));
+                return;
+            }
+            Some("exit") => std::process::exit(3),
+            _ => {}
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let held = temp.path().join("held");
+        // ERROR_SHARING_VIOLATION: the child still runs.
+        let in_use = || fs::File::open(&held).is_err_and(|e| e.raw_os_error() == Some(32));
+        let mut command = support::program(GROUP, "parent");
+        command.env(HELD, &held).stdout(Stdio::null());
+        let mut group = platform::spawn_group(command).unwrap();
+        soon("the program starts its child", || in_use().then_some(()));
+        assert!(!group.exited().unwrap());
+        group.stop();
+        assert!(!group.wait().unwrap().success());
+        soon("the child it started stops too", || (!in_use()).then_some(()));
+
+        let mut command = support::program(GROUP, "exit");
+        command.stdout(Stdio::null());
+        let mut group = platform::spawn_group(command).unwrap();
+        soon("the program finishes", || group.exited().unwrap().then_some(()));
+        group.stop();
+        assert_eq!(group.wait().unwrap().code(), Some(3));
     }
 }
 

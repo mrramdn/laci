@@ -3,6 +3,8 @@ use laci_core::{activity, config, env::Env, ops, paths, service::Service};
 use serde_json::json;
 use std::{fs, path::Path};
 
+mod support;
+
 fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
@@ -29,11 +31,11 @@ fn external_selection_allows_only_selected_paths_and_rejects_symlink_escapes() {
     assert!(
         config::validate_connector(&env, &json!({"name":"External store","link":{"kind":"cwd","dir":disk}})).is_err()
     );
-    std::os::unix::fs::symlink(&unrelated, disk.join("escape")).unwrap();
+    support::link_dir(&unrelated, &disk.join("escape"));
     assert!(paths::workspace_path(disk.join("escape/missing/file").to_str().unwrap(), &env).is_err());
-    fs::remove_file(disk.join("escape")).unwrap();
+    support::unlink_dir(&disk.join("escape"));
     fs::remove_dir(&disk).unwrap();
-    std::os::unix::fs::symlink(&unrelated, &disk).unwrap();
+    support::link_dir(&unrelated, &disk);
     assert!(paths::workspace_path(disk.join("missing").to_str().unwrap(), &env).is_err());
 }
 
@@ -70,7 +72,7 @@ fn configured_external_archive_matches_preview_scan_and_undo() {
     assert!(
         service.request("archive/plan", &json!({"id":id,"destination":temp.path().join("unselected/demo")})).is_err()
     );
-    std::os::unix::fs::symlink(temp.path(), archive.join("escape")).unwrap();
+    support::link_dir(temp.path(), &archive.join("escape"));
     assert!(
         service.request("archive/plan", &json!({"id":id,"destination":archive.join("escape/missing/demo")})).is_err()
     );
@@ -369,9 +371,9 @@ fn exact_root_restore_refuses_a_replaced_parent_or_symlink() {
     assert!(archive.join("demo/package.json").is_file());
     assert!(!source.exists());
     fs::remove_dir(parent).unwrap();
-    std::os::unix::fs::symlink(&original, parent).unwrap();
+    support::link_dir(&original, parent);
     assert!(service.request("undo", &json!({"id":changed["journal"]["id"]})).is_err());
-    fs::remove_file(parent).unwrap();
+    support::unlink_dir(parent);
     fs::rename(original, parent).unwrap();
     service.request("undo", &json!({"id":changed["journal"]["id"]})).unwrap();
     assert!(source.join("package.json").is_file());

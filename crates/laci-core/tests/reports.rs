@@ -11,6 +11,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod support;
+
 const SESSION: &str = "0adaa996-bb83-4ac2-a823-963b6afc49b0";
 
 fn write(path: &Path, text: &str) {
@@ -189,7 +191,7 @@ fn reading_searching_and_opening_reach_only_reports_of_the_last_scan() {
     assert!(service.request("reports/open", &json!({"what":"run","id":"2026-10-01-alpha.md"})).is_err());
     fs::remove_file(f.reports.join("2026-10-02-beta.md")).unwrap();
     assert!(service.request("reports/read", &json!({"id":"2026-10-02-beta.md"})).is_err());
-    std::os::unix::fs::symlink("/etc/hostname", f.reports.join("2026-10-02-beta.md")).unwrap();
+    support::link_file(Path::new("/etc/hostname"), &f.reports.join("2026-10-02-beta.md"));
     assert!(service.request("reports/read", &json!({"id":"2026-10-02-beta.md"})).is_err(), "a link is never read");
 }
 
@@ -206,7 +208,7 @@ fn an_offline_or_replaced_folder_shows_why_and_lists_nothing() {
     assert!(service.request("reports/read", &json!({"id":"2026-10-01-alpha.md"})).is_err());
     // Saving the same folder again still works while its drive is away.
     save_reports_dir(&mut service, &json!(f.reports)).unwrap();
-    std::os::unix::fs::symlink(&away, &f.reports).unwrap();
+    support::link_dir(&away, &f.reports);
     let snapshot = service.request("rescan", &json!({})).unwrap();
     assert!(snapshot["reportsDir"]["error"].as_str().unwrap().contains("link"));
     assert_eq!(snapshot["reports"], json!([]));

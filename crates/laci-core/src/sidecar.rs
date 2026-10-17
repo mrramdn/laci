@@ -1,39 +1,61 @@
-//! Edits the project's private Markdown notes without rewriting unrelated content.
+//! Edits the project's private Markdown notes without rewriting unrelated content. It writes the line ending the file
+//! mostly uses, and the lines below the frontmatter that it leaves alone keep theirs.
 use crate::{Result, files, git, readers};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::{
     fs,
+    ops::Range,
     path::{Path, PathBuf},
     time::Duration,
 };
 
 pub const SIDECAR: &str = ".laci.md";
 const TEMPLATE: &str = "---\n---\n\n## Next\n\n## Notes\n";
+const CRLF: &str = "\r\n";
 
+/// The line ending most of a file's lines use. CRLF has to have more of them than LF; a file with no lines, or
+/// with as many of each, counts as LF.
+fn ending(text: &str) -> &'static str {
+    let crlf = text.matches(CRLF).count();
+    if crlf > text.matches('\n').count() - crlf { CRLF } else { "\n" }
+}
 fn split(text: &str) -> (Vec<String>, String) {
-    let re = Regex::new(r"\A---\n([\s\S]*?)\n?---\n?").expect("valid frontmatter regex");
+    let re = Regex::new(r"\A---\r?\n([\s\S]*?)(?:\r?\n)?---(?:\r?\n)?").expect("valid frontmatter regex");
     if let Some(c) = re.captures(text) {
         (c[1].lines().map(str::to_owned).collect(), text[c.get(0).unwrap().end()..].into())
     } else {
         (vec![], text.into())
     }
 }
-fn join(fm: Vec<String>, body: &str) -> String {
-    let fields = fm.into_iter().filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join("\n");
-    format!(
-        "---\n{}---\n{}{}",
-        if fields.is_empty() { String::new() } else { format!("{fields}\n") },
-        if body.starts_with('\n') { "" } else { "\n" },
-        body
-    )
+fn join(fm: Vec<String>, body: &str, eol: &str) -> String {
+    let fields = fm.into_iter().filter(|s| !s.trim().is_empty()).map(|s| format!("{s}{eol}")).collect::<String>();
+    let blank = if body.starts_with('\n') || body.starts_with(CRLF) { "" } else { eol };
+    format!("---{eol}{fields}---{eol}{blank}{body}")
+}
+/// A line without the `\r` that splitting at `\n` leaves on a CRLF line.
+fn bare(line: &str) -> &str {
+    line.strip_suffix('\r').unwrap_or(line)
 }
 fn section(lines: &[String], name: &str) -> Option<(usize, usize)> {
     let start = lines.iter().position(|l| l.strip_prefix("##").is_some_and(|s| s.trim().eq_ignore_ascii_case(name)))?;
     let end = (start + 1..lines.len())
-        .find(|&i| Regex::new(r"^#{1,2}\s").unwrap().is_match(&lines[i]))
+        .find(|&i| Regex::new(r"^#{1,2}\s").unwrap().is_match(bare(&lines[i])))
         .unwrap_or(lines.len());
     Some((start, end))
+}
+/// Replaces `lines[range]` with `new` lines that end the way the file's lines do. The last line of a file has no
+/// newline after it: a line added behind it ends it, and the new last line stays open.
+fn splice_lines(lines: &mut Vec<String>, range: Range<usize>, new: Vec<String>, eol: &str) {
+    let (start, end) = (range.start, range.start + new.len());
+    let behind = start > 0 && start == lines.len();
+    lines.splice(range, new);
+    if eol == CRLF && end > start {
+        let last = lines.len() - 1;
+        for line in &mut lines[start - usize::from(behind)..end.min(last)] {
+            line.push('\r');
+        }
+    }
 }
 /// Reject linked files and linked ancestor directories before writing notes or task files.
 pub(crate) fn plain_path(path: &Path) -> Result<()> {
@@ -44,14 +66,15 @@ pub(crate) fn plain_path(path: &Path) -> Result<()> {
     }
     Ok(())
 }
-fn edit(dir: &Path, transform: impl FnOnce(&str) -> String) -> Result<()> {
+/// Hands `transform` the file's text and the line ending its new lines get.
+fn edit(dir: &Path, transform: impl FnOnce(&str, &str) -> String) -> Result<()> {
     let path = dir.join(SIDECAR);
     plain_path(&path)?;
     if !dir.is_dir() {
         return Err("Project folder is gone".into());
     }
     let before = if path.exists() { fs::read_to_string(&path).map_err(|e| e.to_string())? } else { TEMPLATE.into() };
-    files::replace(&path, transform(&before).as_bytes())?;
+    files::replace(&path, transform(&before, ending(&before)).as_bytes())?;
     ensure_excluded(dir)
 }
 pub(crate) fn exclude_file(dir: &Path) -> Option<PathBuf> {
@@ -71,9 +94,10 @@ pub fn ensure_excluded(dir: &Path) -> Result<()> {
     if before.lines().any(|s| s.trim() == SIDECAR) {
         return Ok(());
     }
+    let eol = ending(&before);
     files::replace(
         &path,
-        format!("{before}{}{SIDECAR}\n", if !before.is_empty() && !before.ends_with('\n') { "\n" } else { "" })
+        format!("{before}{}{SIDECAR}{eol}", if !before.is_empty() && !before.ends_with('\n') { eol } else { "" })
             .as_bytes(),
     )
 }
@@ -97,7 +121,7 @@ pub fn set_meta(dir: &Path, key: &str, value: &str) -> Result<()> {
     if !valid {
         return Err("Unknown field or invalid value".into());
     }
-    edit(dir, |text| {
+    edit(dir, |text, eol| {
         let (mut fm, body) = split(text);
         let i = fm.iter().position(|s| s.starts_with(&format!("{key}:")));
         if value.is_empty() {
@@ -109,7 +133,7 @@ pub fn set_meta(dir: &Path, key: &str, value: &str) -> Result<()> {
         } else {
             fm.push(format!("{key}: {value}"));
         }
-        join(fm, &body)
+        join(fm, &body, eol)
     })
 }
 pub fn add_next(dir: &Path, text: &str) -> Result<()> {
@@ -121,43 +145,45 @@ pub(crate) fn add_next_checked(dir: &Path, text: &str, done: bool) -> Result<Che
         return Err("Write a next step".into());
     }
     let mut line = 0;
-    edit(dir, |text| {
+    edit(dir, |text, eol| {
         let (fm, body) = split(text);
         let mut lines = body.split('\n').map(str::to_owned).collect::<Vec<_>>();
         if section(&lines, "Next").is_none() {
-            lines.splice(0..0, ["".into(), "## Next".into(), "".into()]);
+            splice_lines(&mut lines, 0..0, vec!["".into(), "## Next".into(), "".into()], eol);
         }
         let (start, mut at) = section(&lines, "Next").unwrap();
         while at > start + 1 && lines[at - 1].trim().is_empty() {
             at -= 1;
         }
-        lines.insert(at, format!("- [{}] {item}", if done { "x" } else { " " }));
+        splice_lines(&mut lines, at..at, vec![format!("- [{}] {item}", if done { "x" } else { " " })], eol);
         let body = lines.join("\n");
-        let changed = join(fm, &body);
+        let changed = join(fm, &body, eol);
         line = changed[..changed.len() - body.len()].bytes().filter(|b| *b == b'\n').count() + at + 1;
         changed
     })?;
     checkbox(&dir.join(SIDECAR), line, &readers::strip_md(&item))
 }
 pub fn set_notes(dir: &Path, text: &str) -> Result<()> {
-    edit(dir, |src| {
+    edit(dir, |src, eol| {
         let (fm, body) = split(src);
         let mut lines = body.split('\n').map(str::to_owned).collect::<Vec<_>>();
-        let content = if text.trim().is_empty() {
+        // Notes that come with CRLF would end their lines twice in a file that is CRLF itself.
+        let notes = if eol == CRLF { text.replace(CRLF, "\n") } else { text.to_owned() };
+        let content = if notes.trim().is_empty() {
             vec![String::new()]
         } else {
             let mut v = vec![String::new()];
-            v.extend(text.trim_end().split('\n').map(str::to_owned));
+            v.extend(notes.trim_end().split('\n').map(str::to_owned));
             v.push(String::new());
             v
         };
         if let Some((start, end)) = section(&lines, "Notes") {
-            lines.splice(start + 1..end, content);
+            splice_lines(&mut lines, start + 1..end, content, eol);
         } else {
-            lines.push("## Notes".into());
-            lines.extend(content);
+            let end = lines.len();
+            splice_lines(&mut lines, end..end, ["## Notes".into()].into_iter().chain(content).collect(), eol);
         }
-        join(fm, &lines.join("\n"))
+        join(fm, &lines.join("\n"), eol)
     })
 }
 fn locate(lines: &[&str], line: usize, text: &str, re: &Regex) -> Result<usize> {
@@ -292,7 +318,8 @@ pub fn toggle_check(file: &Path, line: usize, text: &str, done: bool) -> Result<
     lines[at] = &changed;
     files::replace(file, lines.join("\n").as_bytes())
 }
-/// Rewrites a checkbox's text and keeps its mark and indentation. Returns the text it replaced, as written.
+/// Rewrites a checkbox's text and keeps its mark, indentation and line ending. Returns the text it replaced, as
+/// written, without the line ending.
 pub(crate) fn edit_check(file: &Path, line: usize, text: &str, to: &str) -> Result<String> {
     if to.trim().is_empty() || to.contains(['\n', '\r']) {
         return Err("Write the new text on one line".into());
@@ -303,8 +330,10 @@ pub(crate) fn edit_check(file: &Path, line: usize, text: &str, to: &str) -> Resu
     let re = Regex::new(r"^(\s*[-*+]\s+\[)([ xX])(\]\s+)(.+)$").unwrap();
     let at = locate(&lines, line, text, &re)?;
     let c = re.captures(lines[at]).unwrap();
-    let before = c[4].to_owned();
-    let changed = format!("{}{}{}{}", &c[1], &c[2], &c[3], to.trim());
+    // The `\r` of a CRLF line is part of the text the pattern captured.
+    let (before, cr) = c[4].strip_suffix('\r').map_or((&c[4], ""), |before| (before, "\r"));
+    let before = before.to_owned();
+    let changed = format!("{}{}{}{}{cr}", &c[1], &c[2], &c[3], to.trim());
     lines[at] = &changed;
     files::replace(file, lines.join("\n").as_bytes())?;
     Ok(before)
@@ -327,4 +356,55 @@ pub(crate) fn delete_check_with_context(file: &Path, line: usize, text: &str) ->
     let context = RemovedCheckbox { raw: src[offset..end].to_owned(), offset, after_hash: fingerprint(&remaining) };
     files::replace(file, remaining.as_bytes())?;
     Ok(context)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_line_ending_is_the_one_most_lines_use() {
+        for (text, eol) in [
+            ("", "\n"),
+            ("one line", "\n"),
+            ("a\nb\n", "\n"),
+            ("a\r\nb\r\n", CRLF),
+            ("a\r\nb\r\nc\n", CRLF),
+            ("a\nb\nc\r\n", "\n"),
+            ("a\r\nb\n", "\n"),
+        ] {
+            assert_eq!(ending(text), eol, "{text:?}");
+        }
+    }
+    #[test]
+    fn frontmatter_ends_at_its_closing_line_whichever_way_lines_end() {
+        for eol in ["\n", CRLF] {
+            let (fm, body) = split(&format!("---{eol}status: active{eol}client: Acme{eol}---{eol}{eol}## Next{eol}"));
+            assert_eq!(fm, ["status: active", "client: Acme"]);
+            assert_eq!(body, format!("{eol}## Next{eol}"));
+            assert_eq!(
+                join(fm, &body, eol),
+                format!("---{eol}status: active{eol}client: Acme{eol}---{eol}{eol}## Next{eol}")
+            );
+        }
+    }
+    #[test]
+    fn lines_spliced_in_end_the_way_the_file_does_and_a_new_last_line_stays_open() {
+        for (before, range, new, after) in [
+            ("a\nb\n", 1..1, vec!["x"], "a\nx\nb\n"),
+            ("a\nb\nc\n", 1..3, vec!["x", "y"], "a\nx\ny\n"),
+            // The file's last line has no newline, and gets one.
+            ("a\nb", 2..2, vec!["c"], "a\nb\nc"),
+            // The empty piece after the last newline becomes a blank line.
+            ("a\nb\n", 3..3, vec!["c"], "a\nb\n\nc"),
+            // The new pieces take the place of the last one, which stays open.
+            ("a\nb\nc\n", 1..4, vec!["x", ""], "a\nx\n"),
+        ] {
+            for eol in ["\n", CRLF] {
+                let mut lines = before.replace('\n', eol).split('\n').map(str::to_owned).collect::<Vec<_>>();
+                splice_lines(&mut lines, range.clone(), new.iter().map(|line| line.to_string()).collect(), eol);
+                assert_eq!(lines.join("\n"), after.replace('\n', eol), "{before:?} {range:?} {eol:?}");
+            }
+        }
+    }
 }

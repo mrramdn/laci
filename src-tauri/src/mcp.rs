@@ -235,7 +235,12 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             out["warnings"] = s["warnings"].clone();
             Ok(out)
         }
-        "tidy_suggestions" => Ok(service.snapshot()?["proposals"].clone()),
+        "tidy_suggestions" => {
+            let s = service.snapshot()?;
+            // Read in place: the proposals of a busy home are hundreds of KB, and a page keeps a few KB of them.
+            let suggestions = s["proposals"].as_array().into_iter().flatten().map(suggestion).collect();
+            Ok(Page::of(args, 30).answer("suggestions", suggestions))
+        }
         "recent_changes" => {
             let log = service.request_as("log", &json!({}), "agent")?;
             let under = match args["project"].as_str().filter(|p| !p.is_empty()) {
@@ -613,6 +618,43 @@ fn change(e: &Value) -> Value {
         }
     }
     out
+}
+/// A Tidy suggestion as an agent reads it in the list: what it is, why it is offered and its first operations. The
+/// rest of the operations, the action and the review token (a move and a hash for every history file of a group)
+/// are in the preview that apply_suggestion gives, which is also where the exact paths are checked.
+fn suggestion(p: &Value) -> Value {
+    // Two operations keep a page of 30 inside the size budget, even when every suggestion is a long group.
+    const SHOWN: usize = 2;
+    let mut out = json!({});
+    for key in ["id", "category", "title", "confidence", "nodeId"] {
+        if !p[key].is_null() {
+            out[key] = p[key].clone();
+        }
+    }
+    if let Some(why) = p["why"].as_str() {
+        out["why"] = json!(clip(why, 300));
+    }
+    if p["blocked"] == true {
+        out["blocked"] = json!(true);
+    }
+    // A group of orphan history files has one operation per file; the rest of a long list is only counted.
+    let ops = p["ops"].as_array().map(Vec::as_slice).unwrap_or_default();
+    out["ops"] = json!(ops.iter().take(SHOWN).map(operation).collect::<Vec<_>>());
+    if ops.len() > SHOWN {
+        out["moreOps"] = json!(ops.len() - SHOWN);
+    }
+    out
+}
+/// One operation of a suggestion, with any text over 300 characters cut: a half-done move names every old path of a
+/// session folder in one `from`.
+fn operation(op: &Value) -> Value {
+    let mut op = op.clone();
+    for value in op.as_object_mut().into_iter().flat_map(|fields| fields.values_mut()) {
+        if let Some(text) = value.as_str() {
+            *value = json!(clip(text, 300));
+        }
+    }
+    op
 }
 /// An agent session or item, as project_details lists it: enough to tell it apart and resume it, without its
 /// prompts and replies. One with no title keeps the start of its first prompt.
@@ -999,7 +1041,12 @@ fn tools() -> Vec<Tool> {
                 "note":{"type":"string","maxLength":300}}),
             vec!["report", "item"],
         ),
-        ("tidy_suggestions", "Preview cleanup suggestions and their exact operations", json!({}), vec![]),
+        (
+            "tidy_suggestions",
+            "Cleanup suggestions, a page at a time: why each is offered and its first operations. apply_suggestion without confirm shows all the operations of one suggestion",
+            json!({"limit":limit(30, 100),"offset":offset}),
+            vec![],
+        ),
         (
             "set_project_fields",
             "Set status, priority or deadline in .laci.md",
@@ -1128,6 +1175,10 @@ mod tests {
             let error = validate_args("recent_changes", &bad).unwrap_err();
             assert!(error.starts_with("Invalid limit") || error.starts_with("Invalid offset"), "{bad}: {error}");
         }
+        assert!(validate_args("tidy_suggestions", &json!({"limit":100,"offset":0})).is_ok());
+        for bad in [json!({"limit":0}), json!({"limit":101}), json!({"offset":-1}), json!({"query":"orphan"})] {
+            assert!(validate_args("tidy_suggestions", &bad).is_err(), "{bad}");
+        }
         // The item number is a string, as open_items gives it: clients that keep to a subset of JSON Schema accept
         // one type per argument.
         assert!(validate_args("close_report_item", &json!({"report":"r","item":"2"})).is_ok());
@@ -1156,6 +1207,36 @@ mod tests {
     }
 
     #[test]
+    fn a_suggestion_is_listed_without_its_per_file_data() {
+        let op = |i: usize| {
+            json!({"kind":"move","label":"Quarantine (restorable)","from":format!("~/.codex/sessions/{i}.jsonl"),
+                "to":"~/.local/share/laci/orphans/codex"})
+        };
+        let group = json!({"id":"orphan:codex:/p/gone:abc","category":"orphan","title":"5 Codex sessions for deleted gone",
+            "why":"w".repeat(400),"confidence":"med","availability":"unavailable","blocked":true,"reason":"Not sure",
+            "ops":(0..5).map(op).collect::<Vec<_>>(),"action":{"type":"quarantine","moves":[{"from":"/a","to":"b"}]},
+            "recovery":{"default":"quarantine"},"validation":{"sources":[{"path":"/a","identity":"h".repeat(64)}]}});
+        let shown = suggestion(&group);
+        for gone in ["action", "recovery", "validation", "availability", "reason", "nodeId"] {
+            assert!(shown.get(gone).is_none(), "{gone}");
+        }
+        assert_eq!((shown["id"].clone(), shown["blocked"].clone()), (json!("orphan:codex:/p/gone:abc"), json!(true)));
+        assert_eq!(shown["why"].as_str().unwrap().chars().count(), 301, "300 characters and the ellipsis");
+        assert_eq!((shown["ops"].as_array().unwrap().len(), shown["moreOps"].clone()), (2, json!(3)));
+        assert_eq!(shown["ops"][1]["from"], "~/.codex/sessions/1.jsonl");
+        // A short list is all of it: nothing is counted, and a suggestion nothing blocks says nothing about it.
+        let reconnect =
+            suggestion(&json!({"id":"reconnect:x","category":"reconnect","nodeId":"/p","ops":[op(0), op(1)]}));
+        assert_eq!((reconnect["ops"].as_array().unwrap().len(), reconnect["nodeId"].clone()), (2, json!("/p")));
+        assert!(reconnect.get("moreOps").is_none() && reconnect.get("blocked").is_none());
+        // A half-done move names every old path of a folder in one `from`; the other paths stay whole.
+        let long = suggestion(&json!({"ops":[{"kind":"rewrite","from":"~/old/path, ".repeat(60),"to":"~/new"}]}));
+        assert_eq!(long["ops"][0]["from"].as_str().unwrap().chars().count(), 301);
+        assert_eq!(long["ops"][0]["to"], "~/new");
+        assert_eq!(suggestion(&json!({}))["ops"], json!([]));
+    }
+
+    #[test]
     fn a_page_says_whether_there_is_more() {
         let items: Vec<Value> = (0..5).map(|i| json!(i)).collect();
         let first = Page::of(&json!({"limit":2}), 30).answer("items", items.clone());
@@ -1169,9 +1250,119 @@ mod tests {
         assert_eq!((past["items"].clone(), past["more"].clone()), (json!([]), json!(false)));
     }
 
+    /// What Tidy up offers on a busy home, in the scan's order: 4 reconnects, one half-done move across 12 session
+    /// folders, space from 15 projects, 3 duplicates, 120 orphans (100 Claude folders, 3 of them blocked, and 20 groups
+    /// of 2 to 500 Codex sessions) and 8 archives. Each is shaped as the scan makes it, with a move and a hash for every
+    /// history file besides its operations.
+    fn busy_proposals(home: &Path) -> Vec<Value> {
+        let home = home.display().to_string();
+        let tilde = |path: &str| path.replacen(&home, "~", 1);
+        let project = |i: usize| format!("{home}/project/p{i}");
+        let hash = |i: usize| format!("{:064x}", (i as u128 + 1) * 0x9e37_79b9_7f4a_7c15);
+        let quarantine = |id: String, title: String, why: String, kind: &str, files: &[String]| {
+            let to = format!("~/.local/share/laci/orphans/{kind}");
+            json!({"id":id,"category":"orphan","title":title,"why":why,"confidence":"med",
+                "ops":files.iter().map(|f| json!({"kind":"move","label":"Quarantine (restorable)","from":tilde(f),"to":to})).collect::<Vec<_>>(),
+                "action":{"type":"quarantine","moves":files.iter().map(|f| json!({"from":f,"to":format!("{kind}/{}", f.rsplit('/').next().unwrap_or(f))})).collect::<Vec<_>>()},
+                "recovery":{"default":"quarantine","choices":["quarantine","trash"],
+                    "quarantine":"Laci Undo restores these exact history paths.",
+                    "trash":"Restore these history paths through system Trash; Laci Undo is unavailable."},
+                "availability":"missing",
+                "validation":{"projects":[format!("{home}/project/gone")],"roots":[{"path":format!("{home}/project"),"online":true}],
+                    "sources":files.iter().enumerate().map(|(i, f)| json!({"path":f,"identity":hash(i)})).collect::<Vec<_>>()}})
+        };
+        let mut out = Vec::new();
+        for i in 0..2 {
+            let (old, new) = (format!("{home}/project/old{i}"), format!("{home}/project/_archive/p{i}"));
+            out.push(json!({"id":format!("reconnect:-home-me-project-old{i}"),"category":"reconnect","confidence":"high",
+                "title":format!("Reconnect 4 sessions + 1 memory file to p{i}"),"nodeId":new,
+                "why":"The folder was moved into _archive, but its agent history stayed at the old address. Claude cannot find these at the new address.",
+                "ops":[{"kind":"rename","label":"Move Claude sessions + memory","from":tilde(&old),"to":tilde(&new),"detail":"4 sessions · 1 memory file · 3.2 MB"},
+                    {"kind":"rewrite","label":"Rewrite cwd in Claude logs","detail":format!("40 lines → {}", tilde(&new))}],
+                "action":{"type":"reconnect-claude","dir":format!("{home}/.claude/projects/old{i}"),"pairs":[[old,new]]}}));
+            // Codex sessions that still name the old folder: one rewrite, and every file in the action.
+            let files: Vec<String> =
+                (0..150).map(|k| format!("{home}/.codex/sessions/2026/09/rollout-{i}-{k:04}.jsonl")).collect();
+            out.push(json!({"id":format!("orphan:codex:{old}"),"category":"reconnect","confidence":"high",
+                "title":format!("Reconnect 150 Codex sessions to p{i}"),"nodeId":new,
+                "why":format!("p{i} used to live at {}: its Claude logs still say so. These sessions stayed at the old address.", tilde(&old)),
+                "ops":[{"kind":"rewrite","label":"Rewrite paths in Codex logs","from":tilde(&old),"to":tilde(&new),"detail":"3000 lines in 150 files"}],
+                "action":{"type":"rewrite-logs","field":"payload.cwd","files":files,"pairs":[[old,new]]}}));
+        }
+        let stale = |i: usize| {
+            (0..14).map(|k| format!("~/project/old/p{i}/packages/module-{k}")).collect::<Vec<_>>().join(", ")
+        };
+        out.push(json!({"id":"migration:stale-cwd","category":"migration","confidence":"high","title":"Finish 12 half-done moves",
+            "why":"These session folders were renamed after a move, but their logs still record the old path. Search, stats and the next move would get it wrong.",
+            "ops":(0..12).map(|i| json!({"kind":"rewrite","label":tilde(&project(i)),"from":stale(i),"to":tilde(&project(i)),"detail":"31 lines"})).collect::<Vec<_>>(),
+            "action":{"type":"rewrite-claude","items":(0..12).map(|i| json!({"dir":format!("{home}/.claude/projects/p{i}"),"pairs":[[stale(i),project(i)]]})).collect::<Vec<_>>()}}));
+        out.push(json!({"id":"space:inactive","category":"space","confidence":"high","title":"Free 6.6 GB from 15 inactive projects",
+            "why":"Dependencies and build output in archived or dormant projects. They are deleted for good; a fresh install or build brings them back.",
+            "ops":(0..15).map(|i| json!({"kind":"delete","label":format!("p{i}"),"detail":"440 MB · node_modules, target, dist"})).collect::<Vec<_>>(),
+            "action":{"type":"clear","paths":(0..15).flat_map(|i| ["node_modules", "target", "dist"].map(|part| format!("{}/{part}", project(i)))).collect::<Vec<_>>()}}));
+        for i in 0..3 {
+            let copies = [project(i), format!("{home}/project/copies/p{i}"), format!("{home}/Downloads/p{i}")];
+            let shown: Vec<String> = copies.iter().map(|c| tilde(c)).collect();
+            out.push(json!({"id":format!("dup:{}",hash(i)),"category":"duplicate","confidence":"med",
+                "title":format!("p{i} exists in 3 places"),
+                "why":format!("{} share their first commit. One is probably a stale copy.", shown.join(" and ")),
+                "ops":shown.iter().map(|c| json!({"kind":"keep","label":c,"detail":"last commit 2026-09-01 · 120 commits"})).collect::<Vec<_>>()}));
+        }
+        for i in 0..100 {
+            let name = format!("-home-me-project-gone{i}");
+            let dir = format!("{home}/.claude/projects/{name}");
+            let title = "3 sessions + 2 memory files for a folder that is gone".to_owned();
+            let why = format!("Nothing on disk matches {name}. Last used 2026-09-12.");
+            let mut orphan = quarantine(format!("orphan:{name}:{}", hash(i)), title, why, "claude", &[dir]);
+            // A folder whose history Laci couldn't read in full: the scan keeps its operations but won't act on them.
+            if i % 40 == 7 {
+                let reason = "Laci couldn't read all of this history, so it won't clean it up";
+                orphan["id"] = json!(format!("orphan:{name}"));
+                orphan["title"] = json!("Detached history needs a location check");
+                orphan["why"] = json!(reason);
+                orphan["availability"] = json!("unavailable");
+                orphan["blocked"] = json!(true);
+                orphan["reason"] = json!(reason);
+                orphan.as_object_mut().unwrap().remove("validation");
+            }
+            out.push(orphan);
+        }
+        for i in 0..20 {
+            // 2, 5, 12 and 40 Codex sessions in turn, and 500 in one group.
+            let count = if i == 11 { 500 } else { [2, 5, 12, 40][i % 4] };
+            let gone = format!("{home}/project/deleted-{i}");
+            let files: Vec<String> = (0..count)
+                .map(|k| {
+                    let day = 1 + k % 28;
+                    format!(
+                        "{home}/.codex/sessions/2026/09/{day:02}/rollout-2026-09-{day:02}T10-11-12-{i:04}{k:08}-aaaa-bbbb-cccc-dddddddddddd.jsonl"
+                    )
+                })
+                .collect();
+            let id = format!("orphan:codex:{gone}:{}", hash(1000 + i));
+            let title = format!("{count} Codex sessions for deleted deleted-{i}");
+            let why = format!("{} no longer exists. Last used 2026-09-12.", tilde(&gone));
+            out.push(quarantine(id, title, why, "codex", &files));
+        }
+        for i in 0..8 {
+            let (from, to) = (tilde(&project(i)), format!("~/project/_archive/p{i}"));
+            out.push(json!({"id":format!("archive:{}",project(i)),"category":"status","confidence":"med",
+                "title":format!("Archive p{i}?"),"nodeId":project(i),
+                "why":"No commits, file changes or agent sessions for 150 days.",
+                "ops":[{"kind":"move","label":"Move folder","from":from,"to":to},
+                    {"kind":"rename","label":"Move Claude sessions + memory","from":from,"to":to,"detail":"64 sessions · 2 memory files · 8.1 MB"},
+                    {"kind":"rewrite","label":"Rewrite cwd in Claude logs","detail":format!("120 lines → {to}")},
+                    {"kind":"keep","label":"Travels with the folder","detail":".laci.md, CLAUDE.md, AGENTS.md"},
+                    {"kind":"write","label":"Set status: archived","to":format!("{to}/.laci.md")},
+                    {"kind":"write","label":"Write undo journal","to":"~/.local/share/laci/journal/"}],
+                "action":{"type":"archive","nodeId":project(i)}}));
+        }
+        out
+    }
+
     /// A home about twice as busy as a real one: 60 projects with 20 to-dos each, one with a 60 KB README, 64
     /// conversations, 30 newer subagent logs and 20 Codex sessions, ten projects whose only check is muted, 22 session
-    /// reports, and 300 Log entries that each keep 18 KB of previous notes.
+    /// reports, 300 Log entries that each keep 18 KB of previous notes, and 137 Tidy up suggestions.
     fn busy_home() -> (tempfile::TempDir, Service, String) {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().to_path_buf();
@@ -1255,7 +1446,7 @@ mod tests {
             "sessions":logs,"subagentLogs":30,"gone":["x".repeat(1000)],"cwds":["y".repeat(1000)]}),
         );
         let snapshot = json!({"nodes":nodes,"sessions":logs,"claude":claude,"items":items,
-            "reports":reports,"reportsDir":{"path":format!("{}/notes", home.display()),"total":22},"proposals":[],
+            "reports":reports,"reportsDir":{"path":format!("{}/notes", home.display()),"total":22},"proposals":busy_proposals(&home),
             "warnings":[{"code":"claude-cleanup","severity":"high","title":"Claude Code deletes session logs after 30 days"}]});
         let mut service = Service::new(env);
         service.current = Some(snapshot);
@@ -1279,6 +1470,10 @@ mod tests {
             let size = serde_json::to_string(&answer).unwrap().len();
             assert!(size < 25_000, "{name} {args}: {size} characters");
         }
+        // As the scan makes them, the suggestions are far over the budget: a group of history files has a move and a
+        // hash for each file. The list keeps two operations of each; apply_suggestion has the rest.
+        let unpaged = serde_json::to_string(&service.current.as_ref().unwrap()["proposals"]).unwrap().len();
+        assert!(unpaged > 500_000, "{unpaged} characters before paging");
         let changes = call(&mut service, "recent_changes", &json!({"limit":100})).unwrap();
         assert!(!serde_json::to_string(&changes).unwrap().contains("nnnnnnnn"), "no undo data in the Log answer");
         let details = call(&mut service, "project_details", &json!({"project":big})).unwrap();
@@ -1347,5 +1542,77 @@ mod tests {
         let reports = call(&mut service, "list_reports", &json!({"limit":5,"offset":20})).unwrap();
         assert_eq!((reports["reports"].as_array().unwrap().len(), reports["total"].clone()), (2, json!(22)));
         assert_eq!(reports["more"], false);
+        // Tidy up: every suggestion once, in the scan's order, 30 to a page, and each page small enough to read.
+        let offered = array(&service.current.as_ref().unwrap()["proposals"]);
+        let mut listed = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = call(&mut service, "tidy_suggestions", &json!({"offset":offset})).unwrap();
+            let size = serde_json::to_string(&page).unwrap().len();
+            assert!(size < 25_000, "tidy_suggestions at {offset}: {size} characters");
+            assert_eq!((page["total"].clone(), page["offset"].clone()), (json!(offered.len()), json!(offset)));
+            listed.extend(array(&page["suggestions"]));
+            if page["more"] != true {
+                break;
+            }
+            offset += 30;
+        }
+        let ids = |list: &[Value]| list.iter().map(|p| string(p, "id").to_owned()).collect::<Vec<_>>();
+        assert_eq!(ids(&listed), ids(&offered));
+        for entry in &listed {
+            for gone in ["action", "validation", "recovery", "availability", "reason"] {
+                assert!(entry.get(gone).is_none(), "{gone}");
+            }
+            assert!(entry["ops"].as_array().unwrap().len() <= 2, "{}", entry["id"]);
+        }
+        // A group of 500 history files lists two and counts the rest, while a reconnect keeps both of its own.
+        let group = listed.iter().find(|e| string(e, "title").starts_with("500 Codex")).unwrap();
+        assert_eq!((group["ops"].as_array().unwrap().len(), group["moreOps"].clone()), (2, json!(498)));
+        assert_eq!(group["ops"][0]["kind"], "move");
+        let reconnect = listed.iter().find(|e| string(e, "title").starts_with("Reconnect 4 sessions")).unwrap();
+        assert!(reconnect["ops"].as_array().unwrap().len() == 2 && reconnect.get("moreOps").is_none());
+        assert_eq!(reconnect["nodeId"], offered[0]["nodeId"]);
+        // The scan's operations are kept for the three it won't act on, and they say so.
+        let blocked: Vec<_> = listed.iter().filter(|e| e["blocked"] == true).collect();
+        assert_eq!(blocked.len(), 3);
+        assert!(
+            blocked.iter().all(|e| string(e, "why").contains("won't clean it up") && e["ops"][0]["from"].is_string())
+        );
+        // A half-done move keeps its folders as operations and cuts the old paths that one of them lists.
+        let migration = listed.iter().find(|e| e["id"] == "migration:stale-cwd").unwrap();
+        assert_eq!((migration["ops"].as_array().unwrap().len(), migration["moreOps"].clone()), (2, json!(10)));
+        assert_eq!(migration["ops"][0]["from"].as_str().unwrap().chars().count(), 301);
+        let past = call(&mut service, "tidy_suggestions", &json!({"offset":offered.len() + 40})).unwrap();
+        assert_eq!(
+            (past["suggestions"].clone(), past["total"].clone(), past["more"].clone()),
+            (json!([]), json!(offered.len()), json!(false))
+        );
+        let end = call(&mut service, "tidy_suggestions", &json!({"limit":5,"offset":offered.len() - 3})).unwrap();
+        assert_eq!((end["suggestions"].as_array().unwrap().len(), end["more"].clone()), (3, json!(false)));
+        let most = call(&mut service, "tidy_suggestions", &json!({"limit":100})).unwrap();
+        assert_eq!((most["suggestions"].as_array().unwrap().len(), most["more"].clone()), (100, json!(true)));
+    }
+
+    #[test]
+    fn a_full_page_of_long_groups_still_fits_an_agent() {
+        let (_dir, mut service, _) = busy_home();
+        // Thirty copies of the longest group of the busy home: 500 history files each.
+        let group = array(&service.current.as_ref().unwrap()["proposals"])
+            .into_iter()
+            .max_by_key(|p| array(&p["ops"]).len())
+            .unwrap();
+        assert_eq!(array(&group["ops"]).len(), 500);
+        let groups: Vec<Value> = (0..30)
+            .map(|i| {
+                let mut copy = group.clone();
+                copy["id"] = json!(format!("{}-{i}", string(&group, "id")));
+                copy
+            })
+            .collect();
+        service.current.as_mut().unwrap()["proposals"] = json!(groups);
+        let page = call(&mut service, "tidy_suggestions", &json!({})).unwrap();
+        let size = serde_json::to_string(&page).unwrap().len();
+        assert!(size < 25_000, "{size} characters");
+        assert_eq!((page["suggestions"].as_array().unwrap().len(), page["more"].clone()), (30, json!(false)));
     }
 }

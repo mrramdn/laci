@@ -300,7 +300,7 @@ Then ask your agent things like *"which projects could lose work?"*, *"archive d
 
 Projects in lists and in answers to changes are short: status, priority, deadline, checks and to-dos. `project_details` has the stack, the start of the README, the newest sessions and the archive plan.
 
-Lists answer a page at a time: `list_projects`, `needs_attention` and `recent_changes` 30 entries, `open_items` 50 and `list_reports` 10. `limit` sets the size of a page; when an answer says `more`, call again with `offset`.
+Lists answer a page at a time: `list_projects`, `needs_attention`, `recent_changes` and `tidy_suggestions` 30 entries, `open_items` 50 and `list_reports` 10. `limit` sets the size of a page; when an answer says `more`, call again with `offset`.
 
 The server also offers two prompts, which the desktop app uses for its buttons. In Claude Code, they are slash commands such as `/mcp__laci__review`.
 

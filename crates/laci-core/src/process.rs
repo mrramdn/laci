@@ -184,7 +184,8 @@ pub(crate) fn run_env(
     }
 }
 
-#[cfg(test)]
+// AppImage is Linux's, and these paths and lists are written as Unix writes them.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;

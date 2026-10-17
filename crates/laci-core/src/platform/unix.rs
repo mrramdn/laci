@@ -1,5 +1,5 @@
 //! What Linux and macOS share: the home folder from HOME, files told apart by device and inode, the `flock` change
-//! lock, renames that never replace, and the programs Laci starts and stops.
+//! lock, renames that never replace, links copied as links, and the programs Laci finds, starts and stops.
 use super::{Identity, Stamp};
 use crate::Result;
 use rustix::{
@@ -7,9 +7,13 @@ use rustix::{
     process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid},
 };
 use std::{
+    ffi::OsStr,
     fs::{self, File, Metadata, OpenOptions},
     io::{self, Read, Write},
-    os::unix::{fs::MetadataExt, process::CommandExt},
+    os::unix::{
+        fs::{MetadataExt, PermissionsExt},
+        process::CommandExt,
+    },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus},
     thread,
@@ -20,8 +24,11 @@ pub fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
+/// Laci v1's names for the device and the inode.
+pub const IDENTITY_FIELDS: [&str; 2] = ["device", "inode"];
+
 pub fn identity(_path: &Path, meta: &Metadata) -> Result<Identity> {
-    Ok(Identity { volume: meta.dev(), file: meta.ino() })
+    Ok(Identity { volume: meta.dev(), file: meta.ino().into() })
 }
 pub fn change_stamp(_path: &Path, meta: &Metadata) -> Result<Stamp> {
     Ok(stamp(meta))
@@ -31,7 +38,7 @@ pub fn file_change_stamp(_file: &File, meta: &Metadata) -> Result<Stamp> {
 }
 fn stamp(meta: &Metadata) -> Stamp {
     Stamp {
-        identity: Identity { volume: meta.dev(), file: meta.ino() },
+        identity: Identity { volume: meta.dev(), file: meta.ino().into() },
         modified: (meta.mtime(), meta.mtime_nsec()),
         changed: (meta.ctime(), meta.ctime_nsec()),
     }
@@ -121,6 +128,16 @@ pub fn preserve(meta: &Metadata, dest: &Path) -> Result<()> {
     file.set_times(times).map_err(|e| e.to_string())
 }
 
+pub fn copy_link(src: &Path, dest: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(fs::read_link(src).map_err(|e| e.to_string())?, dest).map_err(|e| e.to_string())
+}
+
+pub fn which(program: &str, path: &OsStr) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .map(|p| p.join(program))
+        .find(|p| p.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
+}
+
 pub fn exited(child: &mut Child) -> Result<bool> {
     let options = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
     Ok(waitid(WaitId::Pid(Pid::from_child(child)), options).map_err(|e| e.to_string())?.is_some())
@@ -139,7 +156,7 @@ impl Group {
     pub fn exited(&mut self) -> Result<bool> {
         exited(&mut self.child)
     }
-    pub fn stop(&self) {
+    pub fn stop(&mut self) {
         let _ = kill_process_group(self.leader, Signal::TERM);
         thread::sleep(Duration::from_millis(150));
         let _ = kill_process_group(self.leader, Signal::KILL);

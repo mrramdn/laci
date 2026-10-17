@@ -44,9 +44,11 @@ fn journal_path(env: &Env, entry: &Value, key: &str) -> Result<PathBuf> {
     if checked.is_err()
         && key == "from"
         && entry["kind"] == "move"
-        && let (Some(device), Some(inode)) = (entry["parentDevice"].as_u64(), entry["parentInode"].as_u64())
+        && let (Some(volume), Some(file)) =
+            (entry["parentDevice"].as_u64(), platform::Identity::file_from_json(&entry["parentInode"]))
     {
-        return paths::restore_workspace_root(entry[key].as_str().ok_or("Missing source path")?, env, device, inode);
+        let parent = platform::Identity { volume, file };
+        return paths::restore_workspace_root(entry[key].as_str().ok_or("Missing source path")?, env, parent);
     }
     checked
 }
@@ -85,7 +87,7 @@ pub(crate) fn copy_template(src: &Path, dest: &Path) -> Result<()> {
 fn copy_tree_inner(src: &Path, dest: &Path, skip_git: bool) -> Result<()> {
     let meta = fs::symlink_metadata(src).map_err(|e| e.to_string())?;
     if meta.is_symlink() {
-        std::os::unix::fs::symlink(fs::read_link(src).map_err(|e| e.to_string())?, dest).map_err(|e| e.to_string())?;
+        platform::copy_link(src, dest)?;
     } else if meta.is_dir() {
         fs::create_dir(dest).map_err(|e| e.to_string())?;
         for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
@@ -237,7 +239,7 @@ impl<'a> Tx<'a> {
                 return Err("Can't move the mounted workspace root itself; select a project inside it".into());
             }
             entry["parentDevice"] = json!(id.volume);
-            entry["parentInode"] = json!(id.file);
+            entry["parentInode"] = id.file_json();
         }
         self.mkdirs(dest.parent().ok_or("Missing parent")?)?;
         self.log(entry)?;
@@ -1033,7 +1035,8 @@ pub fn backup_state(env: &Env) -> Option<Value> {
     Some(state)
 }
 
-#[cfg(test)]
+/// These read /proc and start the shell and `sleep`, so they run on Linux alone.
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use std::process::{Child, Command};

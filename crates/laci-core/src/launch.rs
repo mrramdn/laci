@@ -623,6 +623,8 @@ mod tests {
         assert_eq!(models[0]["id"], "model-a");
         assert_eq!(models[0]["efforts"], json!([]));
     }
+    // Linux's terminals, and `sh` to read the quoting back.
+    #[cfg(target_os = "linux")]
     #[test]
     fn terminal_transport_keeps_argv_and_shell_quoting_round_trips() {
         let home = tempfile::tempdir().unwrap();

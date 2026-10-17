@@ -87,9 +87,7 @@ impl Plan {
     }
 }
 fn available(program: &str) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::env::split_paths(&process::host_path())
-        .any(|p| p.join(program).metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
+    platform::which(program, &process::host_path()).is_some()
 }
 pub fn plan(env: &Env, r: &Value) -> Result<Plan> {
     let id = r["recipe"].as_str().unwrap_or("vite");

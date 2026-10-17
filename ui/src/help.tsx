@@ -1,8 +1,9 @@
 // Help, in both designs: a page in Simple (view "help") and a dialog in Detailed (modal "help"). The
 // same four parts: how Laci keeps work safe, the words it uses (the glossary in words.ts), the
-// keyboard shortcuts of this system (shortcuts.ts) and where to report a problem.
+// keyboard shortcuts of this system (shortcuts.ts; Detailed lists them as its Keyboard shortcuts
+// dialog does) and where to report a problem.
 import { useState } from "react";
-import { DialogFrame } from "./dialogs";
+import { DialogFrame, ShortcutGrid } from "./dialogs";
 import { Icon } from "./common";
 import { OS } from "./platform";
 import { chordText, shortcutsFor } from "./shortcuts";
@@ -116,7 +117,6 @@ export function HelpPage() {
 /** Detailed's Help: the same parts in a dialog, drawn with Detailed's own styles. */
 export function HelpDialog() {
   const close = () => useApp.setState({ modal: null });
-  const keys = shortcutsFor(OS, "detailed");
   return (
     <DialogFrame
       title={help.title}
@@ -137,14 +137,7 @@ export function HelpDialog() {
         ))}
       </ul>
       <div className="sec-t">{help.keysTitle}</div>
-      <div className="short-sec">
-        {keys.map((shortcut) => (
-          <div className="short-row" key={shortcut.id}>
-            <span>{shortcut.does}</span>
-            <Keys shortcut={shortcut} />
-          </div>
-        ))}
-      </div>
+      <ShortcutGrid />
       <div className="sec-t">{help.wordsTitle}</div>
       <p className="faint">{help.wordsIntro}</p>
       <dl className="kv">

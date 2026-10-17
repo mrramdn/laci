@@ -2,8 +2,9 @@ import { useEffect } from "react";
 import { api } from "./api";
 import { useApp, run, savePref } from "./store";
 import { parentOf } from "./helpers";
-import { isMac, MOD } from "./platform";
+import { isMac, OS } from "./platform";
 import { selectIsOpen } from "./select";
+import { chordsOf, chordText } from "./shortcuts";
 import { toggleTerminal } from "./terminal-api";
 /** The parts of a key press that the shortcuts look at. */
 type Press = Pick<
@@ -58,40 +59,8 @@ export const isParentFolderKey = (event: Press) =>
     !event.altKey &&
     !event.shiftKey &&
     event.key === "ArrowUp");
-const HIDDEN_FILES_KEYS = isMac ? ["⌘", "⇧", "."] : ["Ctrl", "H"];
 /** What the Display menu says beside "Hidden files": Ctrl H, or ⌘⇧. on macOS. */
-export const HIDDEN_FILES_HINT = HIDDEN_FILES_KEYS.join(isMac ? "" : " ");
-type Shortcut = readonly [label: string, keys: readonly string[]];
-/**
- * The window's shortcuts as this system writes them, for the list of shortcuts. The list comes from
- * here so that what it says and what the keys do stay together.
- */
-export const SHORTCUTS: readonly (readonly [
-  section: string,
-  rows: readonly Shortcut[],
-])[] = [
-  [
-    "Navigation",
-    [
-      ["Command palette", [MOD, "K"]],
-      ["Next / Prev row", ["↓", "↑"]],
-      ["Open / Select", ["↵"]],
-      ["Parent folder", isMac ? ["⌫", "⌘ ↑"] : ["⌫"]],
-      ["Next / Prev pane", ["F6", "Shift F6"]],
-      ["Close / Dismiss", ["Esc"]],
-    ],
-  ],
-  [
-    "Workspace",
-    [
-      // ⌘` moves between a Mac app's windows, so its list names Ctrl.
-      ["Toggle terminal", ["F4", isMac ? "⌃ `" : "Ctrl `"]],
-      ["Toggle hidden files", HIDDEN_FILES_KEYS],
-      ["Shortcuts help", ["?"]],
-      ...(isMac ? [["Settings", ["⌘", ","]] as Shortcut] : []),
-    ],
-  ],
-];
+export const HIDDEN_FILES_HINT = chordText(OS, chordsOf(OS, "hidden")[0]);
 /** Detailed's panes, in the order F6 visits them. */
 const PANES: [string, string][] = [
   ["sidebar", "#side"],
@@ -211,7 +180,8 @@ export function useGlobalHotkeys() {
         return;
       }
       if (target.closest(".xterm") || state.palette || state.modal) return;
-      if (isShortcutsKey(event) && !typing(target)) {
+      // Simple opens its Help page with these keys itself.
+      if (isShortcutsKey(event) && !typing(target) && state.design !== "simple") {
         event.preventDefault();
         useApp.setState({ modal: { kind: "shortcuts" } });
       }

@@ -8,8 +8,7 @@ import { LaciMark } from "../brand";
 import { useNow } from "../clock";
 import { Icon } from "../common";
 import { HelpPage } from "../help";
-import { namePanes } from "../hotkeys";
-import { isMod } from "../platform";
+import { isShortcutsKey, namePanes } from "../hotkeys";
 import { homeModel, navBadges } from "../selectors";
 import { rescan, setDesign, setTheme, useApp } from "../store";
 import type { Theme } from "../store";
@@ -106,7 +105,7 @@ function useSimpleKeys() {
         target.matches('input, textarea, select, [role="combobox"]') ||
         target.isContentEditable;
       if (typing) return;
-      if (event.key === "?" || (isMod(event) && event.key === "/")) {
+      if (isShortcutsKey(event)) {
         event.preventDefault();
         state.navigate("help");
       }

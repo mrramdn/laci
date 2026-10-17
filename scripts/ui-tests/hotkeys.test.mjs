@@ -390,62 +390,68 @@ export async function aDialogKeepsTheKeysItSwallows() {
 
 // ── The list of shortcuts ──────────────────────────────────────────────────────────────────────────
 
-/** The list the Shortcuts dialog showed before the keys knew the system. */
-const LISTED = [
-  [
-    "Navigation",
-    [
-      ["Command palette", ["Ctrl", "K"]],
-      ["Next / Prev row", ["↓", "↑"]],
-      ["Open / Select", ["↵"]],
-      ["Parent folder", ["⌫"]],
-      ["Next / Prev pane", ["F6", "Shift F6"]],
-      ["Close / Dismiss", ["Esc"]],
-    ],
-  ],
-  [
-    "Workspace",
-    [
-      ["Toggle terminal", ["F4", "Ctrl `"]],
-      ["Toggle hidden files", ["Ctrl", "H"]],
-      ["Shortcuts help", ["?"]],
-    ],
-  ],
-];
+const { SHORTCUTS, shortcutsFor } = load("shortcuts.ts");
 
-export async function theListOfShortcutsIsTheSameOnLinuxAndWindows() {
-  for (const os of ["linux", "windows"]) {
-    const { SHORTCUTS, HIDDEN_FILES_HINT } = page(os);
-    assert.deepEqual(JSON.parse(JSON.stringify(SHORTCUTS)), LISTED, os);
-    assert.equal(HIDDEN_FILES_HINT, "Ctrl H", os);
+/** A chord from ui/src/shortcuts.ts as the key press it stands for. */
+function pressOf(chord) {
+  const named = { "↑": "ArrowUp", "↓": "ArrowDown", Esc: "Escape", Return: "Enter" };
+  const codes = { ".": "Period", "`": "Backquote", "/": "Slash", ",": "Comma" };
+  const press = { key: "", code: "", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false };
+  for (const key of chord) {
+    if (key === "Ctrl" || key === "⌃") press.ctrlKey = true;
+    else if (key === "⌘") press.metaKey = true;
+    else if (key === "Shift" || key === "⇧") press.shiftKey = true;
+    else {
+      press.key = named[key] ?? (key.length === 1 ? key.toLowerCase() : key);
+      press.code = codes[key] ?? "";
+    }
+  }
+  return press;
+}
+
+/** For each row of the table, whether a press does what the row says. */
+const DOES = {
+  palette: (keys, press) => keys.isPaletteKey(press),
+  help: (keys, press) => keys.isShortcutsKey(press),
+  shortcuts: (keys, press) => keys.isShortcutsKey(press),
+  close: (_, press) => press.key === "Escape",
+  terminal: (keys, press) => keys.isTerminalKey(press),
+  settings: (keys, press) => keys.isSettingsKey(press),
+  panes: (_, press) => press.key === "F6" && !press.ctrlKey && !press.altKey,
+  rows: (_, press) => ["ArrowDown", "ArrowUp"].includes(press.key),
+  open: (_, press) => press.key === "Enter",
+  parent: (keys, press) => keys.isParentFolderKey(press),
+  hidden: (keys, press) => keys.isHiddenFilesKey(press),
+};
+
+export async function everyKeyTheListsNameDoesWhatTheySay() {
+  assert.deepEqual(
+    SHORTCUTS.map((row) => row.id).filter((id) => !DOES[id]),
+    [],
+    "a row without a check here",
+  );
+  for (const os of SYSTEMS) {
+    const keys = hotkeysOf(os);
+    for (const design of ["simple", "detailed"])
+      for (const { id, chords } of shortcutsFor(os, design))
+        for (const chord of chords)
+          assert.ok(DOES[id](keys, pressOf(chord)), `${os} ${design}: ${chord.join(" ")} for ${id}`);
   }
 }
 
-export async function theListOfShortcutsSaysCommandOnMac() {
-  const { SHORTCUTS, HIDDEN_FILES_HINT } = page("macos");
-  const rows = Object.fromEntries(SHORTCUTS.flatMap(([, list]) => list));
-  assert.deepEqual(rows["Command palette"], ["⌘", "K"]);
-  assert.deepEqual(rows["Parent folder"], ["⌫", "⌘ ↑"]);
-  assert.deepEqual(rows["Toggle hidden files"], ["⌘", "⇧", "."]);
-  assert.deepEqual(rows["Settings"], ["⌘", ","]);
-  // ⌘` is the Mac's own for the next window, so the list names the key that opens the terminal.
-  assert.deepEqual(rows["Toggle terminal"], ["F4", "⌃ `"]);
-  assert.equal(HIDDEN_FILES_HINT, "⌘⇧.");
-  // What the other rows say does not change, and the list gains only Settings.
-  const unchanged = SHORTCUTS.flatMap(([, list]) => list).filter(([label]) =>
-    [
-      "Next / Prev row",
-      "Open / Select",
-      "Next / Prev pane",
-      "Close / Dismiss",
-      "Shortcuts help",
-    ].includes(label),
-  );
-  assert.deepEqual(
-    unchanged,
-    LISTED.flatMap(([, list]) => list).filter(([label]) =>
-      unchanged.some(([name]) => name === label),
-    ),
-  );
-  assert.equal(SHORTCUTS.flatMap(([, list]) => list).length, 10);
+export async function theShortcutsKeyOpensTheListOnlyInDetailed() {
+  for (const os of SYSTEMS) {
+    const detailed = page(os);
+    detailed.press("?");
+    assert.deepEqual(detailed.state.modal, { kind: "shortcuts" }, os);
+    // Simple opens its Help page with the key itself (SimpleShell.tsx).
+    const simple = page(os, { design: "simple" });
+    simple.press("?");
+    assert.equal(simple.state.modal, null, os);
+  }
+}
+
+export async function theDisplayMenuNamesTheKeyForHiddenFiles() {
+  for (const os of ["linux", "windows"]) assert.equal(page(os).HIDDEN_FILES_HINT, "Ctrl H", os);
+  assert.equal(page("macos").HIDDEN_FILES_HINT, "⌘⇧.");
 }

@@ -230,11 +230,11 @@ export async function theShortcutsDialogListsTheKeysOfTheSystem() {
     ["Close / Dismiss", ["Esc"]],
     ["Toggle terminal", ["F4", "Ctrl `"]],
     ["Toggle hidden files", ["Ctrl", "H"]],
-    ["Shortcuts help", ["?"]],
+    ["Shortcuts help", ["?", "Ctrl /"]],
   ]);
   const mac = Object.fromEntries(rows("macos"));
   assert.deepEqual(mac["Command palette"], ["⌘", "K"]);
-  assert.deepEqual(mac["Parent folder"], ["⌫", "⌘ ↑"]);
+  assert.deepEqual(mac["Parent folder"], ["⌘", "↑"]);
   assert.deepEqual(mac["Toggle hidden files"], ["⌘", "⇧", "."]);
   assert.deepEqual(mac["Settings"], ["⌘", ","]);
 }

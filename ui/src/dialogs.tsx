@@ -10,8 +10,8 @@ import type { ReactNode } from "react";
 import { api, errorText } from "./api";
 import { useApp, changed, run, selectWhenReady } from "./store";
 import { bytes, expandHome, isAbsolutePath, plural, tilde } from "./helpers";
-import { SHORTCUTS } from "./hotkeys";
 import { OS, TRASH } from "./platform";
+import { detailedList } from "./shortcuts";
 import { Icon, Ops, restoreFocus, SeverityGlyph } from "./common";
 import { useConfigPath } from "./settings";
 import { closeTerminal, useTerms } from "./terminal-api";
@@ -446,24 +446,31 @@ function Shortcuts() {
         </>
       }
     >
-      <div className="short-grid">
-        {SHORTCUTS.map(([title, rows]) => (
-          <div className="short-sec" key={title}>
-            <h3>{title}</h3>
-            {rows.map(([label, keys]) => (
-              <div className="short-row" key={label}>
-                <span>{label}</span>
-                <div className="short-keys">
-                  {keys.map((key) => (
-                    <kbd key={key}>{key}</kbd>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
+      <ShortcutGrid />
     </DialogFrame>
+  );
+}
+const SHORTCUTS = detailedList(OS);
+/** Detailed's keys in its two sections, for its Keyboard shortcuts dialog and its Help. */
+export function ShortcutGrid() {
+  return (
+    <div className="short-grid">
+      {SHORTCUTS.map(([title, rows]) => (
+        <div className="short-sec" key={title}>
+          <h3>{title}</h3>
+          {rows.map(([label, keys]) => (
+            <div className="short-row" key={label}>
+              <span>{label}</span>
+              <div className="short-keys">
+                {keys.map((key) => (
+                  <kbd key={key}>{key}</kbd>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }
 function Archive({ id }: { id: string }) {

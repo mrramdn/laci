@@ -1,7 +1,8 @@
-// The keyboard shortcuts in one table, for each system and design: Help lists them, and Detailed's own
-// list can come from here too. macOS gets its own keys where the system has a habit (⌘ instead of
-// Ctrl, ⌘↑ for the folder above, ⌘⇧. for hidden files, ⌘, for Settings); Linux and Windows share theirs.
-// Pure data: it imports only types, so the tests read it as it is.
+// The keyboard shortcuts in one table, for each system and design: Help lists them, and so does
+// Detailed's Keyboard shortcuts dialog in its own short names. hotkeys.ts does what they say, and its
+// tests press every key listed here. macOS gets its own keys where the system has a habit (⌘ instead
+// of Ctrl, ⌘↑ for the folder above, ⌘⇧. for hidden files, ⌘, for Settings); Linux and Windows share
+// theirs. Pure data: it imports only types, so the tests read it as it is.
 import type { Os } from "./platform";
 import type { Design } from "./types";
 
@@ -130,6 +131,59 @@ export function shortcutsFor(os: Os, design: Design): Shortcut[] {
       return chords.length ? [{ id, does, group, chords }] : [];
     },
   );
+}
+
+/** The keys of row `id` on `os`: none when the system has no key for it. */
+export function chordsOf(os: Os, id: string): Chords {
+  const row = SHORTCUTS.find((r) => r.id === id);
+  return !row ? [] : os === "macos" ? row.mac : row.other;
+}
+
+/** Detailed's Keyboard shortcuts dialog: its two sections, and the rows of each in its short names. */
+const DETAILED_LIST = [
+  [
+    "Navigation",
+    [
+      ["palette", "Command palette"],
+      ["rows", "Next / Prev row"],
+      ["open", "Open / Select"],
+      ["parent", "Parent folder"],
+      ["panes", "Next / Prev pane"],
+      ["close", "Close / Dismiss"],
+    ],
+  ],
+  [
+    "Workspace",
+    [
+      ["terminal", "Toggle terminal"],
+      ["hidden", "Toggle hidden files"],
+      ["shortcuts", "Shortcuts help"],
+      ["settings", "Settings"],
+    ],
+  ],
+] as const;
+
+/** Detailed draws these keys as symbols, where Help writes their names. */
+const SYMBOLS: Record<string, string> = { Enter: "↵", Return: "↵", Backspace: "⌫" };
+
+/**
+ * Detailed's list on `os`: each section with its rows, each row its name and its key caps. One chord
+ * puts each key on a cap of its own (Ctrl, K); several put each chord on one cap (F6, Shift F6). Rows
+ * with no key on `os` are left out.
+ */
+export function detailedList(os: Os) {
+  const listed = new Map(shortcutsFor(os, "detailed").map((s) => [s.id, s.chords]));
+  return DETAILED_LIST.map(([section, rows]) => {
+    const shown = rows.flatMap(([id, label]) => {
+      const chords = (listed.get(id) ?? []).map((chord) =>
+        chord.map((key) => SYMBOLS[key] ?? key),
+      );
+      if (!chords.length) return [];
+      const caps = chords.length === 1 ? chords[0] : chords.map((chord) => chord.join(" "));
+      return [[label, caps] as const];
+    });
+    return [section, shown] as const;
+  });
 }
 
 /** A chord as text: "⌘K" on macOS, where the symbols sit together, and "Ctrl K" elsewhere. */

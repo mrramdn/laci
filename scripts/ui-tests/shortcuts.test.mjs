@@ -1,8 +1,9 @@
-// ui/src/shortcuts.ts: one table of keys for each system and design, which Help lists.
+// ui/src/shortcuts.ts: one table of keys for each system and design, which Help and Detailed's
+// Keyboard shortcuts dialog list.
 import assert from "node:assert/strict";
 import { load } from "../ui-module.mjs";
 
-const { SHORTCUTS, chordText, shortcutsFor } = load("shortcuts.ts");
+const { SHORTCUTS, chordText, detailedList, shortcutsFor } = load("shortcuts.ts");
 const keysOf = (os, design, id) =>
   shortcutsFor(os, design)
     .find((s) => s.id === id)
@@ -69,4 +70,60 @@ export async function aChordReadsAsTheSystemWritesIt() {
   assert.equal(chordText("macos", ["Return"]), "Return");
   assert.equal(chordText("linux", ["Ctrl", "K"]), "Ctrl K");
   assert.equal(chordText("windows", ["Shift", "F6"]), "Shift F6");
+}
+
+/** The list Detailed's Keyboard shortcuts dialog showed before the keys knew the system. */
+const LISTED = [
+  [
+    "Navigation",
+    [
+      ["Command palette", ["Ctrl", "K"]],
+      ["Next / Prev row", ["↓", "↑"]],
+      ["Open / Select", ["↵"]],
+      ["Parent folder", ["⌫"]],
+      ["Next / Prev pane", ["F6", "Shift F6"]],
+      ["Close / Dismiss", ["Esc"]],
+    ],
+  ],
+  [
+    "Workspace",
+    [
+      ["Toggle terminal", ["F4", "Ctrl `"]],
+      ["Toggle hidden files", ["Ctrl", "H"]],
+      // It also names Ctrl+/, which has opened the list all along.
+      ["Shortcuts help", ["?", "Ctrl /"]],
+    ],
+  ],
+];
+const plain = (value) => JSON.parse(JSON.stringify(value));
+
+export async function detailedsListIsTheSameOnLinuxAndWindows() {
+  for (const os of ["linux", "windows"]) assert.deepEqual(plain(detailedList(os)), LISTED, os);
+}
+
+export async function detailedsListSaysCommandOnMac() {
+  const list = plain(detailedList("macos"));
+  assert.deepEqual(
+    list.map(([section]) => section),
+    ["Navigation", "Workspace"],
+  );
+  const rows = Object.fromEntries(list.flatMap(([, rows]) => rows));
+  assert.deepEqual(rows["Command palette"], ["⌘", "K"]);
+  assert.deepEqual(rows["Open / Select"], ["↵"]);
+  assert.deepEqual(rows["Parent folder"], ["⌘", "↑"]);
+  assert.deepEqual(rows["Next / Prev pane"], ["F6", "⇧ F6"]);
+  assert.deepEqual(rows["Toggle hidden files"], ["⌘", "⇧", "."]);
+  assert.deepEqual(rows["Shortcuts help"], ["?", "⌘ /"]);
+  assert.deepEqual(rows["Settings"], ["⌘", ","]);
+  // ⌘` is the Mac's own for the next window, so the list names the key that opens the terminal.
+  assert.deepEqual(rows["Toggle terminal"], ["F4", "⌃ `"]);
+}
+
+export async function detailedsListHasEveryDetailedKey() {
+  for (const os of ["linux", "windows", "macos"])
+    assert.equal(
+      detailedList(os).flatMap(([, rows]) => rows).length,
+      shortcutsFor(os, "detailed").length,
+      os,
+    );
 }

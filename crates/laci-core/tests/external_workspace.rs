@@ -327,7 +327,9 @@ fn archive_destination_requires_the_recorded_filesystem_device() {
     let mut service = Service::new(env.clone());
     service.request("setup/save", &json!({"roots":[source],"archiveDir":archive,"presets":[]})).unwrap();
     let mut cfg = config::load(&env);
-    let device = &mut cfg["rootIdentities"][archive.to_str().unwrap()]["device"];
+    // Windows records the volume where Unix records the device.
+    let field = if cfg!(windows) { "volume" } else { "device" };
+    let device = &mut cfg["rootIdentities"][archive.to_str().unwrap()][field];
     *device = json!(device.as_u64().unwrap().wrapping_add(1));
     config::save(&env, &cfg).unwrap();
     for action in ["archive/plan", "archive"] {

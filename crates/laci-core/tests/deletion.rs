@@ -123,6 +123,7 @@ fn worktrees_in_use_paths_and_symlinks_are_refused() {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn a_project_cannot_use_itself_as_a_remote_backup() {
     let (_home, env, dir, node) = fixture();
     for url in [

@@ -21,7 +21,10 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 fn stamp(path: &Path) {
-    fs::File::open(path)
+    // Windows sets times only through a handle opened for writing.
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
         .unwrap()
         .set_times(
             fs::FileTimes::new()
@@ -125,6 +128,7 @@ fn connectors_move_and_restore_while_mentions_and_inside_history_stay_intact() {
     assert_eq!(fs::read_to_string(store.join("session.jsonl")).unwrap(), original);
 }
 #[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn failed_history_rewrite_rolls_back_project_and_refuses_symlinks() {
     let (temp, env) = home();
     let (mut snap, from, to, _store, _original) = fixture(&env);

@@ -520,7 +520,11 @@
           "label": "Keep agent history outside the project"
         }
       ],
-      "path": "/home/demo/project/_archive/old-portfolio"
+      "path": "/home/demo/project/_archive/old-portfolio",
+      "unbacked": {
+        "files": [],
+        "more": 0
+      }
     },
     "/home/demo/project/clients/acme-store": {
       "allowed": false,
@@ -550,7 +554,11 @@
           "label": "Keep agent history outside the project"
         }
       ],
-      "path": "/home/demo/project/clients/acme-store"
+      "path": "/home/demo/project/clients/acme-store",
+      "unbacked": {
+        "files": [],
+        "more": 0
+      }
     },
     "/home/demo/project/clients/kopi-landing": {
       "allowed": false,
@@ -580,7 +588,11 @@
           "label": "Keep agent history outside the project"
         }
       ],
-      "path": "/home/demo/project/clients/kopi-landing"
+      "path": "/home/demo/project/clients/kopi-landing",
+      "unbacked": {
+        "files": [],
+        "more": 0
+      }
     },
     "/home/demo/project/infra-notes": {
       "allowed": false,
@@ -610,7 +622,11 @@
           "label": "Keep agent history outside the project"
         }
       ],
-      "path": "/home/demo/project/infra-notes"
+      "path": "/home/demo/project/infra-notes",
+      "unbacked": {
+        "files": [],
+        "more": 0
+      }
     },
     "/home/demo/project/side/dotfiles": {
       "allowed": false,
@@ -640,7 +656,11 @@
           "label": "Keep agent history outside the project"
         }
       ],
-      "path": "/home/demo/project/side/dotfiles"
+      "path": "/home/demo/project/side/dotfiles",
+      "unbacked": {
+        "files": [],
+        "more": 0
+      }
     },
     "/home/demo/project/side/habit-app": {
       "allowed": false,
@@ -670,7 +690,11 @@
           "label": "Keep agent history outside the project"
         }
       ],
-      "path": "/home/demo/project/side/habit-app"
+      "path": "/home/demo/project/side/habit-app",
+      "unbacked": {
+        "files": [],
+        "more": 0
+      }
     },
     "/home/demo/project/thesis/campus-lms": {
       "allowed": false,
@@ -700,7 +724,11 @@
           "label": "Keep agent history outside the project"
         }
       ],
-      "path": "/home/demo/project/thesis/campus-lms"
+      "path": "/home/demo/project/thesis/campus-lms",
+      "unbacked": {
+        "files": [],
+        "more": 0
+      }
     }
   },
   "health": {

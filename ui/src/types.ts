@@ -293,6 +293,11 @@ export interface DeletePlan {
   checks: Issue[];
   ops: Op[];
   path: string;
+  /**
+   * Ignored files and folders that only this computer has, without dependencies and build output: the
+   * first few, and how many more there are.
+   */
+  unbacked: { files: string[]; more: number };
 }
 
 /** What the server runs when a proposal is applied. Recomputed from the scan, never sent by the client. */

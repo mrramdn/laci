@@ -25,6 +25,7 @@ import {
   within,
 } from "../helpers";
 import { DeadlinePill } from "../deadline";
+import { HIDDEN_FILES_HINT } from "../hotkeys";
 import { Select } from "../select";
 import { TerminalButton } from "../terminal-controls";
 import type { Entry, Node, Snapshot } from "../types";
@@ -305,7 +306,7 @@ export function Folder() {
                   ["foldersFirst", "Folders first"],
                   [
                     "hidden",
-                    `Hidden files ${hiddenCount ? hiddenCount + " here · " : ""}Ctrl H`,
+                    `Hidden files ${hiddenCount ? hiddenCount + " here · " : ""}${HIDDEN_FILES_HINT}`,
                   ],
                   ["showArchived", "Archived projects"],
                 ] as const

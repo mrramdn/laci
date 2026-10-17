@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import { api, errorText } from "./api";
 import { useApp, changed, run, selectWhenReady } from "./store";
 import { bytes, expandHome, isAbsolutePath, plural, tilde } from "./helpers";
+import { SHORTCUTS } from "./hotkeys";
 import { Icon, Ops, restoreFocus, SeverityGlyph } from "./common";
 import { closeTerminal, useTerms } from "./terminal-api";
 import { AgentDialog, DeleteSessions, SessionDialog } from "./session-ui";
@@ -412,27 +413,6 @@ function TerminalClose({ id }: { id: string }) {
   );
 }
 function Shortcuts() {
-  const sections = [
-    [
-      "Navigation",
-      [
-        ["Command palette", ["Ctrl", "K"]],
-        ["Next / Prev row", ["↓", "↑"]],
-        ["Open / Select", ["↵"]],
-        ["Parent folder", ["⌫"]],
-        ["Next / Prev pane", ["F6", "Shift F6"]],
-        ["Close / Dismiss", ["Esc"]],
-      ],
-    ],
-    [
-      "Workspace",
-      [
-        ["Toggle terminal", ["F4", "Ctrl `"]],
-        ["Toggle hidden files", ["Ctrl", "H"]],
-        ["Shortcuts help", ["?"]],
-      ],
-    ],
-  ] as const;
   return (
     <DialogFrame
       title="Keyboard shortcuts"
@@ -447,7 +427,7 @@ function Shortcuts() {
       }
     >
       <div className="short-grid">
-        {sections.map(([title, rows]) => (
+        {SHORTCUTS.map(([title, rows]) => (
           <div className="short-sec" key={title}>
             <h3>{title}</h3>
             {rows.map(([label, keys]) => (

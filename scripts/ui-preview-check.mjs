@@ -713,11 +713,11 @@ async function prepare(options, onExit) {
       throw new UsageError(`--compare ${options.compare}: not a commit in this repository`);
     }
     const checkout = path.join(scratch, "checkout");
-    git(["worktree", "prune"]);
+    // Only this run's worktree is removed: a repository-wide prune would forget other worktrees that are
+    // just out of reach for a while, such as one on a drive that isn't mounted.
     git(["worktree", "add", "--detach", "--quiet", checkout, sha]);
     onExit(() => {
       spawnSync("git", ["worktree", "remove", "--force", checkout], { cwd: root });
-      spawnSync("git", ["worktree", "prune"], { cwd: root });
     });
     console.log(`Installing ${options.compare} (${sha.slice(0, 7)}) in a temporary worktree…`);
     const install = spawnSync("pnpm", ["install", "--frozen-lockfile", "--prefer-offline"], {

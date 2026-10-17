@@ -13,6 +13,7 @@ import { Select } from "./select";
 import { LaciMark } from "./brand";
 import { Icon } from "./common";
 import { useApp, acknowledge, changed, copyText, rescan, run } from "./store";
+import { useNow } from "./clock";
 import type {
   Apps,
   Change,
@@ -451,6 +452,7 @@ function ReportsSetting({
   draft: string;
 }) {
   const snapshot = useApp((s) => s.snapshot!);
+  useNow();
   const saved = snapshot.reportsDir;
   const newest = reportList(snapshot)[0];
   const [tone, status] =

@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import type { ChangeEvent } from "react";
 import { api, errorText } from "./api";
 import { useApp, external, run, toast, urlOpen } from "./store";
+import { useNow } from "./clock";
 import { proseClick, renderReadme } from "./readme";
 import {
   agentCount,
@@ -47,6 +48,7 @@ import { openTerminal } from "./terminal-api";
 import type { Commit, Health, Node, Snapshot, Task } from "./types";
 export function Inspector({ node: n }: { node: Node }) {
   const s = useApp();
+  useNow();
   const snapshot = s.snapshot!;
   const sessions = sessionsOf(n, snapshot);
   const resumable = sessions.find(

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText } from "../api";
+import { useNow } from "../clock";
 import { Expand, Group, Highlight, Icon, KindIcon, Time } from "../common";
 import {
   agentInstruction,
@@ -41,6 +42,7 @@ const LARGE = 1_000_000;
 
 export function ReportsView() {
   const s = useApp();
+  useNow();
   const snapshot = s.snapshot!;
   const dir = snapshot.reportsDir;
   const enabled = Boolean(dir && !dir.error);

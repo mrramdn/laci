@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useApp, goToProject, rescan, setTheme } from "./store";
+import { useNow } from "./clock";
 import {
   ago,
   allSessions,
@@ -23,6 +24,7 @@ import { DeadlinePill } from "./deadline";
 import type { Node, View } from "./types";
 export function Palette() {
   const s = useApp();
+  useNow();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
   const input = useRef<HTMLInputElement>(null);

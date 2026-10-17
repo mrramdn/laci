@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Icon, Time, Group, Ops } from "../common";
 import { useApp, run, changed, toggleExpanded, refreshLog } from "../store";
+import { useNow } from "../clock";
 import { dayLabel, logKind, plural } from "../helpers";
 import { api } from "../api";
 import type { Change } from "../types";
@@ -13,6 +14,7 @@ const LOG_FILTERS = [
 ];
 export function LogView() {
   const s = useApp();
+  useNow();
   const [query, setQuery] = useState("");
   const [undoable, setUndoable] = useState(false);
   const log = s.activity;

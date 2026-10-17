@@ -9,6 +9,7 @@ import {
   Expand,
 } from "../common";
 import { useApp, run, toast } from "../store";
+import { useNow } from "../clock";
 import { BackupNotice } from "../backup";
 import {
   deadlinesOf,
@@ -27,6 +28,7 @@ import { askAgent } from "../agent-launch";
 import type { Node } from "../types";
 export function Today() {
   const s = useApp();
+  useNow();
   const snapshot = s.snapshot!;
   const all = Object.values(snapshot.nodes);
   const risks = risksOf(snapshot);

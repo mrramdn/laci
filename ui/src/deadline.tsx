@@ -1,6 +1,8 @@
 import { deadlineInfo } from "./helpers";
+import { useNow } from "./clock";
 
 export function DeadlinePill({ deadline }: { deadline?: string }) {
+  useNow();
   const info = deadlineInfo(deadline);
   if (!info || info.days > 14) return null;
   const [y, m, d] = deadline!.split("-").map(Number);

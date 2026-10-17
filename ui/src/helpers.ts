@@ -169,9 +169,19 @@ export const bytes = (b?: number) =>
         : b >= 1e3
           ? `${Math.round(b / 1e3)} KB`
           : `${b} B`;
+/** The language dates are written in: the system's, or British English when the page doesn't say or doesn't know it. */
+export const LOCALE = (() => {
+  const tag = typeof navigator === "undefined" ? undefined : navigator.language;
+  try {
+    if (tag && Intl.DateTimeFormat.supportedLocalesOf(tag).length) return tag;
+  } catch {
+    // Not a language tag.
+  }
+  return "en-GB";
+})();
 export const date = (at?: string) =>
   at
-    ? new Date(at).toLocaleDateString("en-GB", {
+    ? new Date(at).toLocaleDateString(LOCALE, {
         day: "numeric",
         month: "short",
         ...(new Date(at).getFullYear() !== new Date().getFullYear()
@@ -192,7 +202,7 @@ export function dayLabel(day: Date) {
     ? "Today"
     : back === 1
       ? "Yesterday"
-      : day.toLocaleDateString("en-GB", {
+      : day.toLocaleDateString(LOCALE, {
           weekday: "long",
           day: "numeric",
           month: "short",
@@ -205,7 +215,7 @@ export function dayLabel(day: Date) {
 export function shortDay(ymd: string) {
   const day = localDay(ymd);
   return day
-    ? day.toLocaleDateString("en-GB", {
+    ? day.toLocaleDateString(LOCALE, {
         day: "numeric",
         month: "short",
         ...(day.getFullYear() !== new Date().getFullYear()
@@ -236,7 +246,7 @@ export function when(at?: string) {
   if (!at) return "—";
   const d = new Date(at);
   const seconds = (Date.now() - d.getTime()) / 1000;
-  const clock = d.toLocaleTimeString("en-GB", {
+  const clock = d.toLocaleTimeString(LOCALE, {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -246,7 +256,7 @@ export function when(at?: string) {
   if (back === 0) return `${Math.floor(seconds / 3600)} h ago · ${clock}`;
   if (back === 1) return `yesterday ${clock}`;
   if (back < 7)
-    return `${d.toLocaleDateString("en-GB", { weekday: "short" })} ${clock}`;
+    return `${d.toLocaleDateString(LOCALE, { weekday: "short" })} ${clock}`;
   return `${date(at)}${d.getFullYear() === new Date().getFullYear() ? ` ${clock}` : ""}`;
 }
 export const recency = (a: Node, b: Node) =>

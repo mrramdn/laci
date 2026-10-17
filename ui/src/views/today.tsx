@@ -14,6 +14,7 @@ import { BackupNotice } from "../backup";
 import {
   deadlinesOf,
   latestReport,
+  LOCALE,
   plural,
   recency,
   risksOf,
@@ -37,7 +38,7 @@ export function Today() {
     s.selectedRow === key || (s.selectedRow === null && s.selected === n.id);
   const shortDate = (deadline?: string) => {
     const [y, m, d] = (deadline ?? "").split("-").map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString("en-GB", {
+    return new Date(y, m - 1, d).toLocaleDateString(LOCALE, {
       day: "numeric",
       month: "short",
     });
@@ -99,7 +100,7 @@ export function Today() {
       <div className="head">
         <h1>Today</h1>
         <span className="count">
-          {new Date().toLocaleDateString("en-GB", {
+          {new Date().toLocaleDateString(LOCALE, {
             weekday: "long",
             day: "numeric",
             month: "long",

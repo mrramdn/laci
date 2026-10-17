@@ -8,6 +8,7 @@ import {
   base,
   cap,
   deadlinesOf,
+  LOCALE,
   plural,
   risksOf,
   todayBadge,
@@ -229,7 +230,7 @@ export function Sidebar() {
           onClick={rescan}
           title={
             s.error ||
-            `laci watches your folders and updates by itself. Last full scan ${new Date(snapshot.scannedAt).toLocaleTimeString("en-GB")}. Click to scan everything again.`
+            `laci watches your folders and updates by itself. Last full scan ${new Date(snapshot.scannedAt).toLocaleTimeString(LOCALE)}. Click to scan everything again.`
           }
         >
           {!s.error && (s.busy || s.historyPending) ? (

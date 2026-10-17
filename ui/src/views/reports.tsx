@@ -10,6 +10,7 @@ import {
   dayLabel,
   isWindowsPath,
   localDay,
+  LOCALE,
   plural,
   providerName,
   reportById,
@@ -659,7 +660,7 @@ function ReportReader({
         <div className="rp-meta">
           <span>
             {day
-              ? day.toLocaleDateString("en-GB", {
+              ? day.toLocaleDateString(LOCALE, {
                   weekday: "long",
                   day: "numeric",
                   month: "long",

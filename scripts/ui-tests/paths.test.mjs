@@ -383,10 +383,9 @@ export async function windowsReservedNamesAreNamed() {
     "aux.tar.gz",
     "Nul.md",
   ])
-    assert.match(
-      windowsNameProblem(name),
-      new RegExp(
-        `^Windows doesn't allow “${name.replace(/\./g, "\\.")}” as a folder name`,
+    assert.ok(
+      windowsNameProblem(name).startsWith(
+        `Windows doesn't allow “${name}” as a folder name`,
       ),
       name,
     );

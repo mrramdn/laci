@@ -1,8 +1,8 @@
-//! Files on Windows: where Laci keeps its own, which file a path names, the change lock, renames and the Recycle Bin.
+//! Files on Windows: which file a path names, the change lock and renames.
 use super::{ffi, not_yet};
 use crate::{
     Result,
-    platform::{Dirs, Identity, Stamp, path::plain_path},
+    platform::{Identity, Stamp, path::plain_path},
 };
 use file_id::FileId;
 use std::{
@@ -10,15 +10,6 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
-
-/// Windows has no HOME of its own, and the one Git Bash sets is a POSIX path.
-pub fn home_dir() -> Option<PathBuf> {
-    None
-}
-
-pub fn user_dirs(_home: &Path) -> Result<Dirs> {
-    Err(not_yet("choose where to keep its settings and data"))
-}
 
 /// The names config.json keeps an identity under: the volume's serial number and the file's ID.
 pub const IDENTITY_FIELDS: [&str; 2] = ["volume", "file"];
@@ -90,8 +81,4 @@ pub fn copy_link(src: &Path, _dest: &Path) -> Result<()> {
 
 pub fn preserve(_meta: &Metadata, _dest: &Path) -> Result<()> {
     Err(not_yet("keep a file's times and permissions"))
-}
-
-pub fn trash(_path: &Path) -> Result<()> {
-    Err(not_yet("move files to the Recycle Bin"))
 }

@@ -17,9 +17,13 @@ import type { View } from "../types";
 import { ago, shell } from "../words";
 import { FixSheet } from "./fix";
 import { Home } from "./Home";
-import { Later } from "./Later";
+import { Activity } from "./Activity";
+import { AiHelpers } from "./AiHelpers";
+import { CleanUp } from "./CleanUp";
+import { SimpleDialogs } from "./dialogs";
 import { ProjectPage } from "./ProjectPage";
 import { Projects } from "./Projects";
+import { SettingsPage } from "./SettingsPage";
 import { dayOf, urgentCount } from "./model";
 import { readNotNow, useSimple } from "./state";
 import { MoreMenu } from "./ui";
@@ -57,6 +61,7 @@ export default function SimpleShell() {
         ) : null}
       </div>
       <FixSheet />
+      <SimpleDialogs />
     </div>
   );
 }
@@ -71,13 +76,13 @@ function Page({ view }: { view: View }) {
       return <HelpPage />;
     case "agents":
     case "reports":
-      return <Later place="helpers" />;
+      return <AiHelpers />;
     case "tidy":
-      return <Later place="cleanup" />;
+      return <CleanUp />;
     case "log":
-      return <Later place="activity" />;
+      return <Activity />;
     case "settings":
-      return <Later place="settings" />;
+      return <SettingsPage />;
     default:
       return <Home />;
   }

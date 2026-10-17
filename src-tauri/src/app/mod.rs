@@ -282,6 +282,14 @@ impl AppState {
                 // Remote verification can take time; browsing and watcher updates stay responsive.
                 return laci_core::deletion::plan(&env, &node);
             }
+            "secrets/check" => {
+                let (env, node) = {
+                    let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
+                    (engine.service.env.clone(), engine.service.node(string(body, "id"))?)
+                };
+                // Git lists every file it would add, which takes seconds in a big tree with nothing ignored.
+                return laci_core::secrets::check(&env, &node);
+            }
             _ => {}
         }
         let started = Instant::now();

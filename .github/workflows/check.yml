@@ -194,6 +194,11 @@ jobs:
       # The tests must build. Until the port's steps for folders, paths, processes and the Recycle Bin land (M4 and
       # M5), many of them are refused on Windows, as they should be, so running them only reports how far it got.
       - run: cargo test --workspace --features custom-protocol --no-run
+      # The checks that keep Laci off files other programs have open already pass here, and only Windows can run
+      # them, so a failure turns this job red instead of hiding in the report below.
+      - name: cargo test (process guards)
+        run: cargo test --workspace --features custom-protocol --test process_guards
+        timeout-minutes: 10
       - name: cargo test (a report until the port lands)
         run: cargo test --workspace --features custom-protocol --no-fail-fast
         continue-on-error: true

@@ -351,12 +351,17 @@ const designs = {
     screens: {
       today: async () => {},
       folder: simpleNav("Projects"),
-      tidy: simpleNav("Clean up"),
+      // Clean up and Activity ask the engine for the space Laci uses and the log once they show.
+      tidy: simpleNav("Clean up", (page) =>
+        page.getByText(/^Reading the space Laci uses/).waitFor({ state: "detached" }),
+      ),
       agents: simpleNav("AI helpers"),
       reports: simpleNav("AI helpers", (page) =>
         page.getByRole("tab", { name: startingWith("Summaries") }).click(),
       ),
-      log: simpleNav("Activity"),
+      log: simpleNav("Activity", (page) =>
+        page.getByText(/^Reading Activity/).waitFor({ state: "detached" }),
+      ),
       settings: simpleNav("Settings"),
       project: simpleProject,
       palette: (page) => openPalette(page),

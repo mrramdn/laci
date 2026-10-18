@@ -2,9 +2,9 @@
 //! and settings and cache follow the XDG folders.
 pub use super::unix::{
     Group, IDENTITY_FIELDS, Lock, change_stamp, copy_link, exited, file_change_stamp, home_dir, identity, lock,
-    preserve, rename_noreplace, spawn_group, which,
+    preserve, rename_noreplace, spawn_group, user_dirs, which,
 };
-use super::{Apps, Dirs, Holder};
+use super::{Apps, Holder};
 use crate::Result;
 use std::{
     fs, io,
@@ -13,17 +13,6 @@ use std::{
 };
 
 const PROC: &str = "/proc";
-
-/// Settings and cache honour XDG_CONFIG_HOME and XDG_CACHE_HOME; data stays where Laci v1 kept it.
-pub fn user_dirs(home: &Path) -> Result<Dirs> {
-    let mut dirs = Dirs::inside(home);
-    for (key, dest) in [("XDG_CONFIG_HOME", &mut dirs.config), ("XDG_CACHE_HOME", &mut dirs.cache)] {
-        if let Some(base) = std::env::var_os(key).map(PathBuf::from).filter(|p| p.is_absolute()) {
-            *dest = base.join("laci");
-        }
-    }
-    Ok(dirs)
-}
 
 /// What `proc` lists, sorted by name. None when it can't be listed or doesn't list this process, as where it isn't
 /// mounted or a sandbox puts an empty folder there: that is no list of what runs, and nothing may pass as unused.

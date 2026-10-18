@@ -32,7 +32,17 @@ impl Env {
             .map(PathBuf::from)
             .or_else(platform::home_dir)
             .filter(|p| p.is_absolute())
-            .ok_or("Set HOME to an absolute folder path")?;
+            .ok_or(if cfg!(windows) {
+                "Set USERPROFILE to an absolute folder path"
+            } else {
+                "Set HOME to an absolute folder path"
+            })?;
+        // On macOS and Windows one folder has more than one spelling (/var is /private/var; a Windows folder can go by
+        // a short 8.3 name), and the paths Laci reads from the disk come spelled as the disk spells them, so home is
+        // spelled that way too. Linux keeps home as given, as it always has.
+        #[cfg(not(target_os = "linux"))]
+        let home = platform::path::canonical(&home)
+            .map_err(|e| format!("Couldn't open the home folder {}: {e}", home.display()))?;
         let mut env = Self::for_home(home);
         // An AppImage runs from a mount that is gone when it closes; the file itself is what stays.
         if let Some(program) = std::env::var_os("APPIMAGE")

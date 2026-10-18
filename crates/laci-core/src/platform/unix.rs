@@ -1,6 +1,7 @@
-//! What Linux and macOS share: the home folder from HOME, files told apart by device and inode, the `flock` change
-//! lock, renames that never replace, links copied as links, and the programs Laci finds, starts and stops.
-use super::{Identity, Stamp};
+//! What Linux and macOS share: the home folder from HOME, settings and cache in the XDG folders, files told apart by
+//! device and inode, the `flock` change lock, renames that never replace, links copied as links, and the programs Laci
+//! finds, starts and stops.
+use super::{Dirs, Identity, Stamp};
 use crate::Result;
 use rustix::{
     fs::{CWD, FlockOperation, RenameFlags, flock, renameat_with},
@@ -22,6 +23,17 @@ use std::{
 
 pub fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Settings and cache honour XDG_CONFIG_HOME and XDG_CACHE_HOME; data stays where Laci v1 kept it.
+pub fn user_dirs(home: &Path) -> Result<Dirs> {
+    let mut dirs = Dirs::inside(home);
+    for (key, dest) in [("XDG_CONFIG_HOME", &mut dirs.config), ("XDG_CACHE_HOME", &mut dirs.cache)] {
+        if let Some(base) = std::env::var_os(key).map(PathBuf::from).filter(|p| p.is_absolute()) {
+            *dest = base.join("laci");
+        }
+    }
+    Ok(dirs)
 }
 
 /// Laci v1's names for the device and the inode.

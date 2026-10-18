@@ -5,12 +5,14 @@ pub use super::unix::{
     preserve, rename_noreplace, spawn_group, which,
 };
 use super::{Apps, Dirs, Holder};
-use crate::{Result, files};
+use crate::Result;
 use std::{
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     time::Duration,
 };
+
+const PROC: &str = "/proc";
 
 /// Settings and cache honour XDG_CONFIG_HOME and XDG_CACHE_HOME; data stays where Laci v1 kept it.
 pub fn user_dirs(home: &Path) -> Result<Dirs> {
@@ -23,12 +25,37 @@ pub fn user_dirs(home: &Path) -> Result<Dirs> {
     Ok(dirs)
 }
 
+/// What `proc` lists, sorted by name. None when it can't be listed or doesn't list this process, as where it isn't
+/// mounted or a sandbox puts an empty folder there: that is no list of what runs, and nothing may pass as unused.
+fn listed(proc: &Path) -> Option<Vec<fs::DirEntry>> {
+    let mut entries = fs::read_dir(proc).ok()?.collect::<io::Result<Vec<_>>>().ok()?;
+    entries.sort_by_key(|e| e.file_name());
+    let me = std::process::id().to_string();
+    entries.iter().any(|e| e.file_name() == me.as_str()).then_some(entries)
+}
+
 pub fn pid_alive(pid: u32) -> Result<bool> {
-    Ok(Path::new("/proc").join(pid.to_string()).exists())
+    alive_at(Path::new(PROC), pid)
+}
+
+/// A /proc without this process can't tell a process that is gone from one it doesn't show.
+fn alive_at(proc: &Path, pid: u32) -> Result<bool> {
+    if proc.join(pid.to_string()).exists() {
+        return Ok(true);
+    }
+    if !proc.join(std::process::id().to_string()).exists() {
+        return Err("Could not check whether a process is still running".into());
+    }
+    Ok(false)
 }
 
 pub fn processes_in(paths: &[PathBuf]) -> Result<Vec<Holder>> {
-    Ok(files::entries(Path::new("/proc"))
+    processes_at(Path::new(PROC), paths)
+}
+
+fn processes_at(proc: &Path, paths: &[PathBuf]) -> Result<Vec<Holder>> {
+    Ok(listed(proc)
+        .ok_or("Could not check which programs are using this folder")?
         .into_iter()
         .filter_map(|e| {
             let pid = e.file_name().to_string_lossy().parse::<u32>().ok()?;
@@ -48,8 +75,11 @@ pub fn processes_in(paths: &[PathBuf]) -> Result<Vec<Holder>> {
 }
 
 pub fn ensure_idle(sources: &[PathBuf]) -> Result<()> {
-    for process in fs::read_dir("/proc").map_err(|_| "Could not check running history writers".to_owned())? {
-        let process = process.map_err(|e| e.to_string())?;
+    idle_at(Path::new(PROC), sources)
+}
+
+fn idle_at(proc: &Path, sources: &[PathBuf]) -> Result<()> {
+    for process in listed(proc).ok_or("Could not check running history writers")? {
         if process.file_name().to_string_lossy().parse::<u32>().is_err() {
             continue;
         }
@@ -158,4 +188,29 @@ pub fn terminal_script_args(app: &str, cwd: &Path, cmd: Option<&str>, confirm: b
         args.extend(["bash".into(), "-lc".into(), script.into(), cmd.into()]);
     }
     Ok(args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Where /proc isn't mounted, or a sandbox puts an empty folder there, nothing is found running; the checks
+    /// refuse instead of answering "not in use".
+    #[test]
+    fn a_proc_that_does_not_list_this_process_answers_nothing() {
+        let empty = tempfile::tempdir().unwrap();
+        let everywhere = [PathBuf::from("/")];
+        for proc in [Path::new("/no/proc/here"), empty.path()] {
+            let error = processes_at(proc, &everywhere).unwrap_err();
+            assert_eq!(error, "Could not check which programs are using this folder");
+            let error = idle_at(proc, &everywhere).unwrap_err();
+            assert_eq!(error, "Could not check running history writers");
+            assert!(alive_at(proc, 1).is_err(), "{}", proc.display());
+        }
+        let proc = Path::new(PROC);
+        assert!(processes_at(proc, &everywhere).is_ok());
+        idle_at(proc, &[empty.path().to_owned()]).unwrap();
+        assert!(alive_at(proc, std::process::id()).unwrap());
+        assert!(!alive_at(proc, u32::MAX).unwrap());
+    }
 }

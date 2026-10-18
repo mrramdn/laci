@@ -367,14 +367,17 @@ mod tests {
         let codex = providers::builtins().into_iter().find(|p| p.id == "codex").unwrap();
         assert_eq!(status(&env, &codex)["state"], "missing");
         let laci = env.program.to_str().unwrap();
+        // A basic TOML string writes the `\` of a Windows path as `\\`.
+        let escaped = laci.replace('\\', r"\\");
         fs::create_dir_all(home.path().join(".codex")).unwrap();
         let write = |body: String| fs::write(home.path().join(".codex/config.toml"), body).unwrap();
         write(format!(
-            "model = \"gpt\"\n\n[mcp_servers.other]\ncommand = \"x\"\n\n[mcp_servers.laci] # ours\ncommand = \"{laci}\"\nargs = [\"mcp\"]\n\n[mcp_servers.laci.env]\nA = \"b\"\n"
+            "model = \"gpt\"\n\n[mcp_servers.other]\ncommand = \"x\"\n\n[mcp_servers.laci] # ours\ncommand = \"{escaped}\"\nargs = [\"mcp\"]\n\n[mcp_servers.laci.env]\nA = \"b\"\n"
         ));
         let found = status(&env, &codex);
         assert_eq!((&found["state"], &found["how"]), (&json!("registered"), &json!("command")));
-        assert_eq!(found["add"], format!("codex mcp add laci -- {laci} mcp"));
+        // The program as it would be typed: a Windows path needs quotes.
+        assert_eq!(found["add"], format!("codex mcp add laci -- {} mcp", typed(laci, &[])));
         assert_eq!(found["remove"], "codex mcp remove laci");
         write(format!("[mcp_servers.laci]\ncommand = '{laci}'\nargs = ['mcp']\nenabled = false\n"));
         assert_eq!(status(&env, &codex)["state"], "off");

@@ -1303,8 +1303,9 @@ mod tests {
     #[test]
     fn agent_refresh_reuses_metadata_and_discovers_new_agent_only_projects() {
         let home = tempfile::tempdir().unwrap();
-        let env = Env::for_home(home.path().to_owned());
-        let project = env.home.join("project/app");
+        let env = Env::for_home(platform::path::canonical(home.path()).unwrap());
+        // A name at a time, as the scan spells the paths it finds: on Windows a `/` given to `join` stays in the text.
+        let project = env.home.join("project").join("app");
         write(&project.join("package.json"), "{}");
         write(&project.join("README.md"), "# App\nOriginal metadata.\n");
         let store = env.home.join(".claude/projects");
@@ -1321,7 +1322,7 @@ mod tests {
         assert_eq!(snapshot["claude"][paths::enc(&id)]["sessions"].as_array().unwrap().len(), 2);
         assert!(!refresh_agents(&env, &mut snapshot).unwrap());
         assert_eq!(snapshot["nodes"][&id]["agents"]["claude"].as_array().unwrap().len(), 1);
-        let docs = env.home.join("project/research");
+        let docs = env.home.join("project").join("research");
         fs::create_dir_all(&docs).unwrap();
         write(
             &store.join(paths::enc(&docs.to_string_lossy())).join("new.jsonl"),
@@ -1335,13 +1336,14 @@ mod tests {
     #[test]
     fn histories_survive_former_locations_and_mixed_connector_stores() {
         let home = tempfile::tempdir().unwrap();
-        let env = Env::for_home(home.path().to_owned());
-        let project = env.home.join("project/current");
-        let former = env.home.join("project/former");
+        let env = Env::for_home(platform::path::canonical(home.path()).unwrap());
+        let projects = env.home.join("project");
+        let project = projects.join("current");
+        let former = projects.join("former");
         write(&project.join("package.json"), "{\"name\":\"test\"}");
-        let archive = env.home.join("project/_archive/lost");
+        let archive = projects.join("_archive").join("lost");
         write(&archive.join("README.md"), "# Lost\nArchived documentation.");
-        let former_lost = env.home.join("project/lost");
+        let former_lost = projects.join("lost");
         write(
             &env.home.join(".claude/projects").join(paths::enc(&project.to_string_lossy())).join("session.jsonl"),
             &format!("{}\n", json!({"cwd":former,"gitBranch":"main","type":"ai-title","aiTitle":"Moved project"})),
@@ -1355,7 +1357,7 @@ mod tests {
             &format!("{}\n", json!({"type":"session_meta","payload":{"cwd":former}})),
         );
         let nested = project.join("notes");
-        let former_nested = env.home.join("project/past-docs");
+        let former_nested = projects.join("past-docs");
         write(&nested.join("README.md"), "# Notes\nNested project documentation.");
         write(
             &env.home.join(".claude/projects").join(paths::enc(&nested.to_string_lossy())).join("nested.jsonl"),
@@ -1404,8 +1406,8 @@ mod tests {
     #[test]
     fn metadata_edits_leave_source_activity_unchanged_and_keep_stable_id() {
         let home = tempfile::tempdir().unwrap();
-        let env = Env::for_home(home.path().to_owned());
-        let dir = env.home.join("project/a");
+        let env = Env::for_home(platform::path::canonical(home.path()).unwrap());
+        let dir = env.home.join("project").join("a");
         write(&dir.join("package.json"), "{}");
         config::save(&env, &json!({"roots":["~/project"],"presets":[]})).unwrap();
         let mut snap = scan(&env).unwrap();

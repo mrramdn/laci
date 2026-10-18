@@ -1383,7 +1383,8 @@ mod tests {
         let home = dir.path().to_path_buf();
         let env = Env::for_home(home.clone());
         let at = |i: usize| format!("2026-10-{:02}T{:02}:00:00.000Z", 1 + i % 28, i % 24);
-        let project = |i: usize| format!("{}/project/p{i}", home.display());
+        // Spelled as a scan names a project, a name at a time: on Windows with `\` between the names.
+        let project = |i: usize| home.join("project").join(format!("p{i}")).display().to_string();
         let mut log = String::new();
         for i in 0..300 {
             log += &json!({"id":format!("e{i}"),"at":at(i),"by":"agent","title":format!("Edited the notes of p{}", i % 60),

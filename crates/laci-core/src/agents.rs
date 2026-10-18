@@ -1168,6 +1168,11 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, values.iter().map(|v| format!("{v}\n")).collect::<String>()).unwrap();
     }
+    /// `path`, written as on Linux, as an agent on this OS records it. A working folder only counts when it is
+    /// absolute, and on Windows that takes a drive.
+    fn abs(path: &str) -> String {
+        if cfg!(windows) { format!("C:{}", path.replace('/', r"\")) } else { path.to_owned() }
+    }
     #[test]
     fn connectors_are_opt_in_and_custom_store_identity_wins_without_losing_legacy() {
         let home = tempfile::tempdir().unwrap();
@@ -1218,13 +1223,13 @@ mod tests {
         ] {
             let mut payload = source;
             payload["id"] = json!(CHILD);
-            payload["cwd"] = json!("/projects/old");
+            payload["cwd"] = json!(abs("/projects/old"));
             let mut text = format!("{}\n", json!({"type":"session_meta","payload":payload}));
             text.push_str(&"{}\n".repeat(METADATA_RECORDS));
-            text.push_str(&format!("{}\n", json!({"type":"session_meta","payload":{"cwd":"/projects/latest"}})));
+            text.push_str(&format!("{}\n", json!({"type":"session_meta","payload":{"cwd":abs("/projects/latest")}})));
             fs::write(&log, text).unwrap();
             let facts = session_facts(&log, "codex");
-            assert_eq!(facts["cwd"], "/projects/latest");
+            assert_eq!(facts["cwd"], abs("/projects/latest"));
             assert_eq!(facts["parentId"], ID);
             assert_eq!(facts["sessionId"], CHILD);
             assert_eq!(facts["sourceKind"], "subagent");
@@ -1239,12 +1244,12 @@ mod tests {
             for boundary in ["bytes", "records"] {
                 let head = if provider == "codex" {
                     vec![
-                        json!({"type":"session_meta","payload":{"id":ID,"cwd":"/projects/old","source":"cli"}}),
+                        json!({"type":"session_meta","payload":{"id":ID,"cwd":abs("/projects/old"),"source":"cli"}}),
                         json!({"type":"event_msg","payload":{"type":"user_message","message":"Original user request"}}),
                     ]
                 } else {
                     vec![
-                        json!({"type":"user","sessionId":ID,"cwd":"/projects/old","message":{"role":"user","content":"Original user request"}}),
+                        json!({"type":"user","sessionId":ID,"cwd":abs("/projects/old"),"message":{"role":"user","content":"Original user request"}}),
                     ]
                 };
                 let mut text = head.iter().map(|v| format!("{v}\n")).collect::<String>();
@@ -1254,17 +1259,17 @@ mod tests {
                     text.push_str(&"{}\n".repeat(METADATA_RECORDS));
                 }
                 let tail = if provider == "codex" {
-                    json!({"type":"turn_context","payload":{"cwd":"/projects/latest"}})
+                    json!({"type":"turn_context","payload":{"cwd":abs("/projects/latest")}})
                 } else {
-                    json!({"type":"custom-title","customTitle":"Renamed late","cwd":"/projects/latest"})
+                    json!({"type":"custom-title","customTitle":"Renamed late","cwd":abs("/projects/latest")})
                 };
                 text.push_str(&format!("{tail}\n"));
                 fs::write(&log, text).unwrap();
                 let facts = session_facts(&log, provider);
-                assert_eq!(facts["cwd"], "/projects/latest", "{provider}/{boundary}");
+                assert_eq!(facts["cwd"], abs("/projects/latest"), "{provider}/{boundary}");
                 assert_eq!(facts["sessionId"], ID);
                 assert_eq!(facts["ownershipComplete"], false);
-                assert_eq!(facts["cwds"], json!({"/projects/old":1}));
+                assert_eq!(facts["cwds"], json!({abs("/projects/old"):1}));
                 assert_eq!(facts["title"], if provider == "claude" { "Renamed late" } else { "Original user request" });
             }
         }
@@ -1387,21 +1392,21 @@ mod tests {
         put(
             &log,
             &[
-                json!({"type":"session_meta","payload":{"id":ID,"cwd":"/projects/live"}}),
-                json!({"type":"turn_context","payload":{"cwd":"/projects/gone"}}),
+                json!({"type":"session_meta","payload":{"id":ID,"cwd":abs("/projects/live")}}),
+                json!({"type":"turn_context","payload":{"cwd":abs("/projects/gone")}}),
             ],
         );
         let mut old = Cache::load(&env);
         old.facts(
             "cwd:codex:cwd",
             &log,
-            || json!({"cwd":"/projects/gone","cwds":{"/projects/gone":1},"ownershipComplete":true}),
+            || json!({"cwd":abs("/projects/gone"),"cwds":{abs("/projects/gone"):1},"ownershipComplete":true}),
         );
         old.save(&env);
         fs::rename(env.cache_dir.join("v5-agent-facts.json"), env.cache_dir.join("v4-agent-facts.json")).unwrap();
         let history = read_all(&env, &connectors(&env, &json!({"presets":["codex"]})));
         let item = history.items.values().next().unwrap();
-        assert_eq!(item["cwds"], json!({"/projects/live":1,"/projects/gone":1}));
+        assert_eq!(item["cwds"], json!({abs("/projects/live"):1,abs("/projects/gone"):1}));
         assert_eq!(item["ownershipComplete"], true);
     }
     #[test]
@@ -1474,16 +1479,20 @@ mod tests {
     fn reads_escaped_cwd_and_full_logs_without_counting_unfinished_lines() {
         let temp = tempfile::tempdir().unwrap();
         let file = temp.path().join("log.jsonl");
+        // On Windows behind a drive, with `/` between the names as some tools write them there.
+        let drive = if cfg!(windows) { "C:" } else { "" };
         fs::write(
             &file,
-            "{\"cwd\": \"/home/a/project\\u0020one\"}\n{\"cwd\":\"/home/a/project one/sub\"}\n{\"cwd\":\"/half\"",
+            format!(
+                "{{\"cwd\": \"{drive}/home/a/project\\u0020one\"}}\n{{\"cwd\":\"{drive}/home/a/project one/sub\"}}\n{{\"cwd\":\"/half\""
+            ),
         )
         .unwrap();
         let facts = log_facts(&file, "cwd", false);
-        assert_eq!(facts["cwd"], "/home/a/project one");
+        assert_eq!(facts["cwd"], abs("/home/a/project one"));
         assert_eq!(facts["lines"], 2);
-        fs::write(&file, r#"{"cwd":"/home/a/project"}"#).unwrap();
-        assert_eq!(log_facts(&file, "cwd", false)["cwd"], "/home/a/project");
+        fs::write(&file, format!(r#"{{"cwd":"{drive}/home/a/project"}}"#)).unwrap();
+        assert_eq!(log_facts(&file, "cwd", false)["cwd"], abs("/home/a/project"));
     }
     #[cfg(unix)]
     #[test]

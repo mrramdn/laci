@@ -10,17 +10,40 @@ use std::{
 const WAIT: Duration = Duration::from_secs(20);
 
 /// Forced for every call, whatever the folder's own settings say.
-const FIXED: [&str; 5] = [
-    // `status` asks this program which files changed.
-    "core.fsmonitor=false",
-    // No hooks, including the one that follows an index refresh.
-    "core.hooksPath=/dev/null",
-    "core.pager=cat",
-    // `log` would start the signature checker.
-    "log.showSignature=false",
-    // A remote URL must not be able to name a command.
-    "protocol.ext.allow=never",
-];
+fn fixed() -> Result<[&'static str; 5]> {
+    Ok([
+        // `status` asks this program which files changed.
+        "core.fsmonitor=false",
+        hooks()?,
+        "core.pager=cat",
+        // `log` would start the signature checker.
+        "log.showSignature=false",
+        // A remote URL must not be able to name a command.
+        "protocol.ext.allow=never",
+    ])
+}
+
+/// No hooks, including the one that follows an index refresh.
+#[cfg(unix)]
+fn hooks() -> Result<&'static str> {
+    Ok("core.hooksPath=/dev/null")
+}
+/// Git for Windows can take /dev/null for the folder \dev\null on the drive, which any user of the computer can make.
+/// A folder in Laci's own app data stays empty: only this user can write there.
+#[cfg(windows)]
+fn hooks() -> Result<&'static str> {
+    static HOOKS: std::sync::LazyLock<Result<String>> = std::sync::LazyLock::new(|| {
+        let dir = crate::platform::user_dirs(Path::new(""))?.config.join("no-git-hooks");
+        // A folder that isn't there has no hooks either.
+        let _ = std::fs::create_dir_all(&dir);
+        let dir = dir.to_str().ok_or("Laci's app data folder has a name Git can't be given")?;
+        Ok(format!("core.hooksPath={dir}"))
+    });
+    HOOKS.as_deref().map_err(Clone::clone)
+}
+
+/// Windows' limit of 260 characters on a path would otherwise stop Git inside deep folders such as node_modules.
+const LONG_PATHS: &[&str] = if cfg!(windows) { &["core.longpaths=true"] } else { &[] };
 
 /// A read never fetches missing objects or prompts, and ignores a repository named by the parent process.
 const ENV: [(&str, Option<&str>); 5] = [
@@ -32,17 +55,22 @@ const ENV: [(&str, Option<&str>); 5] = [
 ];
 
 /// `args` after the settings every call forces.
-fn full<'a>(settings: &'a [String], args: &[&'a str]) -> Vec<&'a str> {
+fn full<'a>(settings: &'a [String], args: &[&'a str]) -> Result<Vec<&'a str>> {
     let mut full = vec!["--no-pager"];
-    for setting in FIXED.iter().copied().chain(settings.iter().map(String::as_str)) {
+    for setting in fixed()?.into_iter().chain(LONG_PATHS.iter().copied()).chain(settings.iter().map(String::as_str)) {
         full.extend(["-c", setting]);
     }
     full.extend_from_slice(args);
-    full
+    Ok(full)
+}
+
+/// Whether Git runs here, for the first run's note asking to install it. On macOS the stand-in Git doesn't count.
+pub(crate) fn runs() -> bool {
+    process::run("git", &["--version"], None, Duration::from_secs(5)).is_ok()
 }
 
 fn call(dir: &Path, settings: &[String], args: &[&str], timeout: Duration) -> Result<String> {
-    process::run_env("git", &full(settings, args), Some(dir), timeout, &ENV)
+    process::run_env("git", &full(settings, args)?, Some(dir), timeout, &ENV)
 }
 
 /// The names in a `-z` listing, as Git wrote them.
@@ -146,7 +174,7 @@ impl Repo {
     /// Like [`Repo::run`], with the output as Git wrote it: for `-z` lists of names that may not be valid text.
     pub(crate) fn run_bytes(&self, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
         let settings = self.settings.as_ref().map_err(Clone::clone)?;
-        process::run_env_bytes("git", &full(settings, args), Some(&self.dir), timeout, &ENV)
+        process::run_env_bytes("git", &full(settings, args)?, Some(&self.dir), timeout, &ENV)
     }
 
     /// Output of a read, or nothing when Git fails.

@@ -454,11 +454,8 @@ export function reportLink(href: string, reports: Report[], folder: string) {
 function OpenItems({ report }: { report: Report }) {
   const closed = report.closed ?? [];
   if (!report.open.length && !closed.length) return null;
-  const close = (
-    item: number | string,
-    state: "done" | "dropped" | "open",
-    text: string,
-  ) => void closeReportItem(report.id, item, state, text);
+  const close = (text: string, state: "done" | "dropped" | "open") =>
+    void closeReportItem(report.id, text, state);
   return (
     <section className="rp-items" aria-label="Open items">
       <div className="sec-t">
@@ -468,21 +465,21 @@ function OpenItems({ report }: { report: Report }) {
           Closing one changes nothing in the file
         </span>
       </div>
-      {report.open.map((item, i) => (
+      {report.open.map((item) => (
         <div className="rp-item" key={item}>
           <Icon name="check" className="sm faint" />
           <span className="txt">{item}</span>
           <button
             className="btn sm ghost"
             title="It is finished"
-            onClick={() => close(i + 1, "done", item)}
+            onClick={() => close(item, "done")}
           >
             Done
           </button>
           <button
             className="btn sm ghost"
             title="It no longer needs doing"
-            onClick={() => close(i + 1, "dropped", item)}
+            onClick={() => close(item, "dropped")}
           >
             Drop
           </button>
@@ -497,12 +494,12 @@ function OpenItems({ report }: { report: Report }) {
       {closed.length ? (
         <details className="rp-closed">
           <summary>Closed ({closed.length})</summary>
-          {closed.map((item, i) => (
+          {closed.map((item) => (
             <div className="rp-item done" key={item}>
               <span className="txt">{item}</span>
               <button
                 className="btn sm ghost"
-                onClick={() => close(i + 1, "open", item)}
+                onClick={() => close(item, "open")}
               >
                 Open again
               </button>

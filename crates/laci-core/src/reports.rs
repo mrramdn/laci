@@ -357,11 +357,20 @@ fn still_open(items: &[String], closed: &Value) -> (Vec<String>, usize) {
 
 /// Closes an open item of a report (state `done`, `dropped` or `moved`) or opens a closed one again (`open`).
 /// `item` is its number among the items it can apply to, from 1, or words that match only one of them.
+/// How a request names one of a report's items.
+pub enum ItemName<'a> {
+    /// Its place among the items in that state, from 1, or words from it: what an agent sends.
+    Loose(&'a str),
+    /// Its whole text: what a window sends, so a click on a list drawn before another change still names that item,
+    /// or none, never the next one nor one whose words include its words.
+    Exact(&'a str),
+}
+
 pub fn close_item(
     env: &Env,
     snapshot: &Value,
     id: &str,
-    item: &str,
+    item: ItemName<'_>,
     state: &str,
     note: &str,
     by: &str,
@@ -377,25 +386,38 @@ pub fn close_item(
         facts["items"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
     let closed = closed_items(env);
     let pool: Vec<&String> = all.iter().filter(|i| closed[id][item_key(i)].is_object() == (state == "open")).collect();
-    let chosen = match item.trim().parse::<usize>() {
-        // Without this, 0 would be taken as words and close whichever item happens to contain a 0.
-        Ok(0) => return Err("Items are numbered from 1".into()),
-        Ok(n) => *pool.get(n - 1).ok_or("No item has that number")?,
-        _ => {
-            let words: Vec<String> = item.split_whitespace().map(str::to_lowercase).collect();
-            if words.is_empty() {
-                return Err("Name the item by its number or by words from it".into());
+    let chosen = match item {
+        ItemName::Exact(exact) => match pool.iter().find(|i| i.as_str() == exact) {
+            Some(found) => *found,
+            None if all.iter().any(|i| i == exact) => {
+                return Err(
+                    if state == "open" { "That item is open already" } else { "That item is closed already" }.into()
+                );
             }
-            let matches: Vec<&&String> =
-                pool.iter().filter(|i| words.iter().all(|w| i.to_lowercase().contains(w))).collect();
-            match matches.as_slice() {
-                [one] => **one,
-                [] => {
-                    return Err(if state == "open" { "No closed item matches" } else { "No open item matches" }.into());
+            None => return Err("That item isn't in the report any more".into()),
+        },
+        ItemName::Loose(item) => match item.trim().parse::<usize>() {
+            // Without this, 0 would be taken as words and close whichever item happens to contain a 0.
+            Ok(0) => return Err("Items are numbered from 1".into()),
+            Ok(n) => *pool.get(n - 1).ok_or("No item has that number")?,
+            _ => {
+                let words: Vec<String> = item.split_whitespace().map(str::to_lowercase).collect();
+                if words.is_empty() {
+                    return Err("Name the item by its number or by words from it".into());
                 }
-                _ => return Err("More than one item matches; use more of its words or its number".into()),
+                let matches: Vec<&&String> =
+                    pool.iter().filter(|i| words.iter().all(|w| i.to_lowercase().contains(w))).collect();
+                match matches.as_slice() {
+                    [one] => **one,
+                    [] => {
+                        return Err(
+                            if state == "open" { "No closed item matches" } else { "No open item matches" }.into()
+                        );
+                    }
+                    _ => return Err("More than one item matches; use more of its words or its number".into()),
+                }
             }
-        }
+        },
     };
     let key = item_key(chosen);
     let title = snapshot["reports"]

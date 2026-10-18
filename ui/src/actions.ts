@@ -54,17 +54,17 @@ export function deleteTodo(node: Node, task: Task) {
 }
 
 /**
- * Closes one of a report's open items as done or dropped, or opens a closed one again. `item` is its
- * place in the list, from 1, or its text; `text` is shown in the toast. The report stays as written.
+ * Closes one of a report's open items as done or dropped, or opens a closed one again. `text` is the
+ * item's whole text, which names that item alone even after the list has changed; the toast shows it.
+ * The report stays as written.
  */
 export function closeReportItem(
   report: string,
-  item: number | string,
-  state: "done" | "dropped" | "open",
   text: string,
+  state: "done" | "dropped" | "open",
 ) {
   return run(async () => {
-    await api("report/close", { report, item, state });
+    await api("report/close", { report, text, state });
     toast(state === "open" ? "Opened again" : "Closed in the report", text);
   });
 }

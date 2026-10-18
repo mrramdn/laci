@@ -1135,8 +1135,14 @@ fn a_dismissed_suggestion_stays_away_until_it_is_asked_back() {
     assert!(!snap["proposals"].as_array().unwrap().iter().any(|p| p["id"] == id));
     assert_eq!(snap["dismissed"][0]["id"], id);
     assert!(activity::read_log(&env, 5)[0]["title"].as_str().unwrap().starts_with("Dismissed: "));
+    // A second click on the same button finds it done, and says so without a second Log entry.
+    let logged = activity::read_log(&env, 50).len();
+    service.request("proposal/dismiss", &json!({"id":id})).unwrap();
+    assert_eq!(activity::read_log(&env, 50).len(), logged);
     let back = service.request("proposal/dismiss", &json!({"id":id,"undo":true})).unwrap();
     assert!(back["snapshot"]["proposals"].as_array().unwrap().iter().any(|p| p["id"] == id));
+    service.request("proposal/dismiss", &json!({"id":id,"undo":true})).unwrap();
+    assert_eq!(activity::read_log(&env, 50).len(), logged + 1);
 }
 
 #[test]

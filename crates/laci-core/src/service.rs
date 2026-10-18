@@ -556,11 +556,12 @@ impl Service {
             }
             "report/close" => {
                 let snapshot = self.snapshot()?;
+                let loose = b["item"].as_u64().map_or_else(|| string(b, "item").to_owned(), |n| n.to_string());
                 reports::close_item(
                     &self.env,
                     &snapshot,
                     string(b, "report"),
-                    &b["item"].as_u64().map_or_else(|| string(b, "item").to_owned(), |n| n.to_string()),
+                    b["text"].as_str().map_or(reports::ItemName::Loose(&loose), reports::ItemName::Exact),
                     if string(b, "state").is_empty() { "done" } else { string(b, "state") },
                     string(b, "note"),
                     by,
@@ -675,6 +676,11 @@ impl Service {
             }
             "proposal/dismiss" => {
                 let back = b["undo"] == true;
+                // Asked twice, as by a double click, the second finds it done already and changes nothing.
+                let hidden = config::load(&self.env)["dismissed"][id].as_str().is_some_and(|at| files::age(at) < 90.0);
+                if hidden != back {
+                    return Ok(json!({"ok":true}));
+                }
                 let snap = self.snapshot()?;
                 let title = if back {
                     array(&snap["dismissed"])

@@ -967,10 +967,18 @@ export async function stillToDoItemsAreClosedInLaciNotInTheFile() {
   page.act(() => notNeeded.props.onClick());
   await page.settle();
   assert.deepEqual(
-    page.closed.map(([report, item, state]) => [report, item, state]),
+    page.closed,
     [
-      ["2026-10-07-checkout-total-on-mobile-safari.md", 1, "done"],
-      ["2026-10-07-checkout-total-on-mobile-safari.md", 2, "dropped"],
+      [
+        "2026-10-07-checkout-total-on-mobile-safari.md",
+        "Send the staging link to the client and ask for the go to release.",
+        "done",
+      ],
+      [
+        "2026-10-07-checkout-total-on-mobile-safari.md",
+        "Promo codes stack with the expo discount; ask whether that is wanted.",
+        "dropped",
+      ],
     ],
   );
   // The summary names its chat, which opens on its own sheet.

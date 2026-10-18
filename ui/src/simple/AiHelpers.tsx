@@ -1697,7 +1697,7 @@ function StillToDo({ report }: { report: Report }) {
       <p className="s-quiet">{said.stillToDoNote}</p>
       {report.open.length ? (
         <ul className="s-summary-items">
-          {report.open.map((item, i) => (
+          {report.open.map((item) => (
             <li key={item} className="s-summary-item">
               <span>{item}</span>
               <div className="s-actions">
@@ -1706,7 +1706,7 @@ function StillToDo({ report }: { report: Report }) {
                   small
                   icon="check"
                   aria-label={said.itemDoneFor(item)}
-                  onClick={() => void closeReportItem(report.id, i + 1, "done", item)}
+                  onClick={() => void closeReportItem(report.id, item, "done")}
                 >
                   {said.itemDone}
                 </Button>
@@ -1714,7 +1714,7 @@ function StillToDo({ report }: { report: Report }) {
                   kind="text"
                   small
                   aria-label={said.notNeededFor(item)}
-                  onClick={() => void closeReportItem(report.id, i + 1, "dropped", item)}
+                  onClick={() => void closeReportItem(report.id, item, "dropped")}
                 >
                   {said.notNeeded}
                 </Button>
@@ -1734,14 +1734,14 @@ function StillToDo({ report }: { report: Report }) {
           openLabel={said.closedItems(closed.length)}
         >
           <ul className="s-summary-items">
-            {closed.map((item, i) => (
+            {closed.map((item) => (
               <li key={item} className="s-summary-item s-done">
                 <span>{item}</span>
                 <Button
                   kind="text"
                   small
                   aria-label={said.openAgainFor(item)}
-                  onClick={() => void closeReportItem(report.id, i + 1, "open", item)}
+                  onClick={() => void closeReportItem(report.id, item, "open")}
                 >
                   {said.openAgain}
                 </Button>

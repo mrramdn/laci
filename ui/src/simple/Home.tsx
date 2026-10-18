@@ -408,7 +408,7 @@ function PickUpCard({
             className="s-check"
             aria-label={home.markDone(item)}
             title={home.markDone(item)}
-            onClick={() => void closeReportItem(report.id, item, "done", item)}
+            onClick={() => void closeReportItem(report.id, item, "done")}
           >
             <Icon name="check" />
           </button>

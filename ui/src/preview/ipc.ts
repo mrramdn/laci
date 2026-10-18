@@ -442,8 +442,13 @@ function closeItem(body: Body) {
     fail("That report is not in the last scan.");
   const state = text(body, "state") || "done";
   const closed = (report.closed ??= []);
-  // An item is its 1-based place in the list, or its text.
-  const wanted = typeof body.item === "string" ? body.item : undefined;
+  // A window names an item by its whole text; an agent by its 1-based place, or by its text.
+  const wanted =
+    typeof body.text === "string"
+      ? body.text
+      : typeof body.item === "string"
+        ? body.item
+        : undefined;
   const place = (list: string[]) =>
     wanted === undefined ? Number(body.item) - 1 : list.indexOf(wanted);
   if (state === "open") {

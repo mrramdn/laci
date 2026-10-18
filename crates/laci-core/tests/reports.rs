@@ -167,6 +167,28 @@ fn a_moved_project_keeps_its_reports_through_their_session() {
 }
 
 #[test]
+fn a_window_names_an_item_by_its_whole_text_and_a_stale_click_closes_nothing_else() {
+    let f = fixture();
+    let alpha = f.reports.join("2026-10-01-alpha.md");
+    let text = fs::read_to_string(&alpha).unwrap().replace("- Ship it\n", "- Ship it\n- Fix login\n- Fix login page\n");
+    write(&alpha, &text);
+    let mut service = Service::new(f.env.clone());
+    save_reports_dir(&mut service, &json!(f.reports)).unwrap();
+    let close = |service: &mut Service, text: &str, state: &str| {
+        service.request("report/close", &json!({"report":"2026-10-01-alpha.md","text":text,"state":state}))
+    };
+    // Its whole text names it, though its words are in another item too.
+    assert_eq!(close(&mut service, "Fix login", "done").unwrap()["item"], "Fix login");
+    // A second click on a list drawn before the first names an item closed now: nothing else closes.
+    assert!(close(&mut service, "Fix login", "done").unwrap_err().contains("closed already"));
+    assert!(close(&mut service, "Not in the report", "done").unwrap_err().contains("isn't in the report"));
+    let open = report(&service.snapshot().unwrap(), "2026-10-01-alpha.md")["open"].clone();
+    assert_eq!(open, json!(["Ship it", "Fix login page"]));
+    assert_eq!(close(&mut service, "Fix login", "open").unwrap()["item"], "Fix login");
+    assert!(close(&mut service, "Fix login", "open").unwrap_err().contains("open already"));
+}
+
+#[test]
 fn reading_searching_and_opening_reach_only_reports_of_the_last_scan() {
     let f = fixture();
     let mut service = Service::new(f.env.clone());

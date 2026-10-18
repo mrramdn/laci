@@ -1204,6 +1204,73 @@ export const activity = {
   noMatch: (query: string) => `No change matches “${query}”.`,
   clearSearch: "Clear the search",
   showAll: "Show all",
+  /**
+   * Each kind of change as one sentence, for its row, its Undo and the filled button. The engine's
+   * own title, in Detailed's words, waits behind What changed.
+   */
+  changes: {
+    undid: (what: string) => `Undid: ${what}`,
+    undidAny: "Undid a change",
+    settings: "Changed settings",
+    status: (name: string, status: string) => `Set the status of ${name} to ${status}`,
+    statusByLaci: (name: string) => `Let Laci set the status of ${name}`,
+    priority: (name: string, priority: string) =>
+      `Set the priority of ${name} to ${priority}`,
+    priorities: { high: "high", medium: "medium", low: "low" } as Record<
+      string,
+      string | undefined
+    >,
+    noPriority: (name: string) => `Removed the priority of ${name}`,
+    due: (name: string, day: string) => `Set the due date of ${name} to ${day}`,
+    noDue: (name: string) => `Removed the due date of ${name}`,
+    hidWarning: (name: string) => `Hid a warning about ${name}`,
+    warnAgain: (name: string) => `Asked Laci to warn about ${name} again`,
+    hiddenWarnings: (name: string) => `Changed the hidden warnings of ${name}`,
+    addedStep: (name: string) => `Added a next step to ${name}`,
+    ticked: (name: string) => `Ticked a to-do in ${name}`,
+    unticked: (name: string) => `Unticked a to-do in ${name}`,
+    editedTodo: (name: string) => `Edited a to-do in ${name}`,
+    deletedStep: (name: string) => `Deleted a next step from ${name}`,
+    notes: (name: string) => `Edited the notes of ${name}`,
+    showsChats: (ai: string) => `Laci shows the chats of ${ai}`,
+    hidesChats: (ai: string) => `Laci no longer shows the chats of ${ai}`,
+    addedTool: (ai: string) => `Added ${ai}`,
+    removedTool: (ai: string) => `Removed ${ai}`,
+    closedItem: (summary: string) => `Closed an item of the summary “${summary}”`,
+    openedItem: (summary: string) =>
+      `Opened an item of the summary “${summary}” again`,
+    keptOut: (files: number, name: string) =>
+      `Kept ${count(files, "file")} of ${name} out of saved versions`,
+    archived: (name: string) => `Archived ${name}`,
+    moved: (name: string) => `Moved ${name}`,
+    reconnected: (name: string) => `Reconnected the AI chats of ${name}`,
+    finishedMoves: (moves: number) => `Finished ${count(moves, "unfinished move")}`,
+    freed: (size: string, projects: number) =>
+      `Freed ${size} in ${count(projects, "project")}`,
+    freedIn: (name: string) => `Freed up space in ${name}`,
+    setAside: (name: string) => `Set aside the AI chats left from ${name}`,
+    setAsideAny: "Set aside leftover AI chats",
+    trashedChats: (name: string) =>
+      `Moved the AI chats left from ${name} to the ${TRASH}`,
+    trashedChatsAny: `Moved leftover AI chats to the ${TRASH}`,
+    deletedChat: (title: string) => `Deleted the chat “${title}”`,
+    deletedChats: (n: number) => `Deleted ${count(n, "chat")}`,
+    trashed: (name: string) => `Moved ${name} to the ${TRASH}`,
+    hidSuggestion: "Hid a suggestion for 90 days",
+    suggestedAgain: "Brought back a hidden suggestion",
+    copied: (n: number) => `Copied ${count(n, "chat file")}`,
+    copyUpToDate: "The copy of AI chats was up to date",
+    copyOn: "Laci now copies new chats by itself",
+    copyOff: "Laci now copies chats only when you ask",
+    putBack: (ai: string) => `Put back a ${ai} chat from Laci’s copy`,
+    putBackAny: "Put back a chat from Laci’s copy",
+    emptiedKept: "Emptied Kept for Undo",
+    removedOldUndo: "Removed the old undo records",
+    removedLaci1: "Removed the leftovers of Laci 1",
+    letUse: (ai: string) => `Let ${ai} use Laci`,
+    stoppedUse: (ai: string) => `Stopped ${ai} from using Laci`,
+    created: (name: string) => `Created ${name}`,
+  },
 };
 
 /** AI helpers: the chats of every project, the summaries your AI writes, and the AI tools Laci knows. */

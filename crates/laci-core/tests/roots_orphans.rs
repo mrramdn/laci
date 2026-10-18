@@ -9,8 +9,8 @@ fn write(path: &Path, bytes: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, bytes).unwrap();
 }
-fn fixture() -> (tempfile::TempDir, Env, std::path::PathBuf, Service, Value) {
-    let temp = tempfile::tempdir().unwrap();
+fn fixture() -> (support::TempDir, Env, std::path::PathBuf, Service, Value) {
+    let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
     let root = env.home.join("projects");
     fs::create_dir_all(&root).unwrap();

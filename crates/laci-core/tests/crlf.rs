@@ -8,6 +8,8 @@ use std::{
     process::Command,
 };
 
+mod support;
+
 // A project's `.laci.md` and a to-do file, written with LF line endings. The tests turn them into CRLF where needed.
 const LACI_MD: &str =
     "---\nstatus: active\n---\n\n## Next\n\n- [ ] Write docs\n- [ ] Ship it\n\n## Notes\n\nbase notes\n";
@@ -37,10 +39,11 @@ fn edited(before: &str, after: &str, edit: impl Fn(&Path)) {
         assert_eq!(read(&temp.path().join(".laci.md")), ending(after, crlf), "{}", name(crlf));
     }
 }
-fn fixture(crlf: bool) -> (tempfile::TempDir, Env, PathBuf) {
-    let temp = tempfile::tempdir().unwrap();
+fn fixture(crlf: bool) -> (support::TempDir, Env, PathBuf) {
+    let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
-    let project = env.home.join("project/demo");
+    // A name at a time, as the scan spells the paths it finds: on Windows a `/` given to `join` stays in the text.
+    let project = env.home.join("project").join("demo");
     write(&project.join("package.json"), r#"{"name":"demo"}"#);
     write(&project.join(".laci.md"), &ending(LACI_MD, crlf));
     write(&project.join("TODO.md"), &ending(TODO_MD, crlf));

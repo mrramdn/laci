@@ -21,7 +21,7 @@ fn write(path: &Path, text: &str) {
 }
 
 struct Fixture {
-    _temp: tempfile::TempDir,
+    _temp: support::TempDir,
     env: Env,
     reports: PathBuf,
     project: PathBuf,
@@ -34,7 +34,7 @@ impl Fixture {
 
 /// Projects in home, a Claude session that worked in gamma, and reports on a disk outside home.
 fn fixture() -> Fixture {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     let mut env = Env::for_home(temp.path().join("home"));
     env.app_overrides.insert("editor", "true".into());
     env.app_overrides.insert("files", "true".into());
@@ -51,7 +51,7 @@ fn fixture() -> Fixture {
             json!({"type":"user","sessionId":SESSION,"cwd":gamma,"message":{"role":"user","content":"Fix the build"}})
         ),
     );
-    let reports = temp.path().join("disk/reports");
+    let reports = temp.path().join("disk").join("reports");
     write(
         &reports.join("2026-10-01-alpha.md"),
         &format!(
@@ -252,7 +252,8 @@ fn the_reports_setting_is_validated_logged_and_undone() {
     {
         assert!(save_reports_dir(&mut service, &bad).is_err(), "{bad}");
     }
-    let inside = f.env.home.join("notes/reports");
+    // A name at a time, as Laci spells `~/notes/reports`: on Windows a `/` given to `join` stays in the text.
+    let inside = f.env.home.join("notes").join("reports");
     fs::create_dir_all(&inside).unwrap();
     save_reports_dir(&mut service, &json!("~/notes/reports")).unwrap();
     assert_eq!(config::load(&f.env)["reportsDir"], "~/notes/reports");

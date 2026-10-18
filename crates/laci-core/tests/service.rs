@@ -17,10 +17,11 @@ fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
 }
-fn fixture() -> (tempfile::TempDir, Env, PathBuf) {
-    let temp = tempfile::tempdir().unwrap();
+fn fixture() -> (support::TempDir, Env, PathBuf) {
+    let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
-    let project = env.home.join("project/demo");
+    // A name at a time, as the scan spells the paths it finds: on Windows a `/` given to `join` stays in the text.
+    let project = env.home.join("project").join("demo");
     write(&project.join("package.json"), r#"{"name":"demo","scripts":{"safe":"node -e 'console.log(1)'"}}"#);
     write(&project.join("README.md"), "# Demo\n\n## TODO\n\n- [ ] Read the guide\n");
     write(
@@ -965,7 +966,8 @@ fn sessions_only_the_backup_holds_are_listed_and_can_be_put_back() {
     const CODEX: &str = "99999999-2222-3333-4444-555555555555";
     let (_temp, env, project) = fixture();
     config::save(&env, &json!({"roots":["~/project"],"presets":["claude","codex"],"custom":[]})).unwrap();
-    let store = env.home.join(".claude/projects").join(laci_core::paths::enc(&project.to_string_lossy()));
+    // Spelled as the place Laci puts a session back: on Windows a `/` given to `join` stays in the text.
+    let store = env.home.join(".claude").join("projects").join(laci_core::paths::enc(&project.to_string_lossy()));
     let session = store.join(format!("{ID}.jsonl"));
     write(
         &session,
@@ -1004,7 +1006,7 @@ fn sessions_only_the_backup_holds_are_listed_and_can_be_put_back() {
         (&lost["title"], &lost["resumeCapability"], &lost["cwd"], &lost["restoreTo"]),
         (&json!("Fix the login page"), &json!("history-only"), &json!(project), &json!(session))
     );
-    assert!(lost["file"].as_str().unwrap().starts_with(env.data_dir.join("history/claude").to_str().unwrap()));
+    assert!(Path::new(lost["file"].as_str().unwrap()).starts_with(env.data_dir.join("history/claude")));
     assert!(kept.iter().any(|s| s["provider"] == "codex" && s["sessionId"] == CODEX));
     let (request, found) =
         service.agent_context(&json!({"provider":"claude","sessionId":ID,"projectPath":project})).unwrap();

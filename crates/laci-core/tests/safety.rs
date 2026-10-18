@@ -14,6 +14,8 @@ use std::{
     process::{Command, Output},
 };
 
+mod support;
+
 fn run(dir: &Path, args: &[&str]) -> Output {
     Command::new("git")
         .args(args)
@@ -38,10 +40,11 @@ fn write(path: &Path, text: &str) {
 }
 /// A home whose `project` folder Laci reads, with one Git project in it. Laci's own Git calls read the user's Git
 /// settings, so the project names an empty ignore list in place of the user's.
-fn fixture() -> (tempfile::TempDir, Env, PathBuf) {
-    let temp = tempfile::tempdir().unwrap();
+fn fixture() -> (support::TempDir, Env, PathBuf) {
+    let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
-    let dir = env.home.join("project/demo");
+    // A name at a time, as the scan spells the paths it finds: on Windows a `/` given to `join` stays in the text.
+    let dir = env.home.join("project").join("demo");
     fs::create_dir_all(&dir).unwrap();
     git(&dir, &["init", "-q", "--initial-branch=main"]);
     let none = temp.path().join("no-ignores");
@@ -503,7 +506,7 @@ fn the_fix_prompt_answers_like_the_other_prompts() {
 }
 
 /// A project whose commits are all on a local backup, so a Trash plan allows removal.
-fn backed_up() -> (tempfile::TempDir, Env, PathBuf, Value) {
+fn backed_up() -> (support::TempDir, Env, PathBuf, Value) {
     let (temp, env, dir) = fixture();
     let remote = temp.path().join("backup.git");
     fs::create_dir(&remote).unwrap();

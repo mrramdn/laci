@@ -1,7 +1,31 @@
-//! What the tests need from the OS where Linux, macOS and Windows differ: links, and programs to start.
+//! What the tests need from the OS where Linux, macOS and Windows differ: temporary folders, links, and programs to
+//! start.
 // Each test file uses only some of these.
 #![allow(dead_code)]
-use std::{path::Path, process::Command};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+/// A temporary folder, removed when this is dropped.
+pub struct TempDir {
+    _dir: tempfile::TempDir,
+    path: PathBuf,
+}
+impl TempDir {
+    /// The folder as Laci spells the paths it finds on the disk, and its home outside Linux: canonical. Windows' own
+    /// temp path can hold an 8.3 short name such as `RUNNER~1`, and macOS's leads through the link `/var`.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// A new temporary folder for a test's home and projects.
+pub fn tempdir() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let path = laci_core::platform::path::canonical(dir.path()).unwrap();
+    TempDir { _dir: dir, path }
+}
 
 /// Makes `link` a link to the folder `target`. Windows makes symlinks only in Developer Mode or for an administrator;
 /// without either, a junction stands in, which Laci must refuse the same way.

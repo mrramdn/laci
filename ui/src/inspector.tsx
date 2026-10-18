@@ -1,17 +1,11 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { ChangeEvent } from "react";
-import { api, errorText } from "./api";
-import { useApp, external, run, toast, urlOpen } from "./store";
+import { useShallow } from "zustand/react/shallow";
+import { api } from "./api";
+import { useApp, copyText, external, run, toast, urlOpen } from "./store";
 import { useNow } from "./clock";
-import { proseClick, renderReadme } from "./readme";
+import { addTodo, deleteTodo, muteCheck, setMeta, toggleTodo } from "./actions";
+import { loadMarkdown, useHealth, useMarkdown, useNotesDraft } from "./hooks";
 import {
   agentCount,
   APP_NAMES,
@@ -27,7 +21,6 @@ import {
   conversations,
   reportsOfProject,
   shortDay,
-  taskIdentity,
   tilde,
 } from "./helpers";
 import {
@@ -45,11 +38,24 @@ import { TerminalButton, launchShell } from "./terminal-controls";
 import { agentProviders, askAgent } from "./agent-launch";
 import { SessionList, requestResume } from "./session-ui";
 import { openTerminal } from "./terminal-api";
-import type { Commit, Health, Node, Snapshot, Task } from "./types";
+import type { Commit, Node, Snapshot, Task } from "./types";
 export function Inspector({ node: n }: { node: Node }) {
-  const s = useApp();
+  // Only what the panel shows, so news of a scan in progress doesn't draw it again.
+  const s = useApp(
+    useShallow((state) => ({
+      snapshot: state.snapshot!,
+      tab: state.tab,
+      apps: state.apps,
+      historyPending: state.historyPending,
+    })),
+  );
   useNow();
-  const snapshot = s.snapshot!;
+  const hasReadme = Boolean(n.readme);
+  // What draws Markdown loads ahead, so the README tab shows at once.
+  useEffect(() => {
+    if (hasReadme) void loadMarkdown();
+  }, [hasReadme]);
+  const snapshot = s.snapshot;
   const sessions = sessionsOf(n, snapshot);
   const resumable = sessions.find(
     (session) => session.resumeCapability === "supported" && !session.parentId,
@@ -64,10 +70,8 @@ export function Inspector({ node: n }: { node: Node }) {
     ...(n.readme ? [["readme", "README", 0] as [string, string, number]] : []),
   ];
   const active = tabs.some((t) => t[0] === s.tab) ? s.tab : "health";
-  const meta = (key: string, value: string) =>
-    void run(async () => {
-      s.patch(await api<Node>("meta", { id: n.id, key, value }));
-    });
+  const meta = (key: "status" | "priority" | "deadline", value: string) =>
+    void setMeta(n, key, value);
   return (
     <aside id="insp" className="insp" aria-label="Details">
       <div className="head">
@@ -86,10 +90,7 @@ export function Inspector({ node: n }: { node: Node }) {
           title="Copy path"
           aria-label="Copy path"
           onClick={() =>
-            void run(async () => {
-              await navigator.clipboard.writeText(n.path);
-              toast("Path copied", tilde(n.path, snapshot.home));
-            })
+            copyText(n.path, "Path copied", tilde(n.path, snapshot.home))
           }
         >
           <Icon name="copy" />
@@ -491,39 +492,6 @@ function CommitRow({ commit, author }: { commit: Commit; author?: boolean }) {
     </>
   );
 }
-function useHealth(n: Node) {
-  const [state, setState] = useState<{
-    id: string;
-    health?: Health;
-    failed?: boolean;
-  } | null>(null);
-  const request = useRef(0);
-  const git = n.git;
-  const project = n.kind === "project";
-  useEffect(() => {
-    if (!project) return;
-    const mine = ++request.current;
-    api<Health>("health", { id: n.id })
-      .then((health) => {
-        if (mine === request.current) setState({ id: n.id, health });
-      })
-      .catch(() => {
-        if (mine === request.current)
-          setState((old) =>
-            old?.id === n.id && old.health ? old : { id: n.id, failed: true },
-          );
-      });
-  }, [
-    project,
-    n.id,
-    n.revision,
-    git?.dirty,
-    git?.ahead,
-    git?.commits,
-    git?.stashes,
-  ]);
-  return project && state?.id === n.id ? state : null;
-}
 function HealthTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
   const loaded = useHealth(n);
   const health = loaded?.health;
@@ -539,16 +507,7 @@ function HealthTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
           );
   const issues = all.filter((i) => !i.muted);
   const muted = all.filter((i) => i.muted);
-  // Keep codes that are muted but not raised right now, so muting one check never drops another.
-  const quiet = (n.meta.quiet ?? "").split(",").filter(Boolean);
-  const mute = (code: string, on: boolean) =>
-    void run(async () => {
-      const rest = quiet.filter((c) => c !== code);
-      const value = (on ? [...rest, code] : rest).join(",");
-      useApp
-        .getState()
-        .patch(await api<Node>("meta", { id: n.id, key: "quiet", value }));
-    });
+  const mute = (code: string, on: boolean) => void muteCheck(n, code, on);
   const git = n.git;
   const stack = n.stack;
   const weeks = git?.firstCommitAt
@@ -939,21 +898,7 @@ function TaskCheckbox({ node, task }: { node: Node; task: Task }) {
         className="cb"
         type="checkbox"
         checked={task.done}
-        onChange={(e) =>
-          void run(async () =>
-            useApp.getState().patch(
-              await api<Node>("todo", {
-                id: node.id,
-                op: "toggle",
-                file: task.file,
-                line: task.line,
-                text: task.text,
-                ...taskIdentity(node, task),
-                done: e.target.checked,
-              }),
-            ),
-          )
-        }
+        onChange={(e) => void toggleTodo(node, task, e.target.checked)}
       />
       <div className="txt">
         {task.text}
@@ -987,18 +932,7 @@ function TaskCheckbox({ node, task }: { node: Node; task: Task }) {
           aria-label="Delete"
           onClick={(e) => {
             e.preventDefault();
-            void run(async () =>
-              useApp.getState().patch(
-                await api<Node>("todo", {
-                  id: node.id,
-                  op: "delete",
-                  file: task.file,
-                  line: task.line,
-                  text: task.text,
-                  ...taskIdentity(node, task),
-                }),
-              ),
-            );
+            void deleteTodo(node, task);
           }}
         >
           <Icon name="x" className="sm" />
@@ -1038,16 +972,9 @@ function TodoTab({ node: n }: { node: Node }) {
         className="add"
         onSubmit={(e) => {
           e.preventDefault();
-          const value = text.trim();
-          if (value)
-            void run(async () => {
-              useApp
-                .getState()
-                .patch(
-                  await api<Node>("todo", { id: n.id, op: "add", text: value }),
-                );
-              setText("");
-            });
+          void addTodo(n, text).then((added) => {
+            if (added) setText("");
+          });
         }}
       >
         <Icon name="plus" className="sm" />
@@ -1107,76 +1034,22 @@ function TodoTab({ node: n }: { node: Node }) {
   );
 }
 function Notes({ node }: { node: Node }) {
-  const [text, setText] = useState(node.notes ?? "");
-  const [status, setStatus] = useState("");
-  const draft = useRef(node.notes ?? "");
-  const saved = useRef(node.notes ?? "");
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const sequence = useRef(Promise.resolve());
-  const mounted = useRef(true);
-  const save = useCallback(
-    (value: string) => {
-      sequence.current = sequence.current.then(async () => {
-        if (saved.current === value) return;
-        if (mounted.current) setStatus("Saving…");
-        try {
-          const patched = await api<Node>("notes", {
-            id: node.id,
-            text: value,
-          });
-          saved.current = value;
-          useApp.getState().patch(patched);
-          if (mounted.current)
-            setStatus(draft.current === value ? "Saved" : "Saving…");
-        } catch (error) {
-          if (mounted.current) setStatus("Couldn’t save");
-          toast("Couldn’t save notes", errorText(error), { error: true });
-        }
-      });
-    },
-    [node.id],
-  );
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      clearTimeout(timer.current);
-      if (draft.current !== saved.current) save(draft.current);
-    };
-  }, [save]);
-  useEffect(() => {
-    if (draft.current === saved.current && node.notes !== saved.current) {
-      draft.current = node.notes ?? "";
-      saved.current = draft.current;
-      setText(draft.current);
-    }
-  }, [node.notes]);
-  function change(e: ChangeEvent<HTMLTextAreaElement>) {
-    const value = e.target.value;
-    draft.current = value;
-    setText(value);
-    setStatus("Editing…");
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => save(value), 600);
-  }
+  const notes = useNotesDraft(node);
   return (
     <>
       <div className="sec-t">
         <label htmlFor="project-notes">Notes</label> <span className="grow" />
         <span className="faint" style={{ fontWeight: 400 }}>
-          {status}
+          {notes.status}
         </span>
       </div>
       <textarea
         id="project-notes"
         name="notes"
         className="notes"
-        value={text}
-        onChange={change}
-        onBlur={() => {
-          clearTimeout(timer.current);
-          save(draft.current);
-        }}
+        value={notes.text}
+        onChange={(e) => notes.change(e.target.value)}
+        onBlur={notes.flush}
         maxLength={20000}
         placeholder="Context for future you, or for the next agent session…"
       />
@@ -1400,11 +1273,17 @@ function ReportsSection({ node: n }: { node: Node }) {
   );
 }
 function ReadmeTab({ node }: { node: Node }) {
+  const markdown = useMarkdown();
   const [remoteFor, setRemoteFor] = useState<string>();
   const loadRemote = remoteFor === node.path;
+  // Empty until marked and DOMPurify are in: the README's raw text is never shown.
   const { html, remote } = useMemo(
-    () => renderReadme(node.readme?.raw ?? "", node.path, loadRemote),
-    [node.path, node.readme?.raw, loadRemote],
+    () =>
+      markdown?.renderReadme(node.readme?.raw ?? "", node.path, loadRemote) ?? {
+        html: "",
+        remote: 0,
+      },
+    [markdown, node.path, node.readme?.raw, loadRemote],
   );
   return (
     <>
@@ -1429,7 +1308,7 @@ function ReadmeTab({ node }: { node: Node }) {
         className="readme"
         dangerouslySetInnerHTML={{ __html: html }}
         onClick={(e) =>
-          proseClick(e, {
+          markdown?.proseClick(e, {
             remote: () => setRemoteFor(node.path),
             blocked: "A README can open web, mail and project links only",
             relative: (href) =>

@@ -51,9 +51,15 @@ function longDay(ymd: string) {
   });
 }
 
-/** Whether leftover AI chats were set aside in Kept for Undo, not sent to the system's bin. */
+/**
+ * Whether leftover AI chats were set aside in Kept for Undo, not sent to the system's bin. An older
+ * entry comes without its journal's steps; then the detail tells, which the engine writes only for
+ * what went to the bin.
+ */
 const keptForUndo = (entry: LogEntry) =>
-  Boolean(entry.steps?.some((step) => step.kind === "move"));
+  entry.steps
+    ? entry.steps.some((step) => step.kind === "move")
+    : !entry.detail;
 
 /**
  * What a form of the engine's title says, from the parts it found. When it says nothing, the change

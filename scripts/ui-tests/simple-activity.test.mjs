@@ -400,6 +400,19 @@ const SAID = [
     }),
     "Moved leftover AI chats to the Trash",
   ],
+  // An older entry comes without its journal's steps: the detail, written only for what went to the
+  // bin, tells the two apart.
+  [
+    change("a4b", "3 Codex sessions for deleted habit-app", { journal: "j4b" }),
+    "Set aside the AI chats left from habit-app",
+  ],
+  [
+    change("a5b", "2 sessions + 1 memory file for a folder that is gone", {
+      journal: "j5b",
+      detail: "Restore it through your system Trash.",
+    }),
+    "Moved leftover AI chats to the Trash",
+  ],
   // Changes Undo takes back step by step.
   [change("a6", "Archive habit-app", { journal: "j6", path: "/home/demo/project/side/habit-app" }), "Archived habit-app"],
   [

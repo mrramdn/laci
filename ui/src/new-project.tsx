@@ -9,6 +9,7 @@ import {
   type AgentDraft,
   validateAgentDraft,
 } from "./agent-launch";
+import { ChooseFolder } from "./pick";
 import { Select } from "./select";
 import { useApp, changed, selectWhenReady } from "./store";
 import {
@@ -21,6 +22,7 @@ import {
 import { OS } from "./platform";
 import type { Change, NewInfo, TerminalInfo } from "./types";
 import { useTerms } from "./terminal-api";
+import { detailedSettings as said } from "./words";
 
 interface Recipe {
   id: string;
@@ -415,16 +417,25 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
           </label>
           <label className="fld">
             <span>In</span>
-            <Select
-              label="Project location"
-              disabled={saving || !!created}
-              value={draft.parent}
-              options={parents.map((path) => ({
-                value: path,
-                label: tilde(path, snapshot.home),
-              }))}
-              onValueChange={(value) => update("parent", value)}
-            />
+            <div className="addrow" style={{ margin: 0 }}>
+              <Select
+                label="Project location"
+                disabled={saving || !!created}
+                value={draft.parent}
+                options={parents.map((path) => ({
+                  value: path,
+                  label: tilde(path, snapshot.home),
+                }))}
+                onValueChange={(value) => update("parent", value)}
+              />
+              <ChooseFolder
+                label={said.choose}
+                title={said.locationTitle}
+                defaultPath={draft.parent}
+                disabled={saving || !!created}
+                onPick={(path) => update("parent", path)}
+              />
+            </div>
           </label>
         </div>
         <label className="fld">
@@ -487,12 +498,20 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
             </label>
             <label className="fld">
               <span>Reference a local folder</span>
-              <input
-                className="inp mono"
-                value={templatePath}
-                onChange={(e) => setTemplatePath(e.target.value)}
-                placeholder={STARTER}
-              />
+              <div className="addrow" style={{ margin: 0 }}>
+                <input
+                  className="inp mono"
+                  value={templatePath}
+                  onChange={(e) => setTemplatePath(e.target.value)}
+                  placeholder={STARTER}
+                />
+                <ChooseFolder
+                  label={said.choose}
+                  title={said.templateTitle}
+                  defaultPath={templatePath.trim() || "~"}
+                  onPick={setTemplatePath}
+                />
+              </div>
               <small>
                 The source folder stays in place. Git history is excluded from
                 copies.

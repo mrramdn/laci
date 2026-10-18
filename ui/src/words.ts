@@ -1847,3 +1847,73 @@ export const detailedData = {
     cancel: "Cancel",
   },
 };
+
+/**
+ * What Detailed's Settings, Archive and New project gained in 3.0: the "Choose…" beside each folder
+ * field, and Settings › About & updates. How often Laci looks for a new version is said as first
+ * run says it (`firstRun`), so the same question reads the same everywhere. The rest of Detailed
+ * keeps its words in its components.
+ */
+export const detailedSettings = {
+  /** The button beside a folder field, which opens the system's folder picker. */
+  choose: "Choose…",
+  /** The picker's title for each field. */
+  addFolderTitle: "Choose a folder where you keep projects",
+  archiveFolderTitle: "Choose your archive folder",
+  reportsFolderTitle: "Choose the folder for reports",
+  destinationTitle: (name: string) => `Choose where to archive ${name}`,
+  locationTitle: "Choose where the new project goes",
+  templateTitle: "Choose a folder to start new projects from",
+  /** A folder chosen that Laci doesn’t take as a place to keep projects. */
+  wholeDisk:
+    "Laci doesn’t look through a whole disk. Choose the folder where you keep projects.",
+
+  // Settings › About & updates
+  updatesTitle: "About & updates",
+  updatesIntro:
+    "The version you run, and whether a newer one is out. A change here takes effect at once and needs no saving.",
+  version: (version: string) => `Version ${version}`,
+  reading: "Reading the update status…",
+  neverLooked: "Laci hasn’t looked for a new version yet.",
+  /** `when` is "5 minutes ago", or empty. */
+  upToDate: (when: string) =>
+    `No newer version was found${when ? ` ${when}` : ""}.`,
+  looking: "Looking for a new version…",
+  available: (version: string, when: string) =>
+    `Version ${version} is available${when ? `, published ${when}` : ""}.`,
+  downloading: (version: string, percent?: number) =>
+    `Downloading version ${version}…${percent === undefined ? "" : ` ${percent}%`}`,
+  ready: (version: string) =>
+    `Version ${version} is ready. Restart Laci to finish.`,
+  /** When the desktop gives no reason for a failure. */
+  failed: "Laci couldn’t update.",
+  /** The one button, by what it does. */
+  check: "Check now",
+  checking: "Checking…",
+  install: "Install",
+  installing: "Installing…",
+  retry: "Try again",
+  restart: "Restart",
+  releasePage: "Open the release page",
+  restartNote:
+    "Restarting closes Laci’s terminals and the AI chats running in them.",
+  /** Why there is a link to the release page and no Install. */
+  noticeNote:
+    "Laci can’t replace this copy of itself: a package manager, a script or a portable folder put it here, or macOS runs it from where it was downloaded. Get the new version from its release page.",
+  /** macOS, before an update: an app signed ad hoc looks like a new one to it after each update. */
+  macTitle: "macOS asks about your folders again",
+  macBody:
+    "Laci for macOS is signed ad hoc, without an Apple developer account, so macOS takes each update for a new app. After it is installed, macOS asks again whether Laci may open Documents, Desktop, Downloads or a drive. Choose Allow, as the first time.",
+  whatsNew: (version: string) => `What’s new in ${version}`,
+  notesBlocked: "Release notes can open web and mail links only",
+  remoteImages: (n: number) =>
+    `${count(n, "image")} from the web ${n === 1 ? "is" : "are"} not loaded.`,
+  loadImages: "Load images",
+  /** The question about looking by itself, which Settings asks in a section of its own. */
+  updatesChoice: "Looking for new versions",
+  updatesUnset: "You haven’t chosen yet, so Laci doesn’t look.",
+  updatesSaved: {
+    daily: "Laci looks for new versions once a day",
+    off: "Laci won’t look for new versions",
+  },
+};

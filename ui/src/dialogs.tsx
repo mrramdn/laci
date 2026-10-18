@@ -9,8 +9,18 @@ import {
 import type { ReactNode } from "react";
 import { api, errorText } from "./api";
 import { useApp, changed, run, selectWhenReady } from "./store";
-import { bytes, expandHome, isAbsolutePath, plural, tilde } from "./helpers";
+import {
+  base,
+  bytes,
+  expandHome,
+  isAbsolutePath,
+  joinPath,
+  parentOf,
+  plural,
+  tilde,
+} from "./helpers";
 import { OS, TRASH } from "./platform";
+import { ChooseFolder } from "./pick";
 import { detailedList } from "./shortcuts";
 import { Icon, Ops, restoreFocus, SeverityGlyph } from "./common";
 import { useConfigPath } from "./settings";
@@ -19,6 +29,7 @@ import { AgentDialog, DeleteSessions, SessionDialog } from "./session-ui";
 import { McpDialog } from "./mcp-setup";
 import { Select, SelectPortal, selectIsOpen } from "./select";
 import type { ArchivePlan, Change, DeletePlan, Link } from "./types";
+import { detailedSettings as said } from "./words";
 const NewProject = lazy(() =>
   import("./new-project").then((module) => ({ default: module.NewProject })),
 );
@@ -522,6 +533,10 @@ function Archive({ id }: { id: string }) {
     };
   }, [id, destination, home]);
   if (!n) return null;
+  // The destination is the project's own new folder, which isn't there yet: the picker opens in the
+  // folder above it.
+  const typed = expandHome(destination.trim(), home);
+  const pickFrom = isAbsolutePath(typed) ? parentOf(typed) : "~";
   async function archive() {
     if (!plan) return;
     await run(
@@ -586,23 +601,37 @@ function Archive({ id }: { id: string }) {
     >
       <label className="fld">
         <span>Destination</span>
-        <input
-          className="inp mono"
-          value={destination}
-          disabled={saving}
-          onChange={(e) => {
-            setDestination(e.target.value);
-            setHeavy(false);
-            setError("");
-          }}
-          autoComplete="off"
-          aria-label="Archive destination"
-          placeholder={
-            n.archivePlan?.error
-              ? "Choose another destination…"
-              : "Default archive destination"
-          }
-        />
+        <div className="addrow" style={{ margin: 0 }}>
+          <input
+            className="inp mono"
+            value={destination}
+            disabled={saving}
+            onChange={(e) => {
+              setDestination(e.target.value);
+              setHeavy(false);
+              setError("");
+            }}
+            autoComplete="off"
+            aria-label="Archive destination"
+            placeholder={
+              n.archivePlan?.error
+                ? "Choose another destination…"
+                : "Default archive destination"
+            }
+          />
+          {/* The folder chosen takes the project inside, under its own name. */}
+          <ChooseFolder
+            label={said.choose}
+            title={said.destinationTitle(n.name)}
+            defaultPath={pickFrom}
+            disabled={saving}
+            onPick={(path) => {
+              setDestination(joinPath(path, base(n.path)));
+              setHeavy(false);
+              setError("");
+            }}
+          />
+        </div>
         <small>The full project folder path, including its name.</small>
       </label>
       {n.archivePlan?.error ? (

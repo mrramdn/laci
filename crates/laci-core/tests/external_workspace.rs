@@ -485,13 +485,14 @@ fn projects_containing_laci_config_or_cache_cannot_be_archived_or_moved() {
 fn move_destinations_cannot_enter_laci_owned_directories() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));
-    let source = env.home.join("project/demo");
+    let source = env.home.join("project").join("demo");
     write(&source.join("package.json"), "{}");
     config::save(&env, &json!({"roots":["~/project"],"presets":[]})).unwrap();
     let mut service = Service::new(env.clone());
     for owned in [&env.config_dir, &env.data_dir, &env.cache_dir] {
         let destination = owned.join("misplaced-project");
-        assert!(service.request("move", &json!({"id":source,"destination":destination})).is_err());
+        let error = service.request("move", &json!({"id":source,"destination":destination})).unwrap_err();
+        assert!(error.contains("Laci's settings"), "{error}");
         assert!(!destination.exists());
     }
     assert!(source.join("package.json").is_file());

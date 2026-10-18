@@ -2,7 +2,7 @@
 use laci_core::{
     activity, config,
     env::Env,
-    paths,
+    paths, platform,
     service::{Refresh, Service},
 };
 use serde_json::{Value, json};
@@ -98,7 +98,7 @@ fn reports_on_another_disk_link_by_projects_session_start_and_session_id() {
     let f = fixture();
     let mut service = Service::new(f.env.clone());
     let snapshot = save_reports_dir(&mut service, &json!(f.reports)).unwrap();
-    let dir = f.reports.canonicalize().unwrap();
+    let dir = platform::path::canonical(&f.reports).unwrap();
     assert_eq!(snapshot["reportsDir"], json!({"path":dir,"total":3}));
     assert_eq!(ids(&snapshot), ["2026-10-03-gamma.md", "2026-10-02-beta.md", "2026-10-01-alpha.md"]);
     let alpha = report(&snapshot, "2026-10-01-alpha.md");
@@ -231,7 +231,7 @@ fn the_reports_setting_is_validated_logged_and_undone() {
     assert_eq!(config::load(&f.env)["reportsDir"], "~/notes/reports");
     assert_eq!(service.request("setup/info", &json!({})).unwrap()["reportsDir"], json!(inside));
     save_reports_dir(&mut service, &json!(f.reports)).unwrap();
-    let outside = f.reports.canonicalize().unwrap();
+    let outside = platform::path::canonical(&f.reports).unwrap();
     assert_eq!(config::load(&f.env)["reportsDir"], json!(outside));
     let entry =
         activity::read_log(&f.env, 100).into_iter().find(|e| e["key"] == "settings" && e["canUndo"] == true).unwrap();

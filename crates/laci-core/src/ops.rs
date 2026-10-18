@@ -3,7 +3,11 @@ use crate::{
     Result,
     env::Env,
     files, paths,
-    platform::{self, preserve},
+    platform::{
+        self,
+        path::{below, contains, may_contain, relocate, renames_case, rewrite_prefix, same_path, stays_below},
+        preserve,
+    },
     process, sidecar,
 };
 use serde_json::{Value, json};
@@ -115,6 +119,7 @@ fn remove(path: &Path) -> Result<()> {
 fn rename(src: &Path, dest: &Path) -> Result<()> {
     match platform::rename_noreplace(src, dest) {
         Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && renames_case(src, dest) => rename_case(src, dest),
         Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
             // Copy into a private sibling first, then publish atomically. A failed copy leaves the source intact.
             let staged = tempfile::Builder::new()
@@ -128,6 +133,18 @@ fn rename(src: &Path, dest: &Path) -> Result<()> {
         }
         Err(e) => Err(e.to_string()),
     }
+}
+/// A rename that only changes the case of a name, where the file system counts the new name as taken by the old one.
+/// It goes by a free name in the same folder, and back if the second step fails.
+fn rename_case(src: &Path, dest: &Path) -> Result<()> {
+    let parent = src.parent().ok_or("Missing parent")?;
+    let staged =
+        parent.join(format!(".laci-rename-{:x}-{:x}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+    platform::rename_noreplace(src, &staged).map_err(|e| e.to_string())?;
+    platform::rename_noreplace(&staged, dest).map_err(|e| {
+        let _ = platform::rename_noreplace(&staged, src);
+        e.to_string()
+    })
 }
 /// The processes working inside `paths`, as messages and the UI show them. Fails where Laci can't list processes.
 pub(crate) fn busy_in(paths: &[PathBuf]) -> Result<Vec<Value>> {
@@ -219,13 +236,15 @@ impl<'a> Tx<'a> {
     fn move_to(&mut self, src: &Path, dest: &Path) -> Result<()> {
         sidecar::plain_path(src)?;
         sidecar::plain_path(dest)?;
-        if exists(dest) {
+        // Where case doesn't matter, the name in its new case already finds the folder itself.
+        let recased = renames_case(src, dest);
+        if exists(dest) && !recased {
             return Err(format!("{} already exists", paths::tilde(dest, &self.env.home)));
         }
         if !exists(src) {
             return Err(format!("{} is gone", paths::tilde(src, &self.env.home)));
         }
-        if dest.starts_with(src) {
+        if contains(src, dest) && !recased {
             return Err("Can't move a folder into itself".into());
         }
         if src.is_dir() {
@@ -249,8 +268,12 @@ impl<'a> Tx<'a> {
         if src == dest {
             return Ok(());
         }
-        if !exists(dest) {
+        if !exists(dest) || renames_case(src, dest) {
             return self.move_to(src, dest);
+        }
+        // Another spelling of the same folder, on macOS and Windows: there is nothing to merge.
+        if same_path(src, dest) {
+            return Ok(());
         }
         sidecar::plain_path(src)?;
         sidecar::plain_path(dest)?;
@@ -299,11 +322,7 @@ impl<'a> Tx<'a> {
             let Ok(old) = serde_json::from_str::<String>(&c[2]) else {
                 return c[0].to_owned();
             };
-            let replacement = pairs.iter().find_map(|(from, to)| {
-                old.strip_prefix(from)
-                    .filter(|rest| rest.is_empty() || rest.starts_with('/'))
-                    .map(|rest| format!("{to}{rest}"))
-            });
+            let replacement = pairs.iter().find_map(|(from, to)| rewrite_prefix(&old, from, to));
             replacement
                 .map(|new| format!("{}{}", &c[1], serde_json::to_string(&new).unwrap()))
                 .unwrap_or_else(|| c[0].into())
@@ -468,7 +487,7 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
     for e in entries.iter().filter(|e| e["kind"] == "move") {
         let from = journal_path(env, e, "from")?;
         let to = journal_path(env, e, "to")?;
-        if exists(&from) && exists(&to) {
+        if exists(&from) && exists(&to) && !renames_case(&to, &from) {
             return Err(format!("{} already exists; undo would overwrite it", from.display()));
         }
     }
@@ -478,7 +497,7 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
                 let from = journal_path(env, e, "from")?;
                 let to = journal_path(env, e, "to")?;
                 if exists(&to) {
-                    if exists(&from) {
+                    if exists(&from) && !renames_case(&to, &from) {
                         return Err(format!("{} already exists; undo would overwrite it", from.display()));
                     }
                     fs::create_dir_all(from.parent().ok_or("Missing parent")?).map_err(|e| e.to_string())?;
@@ -629,11 +648,6 @@ fn roots(mut paths: Vec<String>) -> Vec<String> {
     }
     out
 }
-fn relocated(from: &Path, to: &Path, old: &Path) -> PathBuf {
-    let relative = old.strip_prefix(from).expect("validated project prefix");
-    if relative.as_os_str().is_empty() { to.to_owned() } else { to.join(relative) }
-}
-
 pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value) -> Result<Value> {
     let node = &snap["nodes"][id];
     if !node.is_object() {
@@ -641,16 +655,16 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
     }
     let src = value_path(env, &node["path"])?;
     let dest = path(env, dest)?;
-    if src == env.home || dest == env.home {
+    if same_path(&src, &env.home) || same_path(&dest, &env.home) {
         return Err("Can't move the home folder".into());
     }
     if [&env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|owned| {
-        let owned = owned.canonicalize().unwrap_or_else(|_| paths::normalize(owned));
-        owned.starts_with(&src) || dest.starts_with(&owned)
+        let owned = platform::path::canonical(owned).unwrap_or_else(|_| paths::normalize(owned));
+        may_contain(&src, &owned) || may_contain(&owned, &dest)
     }) {
         return Err("Can't move Laci's settings, history, cache or recovery data".into());
     }
-    if dest.starts_with(&src) {
+    if contains(&src, &dest) && !renames_case(&src, &dest) {
         return Err("Can't move a folder into itself".into());
     }
     let title = opts["title"].as_str().map(str::to_owned).unwrap_or_else(|| {
@@ -661,67 +675,79 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
         if opts["status"] == "archived" {
             crate::scan::check_archive_destination(env, &dest)?;
         }
+        // Which history belongs to the folder is asked while it is still there: on macOS and Windows another
+        // spelling of it counts only as long as the file system can confirm it.
+        let claude: Vec<(&Value, &Path, PathBuf)> = snap["claude"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(_, c)| {
+                let old = Path::new(c["path"].as_str()?);
+                Some((c, old, relocate(&src, &dest, old)?))
+            })
+            .collect();
+        // So is whether a tool's log file is kept inside the folder.
+        let items: Vec<(&Value, String, Option<PathBuf>)> = snap["items"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(_, item)| item)
+            .filter(|item| item["cleanupCapability"] != "unsupported")
+            .filter_map(|item| {
+                let newcwd = platform::path::moved_text(&src, &dest, item["cwd"].as_str()?)?;
+                let inside = item["file"].as_str().and_then(|file| below(&src, &paths::expand(file.trim(), &env.home)));
+                Some((item, newcwd, inside))
+            })
+            .collect();
         tx.move_to(&src, &dest)?;
-        if let Some(claude) = snap["claude"].as_object() {
-            for c in claude.values() {
-                let Some(old) = c["path"].as_str().map(Path::new).filter(|p| p.starts_with(&src)) else {
-                    continue;
-                };
-                let now = relocated(&src, &dest, old);
-                let from = value_path(env, &c["dir"])?;
-                let target = from.parent().ok_or("Invalid Claude store")?.join(paths::enc(&now.to_string_lossy()));
-                tx.merge(&from, &target)?;
-                let gone = c["gone"].as_array().cloned().unwrap_or_default();
-                let stale = roots(
-                    c["sessions"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|s| s["cwd"].as_str())
-                        .filter(|s| gone.iter().any(|g| g.as_str() == Some(*s)) && !Path::new(s).starts_with(old))
-                        .map(str::to_owned)
-                        .collect(),
-                );
-                let mut pairs = vec![(src.to_string_lossy().into_owned(), dest.to_string_lossy().into_owned())];
-                pairs.extend(stale.into_iter().map(|s| (s, now.to_string_lossy().into_owned())));
-                for f in jsonl(&target) {
-                    tx.rewrite(&f, &pairs, "cwd")?;
-                }
+        for (c, old, now) in claude {
+            let from = value_path(env, &c["dir"])?;
+            let target = from.parent().ok_or("Invalid Claude store")?.join(paths::enc(&now.to_string_lossy()));
+            tx.merge(&from, &target)?;
+            let gone = c["gone"].as_array().cloned().unwrap_or_default();
+            let stale = roots(
+                c["sessions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|s| s["cwd"].as_str())
+                    .filter(|s| gone.iter().any(|g| g.as_str() == Some(*s)) && !may_contain(old, Path::new(s)))
+                    .map(str::to_owned)
+                    .collect(),
+            );
+            let mut pairs = vec![(src.to_string_lossy().into_owned(), dest.to_string_lossy().into_owned())];
+            pairs.extend(stale.into_iter().map(|s| (s, now.to_string_lossy().into_owned())));
+            for f in jsonl(&target) {
+                tx.rewrite(&f, &pairs, "cwd")?;
             }
         }
         let connectors = snap["connectors"].as_array().cloned().unwrap_or_default();
         let mut moved = std::collections::HashSet::new();
-        if let Some(items) = snap["items"].as_object() {
-            for item in items.values().filter(|item| item["cleanupCapability"] != "unsupported") {
-                let Some(cwd) = item["cwd"].as_str().map(Path::new).filter(|p| p.starts_with(&src)) else {
-                    continue;
-                };
-                let Some(c) = connectors.iter().find(|c| c["id"] == item["connector"]) else {
-                    continue;
-                };
-                let link = &c["link"];
-                if link["kind"] == "cwd" {
-                    let mut file = value_path(env, &item["file"])?;
-                    if file.starts_with(&src) {
-                        file = dest.join(file.strip_prefix(&src).unwrap());
-                    }
-                    tx.rewrite(
-                        &file,
-                        &[(src.to_string_lossy().into_owned(), dest.to_string_lossy().into_owned())],
-                        link["field"].as_str().unwrap_or("cwd"),
-                    )?;
-                } else if link["kind"] == "named" {
-                    let from = value_path(env, &item["file"])?;
-                    if !moved.insert(from.clone()) {
-                        continue;
-                    }
-                    let newcwd = relocated(&src, &dest, cwd);
-                    let target =
-                        value_path(env, &link["dir"])?.join(crate::agents::store_name(link, &newcwd.to_string_lossy()));
-                    tx.merge(&from, &target)?;
+        for (item, newcwd, inside) in items {
+            let Some(c) = connectors.iter().find(|c| c["id"] == item["connector"]) else {
+                continue;
+            };
+            let link = &c["link"];
+            if link["kind"] == "cwd" {
+                let mut file = value_path(env, &item["file"])?;
+                if let Some(rest) = inside {
+                    file = dest.join(rest);
                 }
-                // Inside history travels with the folder. Mention documents retain their original wording.
+                tx.rewrite(
+                    &file,
+                    &[(src.to_string_lossy().into_owned(), dest.to_string_lossy().into_owned())],
+                    link["field"].as_str().unwrap_or("cwd"),
+                )?;
+            } else if link["kind"] == "named" {
+                let from = value_path(env, &item["file"])?;
+                if !moved.insert(from.clone()) {
+                    continue;
+                }
+                // The tool names the folder after the text of its working folder, so that text is moved as written.
+                let target = value_path(env, &link["dir"])?.join(crate::agents::store_name(link, &newcwd));
+                tx.merge(&from, &target)?;
             }
+            // Inside history travels with the folder. Mention documents retain their original wording.
         }
         if let Some(status) = opts["status"].as_str().filter(|s| !s.is_empty()) {
             tx.sidecar_status(&dest, status)?;
@@ -732,9 +758,7 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
         if opts["trashHeavy"].as_bool() == Some(true) {
             for part in node["size"]["parts"].as_array().into_iter().flatten() {
                 let raw = part["path"].as_str().ok_or("Invalid heavy folder")?;
-                if Path::new(raw).is_absolute()
-                    || Path::new(raw).components().any(|c| matches!(c, std::path::Component::ParentDir))
-                {
+                if !stays_below(Path::new(raw)) {
                     return Err("Invalid heavy folder".into());
                 }
                 tx.clear(&path(env, &dest.join(raw).to_string_lossy())?)?;
@@ -838,9 +862,7 @@ fn apply_action_checked(
                 let quarantine = data(env, "orphans")?;
                 for m in a["moves"].as_array().ok_or("Missing moves")? {
                     let rel = m["to"].as_str().ok_or("Missing destination")?;
-                    if Path::new(rel).is_absolute()
-                        || Path::new(rel).components().any(|c| matches!(c, std::path::Component::ParentDir))
-                    {
+                    if !stays_below(Path::new(rel)) {
                         return Err("Bad quarantine path".into());
                     }
                     let from = value_path(env, &m["from"])?;
@@ -876,7 +898,12 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
         {
             let src = value_path(env, &c["link"]["dir"])?;
             let connector = c["id"].as_str().ok_or("Missing connector")?;
-            if connector.is_empty() || connector.contains(['/', '\\']) || connector == ".." {
+            // On Windows a `C:` in front would make the join below start over on that drive.
+            if connector.is_empty()
+                || connector.contains(['/', '\\'])
+                || connector == ".."
+                || (cfg!(windows) && connector.contains(':'))
+            {
                 return Err("Invalid connector id".into());
             }
             if dest.starts_with(&src) {
@@ -987,8 +1014,11 @@ pub fn delete_sessions(env: &Env, snap: &Value, files: &[String]) -> Result<Valu
             .flatten()
             .find(|c| c["id"] == session["connector"])
             .ok_or("Connect this agent before deleting its sessions")?;
-        let id =
-            connector["id"].as_str().filter(|id| !id.is_empty() && !id.contains(['/', '.'])).ok_or("Unknown agent")?;
+        // On Windows `\` and a drive's `:` would lead the joins below out of the quarantine.
+        let id = connector["id"]
+            .as_str()
+            .filter(|id| !id.is_empty() && !id.contains(['/', '.']) && !(cfg!(windows) && id.contains(['\\', ':'])))
+            .ok_or("Unknown agent")?;
         let store = value_path(env, &connector["link"]["dir"])?;
         let source = value_path(env, &session["file"])?;
         let relative = source
@@ -1040,6 +1070,60 @@ pub fn backup_state(env: &Env) -> Option<Value> {
     state["at"].as_str()?;
     state["dest"] = json!(data(env, "history").ok()?);
     Some(state)
+}
+
+/// What macOS and Windows add to a move: a new case for a name. Renaming a file asks nobody which programs use a
+/// folder, so this runs there before port:P5.
+#[cfg(all(test, not(target_os = "linux")))]
+mod elsewhere {
+    use super::*;
+
+    #[test]
+    fn a_file_renamed_to_another_case_is_renamed_and_undo_renames_it_back() {
+        let temp = tempfile::tempdir().unwrap();
+        let env = Env::for_home(platform::path::canonical(temp.path()).unwrap().join("home"));
+        fs::create_dir_all(&env.home).unwrap();
+        let (src, dest) = (env.home.join("Notes.md"), env.home.join("notes.md"));
+        fs::write(&src, "kept").unwrap();
+        if !exists(&dest) {
+            eprintln!("This volume tells case apart; there is no such rename.");
+            return;
+        }
+        let names = || {
+            let mut names: Vec<_> =
+                files::entries(&env.home).iter().map(|e| e.file_name()).filter(|n| n != ".local").collect();
+            names.sort();
+            names
+        };
+        let journal = transact(&env, "Rename", |tx| tx.move_to(&src, &dest)).unwrap();
+        assert_eq!(names(), ["notes.md"]);
+        undo_entries(&env, journal["entries"].as_array().unwrap()).unwrap();
+        assert_eq!(names(), ["Notes.md"]);
+        assert_eq!(fs::read_to_string(&src).unwrap(), "kept");
+        // A name that another file has is still taken, in any case.
+        fs::write(env.home.join("other.md"), "other").unwrap();
+        assert!(transact(&env, "Rename", |tx| tx.move_to(&src, &env.home.join("OTHER.md"))).is_err());
+        assert_eq!(fs::read_to_string(env.home.join("other.md")).unwrap(), "other");
+    }
+
+    /// A history folder merged into itself, spelled with a folder above it in another case, stays as it is.
+    #[test]
+    fn a_folder_merged_into_itself_under_another_spelling_is_left_as_it_is() {
+        let temp = tempfile::tempdir().unwrap();
+        let env = Env::for_home(platform::path::canonical(temp.path()).unwrap().join("home"));
+        let store = env.home.join("store");
+        fs::create_dir_all(&store).unwrap();
+        fs::write(store.join("session.jsonl"), "{}\n").unwrap();
+        let other = env.home.with_file_name("HOME").join("store");
+        if !exists(&other) {
+            eprintln!("This volume tells case apart; there is nothing to merge.");
+            return;
+        }
+        let journal = transact(&env, "Merge", |tx| tx.merge(&store, &other)).unwrap();
+        assert_eq!(journal["entries"], json!([]));
+        assert_eq!(files::entries(&store).iter().map(|e| e.file_name()).collect::<Vec<_>>(), ["session.jsonl"]);
+        assert_eq!(fs::read_to_string(store.join("session.jsonl")).unwrap(), "{}\n");
+    }
 }
 
 /// These read /proc and start the shell and `sleep`, so they run on Linux alone.

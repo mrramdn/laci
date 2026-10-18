@@ -246,8 +246,9 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             let under = match args["project"].as_str().filter(|p| !p.is_empty()) {
                 Some(raw) => Some(match project(service, raw) {
                     Ok(node) => string(&node, "path").to_owned(),
-                    // A moved or deleted project is gone from the scan, while its changes stay in the Log.
-                    Err(_) if raw.starts_with('/') || raw.starts_with('~') => {
+                    // A moved or deleted project is gone from the scan, while its changes stay in the Log. On Windows
+                    // a path can also start with a drive or a share.
+                    Err(_) if raw.starts_with('/') || raw.starts_with('~') || Path::new(raw).is_absolute() => {
                         paths::expand(raw, &service.env.home).to_string_lossy().into_owned()
                     }
                     Err(_) => {

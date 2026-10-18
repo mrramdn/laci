@@ -1,4 +1,11 @@
-use crate::{Result, env::Env, platform::Identity};
+use crate::{
+    Result,
+    env::Env,
+    platform::{
+        Identity,
+        path::{below, canonical, contains, same_path},
+    },
+};
 use std::path::{Component, Path, PathBuf};
 
 pub fn normalize(path: &Path) -> PathBuf {
@@ -15,24 +22,33 @@ pub fn normalize(path: &Path) -> PathBuf {
     out
 }
 
+/// `raw` as a path. `~` and `~/…` start in home, and on Windows `~\…` does too.
 pub fn expand(raw: &str, home: &Path) -> PathBuf {
     normalize(&if raw == "~" {
         home.to_owned()
-    } else if let Some(rest) = raw.strip_prefix("~/") {
+    } else if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix(r"~\").filter(|_| cfg!(windows))) {
         home.join(rest)
     } else {
         PathBuf::from(raw)
     })
 }
 
+/// Whether `path` is `root` or inside it, by the rules of [`contains`].
 pub fn within(path: &Path, root: &Path) -> bool {
-    path.starts_with(root)
+    contains(root, path)
 }
 
+/// `path` as `~/…` when it is in home, with `/` between the names below home on every OS, as config.json keeps them.
 pub fn tilde(path: &Path, home: &Path) -> String {
-    path.strip_prefix(home)
-        .map(|p| if p.as_os_str().is_empty() { "~".to_owned() } else { format!("~/{}", p.display()) })
-        .unwrap_or_else(|_| path.to_string_lossy().into_owned())
+    below(home, path)
+        .map(|p| if p.as_os_str().is_empty() { "~".to_owned() } else { format!("~/{}", slashed(&p)) })
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+/// `relative` as text. On Windows its `\` become `/`, which no name there can hold.
+fn slashed(relative: &Path) -> String {
+    let text = relative.display().to_string();
+    if cfg!(windows) { text.replace('\\', "/") } else { text }
 }
 
 /// Check both the spelling and the existing filesystem, including missing destinations below symlinks.
@@ -41,12 +57,12 @@ pub fn home_path(raw: &str, env: &Env) -> Result<PathBuf> {
     if !p.is_absolute() || !within(&p, &env.home) {
         return Err("Path must be inside your home folder".into());
     }
-    let root = env.home.canonicalize().map_err(|e| e.to_string())?;
+    let root = canonical(&env.home).map_err(|e| e.to_string())?;
     let mut ancestor = p.as_path();
     while std::fs::symlink_metadata(ancestor).is_err() {
         ancestor = ancestor.parent().ok_or("Invalid path")?;
     }
-    let actual = ancestor.canonicalize().map_err(|e| e.to_string())?;
+    let actual = canonical(ancestor).map_err(|e| e.to_string())?;
     if !within(&actual, &root) {
         return Err("A symlink points outside your home folder".into());
     }
@@ -59,21 +75,22 @@ pub fn selected_directory(raw: &str, env: &Env) -> Result<PathBuf> {
     if !path.is_absolute() || !path.is_dir() {
         return Err("Pick an existing folder with an absolute path".into());
     }
-    path.canonicalize().map_err(|e| e.to_string())
+    canonical(&path).map_err(|e| e.to_string())
 }
 
 /// Project access includes only home and the folders explicitly selected in settings.
 /// A selected root replaced by a symlink must not silently authorize a different disk location.
 pub fn workspace_path(raw: &str, env: &Env) -> Result<PathBuf> {
     let path = expand(raw.trim(), &env.home);
-    if path.starts_with(&env.home) {
+    if within(&path, &env.home) {
         return home_path(raw, env);
     }
     if !path.is_absolute() {
         return Err("Path must be inside home or a selected workspace folder".into());
     }
-    for root in workspace_roots(env).into_iter().filter(|root| path.starts_with(root)) {
-        if root.canonicalize().is_ok_and(|actual| actual == root) && contained_actual(&path, &root).is_ok() {
+    for root in workspace_roots(env).into_iter().filter(|root| within(&path, root)) {
+        // Still canonical, as when it was picked: the spelling may differ in case, but no link may have come in.
+        if canonical(&root).is_ok_and(|actual| same_path(&actual, &root)) && contained_actual(&path, &root).is_ok() {
             return Ok(path);
         }
     }
@@ -83,7 +100,10 @@ pub fn workspace_path(raw: &str, env: &Env) -> Result<PathBuf> {
 /// Only a move journal may restore a missing, explicitly selected root, and only under its original parent.
 pub(crate) fn restore_workspace_root(raw: &str, env: &Env, recorded: Identity) -> Result<PathBuf> {
     let path = expand(raw, &env.home);
-    if !path.is_absolute() || path.starts_with(&env.home) || !workspace_roots(env).contains(&path) {
+    if !path.is_absolute()
+        || within(&path, &env.home)
+        || !workspace_roots(env).iter().any(|root| same_path(root, &path))
+    {
         return Err("The original workspace root is no longer selected".into());
     }
     match std::fs::symlink_metadata(&path) {
@@ -92,10 +112,10 @@ pub(crate) fn restore_workspace_root(raw: &str, env: &Env, recorded: Identity) -
     }
     let parent = path.parent().ok_or("Missing workspace parent")?;
     crate::sidecar::plain_path(parent)?;
-    let actual = parent.canonicalize().map_err(|e| e.to_string())?;
+    let actual = canonical(parent).map_err(|e| e.to_string())?;
     let meta = std::fs::metadata(parent).map_err(|e| e.to_string())?;
     let id = crate::platform::identity(parent, &meta)?;
-    if actual != parent || !meta.is_dir() || id != recorded {
+    if !same_path(&actual, parent) || !meta.is_dir() || id != recorded {
         return Err("The original workspace disk or parent folder has changed".into());
     }
     Ok(path)
@@ -135,7 +155,7 @@ fn contained_actual(path: &Path, root: &Path) -> Result<()> {
     while std::fs::symlink_metadata(ancestor).is_err() {
         ancestor = ancestor.parent().ok_or("Invalid path")?;
     }
-    let actual = ancestor.canonicalize().map_err(|e| e.to_string())?;
+    let actual = canonical(ancestor).map_err(|e| e.to_string())?;
     if !within(&actual, root) {
         return Err("A symlink points outside the selected folder".into());
     }

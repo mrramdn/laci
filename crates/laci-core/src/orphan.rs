@@ -3,7 +3,10 @@ use crate::{
     Result, config,
     env::Env,
     paths,
-    platform::{self, ensure_idle},
+    platform::{
+        self, ensure_idle,
+        path::{may_contain, same_path},
+    },
     scan,
     service::string,
     sidecar,
@@ -24,18 +27,17 @@ pub(crate) fn absence(env: &Env, project: &Path) -> Result<()> {
     let selected = scan::root_status(env, &cfg);
     let root = selected
         .iter()
-        .filter(|r| project.starts_with(string(r, "path")))
+        .filter(|r| paths::within(project, Path::new(string(r, "path"))))
         .max_by_key(|r| string(r, "path").len())
         .ok_or("This location is outside the selected scan folders")?;
-    if !Path::new(string(root, "path")).starts_with(&env.home)
-        && cfg["rootIdentities"].get(string(root, "path")).is_none()
-    {
+    let root_path = Path::new(string(root, "path"));
+    if !paths::within(root_path, &env.home) && cfg["rootIdentities"].get(string(root, "path")).is_none() {
         return Err("The external drive has no recorded identity. Reconnect it and save its scan location in Settings before cleanup.".into());
     }
     if root["available"] != true {
         return Err("The project's selected folder or drive is unavailable".into());
     }
-    if project == Path::new(string(root, "path")) {
+    if same_path(project, root_path) {
         return Err("A selected root cannot be confirmed deleted".into());
     }
     match fs::symlink_metadata(project) {
@@ -45,7 +47,7 @@ pub(crate) fn absence(env: &Env, project: &Path) -> Result<()> {
     }
     // Read every existing ancestor to distinguish ENOENT from inaccessible paths and links.
     for parent in project.ancestors().skip(1) {
-        if !parent.starts_with(string(root, "path")) {
+        if !paths::within(parent, root_path) {
             break;
         }
         match fs::symlink_metadata(parent) {
@@ -63,8 +65,8 @@ pub(crate) fn absence(env: &Env, project: &Path) -> Result<()> {
 fn identity(env: &Env, source: &Path) -> Result<String> {
     paths::home_path(&source.to_string_lossy(), env)?;
     sidecar::plain_path(source)?;
-    if [&env.home, &env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|p| p.starts_with(source))
-        || [&env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|p| source.starts_with(p))
+    if [&env.home, &env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|p| may_contain(source, p))
+        || [&env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|p| may_contain(p, source))
     {
         return Err("This path contains protected settings or recovery data".into());
     }
@@ -158,7 +160,7 @@ pub(crate) fn prepare(env: &Env, snapshot: &Value, proposal: &mut Value) {
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .any(|c| c["link"]["dir"].as_str().is_some_and(|dir| Path::new(dir).starts_with(source)))
+                    .any(|c| c["link"]["dir"].as_str().is_some_and(|dir| may_contain(source, Path::new(dir))))
                 {
                     return Err("An entire connector store cannot be removed as orphan history".into());
                 }
@@ -168,7 +170,7 @@ pub(crate) fn prepare(env: &Env, snapshot: &Value, proposal: &mut Value) {
         let selected = scan::root_status(env, &config::load(env));
         let roots: Vec<_> = selected
             .into_iter()
-            .filter(|root| projects.iter().any(|project| project.starts_with(string(root, "path"))))
+            .filter(|root| projects.iter().any(|project| paths::within(project, Path::new(string(root, "path")))))
             .collect();
         Ok(json!({"projects":projects,"roots":roots,"sources":sources}))
     })();

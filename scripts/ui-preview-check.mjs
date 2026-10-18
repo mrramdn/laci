@@ -9,12 +9,12 @@
 //
 // Simple's screens are driven by what a person sees: the five places Home, Projects, AI helpers,
 // Clean up and Activity in the sidebar, Settings at its foot, and a project found with the palette,
-// whose ⋯ More holds Archive. Its checks lean on two hooks that the shell gives (ui:S1):
+// whose ⋯ More holds Archive, Delete and Free up space. Its checks lean on two hooks that the shell
+// gives (ui:S1):
 //   data-ui="primary"  the one filled button of a screen (`.btn.primary` counts too)
 //   data-ui="status"   every status chip: an svg, img or [data-icon] inside, and words
-// A build without Simple's shell skips `--design simple`. AI helpers has no Summaries tab until
-// its page is built (ui:18), so the reports screen is noted as not shown yet. Change the
-// `designs.simple` table when the DOM it relies on changes.
+// A build without Simple's shell skips `--design simple`. AI helpers shows the reports screen as its
+// Summaries tab. Change the `designs.simple` table when the DOM it relies on changes.
 import { spawnSync } from "node:child_process";
 import {
   createReadStream,
@@ -49,6 +49,8 @@ export const SCREENS = [
   "project",
   "palette",
   "archive",
+  "delete",
+  "clean",
 ];
 /** The first width of each of Simple's tiers, and the window the app opens in. All 900 high. */
 export const SIZES = ["720x900", "840x900", "1200x900", "1440x900", "1600x900"];
@@ -260,6 +262,8 @@ function fixtureNow(tree) {
 
 /** A project the fixtures have health, an archive plan and to-dos for. */
 const PROJECT = "acme-store";
+/** The project with downloaded packages to delete: Free up space is offered for it. */
+const HEAVY = "habit-app";
 /** A folder with two projects in it. */
 const FOLDER = "clients";
 
@@ -282,10 +286,10 @@ const detailedNav = (label) => async (page) => {
   await page.locator("#side .sb-item").filter({ hasText: startingWith(label) }).first().click();
   await heading(page, label).waitFor();
 };
-async function detailedProject(page) {
-  await openPalette(page, "acme");
-  await page.getByRole("option", { name: startingWith(PROJECT) }).click();
-  await heading(page, PROJECT, 2).waitFor();
+async function detailedProject(page, name = PROJECT) {
+  await openPalette(page, name.slice(0, 4));
+  await page.getByRole("option", { name: startingWith(name) }).click();
+  await heading(page, name, 2).waitFor();
 }
 
 const SIMPLE_PLACES = [
@@ -307,10 +311,16 @@ const simpleNav = (label, then) => async (page) => {
     .waitFor();
   await then?.(page);
 };
-async function simpleProject(page) {
-  await openPalette(page, "acme");
-  await page.getByRole("option", { name: startingWith(PROJECT) }).click();
-  await heading(page, PROJECT).waitFor();
+async function simpleProject(page, name = PROJECT) {
+  await openPalette(page, name.slice(0, 4));
+  await page.getByRole("option", { name: startingWith(name) }).click();
+  await heading(page, name).waitFor();
+}
+/** Picks `item` in the project's ⋯ More, and waits for its sheet to have its plan. */
+async function simpleMore(page, item) {
+  await page.getByRole("button", { name: /^(⋯|More)/ }).first().click();
+  await page.getByRole("menuitem", { name: startingWith(item) }).click();
+  await dialogShown(page);
 }
 
 /**
@@ -342,9 +352,20 @@ const designs = {
         await page.locator("#insp").getByRole("button", { name: "Archive" }).click();
         await dialogShown(page);
       },
+      delete: async (page) => {
+        await detailedProject(page);
+        await page.locator("#insp").getByRole("button", { name: "Move to Trash" }).click();
+        await dialogShown(page);
+      },
+      clean: async (page) => {
+        await detailedProject(page, HEAVY);
+        await page.locator("#insp").getByRole("button", { name: "Delete build output…" }).click();
+        await dialogShown(page);
+      },
     },
   },
-  // The five places, Settings, and the way to a project's Archive through ⋯ More (ui:S1).
+  // The five places, Settings, and a project's Archive, Delete and Free up space sheets through
+  // ⋯ More (ui:S1, ui:20).
   simple: {
     // Detailed has a "Home" in its Places, so look for a place that only Simple has.
     home: (page) => simplePlace(page, "AI helpers"),
@@ -355,21 +376,31 @@ const designs = {
       tidy: simpleNav("Clean up", (page) =>
         page.getByText(/^Reading the space Laci uses/).waitFor({ state: "detached" }),
       ),
-      agents: simpleNav("AI helpers"),
-      reports: simpleNav("AI helpers", (page) =>
-        page.getByRole("tab", { name: startingWith("Summaries") }).click(),
-      ),
+      agents: simpleNav("AI helpers", (page) => heading(page, "AI helpers").waitFor()),
+      // The newest summary opens beside the list, on a wide window, once its text is read.
+      reports: simpleNav("AI helpers", async (page) => {
+        await page.getByRole("tab", { name: startingWith("Summaries") }).click();
+        await page.getByText("Reading the summary…").first().waitFor({ state: "detached" });
+      }),
       log: simpleNav("Activity", (page) =>
         page.getByText(/^Reading Activity/).waitFor({ state: "detached" }),
       ),
-      settings: simpleNav("Settings"),
+      settings: simpleNav("Settings", (page) =>
+        page.getByText("Reading your settings…").first().waitFor({ state: "detached" }),
+      ),
       project: simpleProject,
       palette: (page) => openPalette(page),
       archive: async (page) => {
         await simpleProject(page);
-        await page.getByRole("button", { name: /^(⋯|More)/ }).first().click();
-        await page.getByRole("menuitem", { name: startingWith("Archive") }).click();
-        await dialogShown(page);
+        await simpleMore(page, "Archive");
+      },
+      delete: async (page) => {
+        await simpleProject(page);
+        await simpleMore(page, "Delete");
+      },
+      clean: async (page) => {
+        await simpleProject(page, HEAVY);
+        await simpleMore(page, "Free up space");
       },
     },
   },

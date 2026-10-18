@@ -78,9 +78,10 @@ const rulesOf = async (page, html, rule) => {
 
 /**
  * A stand-in for the Simple shell, made as design-research §3.2 and §3.3 describe it: five places
- * in the navigation with Settings at its foot, the palette, a project page with ⋯ More, and an
- * Archive dialog. It has the hook that ui:S1 is to give: `data-ui="primary"`. The tabs and the
- * Archive button are 20 px high on purpose, and the rest are big enough.
+ * in the navigation with Settings at its foot, the palette, a project page with ⋯ More, and its
+ * Archive, Delete and Free up space sheets. It has the hook that ui:S1 is to give:
+ * `data-ui="primary"`. The tabs and the Archive button are 20 px high on purpose, and the rest are
+ * big enough.
  */
 const FAKE_SIMPLE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Simple</title>
 <style>
@@ -127,30 +128,40 @@ const FAKE_SIMPLE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     input.focus();
     input.oninput = () => {
       list.innerHTML = "";
-      if (input.value && "acme-store".includes(input.value)) {
-        const option = document.createElement("div");
-        option.setAttribute("role", "option");
-        option.textContent = "acme-store ~/project/clients/acme-store";
-        option.onclick = () => { scrim.remove(); showProject(); };
-        list.append(option);
-      }
+      for (const [name, folder] of [["acme-store", "clients"], ["habit-app", "side"]])
+        if (input.value && name.includes(input.value)) {
+          const option = document.createElement("div");
+          option.setAttribute("role", "option");
+          option.textContent = name + " ~/project/" + folder + "/" + name;
+          option.onclick = () => { scrim.remove(); showProject(name); };
+          list.append(option);
+        }
     };
   }
-  function showProject() {
-    title.textContent = "acme-store";
+  function showProject(name) {
+    title.textContent = name;
     const more = document.getElementById("more");
     more.innerHTML = '<button aria-haspopup="menu">⋯ More</button>';
     more.querySelector("button").onclick = () => {
       const menu = document.createElement("div");
       menu.setAttribute("role", "menu");
-      menu.innerHTML = '<button role="menuitem">Archive…</button>';
       more.append(menu);
-      menu.firstChild.onclick = () => {
-        menu.remove();
-        const dialog = document.createElement("div");
-        dialog.innerHTML = '<div role="dialog" aria-modal="true" aria-labelledby="t"><h2 id="t">Archive acme-store?</h2><button data-ui="primary">Archive</button></div>';
-        document.body.append(dialog);
-      };
+      for (const [item, heading, button] of [
+        ["Archive…", "Archive " + name + "?", '<button data-ui="primary">Archive</button>'],
+        ["Delete project…", "Delete " + name + "?", '<button style="height: 32px">Cancel</button>'],
+        ["Free up space here…", "Free up space in " + name + "?", '<button style="height: 32px">Cancel</button>'],
+      ]) {
+        const entry = document.createElement("button");
+        entry.setAttribute("role", "menuitem");
+        entry.textContent = item;
+        entry.onclick = () => {
+          menu.remove();
+          const dialog = document.createElement("div");
+          dialog.innerHTML = '<div role="dialog" aria-modal="true" aria-labelledby="t"><h2 id="t">' + heading + "</h2>" + button + "</div>";
+          document.body.append(dialog);
+        };
+        menu.append(entry);
+      }
     };
   }
 </script></body></html>`;
@@ -168,7 +179,7 @@ export async function theMatrixIsEveryScreenAtTheFourTiersAndTheAppsWindow() {
   );
   assert.ok(options.sizes.every((size) => size.height === 900));
   assert.equal(SIZES.length, options.sizes.length);
-  assert.equal(SCREENS.length, 10);
+  assert.equal(SCREENS.length, 12);
   assert.deepEqual(
     [options.compare, options.axe, options.overflow, options.rules, options.strict],
     [undefined, false, false, false, false],
@@ -235,8 +246,8 @@ export async function aMistakeInTheOptionsIsRefusedInPlainWords() {
 export async function everyShotIsADesignThemeSizeAndScreenWithAFileOfItsOwn() {
   const options = parseArgs([]);
   const shots = shotsOf(options);
-  assert.equal(shots.length, 2 * 2 * 5 * 10);
-  assert.equal(shotsOf(options, ["detailed"]).length, 100);
+  assert.equal(shots.length, 2 * 2 * 5 * 12);
+  assert.equal(shotsOf(options, ["detailed"]).length, 120);
   assert.equal(shotsOf(options, []).length, 0);
   const files = new Set(shots.map(fileOf));
   assert.equal(files.size, shots.length, "no two shots share a file");
@@ -549,6 +560,8 @@ export async function everyScreenOfSimpleIsReachedThroughItsPlacesThePaletteAndM
         assert.deepEqual(broken("project"), []);
         assert.deepEqual(broken("palette"), []);
         assert.deepEqual(broken("archive"), ['target: button "Archive"']);
+        assert.deepEqual(broken("delete"), []);
+        assert.deepEqual(broken("clean"), []);
       } finally {
         await site.close();
       }

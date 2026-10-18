@@ -232,6 +232,15 @@ export function DialogFrame({
 }
 export function Dialogs() {
   const modal = useApp((s) => s.modal);
+  const design = useApp((s) => s.design);
+  // Simple draws its own Archive, Delete and Free up space sheets (simple/dialogs.tsx).
+  if (
+    design === "simple" &&
+    (modal?.kind === "archive" ||
+      modal?.kind === "delete" ||
+      modal?.kind === "clean")
+  )
+    return null;
   return modal?.kind === "shortcuts" ? (
     <Shortcuts />
   ) : modal?.kind === "help" ? (

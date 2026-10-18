@@ -280,20 +280,23 @@ async function untilFonts() {
   return true;
 }
 
-/** What the window shows: the first run, a design's shell, or neither yet. */
+/** What the window shows: the first run, a design's shell, or neither yet, and how it is drawn. */
 function shownNow() {
   const root = document.documentElement;
-  if (document.querySelector(".boot")) return { screen: "boot" };
-  if (document.querySelector(".setup")) return { screen: "first-run" };
-  const simple = Boolean(document.querySelector(".s-shell, [data-ui='nav']"));
-  const detailed = Boolean(document.getElementById("app"));
-  return {
-    screen: simple && !detailed ? "simple" : detailed && !simple ? "detailed" : "",
+  const drawn = {
     design: root.dataset.design ?? "",
     theme: root.dataset.theme ?? "system",
     toast: Boolean(document.querySelector(".toast")),
     size: [window.innerWidth, window.innerHeight],
     ratio: window.devicePixelRatio,
+  };
+  if (document.querySelector(".boot")) return { ...drawn, screen: "boot" };
+  if (document.querySelector(".setup")) return { ...drawn, screen: "first-run" };
+  const simple = Boolean(document.querySelector(".s-shell, [data-ui='nav']"));
+  const detailed = Boolean(document.getElementById("app"));
+  return {
+    ...drawn,
+    screen: simple && !detailed ? "simple" : detailed && !simple ? "detailed" : "",
   };
 }
 

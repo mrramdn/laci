@@ -40,7 +40,7 @@ fn external_selection_allows_only_selected_paths_and_rejects_symlink_escapes() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn configured_external_archive_matches_preview_scan_and_undo() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));
@@ -100,7 +100,7 @@ fn archive_setting_is_optional_and_undo_restores_it() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn one_off_archive_keeps_only_chosen_project_visible_and_undo_restores_config_bytes() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));
@@ -128,7 +128,7 @@ fn one_off_archive_keeps_only_chosen_project_visible_and_undo_restores_config_by
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn archive_undo_does_not_overwrite_later_settings() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));
@@ -149,7 +149,7 @@ fn archive_undo_does_not_overwrite_later_settings() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn external_project_history_and_notes_survive_archive_and_undo() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));
@@ -226,7 +226,7 @@ fn replaced_standalone_archive_identity_blocks_preview_and_execution() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn archive_rechecks_a_replaced_destination_after_preview_and_inside_the_transaction() {
     let (_temp, env, source, archive) = exact_root_fixture();
     let mut service = Service::new(env.clone());
@@ -261,7 +261,7 @@ fn archive_rechecks_a_replaced_destination_after_preview_and_inside_the_transact
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn valid_alternative_and_explicit_archive_reselection_authorize_archiving() {
     let (temp, env, source, archive) = exact_root_fixture();
     let alternative = temp.path().join("other-disk");
@@ -298,7 +298,7 @@ fn valid_alternative_and_explicit_archive_reselection_authorize_archiving() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn nested_archive_selection_checks_its_identity_even_when_scan_roots_are_deduplicated() {
     let (temp, env, source, _) = exact_root_fixture();
     let root = temp.path().join("saved-disk");
@@ -340,7 +340,7 @@ fn archive_destination_requires_the_recorded_filesystem_device() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn exact_external_project_root_can_be_restored_after_archive() {
     let (_temp, env, source, archive) = exact_root_fixture();
     let mut service = Service::new(env.clone());
@@ -355,7 +355,7 @@ fn exact_external_project_root_can_be_restored_after_archive() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn failed_archive_step_rolls_back_an_exact_external_project_root() {
     let (_temp, env, source, archive) = exact_root_fixture();
     let mut service = Service::new(env.clone());
@@ -370,7 +370,7 @@ fn failed_archive_step_rolls_back_an_exact_external_project_root() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn exact_root_restore_refuses_a_replaced_parent_or_symlink() {
     let (temp, env, source, archive) = exact_root_fixture();
     let mut service = Service::new(env.clone());
@@ -392,7 +392,7 @@ fn exact_root_restore_refuses_a_replaced_parent_or_symlink() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn one_off_archive_honors_an_external_xdg_config_directory_without_granting_workspace_access() {
     let temp = tempfile::tempdir().unwrap();
     let mut env = Env::for_home(temp.path().join("home"));
@@ -413,7 +413,7 @@ fn one_off_archive_honors_an_external_xdg_config_directory_without_granting_work
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn exact_root_restore_requires_the_recorded_filesystem_device() {
     let (_temp, env, source, archive) = exact_root_fixture();
     let mut service = Service::new(env.clone());
@@ -430,7 +430,7 @@ fn exact_root_restore_requires_the_recorded_filesystem_device() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn config_journal_scope_cannot_restore_a_neighboring_file() {
     let temp = tempfile::tempdir().unwrap();
     let mut env = Env::for_home(temp.path().join("home"));

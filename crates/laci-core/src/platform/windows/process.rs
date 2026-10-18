@@ -17,8 +17,11 @@ const SHARING_VIOLATION: i32 = 32;
 /// Looked up in a fresh list of processes, which must show this one too.
 pub fn pid_alive(pid: u32) -> Result<bool> {
     let (asked, me) = (Pid::from_u32(pid), Pid::from_u32(std::process::id()));
+    // sysinfo drops a pid listed twice, so this one would go missing when asked about itself.
+    let both = [asked, me];
+    let pids = if asked == me { &both[1..] } else { &both[..] };
     let mut system = System::new();
-    system.refresh_processes_specifics(ProcessesToUpdate::Some(&[asked, me]), true, ProcessRefreshKind::nothing());
+    system.refresh_processes_specifics(ProcessesToUpdate::Some(pids), true, ProcessRefreshKind::nothing());
     if system.process(me).is_none() {
         return Err("Could not check whether a process is still running".into());
     }

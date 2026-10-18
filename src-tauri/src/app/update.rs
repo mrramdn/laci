@@ -363,8 +363,25 @@ pub fn install_kind() -> Install {
     // The portable zip says so in a file next to laci.exe. Checked first: its laci.exe may carry the bundle type
     // of the installer it was taken from.
     let portable = exe.as_deref().and_then(Path::parent).is_some_and(|dir| dir.join("PORTABLE").is_file());
-    let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from).is_some_and(|p| p.is_absolute() && p.is_file());
+    let appimage = exe.as_deref().is_some_and(|exe| {
+        runs_from_appimage(exe, std::env::var_os("APPIMAGE").as_deref(), std::env::var_os("APPDIR").as_deref())
+    });
     decide(portable, bundle_type(), exe.as_deref(), appimage)
+}
+
+/// Whether `exe` runs from the AppImage `appimage` names: from inside the folder the AppImage runtime mounted or
+/// unpacked it to (`appdir`, named `.mount_*` or `appimage_extracted_*`). A program started from another AppImage,
+/// such as a terminal, inherits both variables, and Laci must never put itself in that program's file.
+fn runs_from_appimage(exe: &Path, appimage: Option<&std::ffi::OsStr>, appdir: Option<&std::ffi::OsStr>) -> bool {
+    let (Some(image), Some(dir)) = (appimage.map(Path::new), appdir.map(Path::new)) else {
+        return false;
+    };
+    let runtime = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with(".mount_") || name.starts_with("appimage_extracted_"));
+    // An AppImage keeps Laci at usr/bin/laci in its folder.
+    image.is_absolute() && image.is_file() && runtime && exe.ancestors().nth(3) == Some(dir)
 }
 
 /// A deb or an rpm belongs to the package manager, and a copy with no bundle type was put in place by
@@ -817,6 +834,24 @@ mod tests {
             assert_eq!(decide(portable, bundle, Some(Path::new(exe)), appimage), expected, "{case}");
         }
         assert_eq!(decide(false, Some(App), None, false), Notice);
+        // An AppImage replaces itself only when Laci runs from it, never another program's AppImage that started it.
+        let image = tempfile::NamedTempFile::new().unwrap();
+        let image = Some(image.path().as_os_str());
+        let laci = Path::new("/tmp/.mount_LaciAbC/usr/bin/laci");
+        for (exe, appimage, appdir, expected) in [
+            (laci, image, Some("/tmp/.mount_LaciAbC"), true),
+            (Path::new("/tmp/appimage_extracted_9f2/usr/bin/laci"), image, Some("/tmp/appimage_extracted_9f2"), true),
+            // Started from a terminal that is an AppImage: both variables are the terminal's.
+            (Path::new("/home/me/squashfs-root/usr/bin/laci"), image, Some("/tmp/.mount_kittyXy"), false),
+            (laci, image, Some("/tmp/.mount_kittyXy"), false),
+            (laci, image, Some("/home/me/apps/laci"), false),
+            (laci, image, None, false),
+            (laci, None, Some("/tmp/.mount_LaciAbC"), false),
+            (laci, Some(std::ffi::OsStr::new("/nowhere/Laci.AppImage")), Some("/tmp/.mount_LaciAbC"), false),
+        ] {
+            let appdir = appdir.map(std::ffi::OsStr::new);
+            assert_eq!(runs_from_appimage(exe, appimage, appdir), expected, "{exe:?} {appdir:?}");
+        }
         let (_home, notice) = updates(Notice);
         assert_eq!(notice.status()["install"], "notice");
         notice.finish(true, found("3.1.0"), Utc::now());

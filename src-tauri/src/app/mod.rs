@@ -438,9 +438,9 @@ fn term_close(state: State<'_, Shared>, id: String) {
     state.terminals.close(&id);
 }
 
-/// The design a new install opens in. It stays Detailed until the Simple shell ships; first run then asks, with
-/// Simple preselected.
-const NEW_INSTALL_DESIGN: &str = "detailed";
+/// The design a new install opens in, and so the one its first-run screen preselects. NEW_INSTALL_DESIGN in
+/// ui/src/store.ts is the same; scripts/ui-tests/design.test.mjs checks that the two agree.
+const NEW_INSTALL_DESIGN: &str = "simple";
 
 /// The design a window opens in: the saved one, else Detailed for a setup made before designs existed and
 /// NEW_INSTALL_DESIGN for a new one.
@@ -614,6 +614,8 @@ mod tests {
     fn a_saved_design_wins_and_an_earlier_setup_stays_detailed_with_an_offer() {
         assert_eq!([startup_design("simple", true), startup_design("detailed", false)], ["simple", "detailed"]);
         assert_eq!([startup_design("", true), startup_design("", false)], ["detailed", NEW_INSTALL_DESIGN]);
+        // A new install opens in Simple, on Simple's colours, and first run asks with Simple preselected.
+        assert_eq!(startup_design("", false), "simple");
         let upgraded = init_script("", "", true, "linux");
         assert!(upgraded.contains("dataset;d.design='detailed';d.designOffer='1';d.os='linux';}"), "{upgraded}");
         let fresh = init_script("dark", "", false, "macos");

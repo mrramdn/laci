@@ -617,9 +617,22 @@ function viewIn(design: Design, s: State): View {
  * nothing and returns false, so neither loses its place.
  */
 export function setDesign(design: Design): boolean {
+  return keepDesign(design, true);
+}
+/**
+ * Saves the design picked on the first-run screen and shows it, like a switch but without its toast
+ * and its focus move: the choice is on the screen as it is made. It waits in the same way while a
+ * dialog is open or a change runs, so call it before the setup is saved.
+ */
+export function chooseDesign(design: Design): boolean {
+  return keepDesign(design, false);
+}
+/** Shows and saves `design`; `announce` says so in a toast and takes the focus along. */
+function keepDesign(design: Design, announce: boolean) {
   const s = useApp.getState();
   if (s.modal || s.working) return false;
   const switched = design !== s.design;
+  if (switched && announce) focusAfterSwitch(design);
   showDesign(design, false);
   useApp.setState({
     design,
@@ -631,17 +644,67 @@ export function setDesign(design: Design): boolean {
     toast("Couldn’t save view", errorText(error), { error: true }),
   );
   // Choosing the design already shown only saves it, and a change's Undo stays in reach.
-  if (switched && !useApp.getState().toast?.undo)
+  if (announce && switched && !useApp.getState().toast?.undo)
     toast(
       design === "simple" ? "Now in Simple view" : "Now in Detailed view",
       "Switch back at the bottom of the sidebar.",
     );
   return true;
 }
+/** The Simple | Detailed toggle at the foot of each design's sidebar. */
+const TOGGLE = '[data-ui="design-toggle"]';
+/**
+ * A switch draws the other design's window in place of this one, and the control that made it goes
+ * with it. Once the other window is drawn (its code may still be loading), the focus goes to the
+ * same place there: its toggle, on the design now shown, when a toggle made the switch, else the
+ * page. Detailed's narrow rail hides the button of the design shown, so the focus takes the
+ * toggle's other button there, and the page if the toggle has none it can take. It stays where it
+ * is if something took it meanwhile, or if the design changed again.
+ */
+function focusAfterSwitch(design: Design) {
+  if (typeof MutationObserver === "undefined" || !document.body) return;
+  const fromToggle = Boolean(document.activeElement?.closest(TOGGLE));
+  const before = document.querySelector(TOGGLE);
+  const land = () => {
+    if (document.documentElement.dataset.design !== design) return true;
+    const toggle = document.querySelector(TOGGLE);
+    if (!toggle || toggle === before) return false;
+    const focused = document.activeElement;
+    if (focused && focused !== document.body && focused.isConnected)
+      return true;
+    const targets = [
+      ...(fromToggle
+        ? [
+            toggle.querySelector<HTMLElement>('[aria-pressed="true"]'),
+            ...toggle.querySelectorAll<HTMLElement>("button"),
+          ]
+        : []),
+      document.getElementById("main"),
+    ];
+    // A button that isn't drawn doesn't take the focus: try the next.
+    for (const target of targets) {
+      target?.focus({ preventScroll: true });
+      if (target && document.activeElement === target) break;
+    }
+    return true;
+  };
+  const observer = new MutationObserver(() => {
+    if (land()) stop();
+  });
+  const timer = setTimeout(stop, 10_000);
+  function stop() {
+    observer.disconnect();
+    clearTimeout(timer);
+  }
+  observer.observe(document.body, { childList: true, subtree: true });
+}
 const isDesign = (value: unknown): value is Design =>
   value === "simple" || value === "detailed";
-/** The design a new install opens in: NEW_INSTALL_DESIGN in src-tauri/src/app/mod.rs, changed together. */
-export const NEW_INSTALL_DESIGN: Design = "detailed";
+/**
+ * The design a new install opens in, and the one its first-run screen preselects:
+ * NEW_INSTALL_DESIGN in src-tauri/src/app/mod.rs, changed together.
+ */
+export const NEW_INSTALL_DESIGN: Design = "simple";
 /**
  * The design for the saved choices: the one saved, else Detailed for a setup from before there were
  * two designs and NEW_INSTALL_DESIGN for a new one. The desktop's start-up script decides the same way.

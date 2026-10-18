@@ -1,5 +1,6 @@
-// Simple and Detailed in ui/src/store.ts: what a switch changes and where it lands, how each design
-// opens a project, and how the choices saved in config.json win over what the page started with.
+// Simple and Detailed in ui/src/store.ts: what a switch changes and where it lands, where the focus
+// goes after it, how first run saves the design it picks, how each design opens a project, and how
+// the choices saved in config.json win over what the page started with.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { load, requireUi } from "../ui-module.mjs";
@@ -11,9 +12,10 @@ const CLIENTS = `${ROOT}/clients`;
 
 /**
  * A store of its own, on a page whose `<html>` has `dataset`. `reply` answers its requests.
- * `requests` lists what it asked for, and `storage` what it kept for the next start.
+ * `requests` lists what it asked for, and `storage` what it kept for the next start. `page` gives
+ * the store a fuller page: its `document`, `MutationObserver` and `setTimeout`.
  */
-function store(dataset = {}, reply = async () => ({})) {
+function store(dataset = {}, reply = async () => ({}), page = {}) {
   const requests = [];
   const storage = new Map();
   let timerId = 0;
@@ -37,6 +39,7 @@ function store(dataset = {}, reply = async () => ({})) {
       },
       setTimeout: () => ++timerId,
       clearTimeout: () => {},
+      ...page,
     },
   );
   return { ...exports, dataset, requests, storage };
@@ -457,4 +460,249 @@ export async function theStoreNeedsOnlyTheApiFromTheInterface() {
     ([, name]) => name,
   );
   assert.deepEqual(local, ["./api"]);
+}
+
+// ── ui:P3: a new install, first run's choice, and the focus after a switch ──────────────────────────
+
+export async function aNewInstallOpensInSimple() {
+  const { useApp, applyPrefs, dataset, NEW_INSTALL_DESIGN } = store({
+    design: "detailed",
+  });
+  // First run now asks, with Simple picked, and Simple ships: a new install opens in it.
+  assert.equal(NEW_INSTALL_DESIGN, "simple");
+  applyPrefs(prefs({ design: null, configured: false }));
+  assert.equal(useApp.getState().design, "simple");
+  assert.deepEqual(dataset, { design: "simple" });
+}
+
+export async function firstRunSavesThePickedDesignWithoutAToast() {
+  const { useApp, chooseDesign, dataset, requests, storage } = store({
+    design: "simple",
+  });
+  useApp.getState().load(snapshot());
+  assert.equal(chooseDesign("detailed"), true);
+  assert.deepEqual(
+    pick(useApp.getState(), "design", "designSet", "designOffer", "toast"),
+    { design: "detailed", designSet: true, designOffer: false, toast: null },
+  );
+  assert.deepEqual(dataset, { design: "detailed" });
+  assert.equal(storage.get("laci:design"), "detailed");
+  assert.deepEqual(requests, [["design", { design: "detailed" }]]);
+  // Keeping the design shown saves it too, so the first save in Settings can't change it later.
+  assert.equal(chooseDesign("detailed"), true);
+  assert.deepEqual(requests.at(-1), ["design", { design: "detailed" }]);
+}
+
+export async function firstRunWaitsLikeASwitch() {
+  for (const busy of [{ modal: { kind: "new" } }, { working: "Scanning…" }]) {
+    const { useApp, chooseDesign, dataset, requests } = store({
+      design: "simple",
+    });
+    useApp.setState(busy);
+    assert.equal(chooseDesign("detailed"), false);
+    assert.equal(useApp.getState().design, "simple");
+    assert.deepEqual(dataset, { design: "simple" });
+    assert.deepEqual(requests, []);
+  }
+}
+
+const TOGGLE = '[data-ui="design-toggle"]';
+/**
+ * A page for the focus after a switch: the window of `design`, with its toggle (the button of the
+ * design shown pressed, and the other one) and its main, a MutationObserver the page tells when the
+ * window changes, and the timers set. `redraw(next, meanwhile, hidden)` draws the window of `next`
+ * in its place, runs `meanwhile`, then tells the observers. The parts named in `hidden` aren't
+ * drawn, as Detailed's narrow rail leaves out the button of the design shown: they don't take the
+ * focus.
+ */
+function windowPage(design) {
+  const focused = [];
+  const observers = [];
+  const timers = [];
+  const document = {
+    documentElement: { dataset: { design } },
+    body: { name: "body" },
+    activeElement: null,
+  };
+  const windowOf = (shown, hidden = []) => {
+    const toggle = { name: `${shown} toggle` };
+    const element = (part, name, inToggle = false) => ({
+      name,
+      isConnected: true,
+      closest: (selector) => (inToggle && selector === TOGGLE ? toggle : null),
+      focus(options) {
+        if (hidden.includes(part)) return;
+        focused.push([name, options]);
+        document.activeElement = this;
+      },
+    });
+    const pressed = element(
+      "pressed",
+      `${shown}: the pressed button of the toggle`,
+      true,
+    );
+    const other = element(
+      "other",
+      `${shown}: the other button of the toggle`,
+      true,
+    );
+    toggle.querySelector = (selector) =>
+      selector === '[aria-pressed="true"]' ? pressed : null;
+    // Simple's button comes first in both toggles.
+    toggle.querySelectorAll = (selector) =>
+      selector === "button"
+        ? shown === "simple"
+          ? [pressed, other]
+          : [other, pressed]
+        : [];
+    return {
+      toggle,
+      pressed,
+      other,
+      main: element("main", `${shown}: main`),
+      card: element("card", `${shown}: a button on the page`),
+    };
+  };
+  let shown = windowOf(design);
+  document.querySelector = (selector) =>
+    selector === TOGGLE ? shown.toggle : null;
+  document.getElementById = (id) => (id === "main" ? shown.main : null);
+  class Observer {
+    constructor(changed) {
+      this.changed = changed;
+      this.on = false;
+      observers.push(this);
+    }
+    observe(target, options) {
+      this.on =
+        target === document.body && options.subtree && options.childList;
+    }
+    disconnect() {
+      this.on = false;
+    }
+  }
+  const page = {
+    document,
+    focused,
+    observers,
+    timers,
+    get shown() {
+      return shown;
+    },
+    changed: () =>
+      observers.filter((o) => o.on).forEach((o) => o.changed([])),
+    redraw(next, meanwhile = () => {}, hidden = []) {
+      for (const element of Object.values(shown)) element.isConnected = false;
+      shown = windowOf(next, hidden);
+      document.activeElement = document.body;
+      meanwhile();
+      page.changed();
+    },
+    store: () =>
+      store(document.documentElement.dataset, async () => ({}), {
+        document,
+        MutationObserver: Observer,
+        setTimeout: (run, ms) => timers.push({ run, ms }),
+      }),
+  };
+  return page;
+}
+
+export async function aSwitchFromAToggleLeavesTheFocusOnTheOtherDesignsToggle() {
+  const page = windowPage("detailed");
+  const { setDesign } = page.store();
+  page.document.activeElement = page.shown.other;
+  assert.equal(setDesign("simple"), true);
+  // The old window is still there: nothing moves until the other one is drawn.
+  page.changed();
+  assert.deepEqual(page.focused, []);
+  page.redraw("simple");
+  assert.deepEqual(page.focused, [
+    ["simple: the pressed button of the toggle", { preventScroll: true }],
+  ]);
+  assert.ok(
+    page.observers.every((o) => !o.on),
+    "it stops looking",
+  );
+  // And back, the same way.
+  page.document.activeElement = page.shown.other;
+  setDesign("detailed");
+  page.redraw("detailed");
+  assert.deepEqual(page.focused.at(-1), [
+    "detailed: the pressed button of the toggle",
+    { preventScroll: true },
+  ]);
+}
+
+export async function inDetailedsNarrowRailTheFocusTakesTheToggleButtonThatIsDrawn() {
+  // Below 1240 px Detailed's rail shows only the way to Simple: the button of Detailed isn't drawn.
+  const page = windowPage("simple");
+  const { setDesign } = page.store();
+  page.document.activeElement = page.shown.other;
+  setDesign("detailed");
+  page.redraw("detailed", undefined, ["pressed"]);
+  assert.deepEqual(page.focused, [
+    ["detailed: the other button of the toggle", { preventScroll: true }],
+  ]);
+  // A toggle with nothing drawn leaves the focus on the page.
+  page.document.activeElement = page.shown.other;
+  page.focused.length = 0;
+  setDesign("simple");
+  page.redraw("simple", undefined, ["pressed", "other"]);
+  assert.deepEqual(page.focused, [["simple: main", { preventScroll: true }]]);
+}
+
+export async function aSwitchFromElsewhereLeavesTheFocusOnThePage() {
+  // The palette, the card that offers Simple, Settings › Appearance.
+  const page = windowPage("detailed");
+  const { setDesign } = page.store();
+  page.document.activeElement = page.shown.card;
+  setDesign("simple");
+  page.redraw("simple");
+  assert.deepEqual(page.focused, [["simple: main", { preventScroll: true }]]);
+}
+
+export async function theFocusStaysWhereSomethingElsePutIt() {
+  const page = windowPage("detailed");
+  const { setDesign } = page.store();
+  page.document.activeElement = page.shown.other;
+  setDesign("simple");
+  // Something in the new window, such as the palette as it closes, gave the focus away first.
+  page.redraw("simple", () => page.shown.card.focus());
+  assert.deepEqual(page.focused, [["simple: a button on the page", undefined]]);
+  assert.ok(page.observers.every((o) => !o.on));
+}
+
+export async function aSecondSwitchBeforeTheFirstIsDrawnMovesTheFocusOnce() {
+  const page = windowPage("detailed");
+  const { setDesign } = page.store();
+  page.document.activeElement = page.shown.other;
+  setDesign("simple");
+  setDesign("detailed");
+  page.redraw("detailed");
+  assert.deepEqual(page.focused, [
+    ["detailed: the pressed button of the toggle", { preventScroll: true }],
+  ]);
+  assert.ok(page.observers.every((o) => !o.on));
+}
+
+export async function theWaitForTheOtherWindowEnds() {
+  const page = windowPage("detailed");
+  const { setDesign } = page.store();
+  setDesign("simple");
+  const wait = page.timers.find((timer) => timer.ms === 10_000);
+  assert.ok(wait, "it gives up after ten seconds");
+  wait.run();
+  assert.ok(page.observers.every((o) => !o.on));
+  page.redraw("simple");
+  assert.deepEqual(page.focused, []);
+}
+
+export async function firstRunAndSavingTheDesignShownMoveNoFocus() {
+  const page = windowPage("simple");
+  const { chooseDesign, setDesign } = page.store();
+  page.document.activeElement = page.shown.other;
+  chooseDesign("detailed");
+  setDesign("detailed");
+  assert.deepEqual(page.observers, []);
 }

@@ -20,7 +20,11 @@ static GENERIC_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^(docs?|root|app|api|web|frontend|backend|server|client|site|rewrite|main|src)$")
         .expect("generic pattern")
 });
-static ARCHIVE_PATH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/_archive(?:/|$)").expect("archive path pattern"));
+/// An `_archive` folder in a path. Windows separates names with `\` too.
+static ARCHIVE_PATH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(if cfg!(windows) { r"[/\\]_archive(?:[/\\]|$)" } else { r"/_archive(?:/|$)" })
+        .expect("archive path pattern")
+});
 
 const CODE: &[&str] = &[
     "package.json",
@@ -1457,5 +1461,20 @@ mod tests {
         let found = issues(&Env::for_home(std::env::temp_dir()), &node, &json!({}));
         let no_remote = found.iter().find(|i| i["code"] == "no-remote").unwrap();
         assert_eq!(no_remote["detail"], "1 commit exists only on this disk");
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_paths {
+    use super::ARCHIVE_PATH;
+
+    #[test]
+    fn an_archive_folder_is_found_between_backslashes_too() {
+        assert_eq!(ARCHIVE_PATH.replace_all(r"C:\Users\me\project\_archive\demo", "/"), r"C:\Users\me\project/demo");
+        assert_eq!(ARCHIVE_PATH.replace_all("C:/Users/me/project/_archive/demo", "/"), "C:/Users/me/project/demo");
+        assert_eq!(
+            ARCHIVE_PATH.replace_all(r"C:\Users\me\project\_archived\demo", "/"),
+            r"C:\Users\me\project\_archived\demo"
+        );
     }
 }

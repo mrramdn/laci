@@ -643,6 +643,25 @@ export async function theInstallNoteLinksToGitsDownloads() {
 
 // ── Settings › Appearance ──────────────────────────────────────────────────────────────────────────
 
+/**
+ * The update store with nothing to say, for Settings › About & updates at the end of the page: no
+ * desktop answers here. detailed-settings.test.mjs draws that section on the real store.
+ */
+function quietUpdates() {
+  const state = {
+    status: null,
+    refusal: null,
+    refresh: async () => {},
+    check: async () => {},
+    install: async () => {},
+    restart: async () => {},
+    choose: async () => false,
+  };
+  const useUpdate = (select = (s) => s) => select(state);
+  useUpdate.getState = () => state;
+  return { useUpdate };
+}
+
 async function settings() {
   const world = app({
     answers: {
@@ -655,7 +674,7 @@ async function settings() {
   world.store.applyPrefs(prefs({ configured: true, design: "detailed" }));
   world.store.useApp.getState().load(snapshot());
   world.store.useApp.setState({ view: "settings" });
-  const { Settings } = world.load("settings.tsx");
+  const { Settings } = world.load("settings.tsx", { "./update": quietUpdates() });
   world.page.mount(createElement(Settings));
   await world.page.settle();
   return world;

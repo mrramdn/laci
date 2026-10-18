@@ -80,6 +80,8 @@ export function Today() {
           <h1>Today</h1>
         </div>
         <div className="body">
+          {/* Laci 2 let every folder stay unticked: that upgrade is offered Simple too. */}
+          <TrySimple />
           <div className="empty-box">
             <Icon name="folder" />
             <b>No folders selected yet</b>

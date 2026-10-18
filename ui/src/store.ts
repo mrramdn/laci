@@ -83,6 +83,8 @@ interface State {
   palette: boolean;
   /** Simple's sheets open over its window. The window behind and the toast wait while one is. */
   sheets: number;
+  /** The Settings shown have changes that aren't saved yet. A switch of design waits for them. */
+  settingsDirty: boolean;
   tree: Set<string>;
   listings: Record<string, Listing>;
   expanded: Record<string, boolean>;
@@ -203,6 +205,7 @@ export const useApp = create<State>((set, get) => ({
   modal: null,
   palette: false,
   sheets: 0,
+  settingsDirty: false,
   tree: new Set(),
   listings: {},
   expanded: {},
@@ -614,7 +617,8 @@ function viewIn(design: Design, s: State): View {
 }
 /**
  * Switches the window to `design` and saves it. While a dialog is open or a change runs it does
- * nothing and returns false, so neither loses its place.
+ * nothing and returns false, so neither loses its place; while Settings has changes that aren't
+ * saved it says so instead, as the other design's Settings would start without them.
  */
 export function setDesign(design: Design): boolean {
   return keepDesign(design, true);
@@ -632,6 +636,17 @@ function keepDesign(design: Design, announce: boolean) {
   const s = useApp.getState();
   if (s.modal || s.working) return false;
   const switched = design !== s.design;
+  if (switched && s.settingsDirty) {
+    // Only Simple's Settings has a Discard: Detailed's changes go when you leave Settings.
+    if (announce)
+      toast(
+        s.design === "simple"
+          ? "Save or discard your changes first"
+          : "Save your settings first",
+        s.design === "simple" ? "" : "Or leave Settings to drop the changes.",
+      );
+    return false;
+  }
   if (switched && announce) focusAfterSwitch(design);
   showDesign(design, false);
   useApp.setState({

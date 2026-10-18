@@ -525,6 +525,53 @@ export async function aSavedUpdateChoiceIsPickedAgain() {
   assert.equal(run.radio("updates", "off").props.checked, true);
 }
 
+export async function firstRunAgainPicksTheUpdateChoiceSavedSinceThen() {
+  // config.json, as the desktop's `prefs` reads it and `updates` writes it.
+  const config = { updates: null };
+  const world = app({
+    design: "simple",
+    answers: {
+      prefs: () => prefs({ updates: config.updates }),
+      "setup/info": setupInfo(),
+      "setup/save": {},
+      design: (body) => body,
+      updates: (body) => {
+        config.updates = body.updates;
+        return prefs({ updates: config.updates, configured: true });
+      },
+    },
+  });
+  world.store.applyPrefs(prefs());
+  world.store.useApp.getState().load(snapshot(false));
+  // One settings.tsx for the whole session, as the window has.
+  const { Settings } = world.load("settings.tsx");
+  const updates = (value) =>
+    world.page.find(
+      (n) => n.type === "input" && n.props.name === "updates" && n.props.value === value,
+    );
+  const start = async () => {
+    world.page.act(() => world.page.button(words.firstRun.start).props.onClick());
+    await world.page.settle();
+  };
+  world.page.mount(createElement(Settings, { first: true }));
+  await world.page.settle();
+  world.page.act(() => updates("off").props.onChange());
+  await start();
+  assert.equal(config.updates, "off");
+  // Undoing that setup in Activity brings first run back in the same session, once its scan is done.
+  world.page.mount(null);
+  world.store.useApp.setState({ setupPending: false });
+  world.page.mount(createElement(Settings, { first: true }));
+  await world.page.settle();
+  assert.equal(world.asked("prefs").length, 2, "first run asks again");
+  assert.equal(updates("off").props.checked, true);
+  assert.equal(updates("daily").props.checked, false);
+  // Start keeps the choice as it is saved.
+  await start();
+  assert.deepEqual(world.asked("updates").at(-1), ["updates", { updates: "off" }]);
+  assert.equal(config.updates, "off");
+}
+
 export async function theDesignFollowsTheWindowUntilOneIsPicked() {
   // The palette's "Switch to Detailed view" works on the first-run screen too.
   const run = await firstRun();
@@ -633,6 +680,65 @@ export async function appearanceSwitchesTheDesignAndTheThemeAtOnce() {
   assert.deepEqual(world.asked("design"), [["design", { design: "simple" }]]);
   // Nothing else in Settings was saved by it.
   assert.deepEqual(world.asked("setup/save"), []);
+}
+
+/** Detailed's "Default archive folder" field in Settings. */
+const archiveField = (world) =>
+  world.page.find((n) => n.type === "input" && n.props["aria-label"] === "Default archive folder");
+
+export async function aSwitchWaitsWhileSettingsHaveChangesThatArentSaved() {
+  const world = await settings();
+  const type = (value) =>
+    world.page.act(() => archiveField(world).props.onChange({ target: { value } }));
+  const look = (design) =>
+    world.page.find((n) => n.type === "button" && n.props["data-design"] === design);
+  assert.equal(world.state().settingsDirty, false, "nothing typed yet");
+  type("~/my-new-archive");
+  assert.equal(world.state().settingsDirty, true);
+  // Appearance doesn't switch: Simple's Settings would start without the typed folder.
+  world.page.act(() => look("simple").props.onClick());
+  assert.equal(world.state().design, "detailed");
+  assert.deepEqual(world.asked("design"), []);
+  assert.deepEqual(
+    [world.state().toast?.title, world.state().toast?.message],
+    ["Save your settings first", "Or leave Settings to drop the changes."],
+  );
+  assert.equal(archiveField(world).props.value, "~/my-new-archive");
+  // Nor do the sidebar's toggle and Search and actions, which switch the same way.
+  assert.equal(world.store.setDesign("simple"), false);
+  // Typing it back as it was leaves nothing to save.
+  type("");
+  assert.equal(world.state().settingsDirty, false);
+  // Once the changes are saved, the switch goes ahead.
+  type("~/my-new-archive");
+  world.page.act(() => world.page.button("Save and rescan").props.onClick());
+  await world.page.settle();
+  assert.equal(world.asked("setup/save")[0][1].archiveDir, "/home/demo/my-new-archive");
+  assert.equal(world.state().settingsDirty, false);
+  world.page.act(() => look("simple").props.onClick());
+  assert.equal(world.state().design, "simple");
+}
+
+export async function leavingSettingsLetsASwitchGoAheadAgain() {
+  // Leaving Settings drops the changes that wait there, as it always has.
+  const world = await settings();
+  world.page.act(() => archiveField(world).props.onChange({ target: { value: "~/elsewhere" } }));
+  assert.equal(world.state().settingsDirty, true);
+  world.page.mount(null);
+  assert.equal(world.state().settingsDirty, false);
+  assert.equal(world.store.setDesign("simple"), true);
+}
+
+export async function simpleSettingsSayHowToLetTheSwitchGoAhead() {
+  const world = app({ design: "simple", answers: { design: (body) => body } });
+  world.store.applyPrefs(prefs({ configured: true, design: "simple" }));
+  world.store.useApp.setState({ settingsDirty: true });
+  assert.equal(world.store.setDesign("detailed"), false);
+  assert.equal(world.state().design, "simple");
+  assert.equal(world.state().toast?.title, "Save or discard your changes first");
+  // Choosing the design shown switches nothing, so it is still saved.
+  assert.equal(world.store.setDesign("simple"), true);
+  assert.deepEqual(world.asked("design"), [["design", { design: "simple" }]]);
 }
 
 export async function firstRunHasNoAppearanceAndSettingsHasNoFirstRunQuestions() {
@@ -842,16 +948,18 @@ export async function switchingFromSearchAndActionsClosesItAndSwitches() {
 
 // ── The card that offers Simple ────────────────────────────────────────────────────────────────────
 
-function today(offer) {
+/** Today's card that offers Simple, or with `page` the whole of Today, on a scan of `roots`. */
+function today(offer, { page = "TrySimple", roots } = {}) {
   const world = app({ answers: { design: (body) => body } });
   world.store.applyPrefs(prefs({ configured: true, design: offer ? null : "detailed" }));
-  world.store.useApp.getState().load(snapshot());
-  const { TrySimple } = world.load("views/today.tsx", {
+  const scan = snapshot();
+  world.store.useApp.getState().load(roots ? { ...scan, roots } : scan);
+  const drawn = world.load("views/today.tsx", {
     "../backup": { BackupNotice: () => null },
     "../session-ui": { requestResume: noop },
     "../agent-launch": { askAgent: noop },
   });
-  world.page.mount(createElement(TrySimple));
+  world.page.mount(createElement(drawn[page]));
   return world;
 }
 
@@ -860,6 +968,17 @@ export async function onlySomeoneWhoSetUpBeforeTwoDesignsIsOfferedSimple() {
   const world = today(true);
   assert.match(world.page.text(), new RegExp(words.views.offerTitle));
   assert.ok(world.page.find((n) => n.props["data-ui"] === "design-offer"));
+}
+
+export async function anUpgradeWithoutProjectFoldersIsOfferedSimpleToo() {
+  // Laci 2 let every folder stay unticked, which saves no project folder at all.
+  const world = today(true, { page: "Today", roots: [] });
+  assert.match(world.page.text(), /No folders selected yet/);
+  assert.ok(world.page.find((n) => n.props["data-ui"] === "design-offer"));
+  // Without the offer, Today is as it was.
+  const chosen = today(false, { page: "Today", roots: [] });
+  assert.match(chosen.page.text(), /No folders selected yet/);
+  assert.equal(chosen.page.find((n) => n.props["data-ui"] === "design-offer"), undefined);
 }
 
 export async function tryingSimpleSwitchesToItsHome() {

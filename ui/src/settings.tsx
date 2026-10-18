@@ -51,9 +51,13 @@ const USUAL_CONFIG_PATH =
     ? "~\\AppData\\Local\\io.github.mrramdn.laci\\config.json"
     : "~/.config/laci/config.json";
 let prefsSaid: Prefs | undefined;
-/** The saved choices, as the desktop gave them when first asked; undefined until it answers. */
-function usePrefs() {
-  const [said, setSaid] = useState(prefsSaid);
+/**
+ * The saved choices, as the desktop gave them when first asked; undefined until it answers. `fresh`
+ * asks again: first run can come back in the same session (an Undo of its setup), after the choices
+ * it preselects were saved.
+ */
+function usePrefs(fresh = false) {
+  const [said, setSaid] = useState(fresh ? undefined : prefsSaid);
   useEffect(() => {
     if (said !== undefined) return;
     let live = true;
@@ -88,6 +92,33 @@ type ThisComputer = { git?: boolean; translocated?: boolean };
 const GIT = "Git";
 const GIT_DOWNLOADS = "https://git-scm.com/downloads";
 const MAC_INSTALL = "xcode-select --install";
+/** The settings Save and rescan sends, the folders as full paths. */
+interface Setup {
+  roots: Set<string>;
+  archiveDir: string;
+  reportsDir: string;
+  presets: Set<string>;
+  apps: Apps;
+  terminalTarget: TerminalTarget;
+}
+/**
+ * Whether saving `now` would change what `saved` holds. The order of folders and tools doesn't
+ * count.
+ */
+function changedSetup(now: Setup, saved: Setup) {
+  const same = (a: Set<string>, b: Set<string>) =>
+    a.size === b.size && [...a].every((value) => b.has(value));
+  return (
+    !same(now.roots, saved.roots) ||
+    now.archiveDir !== saved.archiveDir ||
+    now.reportsDir !== saved.reportsDir ||
+    !same(now.presets, saved.presets) ||
+    now.apps.editor !== saved.apps.editor ||
+    now.apps.files !== saved.apps.files ||
+    now.apps.terminal !== saved.apps.terminal ||
+    now.terminalTarget !== saved.terminalTarget
+  );
+}
 /** Saves whether Laci looks for new versions. Returns why it couldn't, or "" once it has. */
 async function saveUpdates(updates: Updates) {
   try {
@@ -123,7 +154,7 @@ export function Settings({ first = false }: { first?: boolean }) {
   const snapshot = s.snapshot!;
   // When first run goes, the focus goes to the window drawn in its place.
   useEffect(() => (first ? focusTheWindowOnceDrawn : undefined), [first]);
-  const prefs = usePrefs();
+  const prefs = usePrefs(first);
   const configPath = prefs?.configPath || USUAL_CONFIG_PATH;
   // First run: until one is picked, the design is the one the window shows (Simple for a new install,
   // or another the palette switched to), and the choice about new versions the saved one, else once
@@ -148,13 +179,25 @@ export function Settings({ first = false }: { first?: boolean }) {
   const [reportsDir, setReportsDir] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  /** What is saved, as this page last read or saved it. */
+  const [saved, setSaved] = useState<Setup | null>(null);
   const retryScan = first && s.setupPending && Boolean(s.error);
+  /** A typed folder as an absolute path, with ~ expanded. */
+  const full = (raw: string) => expandHome(trimSep(raw.trim()), snapshot.home);
   useEffect(() => {
     let live = true;
     void api<SetupInfo>("setup/info").then(
       (info) => {
         if (!live) return;
         setInfo(info);
+        setSaved({
+          roots: new Set(info.roots),
+          archiveDir: full(info.archiveDir ?? ""),
+          reportsDir: full(info.reportsDir ?? ""),
+          presets: new Set(info.presets),
+          apps: info.apps,
+          terminalTarget: info.terminalTarget ?? "internal",
+        });
         setRoots(new Set(info.roots));
         setArchiveDir(info.archiveDir ?? "");
         setReportsDir(info.reportsDir ?? "");
@@ -209,8 +252,26 @@ export function Settings({ first = false }: { first?: boolean }) {
     else next.add(value);
     setter(next);
   }
-  /** A typed folder as an absolute path, with ~ expanded. */
-  const full = (raw: string) => expandHome(trimSep(raw.trim()), snapshot.home);
+  // Changes waiting for Save and rescan: a switch of design draws the other design's Settings
+  // without them, so it waits for them. First run stays on the screen through a switch.
+  const unsaved =
+    !first &&
+    saved !== null &&
+    changedSetup(
+      {
+        roots,
+        archiveDir: full(archiveDir),
+        reportsDir: full(reportsDir),
+        presets,
+        apps,
+        terminalTarget,
+      },
+      saved,
+    );
+  useEffect(() => {
+    useApp.setState({ settingsDirty: unsaved });
+    return () => useApp.setState({ settingsDirty: false });
+  }, [unsaved]);
   async function save() {
     const archivePath = full(archiveDir);
     if (archivePath && !isAbsolutePath(archivePath)) {
@@ -250,6 +311,14 @@ export function Settings({ first = false }: { first?: boolean }) {
               : result,
             first ? "All set" : "Settings saved",
           );
+          setSaved({
+            roots,
+            archiveDir: archivePath,
+            reportsDir: reportsPath,
+            presets,
+            apps,
+            terminalTarget,
+          });
           useApp.setState({
             apps,
             terminalTarget,

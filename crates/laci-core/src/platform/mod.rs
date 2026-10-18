@@ -167,9 +167,59 @@ pub fn rename_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
     os::rename_noreplace(src, dest)
 }
 
-/// Gives `dest` the permissions and the access and modification times in `meta`.
+/// Gives `dest` the permissions and the access and modification times in `meta`. On Windows the permissions are the
+/// read-only attribute, and the creation time comes along too.
 pub fn preserve(meta: &Metadata, dest: &Path) -> Result<()> {
     os::preserve(meta, dest)
+}
+
+/// Runs `step`, a change to files such as a rename, a copy or a removal. On Windows it tries again for about two
+/// seconds while another program, such as an antivirus scan, Search or OneDrive, holds the file for a moment.
+/// Elsewhere it runs once.
+pub fn retry<T>(step: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    os::retry(step)
+}
+
+/// What the user is told when changing `path` failed with `error`. On Windows it says what to do, such as closing the
+/// program that has the file open; elsewhere it is the system's message.
+pub fn explain(error: &io::Error, path: &Path) -> String {
+    os::explain(error, path)
+}
+
+/// What else comes with moving the folder `from` to `to`, for the move's preview, as a label and a detail each: on
+/// Windows, links in node_modules that keep leading to the old place and a move into or out of OneDrive.
+pub fn move_notes(from: &Path, to: &Path) -> Vec<(&'static str, &'static str)> {
+    os::move_notes(from, to)
+}
+
+/// Whether a file manager hides the file `name`: a name that starts with a dot, and on macOS and Windows a file the
+/// system marks hidden, such as ~/Library or AppData. `meta` is the file's own, as a folder listing reads it.
+pub fn hidden(name: &OsStr, meta: Option<&Metadata>) -> bool {
+    name.as_encoded_bytes().starts_with(b".") || meta.is_some_and(os::hidden_flag)
+}
+
+/// Whether the file stands in for one in the cloud, as OneDrive and iCloud leave files that are only online: its
+/// content isn't on this computer, and reading it would download it.
+pub fn placeholder(meta: &Metadata) -> bool {
+    os::placeholder(meta)
+}
+
+/// Whether a folder in the home folder named `name` holds the system's or apps' own files rather than projects, such
+/// as ~/Library and apps on macOS or AppData on Windows. Folder suggestions don't look inside, which on macOS would
+/// also ask for access to other apps' data.
+pub fn system_folder(name: &OsStr) -> bool {
+    os::system_folder(name)
+}
+
+/// Opens the file `path` for reading, but not through a link in its last name, even one put there after the file was
+/// listed: a link fails to open. A FIFO doesn't block the open.
+pub fn open_nofollow(path: &Path) -> io::Result<File> {
+    os::open_nofollow(path)
+}
+
+/// The computer's name: on Linux what /etc/hostname says, as Laci v1 read it, elsewhere what the system reports.
+pub fn host_name() -> Option<String> {
+    os::host_name()
 }
 
 /// Makes `dest` a link to where the link `src` leads, as a copy of a folder keeps its links.

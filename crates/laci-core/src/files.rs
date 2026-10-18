@@ -1,3 +1,4 @@
+use crate::platform;
 use chrono::{DateTime, SecondsFormat, Utc};
 use std::{
     fs,
@@ -35,17 +36,29 @@ pub fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 pub fn modified(path: &Path) -> String {
-    fs::metadata(path)
-        .and_then(|m| m.modified())
-        .map(|t| DateTime::<Utc>::from(t).to_rfc3339_opts(SecondsFormat::Millis, true))
-        .unwrap_or_default()
+    fs::metadata(path).map(|meta| modified_at(&meta)).unwrap_or_default()
+}
+/// [`modified`] from metadata already read, as a folder listing gives it.
+pub fn modified_at(meta: &fs::Metadata) -> String {
+    meta.modified().map(|t| DateTime::<Utc>::from(t).to_rfc3339_opts(SecondsFormat::Millis, true)).unwrap_or_default()
 }
 pub fn age(at: &str) -> f64 {
     DateTime::parse_from_rfc3339(at)
         .map(|t| (Utc::now().timestamp_millis() - t.timestamp_millis()) as f64 / 86_400_000.0)
         .unwrap_or(f64::INFINITY)
 }
+/// A small text file's content. A file in the cloud whose content isn't on this computer, as OneDrive and iCloud
+/// leave files that are only online, is not read: that would download it.
 pub fn text(path: &Path) -> Option<String> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    if platform::placeholder(&meta) {
+        return None;
+    }
+    text_even_online(path)
+}
+/// Like [`text`], also for a file a sync app keeps only online, which reading downloads. Laci's own settings are read
+/// this way: read as empty, they would be replaced by the next save.
+pub fn text_even_online(path: &Path) -> Option<String> {
     let meta = fs::symlink_metadata(path).ok()?;
     if !meta.is_file() || meta.is_symlink() || meta.len() > 2_000_000 {
         return None;
@@ -55,14 +68,7 @@ pub fn text(path: &Path) -> Option<String> {
 /// Like `text` for a file in a folder someone else writes: the last path component is never followed as a
 /// link, even when one replaces the file after it was listed, and a FIFO cannot block the read.
 pub fn text_nofollow(path: &Path, limit: u64) -> Option<String> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32);
-    }
-    let file = options.open(path).ok()?;
+    let file = platform::open_nofollow(path).ok()?;
     let meta = file.metadata().ok()?;
     if !meta.is_file() || meta.len() > limit {
         return None;
@@ -153,7 +159,8 @@ pub fn rotate_private(path: &Path, to: &Path, limit: u64) {
     }
 }
 
-/// A private temporary inode prevents following a pre-created temporary-file symlink.
+/// A private temporary inode prevents following a pre-created temporary-file symlink. The file keeps its
+/// permissions, on Windows its read-only attribute.
 pub fn replace(path: &Path, contents: &[u8]) -> crate::Result<()> {
     let parent = path.parent().ok_or("File has no parent")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -161,12 +168,35 @@ pub fn replace(path: &Path, contents: &[u8]) -> crate::Result<()> {
         return Err(format!("Refusing to edit linked file {}", path.display()));
     }
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    if let Ok(meta) = fs::metadata(path) {
-        temp.as_file().set_permissions(meta.permissions()).map_err(|e| e.to_string())?;
+    let permissions = fs::metadata(path).ok().map(|meta| meta.permissions());
+    #[cfg(unix)]
+    if let Some(permissions) = &permissions {
+        temp.as_file().set_permissions(permissions.clone()).map_err(|e| e.to_string())?;
     }
     temp.write_all(contents).and_then(|()| temp.as_file().sync_all()).map_err(|e| e.to_string())?;
-    temp.persist(path).map_err(|e| e.to_string())?;
-    Ok(())
+    // Windows puts no file in place of a read-only one, and tempfile clears every attribute of the file it puts in
+    // place, so the attribute comes off the old file first and goes onto whichever file is there after.
+    let readonly = cfg!(windows) && permissions.is_some_and(|p| p.readonly());
+    if readonly {
+        set_readonly(path, false)?;
+    }
+    let mut temp = Some(temp);
+    let persisted = platform::retry(|| {
+        let file = temp.take().ok_or_else(|| std::io::Error::other("The new file is gone"))?;
+        file.persist(path).map(drop).map_err(|e| {
+            temp = Some(e.file);
+            e.error
+        })
+    });
+    let restored = if readonly { set_readonly(path, true) } else { Ok(()) };
+    persisted.map_err(|e| platform::explain(&e, path))?;
+    restored
+}
+/// Only for Windows: elsewhere taking read-only off would let everyone write.
+fn set_readonly(path: &Path, readonly: bool) -> crate::Result<()> {
+    let mut permissions = fs::metadata(path).map_err(|e| e.to_string())?.permissions();
+    permissions.set_readonly(readonly);
+    fs::set_permissions(path, permissions).map_err(|e| platform::explain(&e, path))
 }
 
 pub fn read_limit(path: &Path, limit: u64) -> Option<String> {

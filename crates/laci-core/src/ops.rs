@@ -93,7 +93,7 @@ fn copy_tree_inner(src: &Path, dest: &Path, skip_git: bool) -> Result<()> {
     if meta.is_symlink() {
         platform::copy_link(src, dest)?;
     } else if meta.is_dir() {
-        fs::create_dir(dest).map_err(|e| e.to_string())?;
+        patiently(dest, || fs::create_dir(dest))?;
         for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
             let e = entry.map_err(|e| e.to_string())?;
             if skip_git && e.file_name() == ".git" {
@@ -103,21 +103,28 @@ fn copy_tree_inner(src: &Path, dest: &Path, skip_git: bool) -> Result<()> {
         }
         preserve(&meta, dest)?;
     } else if meta.is_file() {
-        let mut input = File::open(src).map_err(|e| e.to_string())?;
-        let mut output = OpenOptions::new().write(true).create_new(true).open(dest).map_err(|e| e.to_string())?;
+        let mut input = patiently(src, || File::open(src))?;
+        let mut output = patiently(dest, || OpenOptions::new().write(true).create_new(true).open(dest))?;
         std::io::copy(&mut input, &mut output).and_then(|_| output.sync_all()).map_err(|e| e.to_string())?;
+        // Windows can stamp the time of the last write as the writing handle closes, over the one kept here.
+        drop(output);
         preserve(&meta, dest)?;
     } else {
         return Err(format!("Unsupported special file {}", src.display()));
     }
     Ok(())
 }
+/// A step of a move or copy that changes `path`, tried again on Windows while another program holds the file for a
+/// moment, and failing with a message that says what to do.
+fn patiently<T>(path: &Path, step: impl FnMut() -> std::io::Result<T>) -> Result<T> {
+    platform::retry(step).map_err(|e| platform::explain(&e, path))
+}
 fn remove(path: &Path) -> Result<()> {
-    if fs::symlink_metadata(path).is_ok_and(|m| m.is_dir()) { fs::remove_dir_all(path) } else { fs::remove_file(path) }
-        .map_err(|e| e.to_string())
+    let dir = fs::symlink_metadata(path).is_ok_and(|m| m.is_dir());
+    patiently(path, || if dir { fs::remove_dir_all(path) } else { fs::remove_file(path) })
 }
 fn rename(src: &Path, dest: &Path) -> Result<()> {
-    match platform::rename_noreplace(src, dest) {
+    match platform::retry(|| platform::rename_noreplace(src, dest)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && renames_case(src, dest) => rename_case(src, dest),
         Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
@@ -128,10 +135,10 @@ fn rename(src: &Path, dest: &Path) -> Result<()> {
                 .map_err(|e| e.to_string())?;
             let payload = staged.path().join("payload");
             copy_tree(src, &payload)?;
-            platform::rename_noreplace(&payload, dest).map_err(|e| e.to_string())?;
+            patiently(dest, || platform::rename_noreplace(&payload, dest))?;
             remove(src)
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(platform::explain(&e, src)),
     }
 }
 /// A rename that only changes the case of a name, where the file system counts the new name as taken by the old one.
@@ -140,10 +147,9 @@ fn rename_case(src: &Path, dest: &Path) -> Result<()> {
     let parent = src.parent().ok_or("Missing parent")?;
     let staged =
         parent.join(format!(".laci-rename-{:x}-{:x}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
-    platform::rename_noreplace(src, &staged).map_err(|e| e.to_string())?;
-    platform::rename_noreplace(&staged, dest).map_err(|e| {
-        let _ = platform::rename_noreplace(&staged, src);
-        e.to_string()
+    patiently(src, || platform::rename_noreplace(src, &staged))?;
+    patiently(src, || platform::rename_noreplace(&staged, dest)).inspect_err(|_| {
+        let _ = platform::retry(|| platform::rename_noreplace(&staged, src));
     })
 }
 /// The processes working inside `paths`, as messages and the UI show them. Fails where Laci can't list processes.
@@ -300,7 +306,7 @@ impl<'a> Tx<'a> {
             self.move_to(&from, &to)?;
         }
         self.log(json!({"kind":"rmdir","path":src}))?;
-        fs::remove_dir(src).map_err(|e| e.to_string())
+        patiently(src, || fs::remove_dir(src))
     }
     fn backup(&mut self, file: &Path) -> Result<PathBuf> {
         self.n += 1;

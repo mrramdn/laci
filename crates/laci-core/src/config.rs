@@ -23,7 +23,7 @@ static CONNECTOR_ID: LazyLock<regex::Regex> =
 
 pub fn load(env: &Env) -> Value {
     let fresh = !env.config_dir.join("config.json").is_file();
-    let mut c = files::text(&env.config_dir.join("config.json"))
+    let mut c = files::text_even_online(&env.config_dir.join("config.json"))
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .filter(Value::is_object)
         .unwrap_or_else(|| json!({}));

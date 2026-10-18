@@ -304,8 +304,7 @@ fn build(
             }
         }
     }
-    let host =
-        files::read_limit(Path::new("/etc/hostname"), 256).unwrap_or_else(|| "localhost".into()).trim().to_owned();
+    let host = platform::host_name().unwrap_or_else(|| "localhost".into()).trim().to_owned();
     let mut snapshot = json!({"scannedAt":files::now(),"home":env.home,"host":host,"roots":roots,"configured":configured,"rootIds":root_ids,"nodes":nodes,
         "claude":history.claude,"items":history.items,"connectors":[],"suggestions":[],"global":{"claude":[],"items":[]},"orphans":{"claude":[],"items":[]},"unmatched":[],"proposals":[],"warnings":[],"tookMs":0});
     snapshot["sessions"] = json!(history.sessions);
@@ -1001,6 +1000,9 @@ pub fn move_ops(env: &Env, from: &Path, to: &Path, snapshot: &Value) -> Vec<Valu
                 ops.push(json!({"kind":"rename","label":format!("Move {} history",string(c,"name")),"from":paths::tilde(path,&env.home),"to":paths::tilde(&target,&env.home),"detail":bytes(u(it,"bytes"))}));
             }
         }
+    }
+    for (label, detail) in platform::move_notes(from, to) {
+        ops.push(json!({"kind":"keep","label":label,"detail":detail}));
     }
     ops
 }

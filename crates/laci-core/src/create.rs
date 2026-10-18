@@ -57,6 +57,19 @@ fn git_read(dir: &Path, args: &[&str]) -> Result<String> {
     crate::git::plain(dir, args, Duration::from_secs(60))
 }
 
+/// Why Windows can't have a file or folder called `name`: CON, PRN, AUX, NUL, COM1–9 and LPT1–9 name devices, also
+/// with an extension, as in `nul.txt`, and Windows drops a dot or space at the end of a name.
+fn windows_name_error(name: &str) -> Option<String> {
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    let numbered = |prefix: &str| stem.strip_prefix(prefix).is_some_and(|n| matches!(n.as_bytes(), [b'1'..=b'9']));
+    if ["CON", "PRN", "AUX", "NUL"].contains(&stem.as_str()) || numbered("COM") || numbered("LPT") {
+        return Some(format!("Name: Windows keeps {stem} for a device, also with an extension. Pick another name"));
+    }
+    if name.ends_with(['.', ' ']) {
+        return Some("Name: on Windows a name can't end in a dot or a space".into());
+    }
+    None
+}
 pub fn create_project(env: &Env, request: &Value) -> Result<Value> {
     create_with_progress(env, request, &AtomicBool::new(false), &|_| {})
 }
@@ -67,6 +80,11 @@ fn create_unlocked(env: &Env, r: &Value, cancel: &AtomicBool, progress: &dyn Fn(
     let name = r["name"].as_str().unwrap_or("").trim();
     if !regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$").unwrap().is_match(name) {
         return Err("Name: letters, numbers, dots, dashes or underscores, no spaces".into());
+    }
+    if cfg!(windows)
+        && let Some(error) = windows_name_error(name)
+    {
+        return Err(error);
     }
     let parent = paths::workspace_path(r["parent"].as_str().ok_or("Pick a location")?, env)?;
     sidecar::plain_path(&parent)?;

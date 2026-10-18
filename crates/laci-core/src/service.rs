@@ -1052,9 +1052,26 @@ impl Service {
                 if !path.is_dir() {
                     return Err("That folder doesn't exist anymore".into());
                 }
-                let entries:Vec<_>=files::entries(&path).into_iter().take(5000).map(|e|{let meta=fs::symlink_metadata(e.path()).ok();let link=meta.as_ref().is_some_and(|m|m.is_symlink());
-                    let allowed=paths::workspace_path(&e.path().to_string_lossy(),&self.env).is_ok();let dir=allowed&&e.path().is_dir();
-                    json!({"name":e.file_name().to_string_lossy(),"path":e.path(),"dir":dir,"link":link,"size":meta.map(|m|m.len()),"at":files::modified(&e.path()),"git":dir&&e.path().join(".git").exists()})}).collect();
+                // Each entry's own metadata comes with the listing, where Windows would open every file to read it
+                // again. Only a link can lead out of the folder, which is checked already, and only a link's
+                // target is read.
+                let entries: Vec<_> = files::entries(&path)
+                    .into_iter()
+                    .take(5000)
+                    .map(|e| {
+                        let (path, meta) = (e.path(), e.metadata().ok());
+                        let link = meta.as_ref().is_some_and(|m| m.is_symlink());
+                        let (dir, at) = if link {
+                            let allowed = paths::workspace_path(&path.to_string_lossy(), &self.env).is_ok();
+                            (allowed && path.is_dir(), files::modified(&path))
+                        } else {
+                            let dir = meta.as_ref().is_some_and(|m| m.is_dir());
+                            (dir, meta.as_ref().map(files::modified_at).unwrap_or_default())
+                        };
+                        let hidden = platform::hidden(&e.file_name(), meta.as_ref());
+                        json!({"name":e.file_name().to_string_lossy(),"path":path,"dir":dir,"link":link,"size":meta.map(|m|m.len()),"at":at,"git":dir&&path.join(".git").exists(),"hidden":hidden})
+                    })
+                    .collect();
                 Ok(json!({"path":path,"entries":entries}))
             }
             "ls/newest" => {
@@ -1065,7 +1082,7 @@ impl Service {
                     let newest = files::walk(&e.path(), false)
                         .filter(|e| e.file_type().is_file() && e.file_name() != ".laci.md")
                         .take(3000)
-                        .map(|e| files::modified(e.path()))
+                        .map(|e| e.metadata().map(|meta| files::modified_at(&meta)).unwrap_or_default())
                         .max()
                         .unwrap_or_else(|| files::modified(&e.path()));
                     out[e.file_name().to_string_lossy().as_ref()] = json!(newest);
@@ -1113,14 +1130,19 @@ impl Service {
             .map_err(|e| e.to_string())?
             .take(2000)
             .filter_map(std::result::Result::ok)
-            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && !e.file_name().to_string_lossy().starts_with('.'))
+            .filter(|e| {
+                e.file_type().is_ok_and(|t| t.is_dir())
+                    && !platform::hidden(&e.file_name(), e.metadata().ok().as_ref())
+                    && !platform::system_folder(&e.file_name())
+            })
             .take(100)
         {
             let mut repos = 0usize;
             for entry in
                 walkdir::WalkDir::new(entry.path()).max_depth(3).follow_links(false).into_iter().filter_entry(|e| {
                     e.depth() == 0
-                        || (!e.file_name().to_string_lossy().starts_with('.')
+                        || (!platform::hidden(e.file_name(), e.metadata().ok().as_ref())
+                            && !platform::system_folder(e.file_name())
                             && !files::HEAVY.contains(&e.file_name().to_string_lossy().as_ref()))
                 })
             {

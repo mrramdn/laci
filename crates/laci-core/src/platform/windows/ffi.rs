@@ -8,10 +8,14 @@ use std::{
     io, iter,
     os::windows::{ffi::OsStrExt, io::AsRawHandle},
     path::Path,
+    ptr,
 };
-use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, FILE_BASIC_INFO, FILE_ID_INFO, FileBasicInfo, FileIdInfo, GetFileInformationByHandle,
-    GetFileInformationByHandleEx, MoveFileExW,
+use windows_sys::Win32::{
+    Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_BASIC_INFO, FILE_ID_INFO, FileBasicInfo, FileIdInfo,
+        GetFileInformationByHandle, GetFileInformationByHandleEx, MoveFileExW,
+    },
+    System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RegGetValueW},
 };
 
 /// `path` as the Windows API reads it: UTF-16 ending in a NUL.
@@ -33,6 +37,36 @@ pub fn move_file(src: &Path, dest: &Path) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+
+/// Whether Controlled Folder Access blocks changes to protected folders, as a policy sets it or else Windows Security:
+/// EnableControlledFolderAccess is 1 then, while 2 only audits. None when neither says, as when the setting can't be
+/// read.
+pub fn controlled_folder_access() -> Option<bool> {
+    const KEYS: [&str; 2] = [
+        r"SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\Controlled Folder Access",
+        r"SOFTWARE\Microsoft\Windows Defender\Windows Defender Exploit Guard\Controlled Folder Access",
+    ];
+    let name = wide(Path::new("EnableControlledFolderAccess")).ok()?;
+    KEYS.iter().find_map(|key| {
+        let key = wide(Path::new(key)).ok()?;
+        let (mut mode, mut size) = (0u32, size_of::<u32>() as u32);
+        // SAFETY: `key` and `name` are NUL-terminated UTF-16 buffers that live until the call returns, which only
+        // reads them. With RRF_RT_REG_DWORD the call writes nothing but a 4-byte DWORD, into `mode`, a u32 that lives
+        // until it returns and whose size `size` gives; the value's type isn't asked for.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                key.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_DWORD,
+                ptr::null_mut(),
+                (&raw mut mode).cast(),
+                &mut size,
+            )
+        };
+        (status == 0).then_some(mode == 1)
+    })
 }
 
 /// What Windows records about an open file: when it was last written and last changed, in 100-nanosecond steps since
@@ -82,7 +116,6 @@ pub fn file_info(file: &File) -> io::Result<FileInfo> {
     Ok(FileInfo { written: basic.LastWriteTime, changed: basic.ChangeTime, volume, file: index })
 }
 
-use std::ptr;
 use windows_sys::Win32::{
     Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS},
     System::RestartManager::{

@@ -2,6 +2,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockConvertFileSrc, mockIPC } from "@tauri-apps/api/mocks";
 import type { AgentCapabilities } from "../agent-launch";
 import type { CreationJob } from "../new-project";
+import type { UpdateStatus } from "../update";
 import type {
   ActivityLog,
   Apps,
@@ -90,7 +91,14 @@ let snapshot: Snapshot;
 let log: LogEntry[];
 let storage: Storage;
 let mcp: McpStatus[];
-let settings: { theme: Theme; design: Design; os: Os };
+let settings: {
+  theme: Theme;
+  design: Design;
+  os: Os;
+  updates: "daily" | "off" | null;
+};
+/** Where the preview's make-believe update stands. Nothing is ever downloaded. */
+let update: UpdateStatus;
 let revision = 1;
 let serial = 0;
 /** Undoes one Log entry. An entry without one cannot be undone. */
@@ -611,6 +619,71 @@ function continueJob(id: string): CreationJob {
   return state;
 }
 
+/** The version the preview says it is, and the one its update server offers. */
+const PREVIEW_VERSION = "3.0.0";
+const NEXT_VERSION = "3.0.1";
+/** A time as the desktop writes it: whole seconds, in UTC. */
+const toSeconds = (iso: string) => iso.replace(/\.\d+Z$/, "Z");
+/** Tells the window where the update stands, as the desktop does after each step. */
+function announceUpdate() {
+  // The state of this step, even when the next one comes before the event goes out. A step after its page
+  // was replaced, as between two checks of ui-tests, stays quiet.
+  const payload = { type: "update", ...clone(update) };
+  const page = globalThis.window;
+  setTimeout(() => {
+    if (globalThis.window === page) void emit("laci", payload).catch(() => {});
+  }, 0);
+}
+function checkForUpdate(): UpdateStatus {
+  if (update.state === "downloading" || update.state === "ready") return update;
+  update = {
+    ...update,
+    state: "available",
+    version: NEXT_VERSION,
+    notes:
+      "### Fixed\n- A project moved to another disk keeps its agent history.\n- Clean up no longer offers folders that are in use.",
+    date: toSeconds(fixtureNow),
+    url: `https://github.com/mrramdn/laci/releases/tag/v${NEXT_VERSION}`,
+    checkedAt: toSeconds(new Date().toISOString()),
+  };
+  delete update.error;
+  announceUpdate();
+  return update;
+}
+/** A download in five steps, then the update waits for its restart. */
+function installUpdate() {
+  if (update.state === "downloading") return { started: true };
+  if (update.state !== "available" && update.state !== "error")
+    fail("There is no new version to install. Check for updates first.");
+  const page = globalThis.window;
+  const step = (progress: number) => {
+    if (globalThis.window !== page) return;
+    if (progress > 100) {
+      update = { ...update, state: "ready" };
+      delete update.progress;
+    } else {
+      update = { ...update, state: "downloading", progress };
+      setTimeout(() => step(progress + 25), 120);
+    }
+    announceUpdate();
+  };
+  step(0);
+  return { started: true };
+}
+function restartForUpdate() {
+  if (update.state !== "ready") fail("Install the update first.");
+  const { enabled, install, checkedAt } = update;
+  update = {
+    enabled,
+    state: "idle",
+    current: update.version ?? update.current,
+    install,
+    ...(checkedAt ? { checkedAt } : {}),
+  };
+  announceUpdate();
+  return {};
+}
+
 /** Answers that only the desktop knows, not the engine. */
 const desktop: Record<string, Handler> = {
   status: () => ({
@@ -653,6 +726,7 @@ const desktop: Record<string, Handler> = {
   prefs: () => ({
     theme: settings.theme === "system" ? "" : settings.theme,
     design: settings.design,
+    updates: settings.updates,
     configured: true,
     configPath: "~/.config/laci/config.json",
     os: settings.os,
@@ -661,6 +735,18 @@ const desktop: Record<string, Handler> = {
     settings.design = text(body, "design") as Design;
     return { design: settings.design };
   },
+  updates: (body) => {
+    const choice = text(body, "updates");
+    if (choice !== "daily" && choice !== "off") fail("Unknown update choice");
+    settings.updates = choice;
+    update = { ...update, enabled: choice === "daily" };
+    announceUpdate();
+    return desktop.prefs(body);
+  },
+  "update/status": () => update,
+  "update/check": checkForUpdate,
+  "update/install": installUpdate,
+  "update/restart": restartForUpdate,
   theme: (body) => {
     settings.theme = (text(body, "theme") || "system") as Theme;
     return { theme: text(body, "theme") };
@@ -852,7 +938,13 @@ export function installIpc(options: { os: Os; design: Design; theme: Theme }) {
   storage = clone(fixtures.storage);
   mcp = clone(fixtures["agent/mcp"].agents);
   keptOut = new Map();
-  settings = { ...options };
+  settings = { ...options, updates: null };
+  update = {
+    enabled: false,
+    state: "idle",
+    current: PREVIEW_VERSION,
+    install: "click",
+  };
   mockConvertFileSrc(options.os === "windows" ? "windows" : "linux");
   mockIPC(
     (command, payload) => {

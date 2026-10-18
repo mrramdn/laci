@@ -542,6 +542,8 @@ function simpleWindow(patch = {}) {
       "./Later": { Later: nothing },
       "./ProjectPage": { ProjectPage: nothing },
       "./Projects": { Projects: nothing },
+      "./CleanUp": { CleanUp: nothing },
+      "./Activity": { Activity: nothing },
       "./model": { dayOf: () => "2026-10-08", urgentCount: () => 0 },
       "./state": { readNotNow: () => new Set(), useSimple: page.store({ notNow: 0 }) },
       "./ui": { MoreMenu: nothing },

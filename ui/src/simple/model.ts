@@ -1,10 +1,28 @@
 // What Simple's pages show, worked out from the scan: how safe a project is, which problems it shows
 // and how each is fixed, the project list, and what Home hides until tomorrow. Pure: it imports only
 // helpers.ts and selectors.ts, so the tests run it as it is.
-import { deadlineInfo, liveIssues, recency, RISK, within } from "../helpers";
-import { homeModel } from "../selectors";
+import {
+  base,
+  deadlineInfo,
+  liveIssues,
+  recency,
+  RISK,
+  tilde,
+  within,
+} from "../helpers";
+import { activityModel, homeModel } from "../selectors";
 import type { HomeModel, MainCard, Need } from "../selectors";
-import type { Issue, Node, Severity, Snapshot } from "../types";
+import type {
+  ActivityLog,
+  Issue,
+  LogEntry,
+  Node,
+  Proposal,
+  Severity,
+  Snapshot,
+  Storage,
+  StoragePart,
+} from "../types";
 
 /** How a status reads: safe (teal), soon (amber), act now (red) or good to know. */
 export type Tone = "safe" | "soon" | "act" | "fyi";
@@ -246,4 +264,232 @@ export function projectFolders(snapshot: Snapshot): Node[] {
         projects.some((p) => p.path !== n.path && within(p.path, n.path)),
     )
     .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+// --- Clean up -------------------------------------------------------------------------------------
+
+/**
+ * Clean up's tiles, one for each kind of suggestion. AI chats that point to an old place and moves
+ * left unfinished are one kind to a beginner: AI history to fix. "Space Laci uses" has a tile of
+ * its own, from the `storage` request.
+ */
+export const CLEANUP_TILES = [
+  "history",
+  "space",
+  "archive",
+  "leftover",
+  "twice",
+] as const;
+export type CleanupTile = (typeof CLEANUP_TILES)[number];
+const TILE_OF: Record<Proposal["category"], CleanupTile> = {
+  reconnect: "history",
+  migration: "history",
+  space: "space",
+  status: "archive",
+  orphan: "leftover",
+  duplicate: "twice",
+};
+
+/**
+ * A suggestion as the engine sends it. One about leftover AI chats is blocked when Laci can't
+ * confirm that their folder is gone, with the reason; one it can confirm names the folders.
+ */
+export type CleanupProposal = Proposal & {
+  blocked?: boolean;
+  reason?: string;
+  validation?: { projects?: string[] };
+};
+
+export interface CleanupItem {
+  p: CleanupProposal;
+  tile: CleanupTile;
+  /** Laci can make the change: there is one to make, and the engine didn't block it. */
+  ready: boolean;
+  /** Undo can take the change back. Whatever it deletes is deleted for good. */
+  undoable: boolean;
+  /** The space it frees. */
+  bytes: number;
+  /** The projects it is about that are still here. */
+  nodes: Node[];
+  /** For leftover AI chats: the names of the project folders that are gone. */
+  gone: string[];
+}
+
+export interface CleanupView {
+  /**
+   * The suggestions, those Laci can make first: the ones Undo can take back before the ones that
+   * delete for good, the surest first. Those it can't make come last. Otherwise the engine's order.
+   */
+  items: CleanupItem[];
+  /** The tiles that have suggestions, in Clean up's order: how many, what they free, the first. */
+  tiles: { tile: CleanupTile; count: number; bytes: number; first: string }[];
+  /** What the suggestions free together. */
+  bytes: number;
+  /**
+   * The suggestion that is open to begin with: the first one Laci can make that Undo can take back.
+   * A suggestion that deletes for good never opens by itself.
+   */
+  first?: string;
+}
+
+const SURE: Record<string, number> = { high: 0, med: 1, low: 2 };
+
+/** What a suggestion deletes: the paths of freeing space, or of moving to the Trash. */
+const deletes = (p: Proposal) =>
+  p.action && "paths" in p.action ? p.action.paths : [];
+
+function cleanupItem(
+  snapshot: Snapshot,
+  projects: Node[],
+  p: CleanupProposal,
+): CleanupItem {
+  const paths = deletes(p);
+  let nodes: Node[] = [];
+  if (paths.length) {
+    // Each path belongs to the project nearest to it, so a project inside another counts once.
+    const owners = new Set<Node>();
+    for (const path of paths) {
+      const owner = projects
+        .filter((n) => n.path !== path && within(path, n.path))
+        .sort((a, b) => b.path.length - a.path.length)[0];
+      if (owner) owners.add(owner);
+    }
+    nodes = [...owners];
+  } else if (p.category === "duplicate") {
+    // The engine names each copy by where it is, with the home folder as "~".
+    nodes = p.ops.flatMap(
+      (op) =>
+        projects.find((n) => tilde(n.path, snapshot.home) === op.label) ?? [],
+    );
+  } else if (p.nodeId && snapshot.nodes[p.nodeId])
+    nodes = [snapshot.nodes[p.nodeId]];
+  return {
+    p,
+    tile: TILE_OF[p.category] ?? "history",
+    ready: Boolean(p.action) && !p.blocked,
+    undoable: !paths.length,
+    bytes: paths.length
+      ? nodes.reduce((sum, n) => sum + (n.size?.reclaimable ?? 0), 0)
+      : 0,
+    nodes,
+    gone: (p.validation?.projects ?? []).map(base),
+  };
+}
+
+/** Clean up's suggestions and tiles. */
+export function cleanupView(snapshot: Snapshot): CleanupView {
+  const rank = (item: CleanupItem) =>
+    !item.ready ? 2 : item.undoable ? 0 : 1;
+  const projects = Object.values(snapshot.nodes).filter(
+    (n) => n.kind === "project",
+  );
+  const items = snapshot.proposals
+    .map((p) => cleanupItem(snapshot, projects, p))
+    .sort(
+      (a, b) =>
+        rank(a) - rank(b) ||
+        (SURE[a.p.confidence] ?? 3) - (SURE[b.p.confidence] ?? 3),
+    );
+  const freed = (list: CleanupItem[]) =>
+    list.reduce((sum, item) => sum + (item.ready ? item.bytes : 0), 0);
+  return {
+    items,
+    tiles: CLEANUP_TILES.flatMap((tile) => {
+      const mine = items.filter((item) => item.tile === tile);
+      return mine.length
+        ? [{ tile, count: mine.length, bytes: freed(mine), first: mine[0].p.id }]
+        : [];
+    }),
+    bytes: freed(items),
+    first: items.find((item) => item.ready && item.undoable)?.p.id,
+  };
+}
+
+/** The parts of the space Laci uses, in the order Clean up lists them: those it can empty first. */
+const SPACE_ORDER: readonly string[] = [
+  "removed",
+  "undo",
+  "legacy",
+  "history",
+  "journal",
+  "cache",
+];
+
+/** The parts of the space Laci uses, in Clean up's order, and how much of it can be freed. */
+export function laciSpace(storage: Storage): {
+  parts: StoragePart[];
+  free: number;
+} {
+  const at = (part: StoragePart) => {
+    const i = SPACE_ORDER.indexOf(part.id);
+    return i < 0 ? SPACE_ORDER.length : i;
+  };
+  return {
+    parts: [...storage.parts].sort((a, b) => at(a) - at(b)),
+    free: storage.parts.reduce((sum, part) => sum + Math.max(0, part.free), 0),
+  };
+}
+
+// --- Activity -------------------------------------------------------------------------------------
+
+export const ACTIVITY_FILTERS = ["all", "mine", "ai", "undo"] as const;
+export type ActivityFilter = (typeof ACTIVITY_FILTERS)[number];
+
+/** Who made a change: you, your AI (through Laci's tools), or Laci by itself, as an automatic copy. */
+export type Actor = "you" | "ai" | "laci";
+export const actorOf = (entry: LogEntry): Actor =>
+  entry.by === "agent" ? "ai" : entry.by === "auto" ? "laci" : "you";
+
+const SHOWS: Record<ActivityFilter, (entry: LogEntry) => boolean> = {
+  all: () => true,
+  mine: (entry) => actorOf(entry) === "you",
+  ai: (entry) => actorOf(entry) === "ai",
+  undo: (entry) => entry.canUndo,
+};
+
+export interface ActivityView {
+  /** How many changes each filter shows, before the search. */
+  counts: Record<ActivityFilter, number>;
+  /** The changes the filter and the search let through, by day, the newest first. */
+  days: { label: string; entries: LogEntry[] }[];
+  /** The newest change that can be undone, whatever the filter: the screen's filled Undo. */
+  newest?: LogEntry;
+}
+
+/** Activity's changes, from the `log` reply: nothing yet while it is null. */
+export function activityView(
+  log: ActivityLog | null,
+  filter: ActivityFilter,
+  query: string,
+): ActivityView {
+  const all = log?.entries ?? [];
+  const shows = SHOWS[filter];
+  return {
+    counts: Object.fromEntries(
+      ACTIVITY_FILTERS.map((key) => [key, all.filter(SHOWS[key]).length]),
+    ) as Record<ActivityFilter, number>,
+    days: activityModel(log, { query })
+      .days.map((day) => ({ ...day, entries: day.entries.filter(shows) }))
+      .filter((day) => day.entries.length),
+    newest: all.find((entry) => entry.canUndo),
+  };
+}
+
+/**
+ * The change that keeps `entry` from being undone, when it was changed again later: the newest
+ * change of the same thing that still stands. Undo that one first.
+ */
+export function newerChange(
+  log: ActivityLog | null,
+  entry: LogEntry,
+): LogEntry | undefined {
+  if (!entry.superseded || !entry.key) return undefined;
+  const all = log?.entries ?? [];
+  const at = all.indexOf(entry);
+  return all
+    .slice(0, at < 0 ? 0 : at)
+    .find(
+      (newer) =>
+        newer.key === entry.key && newer.state === "applied" && !newer.undoes,
+    );
 }

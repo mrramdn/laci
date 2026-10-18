@@ -975,3 +975,233 @@ export const search = {
   none: "Nothing matches your search.",
   hints: { open: "Open", move: "Move", close: "Close" },
 };
+
+/** Clean up: what Laci suggests tidying, one suggestion at a time, and the space Laci uses itself. */
+export const cleanup = {
+  title: "Clean up",
+  lead: "Laci shows every change before it happens, and makes one change at a time.",
+  couldFree: (size: string) => `Could free ${size}`,
+  tilesLabel: "What there is to clean up",
+  tiles: {
+    history: "Fix AI history",
+    space: "Free up space",
+    archive: "Archive old projects",
+    leftover: "Leftover AI chats",
+    twice: "Same project twice",
+    laci: "Space Laci uses",
+  },
+  tileCount: (n: number) => count(n, "suggestion"),
+  tileReading: "Reading…",
+  suggestions: "Suggestions",
+  review: "Review",
+  sure: { high: "Sure", med: "Likely", low: "Check first" } as Record<
+    string,
+    string | undefined
+  >,
+  canUndo: "Can be undone",
+  forGood: "Deleted for good",
+  leftAlone: "Laci changes nothing",
+  whatChanges: "What will change",
+  moreFor: (title: string) => `More for “${title}”`,
+  open: (name: string) => `Open ${name}`,
+  hide: "Hide for 90 days",
+  hidden: "Hidden for 90 days",
+  hiddenNote: "Laci won’t suggest it again for 90 days.",
+  hiddenList: (n: number) => count(n, "hidden suggestion"),
+  suggestAgain: "Suggest again",
+  suggestAgainFor: (title: string) => `Suggest again: ${title}`,
+  suggestedAgain: "Laci suggests it again",
+  checking: "Laci is looking again after the last change…",
+  emptyTitle: "Nothing to clean up",
+  emptyBody:
+    "Your AI chats point to the right folders, and nothing takes up space for no reason. Laci keeps watching.",
+  /** AI chats that still point to where a project used to be. */
+  reconnect: {
+    title: (name: string) => `Reconnect the AI chats of ${name}`,
+    titleAny: "Reconnect AI chats",
+    why: (name: string) =>
+      `${name} moved, but some of its AI chats still point to the old folder, so your AI can’t find them.`,
+    unsure: (name: string) =>
+      `No folder is at the old place any more. ${name} has the same name, so these AI chats probably belong to it.`,
+    whyAny:
+      "A folder moved, but some of its AI chats still point to the old place, so your AI can’t find them.",
+    button: "Reconnect",
+    doing: "Reconnecting the AI chats…",
+    done: "AI chats reconnected",
+  },
+  /** Folders that moved while their AI chats still name the old place. */
+  migration: {
+    title: (moves: number) => `Finish ${count(moves, "unfinished move")}`,
+    why: "These folders moved, but their AI chats still name the old place, so search and the next move would get them wrong.",
+    button: (moves: number) =>
+      moves === 1 ? "Finish the move" : "Finish the moves",
+    doing: "Finishing the moves…",
+    done: "Moves finished",
+  },
+  /** Downloaded packages and build files in projects nobody works on any more. */
+  space: {
+    title: (size: string, where: string) => `Free ${size} in ${where}`,
+    titleAny: "Free up space",
+    projects: (n: number) => count(n, "project"),
+    why: "Downloaded packages and build files in projects you haven’t used for a while. They are deleted for good: the next install or build brings them back, and that needs the internet.",
+    button: (size: string) => `Free ${size}…`,
+    buttonAny: "Free up space…",
+    counting: (size: string) => `Freeing ${size}`,
+    countingAny: "Freeing space",
+    doing: (size: string) => `Freeing ${size}…`,
+    doingAny: "Freeing space…",
+    done: (size: string) => `Freed ${size}`,
+    doneAny: "Space freed",
+  },
+  /** Projects nobody has changed for a long time. */
+  archive: {
+    title: (name: string) => `Archive ${name}`,
+    titleAny: "Archive an old project",
+    why: (name: string, when: string) => `${name} last changed ${when}.`,
+    never: (name: string) => `Laci has never seen ${name} change.`,
+    what: "Archiving moves it, with its AI chats, to your archive folder. Undo any time in Activity.",
+    button: (name: string) => `Archive ${name}…`,
+    buttonAny: "Archive…",
+  },
+  /** AI chats whose project folder is gone. */
+  leftover: {
+    title: (names: string) => `AI chats left from ${names}`,
+    titleAny: "Leftover AI chats",
+    why: (names: string, folders: number) =>
+      `${names} no longer ${folders === 1 ? "exists" : "exist"}, so these AI chats belong to no project.`,
+    whyAny:
+      "Their project folder no longer exists, so these AI chats belong to no project.",
+    aside:
+      "Setting them aside moves them to Kept for Undo, so Undo can bring them back.",
+    button: "Set aside",
+    doing: "Setting the AI chats aside…",
+    done: "AI chats set aside",
+    trash: `Move to the ${TRASH} instead…`,
+    trashCounting: `Moving these AI chats to the ${TRASH}`,
+    trashDoing: `Moving the AI chats to the ${TRASH}…`,
+    trashDone: `AI chats moved to the ${TRASH}`,
+    blockedTitle: "AI chats Laci can’t check",
+    blocked:
+      "Laci can’t confirm that their project folder is gone, so it leaves them alone.",
+  },
+  /** One project in two folders. */
+  twice: {
+    title: (name: string, places: number) =>
+      `${name} is in ${count(places, "place")}`,
+    titleAny: "Same project twice",
+    why: "These folders hold the same project, so one is probably an old copy. Laci can’t tell which one you use, so it changes nothing: open both and decide.",
+  },
+  /** The space Laci uses itself, from the `storage` request. */
+  laci: {
+    title: "Space Laci uses",
+    total: (size: string) => `${size} in all`,
+    reading: "Reading the space Laci uses…",
+    failed: "Laci couldn’t read how much space it uses.",
+    tryAgain: "Try again",
+    where: "Where it is",
+    none: "Empty",
+    freeable: (size: string) =>
+      `${size} can be freed. This can’t be undone.`,
+    freed: (size: string) => `Freed ${size}`,
+    /** Each part, by its id: its name, what it is, and for the parts Laci can empty, the button. */
+    parts: {
+      removed: {
+        label: "Kept for Undo",
+        about:
+          "AI chats you deleted or set aside, kept so Undo can bring them back. Emptying it makes those deletions final.",
+        button: "Empty Kept for Undo…",
+        counting: "Emptying Kept for Undo",
+        term: "kept-for-undo",
+      },
+      undo: {
+        label: "Old undo records",
+        about:
+          "Copies Laci made before it moved projects. Those older than a week can go, and those moves can then no longer be undone.",
+        button: "Remove the old records…",
+        counting: "Removing the old undo records",
+      },
+      legacy: {
+        label: "Leftovers from Laci 1",
+        about:
+          "Files the first Laci left in its settings folder. This Laci doesn’t read them.",
+        button: "Remove the leftovers…",
+        counting: "Removing the leftovers of Laci 1",
+      },
+      history: {
+        label: "Copy of AI chats",
+        about:
+          "Laci’s own copy of your AI chats, so a tool that deletes old chats can’t lose them. Laci never removes anything from it.",
+        term: "copy-chats",
+      },
+      journal: {
+        label: "Undo records and Activity",
+        about: "What Undo needs to know about each change.",
+      },
+      cache: {
+        label: "Saved check results",
+        about: "Laci makes these again the next time it checks your folders.",
+      },
+    } as Record<
+      string,
+      | {
+          label: string;
+          about: string;
+          button?: string;
+          counting?: string;
+          term?: string;
+        }
+      | undefined
+    >,
+  },
+};
+
+/** Activity: every change by you or your AI, one sentence each, with Undo. */
+export const activity = {
+  title: "Activity",
+  lead: "Every change by you or your AI. Most can be undone here.",
+  undo: (what: string) => `Undo: ${what}`,
+  undoButton: "Undo",
+  undoing: "Undoing…",
+  undone: "Undone",
+  show: "Show",
+  filters: { all: "All", mine: "By me", ai: "By AI", undo: "Can be undone" },
+  search: "Search Activity",
+  who: { you: "You", ai: "Your AI", laci: "Laci, by itself" },
+  by: (who: string, when: string) => `${who}, ${when}`,
+  /** A day's heading: "Today", "Yesterday", else the weekday and the date, the month in full. */
+  day: (at: string, now = Date.now()) => {
+    const day = new Date(at);
+    const back = daysBetween(day, new Date(now));
+    if (back === 0) return "Today";
+    if (back === 1) return "Yesterday";
+    return day.toLocaleDateString(undefined, {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      ...(day.getFullYear() === new Date(now).getFullYear()
+        ? {}
+        : { year: "numeric" }),
+    });
+  },
+  changedLater: "Can’t undo: changed again later",
+  showNewer: "Show the newer change",
+  didNotFinish: "Didn’t finish",
+  whatChanged: "What changed",
+  more: "More",
+  diagnostics: "Open the diagnostics log",
+  reading: "Reading Activity…",
+  failed: "Laci couldn’t read Activity just now.",
+  tryAgain: "Try again",
+  emptyTitle: "Nothing changed yet",
+  emptyBody: "Every change by you or your AI shows up here, with Undo.",
+  noneTitle: "Nothing to show",
+  none: {
+    all: "Nothing changed yet.",
+    mine: "You haven’t changed anything yet.",
+    ai: "Your AI hasn’t changed anything yet.",
+    undo: "Nothing here can be undone now.",
+  },
+  noMatch: (query: string) => `No change matches “${query}”.`,
+  clearSearch: "Clear the search",
+  showAll: "Show all",
+};

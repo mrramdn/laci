@@ -1,9 +1,15 @@
 //! Creation options used by the desktop form and MCP tool.
-use crate::{Result, config, env::Env, files, ops, paths, process, sidecar};
+use crate::{
+    Result, config,
+    env::Env,
+    files, ops, paths,
+    platform::path::{may_contain, same_path},
+    process, sidecar,
+};
 use serde_json::{Value, json};
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
@@ -41,6 +47,24 @@ pub fn add_template(env: &Env, raw: &str) -> Result<Value> {
         config::save(env, &c)?;
         Ok(json!({"templates":templates(env),"path":path}))
     })
+}
+/// The folder of the template `raw` names: one in Laci's own templates folder by its name, or one added by its path,
+/// in any spelling of that path, as an agent may write it with `~`, in another case or with the other separator. The
+/// folder is the one kept when it was added.
+fn template_folder(env: &Env, raw: &str) -> Result<PathBuf> {
+    let requested = paths::expand(raw, &env.home);
+    templates(env)
+        .into_iter()
+        .find_map(|t| {
+            let t = Path::new(&t);
+            if t.is_absolute() {
+                let known = paths::normalize(t);
+                (requested.is_absolute() && same_path(&known, &requested)).then_some(known)
+            } else {
+                (t.as_os_str() == raw).then(|| paths::normalize(&env.config_dir.join("templates").join(t)))
+            }
+        })
+        .ok_or_else(|| "Unknown template".to_owned())
 }
 pub fn hosts() -> Value {
     std::thread::scope(|scope| {
@@ -115,22 +139,15 @@ fn create_unlocked(env: &Env, r: &Value, cancel: &AtomicBool, progress: &dyn Fn(
     {
         return Err("Repo URL: https://… or git@host:owner/repo".into());
     }
-    let template = r["template"].as_str().unwrap_or("");
-    if from == "template" && !templates(env).iter().any(|t| t == template) {
-        return Err("Unknown template".into());
-    }
     let template_source = if from == "template" {
-        let source = if Path::new(template).is_absolute() {
-            Path::new(template).to_owned()
-        } else {
-            env.config_dir.join("templates").join(template)
-        };
-        let source = paths::normalize(&source);
+        let source = template_folder(env, r["template"].as_str().unwrap_or(""))?;
         sidecar::plain_path(&source)?;
         if !source.is_dir() {
             return Err("The template folder is unavailable".into());
         }
-        if dest.starts_with(&source) {
+        // The location can be spelled another way than the template, in another case or on Windows with a short
+        // name, so a doubt counts as inside.
+        if may_contain(&source, &dest) {
             return Err("The new project cannot be inside its template folder".into());
         }
         Some(source)

@@ -6,8 +6,11 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-fn setup() -> (tempfile::TempDir, Env) {
-    let temp = tempfile::tempdir().unwrap();
+
+mod support;
+
+fn setup() -> (support::TempDir, Env) {
+    let temp = support::tempdir();
     let env = Env::for_home(temp.path().to_owned());
     fs::create_dir(temp.path().join("projects with spaces")).unwrap();
     (temp, env)
@@ -105,6 +108,47 @@ fn template_cannot_recursively_copy_into_itself() {
     )
     .unwrap_err();
     assert!(error.contains("inside its template"));
+    assert!(!template.join("recursive").exists());
+}
+
+#[test]
+fn a_template_added_by_path_is_found_by_another_spelling_of_that_path() {
+    let (_temp, env) = setup();
+    let template = env.home.join("custom starter");
+    fs::create_dir(&template).unwrap();
+    fs::write(template.join("README.md"), "# Starter").unwrap();
+    create::add_template(&env, template.to_str().unwrap()).unwrap();
+    let request = |name: &str, template: &str| json!({"parent":"~/projects with spaces","name":name,"from":"template","template":template,"remote":"none"});
+    // An agent may name it from home, or with a separator at the end.
+    for (name, spelling) in
+        [("from-home", "~/custom starter".to_owned()), ("ended", format!("{}/", template.display()))]
+    {
+        let made = create::create_project(&env, &request(name, &spelling)).unwrap();
+        let path = std::path::Path::new(made["path"].as_str().unwrap());
+        assert_eq!(fs::read_to_string(path.join("README.md")).unwrap(), "# Starter", "{spelling}");
+    }
+    assert_eq!(create::create_project(&env, &request("other", "~/custom")).unwrap_err(), "Unknown template");
+}
+
+/// Where names that differ only in case lead to the same folder, a template named in another case is the one that was
+/// added, and a location named in another case is still inside it.
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn a_template_named_in_another_case_is_never_copied_into_itself() {
+    let (_temp, env) = setup();
+    let template = env.home.join("projects with spaces");
+    let parent = env.home.join("PROJECTS WITH SPACES");
+    if !parent.is_dir() {
+        eprintln!("This volume tells case apart; nothing to check.");
+        return;
+    }
+    create::add_template(&env, template.to_str().unwrap()).unwrap();
+    let error = create::create_project(
+        &env,
+        &json!({"parent":parent,"name":"recursive","from":"template","template":env.home.join("Projects With Spaces")}),
+    )
+    .unwrap_err();
+    assert!(error.contains("inside its template"), "{error}");
     assert!(!template.join("recursive").exists());
 }
 

@@ -981,6 +981,20 @@ export async function anUpgradeWithoutProjectFoldersIsOfferedSimpleToo() {
   assert.equal(chosen.page.find((n) => n.props["data-ui"] === "design-offer"), undefined);
 }
 
+export async function todaysReportCheckClosesTheItemItShows() {
+  // The check beside a project's report line names the item by its whole text, so a click on a line
+  // drawn before another change closes that item or none, never the next one.
+  const world = today(false, { page: "Today" });
+  const check = world.page.find(
+    (n) => n.type === "button" && n.props["aria-label"]?.startsWith("Close as done: "),
+  );
+  assert.ok(check, "a report line with its check");
+  const shown = check.props["aria-label"].slice("Close as done: ".length);
+  world.page.act(() => check.props.onClick({ stopPropagation: noop }));
+  const [[, body]] = world.asked("report/close");
+  assert.deepEqual([body.text, body.state, "item" in body], [shown, "done", false]);
+}
+
 export async function tryingSimpleSwitchesToItsHome() {
   const world = today(true);
   world.page.act(() => world.page.button(words.views.offerTry).props.onClick());

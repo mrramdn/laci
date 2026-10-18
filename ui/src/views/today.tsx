@@ -8,7 +8,7 @@ import {
   Group,
   Expand,
 } from "../common";
-import { useApp, run, setDesign, toast } from "../store";
+import { useApp, run, setDesign } from "../store";
 import { useNow } from "../clock";
 import { BackupNotice } from "../backup";
 import { LookThumb } from "../looks";
@@ -26,6 +26,7 @@ import {
 } from "../helpers";
 import { DeadlinePill } from "../deadline";
 import { api } from "../api";
+import { closeReportItem } from "../actions";
 import { requestResume } from "../session-ui";
 import { askAgent } from "../agent-launch";
 import type { Node } from "../types";
@@ -531,14 +532,7 @@ function ReportOpen({ node }: { node: Node }) {
         aria-label={`Close as done: ${report.open[0]}`}
         onClick={(event) => {
           event.stopPropagation();
-          void run(async () => {
-            await api("report/close", {
-              report: report.id,
-              item: 1,
-              state: "done",
-            });
-            toast("Closed in the report", report.open[0]);
-          });
+          void closeReportItem(report.id, report.open[0], "done");
         }}
       >
         <Icon name="check" className="sm" />

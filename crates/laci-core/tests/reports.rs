@@ -179,13 +179,18 @@ fn a_window_names_an_item_by_its_whole_text_and_a_stale_click_closes_nothing_els
     };
     // Its whole text names it, though its words are in another item too.
     assert_eq!(close(&mut service, "Fix login", "done").unwrap()["item"], "Fix login");
-    // A second click on a list drawn before the first names an item closed now: nothing else closes.
-    assert!(close(&mut service, "Fix login", "done").unwrap_err().contains("closed already"));
+    // A second click on a list drawn before the first names an item closed now: nothing else closes, and the
+    // Log doesn't get a second entry.
+    let logged = activity::read_log(&f.env, 100).len();
+    assert_eq!(close(&mut service, "Fix login", "done").unwrap()["item"], "Fix login");
+    assert_eq!(activity::read_log(&f.env, 100).len(), logged);
     assert!(close(&mut service, "Not in the report", "done").unwrap_err().contains("isn't in the report"));
     let open = report(&service.snapshot().unwrap(), "2026-10-01-alpha.md")["open"].clone();
     assert_eq!(open, json!(["Ship it", "Fix login page"]));
     assert_eq!(close(&mut service, "Fix login", "open").unwrap()["item"], "Fix login");
-    assert!(close(&mut service, "Fix login", "open").unwrap_err().contains("open already"));
+    let logged = activity::read_log(&f.env, 100).len();
+    close(&mut service, "Fix login", "open").unwrap();
+    assert_eq!(activity::read_log(&f.env, 100).len(), logged);
 }
 
 #[test]

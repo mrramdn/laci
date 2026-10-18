@@ -389,10 +389,9 @@ pub fn close_item(
     let chosen = match item {
         ItemName::Exact(exact) => match pool.iter().find(|i| i.as_str() == exact) {
             Some(found) => *found,
+            // A second click finds it done already, and changes nothing: no second Log entry, no error.
             None if all.iter().any(|i| i == exact) => {
-                return Err(
-                    if state == "open" { "That item is open already" } else { "That item is closed already" }.into()
-                );
+                return Ok(json!({"report":id,"item":exact,"state":state}));
             }
             None => return Err("That item isn't in the report any more".into()),
         },

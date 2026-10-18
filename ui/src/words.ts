@@ -1205,3 +1205,512 @@ export const activity = {
   clearSearch: "Clear the search",
   showAll: "Show all",
 };
+
+/** AI helpers: the chats of every project, the summaries your AI writes, and the AI tools Laci knows. */
+export const aiHelpers = {
+  title: "AI helpers",
+  lead: "Your chats with AI tools, the summaries they write, and the tools themselves.",
+  start: "Start a chat",
+  startWith: (ai: string) => `With ${ai}…`,
+  tabsLabel: "What AI helpers shows",
+  tabs: { chats: "Chats", summaries: "Summaries", tools: "Tools" },
+
+  // Chats
+  search: "Search chats",
+  show: "Show",
+  filters: {
+    all: "All",
+    week: "This week",
+    old: "Older than 30 days",
+    outside: "Not in a project",
+    kept: "Kept",
+    backup: "Only in Laci’s copy",
+  },
+  select: "Select",
+  selectLabel: "Chats you select",
+  selectNone: "Choose the chats to keep or delete.",
+  selected: (n: number, size: string) => `${count(n, "chat")} selected, ${size}`,
+  selectAll: (n: number) => `Select all ${n}`,
+  clear: "Clear",
+  done: "Done",
+  pick: (title: string) => `Select: ${title}`,
+  keep: "Keep",
+  dontKeep: "Don’t keep",
+  delete: "Delete…",
+  notInProject: "Not in a project",
+  openProject: (name: string) => `Open ${name}`,
+  chatCount: (n: number) => count(n, "chat"),
+  by: (ai: string, when: string) => `${ai}, ${when}`,
+  messages: (n: number) => count(n, "message"),
+  files: (n: number) => `${count(n, "file")} changed`,
+  quick: (n: number) => count(n, "quick chat"),
+  quickNote: "A message or two each, and no file changed.",
+  showMore: (n: number) => `Show ${count(n, "more chat")}`,
+  showFewer: "Show fewer",
+  continue: "Continue",
+  continueFor: (title: string) => `Continue: ${title}`,
+  restore: "Put it back",
+  restoreFor: (title: string) => `Put it back: ${title}`,
+  restoring: "Putting the chat back…",
+  restored: "Chat put back",
+  kept: "Kept",
+  onlyCopy: "Only in Laci’s copy",
+  emptyTitle: "No AI chats yet",
+  emptyBody:
+    "Chats with your AI tools show up here, by project. Laci finds them by itself.",
+  seeTools: "See the AI tools",
+  noneTitle: "No chats here",
+  noMatch: (query: string) => `No chat matches “${query}”.`,
+  none: {
+    all: "There are no chats to show.",
+    week: "No chat changed in the last 7 days.",
+    old: "No chat is older than 30 days.",
+    outside: "Every chat belongs to a project.",
+    kept: "You keep no chat yet.",
+    backup: "No chat is only in Laci’s copy.",
+  },
+  clearSearch: "Clear the search",
+  showAll: "Show all chats",
+
+  // One chat
+  chatAbout: (ai: string, place: string, when: string) => `${ai} · ${place} · ${when}`,
+  noFolder: "No folder written down",
+  inIt: "In it",
+  when: "When",
+  size: "Size",
+  span: (from: string, to: string) => `${from} to ${to}`,
+  notWritten: "Not written down",
+  firstMessage: "Your first message",
+  lastMessage: "Your last message",
+  lastReply: (ai: string) => `The last reply from ${ai}`,
+  keptNote: "Laci won’t suggest cleaning it up.",
+  onlyCopyNote:
+    "Its AI tool deleted it, and this is Laci’s copy. Put it back to continue it.",
+  readSummary: "Read its summary",
+  folder: "Folder",
+  chatId: "Chat ID",
+  file: "File",
+
+  // Deleting chats
+  deleteOne: "Delete this chat?",
+  deleteMany: (n: number) => `Delete ${count(n, "chat")}?`,
+  deleteNote: (n: number, size: string) =>
+    `${n === 1 ? "It moves" : "They move"} to Kept for Undo (${size}). Undo in Activity puts ${n === 1 ? "it" : "them"} back, until you empty Kept for Undo in Clean up.`,
+  deleteStay: (n: number) =>
+    `${count(n, "chat")} ${n === 1 ? "stays" : "stay"}: kept, in use, or not one Laci can delete.`,
+  deleteMore: (n: number) => `and ${count(n, "more chat")}`,
+  deleteNow: "Delete",
+  deleting: "Deleting…",
+  deleted: (n: number) => (n === 1 ? "Chat deleted" : `${count(n, "chat")} deleted`),
+  deletedNote: (n: number) => (n === 1 ? "Undo puts it back." : "Undo puts them back."),
+  keeping: "Keeping…",
+  keptDone: (n: number) =>
+    n === 1 ? "Laci keeps this chat" : `Laci keeps ${count(n, "chat")}`,
+  keptDoneNote: (n: number) => `Clean up won’t suggest deleting ${n === 1 ? "it" : "them"}.`,
+  unkeptDone: (n: number) =>
+    n === 1 ? "Laci no longer keeps this chat" : `Laci no longer keeps ${count(n, "chat")}`,
+
+  // The copy of AI chats
+  copyTitle: "Keep a copy of AI chats",
+  copyWarn: (ai: string, days?: number) =>
+    days
+      ? `${ai} deletes chats after ${count(days, "day")}. Without a copy, older chats are gone for good.`
+      : `${ai} deletes its old chats. Without a copy, they are gone for good.`,
+  copyAuto: "Copy new chats by itself",
+  copyAutoNote: "At most once an hour. Laci never removes anything from its copy.",
+  copyOn: "Laci copies new chats by itself",
+  copyOff: "Laci copies chats only when you ask",
+  copyLast: (when: string, chats: number, size: string) =>
+    `Last copy ${when}: ${count(chats, "chat")}, ${size}.`,
+  copyNone: "Laci hasn’t made a copy yet.",
+  copyNow: "Copy now",
+  copying: "Copying AI chats…",
+  copied: (n: number) => `Copied ${count(n, "chat file")}`,
+  copyUpToDate: "The copy is up to date",
+  copyWhere: (chats: number, where: string) => `${count(chats, "chat")} kept in ${where}`,
+  openFolder: "Open folder",
+
+  // Summaries
+  searchSummaries: "Search summaries",
+  summaryList: "Summaries",
+  forChat: (title: string) => `For “${title}”`,
+  forOneChat: "For one chat",
+  forProject: (name: string) => `For ${name}`,
+  showAllSummaries: "Show all summaries",
+  newTag: "New",
+  noProject: "No project",
+  stillToDoCount: (n: number) => `${n} still to do`,
+  showAllRows: (n: number) => `Show all ${n}`,
+  searchingInside: "Searching inside the summaries…",
+  searchFailed:
+    "Laci couldn’t search inside the summaries. Titles and short texts still match.",
+  noSummaryMatch: (query: string) => `No summary matches “${query}”.`,
+  noneForThis: "No summary names this yet.",
+  noFolderTitle: "Summaries aren’t set up yet",
+  noFolderBody:
+    "Your AI can write a short summary when a chat ends. Choose the folder it writes them in, and Laci lists them here with their projects.",
+  chooseFolder: "Choose folder…",
+  chooseFolderTitle: "Choose the folder your AI writes summaries in",
+  savingFolder: "Saving the folder…",
+  folderSaved: "Summaries folder chosen",
+  unreadableTitle: "Laci can’t read the summaries folder",
+  checkAgain: "Check again",
+  chooseAnother: "Choose another folder…",
+  noSummariesTitle: "No summaries yet",
+  noSummariesBody:
+    "Your AI writes one when a chat ends, once it has the instruction. Paste the instruction where your AI reads its own instructions.",
+  copyInstruction: "Copy the instruction for your AI",
+  instructionCopied: "Instruction copied",
+  instructionHint: "Paste it where your AI reads its instructions.",
+  back: "Summaries",
+  updated: (when: string) => `Updated ${when}`,
+  fromChat: (title: string) => `Chat: ${title}`,
+  stillToDo: "Still to do",
+  stillToDoNote: "Marking an item here changes nothing in the summary file.",
+  itemDone: "Done",
+  itemDoneFor: (item: string) => `Done: ${item}`,
+  notNeeded: "Not needed",
+  notNeededFor: (item: string) => `Not needed: ${item}`,
+  nothingLeft: "Nothing left to do.",
+  moreInSummary: (n: number) => `and ${count(n, "more item")} in the summary`,
+  closedItems: (n: number) => `Done or not needed: ${n}`,
+  openAgain: "Open again",
+  openAgainFor: (item: string) => `Open again: ${item}`,
+  openIn: (app: string) => `Open in ${app}`,
+  location: "Location",
+  copyLocation: "Copy location",
+  locationCopied: "Location copied",
+  reading: "Reading the summary…",
+  tryAgain: "Try again",
+  large: (size: string) => `This summary is ${size}, so showing it can take a moment.`,
+  showIt: "Show it",
+  remoteImages: (n: number) =>
+    `${count(n, "picture")} from the web ${n === 1 ? "isn’t" : "aren’t"} shown.`,
+  loadImages: "Show pictures",
+  linkBlocked: "A summary can open web and mail links, and other summaries in its folder.",
+  linkNotOpened: "Link not opened",
+  linkNotOpenedNote: "Only another summary in the same folder opens here.",
+  goneTitle: "This summary isn’t here any more",
+  goneBody: "It was renamed, moved or deleted since Laci listed it.",
+  showNewest: "Show the newest",
+
+  // Tools
+  yourOwn: "Your own",
+  install: {
+    installed: "Installed",
+    "cant-start": "Installed, but Laci can’t start it",
+    missing: "Not installed",
+  },
+  showChats: "Show its chats in Laci",
+  canUse: "Can use Laci:",
+  canUseWords: {
+    yes: "Yes",
+    "not-yet": "Not yet",
+    other: "Uses another Laci",
+    off: "Turned off",
+  },
+  canUseAction: {
+    yes: "Change…",
+    "not-yet": "Let it use Laci…",
+    other: "Use this Laci…",
+    off: "Turn it on…",
+  },
+  /** Said after a button or a box that each AI tool's card has, so each one is told apart. */
+  forTool: (ai: string) => `, for ${ai}`,
+  startsWith: (model: string, effort: string) =>
+    model && effort
+      ? `Starts with ${model}, with ${effort} thinking effort.`
+      : model
+        ? `Starts with ${model}, with its own thinking effort.`
+        : effort
+          ? `Starts with its own model, with ${effort} thinking effort.`
+          : "Starts with its own model and thinking effort.",
+  startsNote:
+    "As you started it last time. Choose another under Options when you start a chat.",
+  toolChats: (n: number, when: string) => `${count(n, "chat")}, the newest ${when}`,
+  noChats: "No chats yet",
+  startOnly: "Laci only starts it: it keeps no chats Laci can read.",
+  notAdded: "Laci knows this AI tool. Show its chats to see them on your projects.",
+  keepsChatsIn: "Keeps its chats in",
+  program: "Program",
+  chatsShown: (ai: string) => `Laci shows the chats of ${ai}`,
+  chatsHidden: (ai: string) => `Laci no longer shows the chats of ${ai}`,
+  chatsHiddenNote: "Its files stay where they are. Undo in Activity brings them back.",
+  showingChats: "Laci shows its chats",
+  removeOwn: "Remove",
+  ownRemoved: (ai: string) => `${ai} removed`,
+  ownRemovedNote: "Its files stay where they are. Undo in Activity brings it back.",
+  adding: "Adding…",
+  removing: "Removing…",
+  missingTool: "Is your AI tool missing?",
+  addInSettings: "Add it in Settings",
+
+  // Letting an AI use Laci
+  useTitle: {
+    yes: (ai: string) => `${ai} can use Laci`,
+    "not-yet": (ai: string) => `Let ${ai} use Laci`,
+    other: (ai: string) => `${ai} uses another Laci`,
+    off: (ai: string) => `Laci is turned off in ${ai}`,
+  },
+  useIntro: (ai: string) =>
+    `With it, ${ai} can ask Laci which projects you have, and move, archive or start them the safe way. Each change it makes shows in Activity, with Undo.`,
+  useState: {
+    yes: (ai: string) => `${ai} starts this Laci when it needs it.`,
+    "not-yet": (ai: string) => `${ai} doesn’t know Laci yet.`,
+    other: (ai: string) => `${ai} starts another program under Laci’s name:`,
+    off: (ai: string) => `${ai} knows Laci, but it is turned off there.`,
+  },
+  useAction: {
+    "not-yet": "Let it use Laci",
+    other: "Use this Laci instead",
+    off: "Turn it on",
+  },
+  stopUsing: "Stop it using Laci",
+  readingSettings: (ai: string) => `Reading the settings of ${ai}…`,
+  whatChanges: "What exactly changes",
+  runsCommand: (ai: string) => `Laci runs this ${ai} command:`,
+  editsFile: (file: string) => `Laci adds this to ${file}:`,
+  takesOut: (file: string) => `Laci takes itself out of ${file}.`,
+  copyChange: "Copy",
+  changeCopied: "Copied",
+  keepsCopy: (file: string) =>
+    `This changes ${file}. Laci keeps a copy of that file in its own folder first.`,
+  useBlocked: (program: string) =>
+    `Laci can’t find the program ${program} on this computer, so it can’t make this change. Install it, or run the command yourself.`,
+  letting: "Letting it use Laci…",
+  stopping: "Stopping…",
+  letDone: (ai: string) => `${ai} can use Laci now`,
+  stopDone: (ai: string) => `${ai} no longer uses Laci`,
+};
+
+/** Simple's Settings: how Laci looks, the project folders, AI, apps, updates and the rest. */
+export const settings = {
+  title: "Settings",
+  lead: "How Laci looks, where it looks for projects, and the AI tools and apps it works with.",
+  loading: "Reading your settings…",
+  failed: "Laci couldn’t read your settings.",
+  tryAgain: "Try again",
+
+  // Appearance
+  appearance: "Appearance",
+  appearanceNote: "A change here shows at once and needs no saving.",
+  view: "View",
+  designs: { simple: "Simple", detailed: "Detailed" },
+  designNotes: {
+    simple: "Calm and guided, in plain words.",
+    detailed: "Everything at once: paths, version details and long lists.",
+  },
+  viewNote:
+    "Both show the same projects, chats and Activity. Switch any time at the bottom of the sidebar.",
+  theme: "Theme",
+
+  // Projects
+  projects: "Projects",
+  folders: "Project folders",
+  foldersNote: "Laci looks for projects in these folders, and only reads them.",
+  noFolders: "No project folder yet. Add the folder where you keep projects.",
+  unavailable: "Can’t be reached now",
+  remove: "Remove",
+  removeFor: (folder: string) => `Remove ${folder}`,
+  addFolder: "Add a folder…",
+  addFolderTitle: "Choose a folder where you keep projects",
+  suggest: "Suggest folders",
+  suggesting: "Looking for folders…",
+  suggestions: "Folders with projects in them",
+  holds: (n: number) => (n ? `${count(n, "project")} inside` : "No projects found inside"),
+  add: "Add",
+  addFor: (folder: string) => `Add ${folder}`,
+  noSuggestions: "Laci found no other folders with projects in them.",
+  archive: "Archive folder",
+  archiveNearest: "Each project goes to the nearest folder named _archive.",
+  chooseArchive: "Choose folder…",
+  chooseArchiveTitle: "Choose your archive folder",
+  useNearest: "Use the nearest _archive folder",
+
+  // AI
+  ai: "AI",
+  aiTools: "AI tools",
+  aiToolsNote:
+    "Laci shows the chats of these tools on your projects, and moves them with a project.",
+  found: "Found on this computer",
+  notFound: "Not found on this computer",
+  summaries: "Summaries folder",
+  summariesNote:
+    "Your AI can write a short summary when a chat ends. Laci lists the ones in this folder, and changes nothing in it.",
+  summariesFolder: {
+    unsaved: "Save your changes to use this folder.",
+    off: "None chosen, so summaries stay hidden.",
+    unreadable: (why: string) => `Laci can’t read this folder: ${why}`,
+    read: (n: number) => `${count(n, "summary", "summaries")} found.`,
+  },
+  chooseSummaries: "Choose folder…",
+  chooseSummariesTitle: "Choose the folder your AI writes summaries in",
+  stopSummaries: "Stop showing summaries",
+  models: "Model and thinking effort",
+  modelsNote:
+    "Each AI starts with the choice you made the last time you started it. Choose another under Options when you start a chat.",
+  seeTools: "See each AI tool in AI helpers",
+
+  // Apps
+  apps: "Apps",
+  appsNote: "The apps that the Open in and Show in buttons open.",
+  appNames: { editor: "Editor", files: "File manager", terminal: "Terminal app" },
+  notInstalledApp: (name: string) => `${name} (not installed)`,
+  chatsOpenIn: "Open AI chats in",
+  targets: { internal: "Laci’s terminal", external: "My terminal app" },
+  targetNotes: {
+    internal: "At the bottom of this window.",
+    external: "In a window of its own.",
+  },
+
+  // Updates, in the words of the first run's question about them
+  updates: "Updates",
+  updatesQuestion: "New versions of Laci",
+  updateChoices: {
+    daily: "Look for new versions once a day",
+    off: "Don’t look for new versions",
+  },
+  updateNotes: {
+    daily:
+      "Laci tells you when a new version is ready, and installs nothing until you choose to.",
+    off: "Laci won’t look by itself. You can still download a new version from GitHub.",
+  },
+  updatesUnset: "You haven’t chosen yet, so Laci doesn’t look.",
+  updatesPrivacy:
+    "A check only asks GitHub which version is newest: like any visit to a website it shows your internet address, and it sends nothing about your projects.",
+  updatesSaved: {
+    daily: "Laci looks for new versions once a day",
+    off: "Laci won’t look for new versions",
+  },
+
+  // The technical part, folded away (design-research's "Advanced"; Simple keeps that word for no part)
+  technical: "Technical settings",
+  technicalNote: "Your own AI tool, the diagnostics log and where Laci keeps its settings.",
+  showTechnical: "Show technical settings",
+  hideTechnical: "Hide technical settings",
+  addTool: "Your own AI tool",
+  addToolNote:
+    "For an AI tool Laci doesn’t know yet: say where it keeps its chats, or how to start it.",
+  addToolButton: "Add another AI tool…",
+  diagnostics: "Diagnostics log",
+  diagnosticsNote: "A technical record of what Laci did. It helps when you report a problem.",
+  openDiagnostics: "Open the diagnostics log",
+  settingsFile: "Settings file",
+  settingsFileNote: "Laci keeps your settings in this file.",
+  copyLocation: "Copy location",
+  locationCopied: "Location copied",
+
+  // About
+  about: "About",
+  name: "Laci",
+  version: (version: string) => `Version ${version}`,
+  aboutLine:
+    "Laci keeps your projects in one place, with their AI chats. What it learns about them stays on this computer.",
+  openHelp: "Help",
+  report: "Report a problem",
+
+  // Saving
+  unsaved: "You have changes that aren’t saved yet.",
+  discard: "Discard",
+  save: "Save changes",
+  saving: "Saving…",
+  saved: "Settings saved",
+  savedNote: "Undo in Activity puts the old ones back.",
+};
+
+/**
+ * Simple's own sheets for Archive, Delete and Free up space (design-research §3.7): Archive comes
+ * before the system's bin, and what can't be undone says so before its Countdown.
+ */
+export const dialogs = {
+  /** How to get a folder back from the system's bin, on `os` (linux, macos or windows). */
+  restoreSteps: (os: string) =>
+    os === "macos"
+      ? "To get it back, open the Trash in the Dock and choose Put Back."
+      : os === "windows"
+        ? "To get it back, open the Recycle Bin on the desktop and choose Restore."
+        : "To get it back, open the Trash in your file manager and choose Restore.",
+  busy: "Laci is finishing another change. Try again in a moment.",
+  checkAgain: "Check again",
+  /** What "Show details" holds. */
+  details: {
+    found: "What Laci found",
+    onlyHere: "Only on this computer",
+    location: "Location",
+    steps: "What Laci does",
+    goesTo: "Goes to",
+    hidden: "Hidden warnings",
+  },
+  delete: {
+    title: (name: string) => `Delete ${name}?`,
+    intro: `Archiving is the safer choice: you can undo it. Laci can’t undo a move to the ${TRASH}.`,
+    introArchived: `It is in your archive folder already. Laci can’t undo a move to the ${TRASH}.`,
+    lost: "What could be lost",
+    checking: "Checking that nothing would be lost…",
+    allSaved: "Everything in it is saved and online.",
+    onlyHere:
+      "Only this computer has these files. Your online copy can’t give them back:",
+    more: (n: number) => `and ${count(n, "more file")}`,
+    blocked: (name: string) => `Laci can’t move ${name} to the ${TRASH} yet.`,
+    blockedWhy:
+      "Laci does it only once every saved version is online, every change is saved as a version, nothing is set aside, and no program is using the folder. Show details says what stopped it.",
+    noHistory:
+      "This folder has no version history, so Laci can’t check what would be lost. Archive it instead.",
+    checkFailed: (name: string) => `Laci couldn’t check ${name}.`,
+    archiveInstead: "Archive instead",
+    archiveNote: (name: string) =>
+      `Laci moves ${name}, with its AI chats, to your archive folder. You can undo it in Activity.`,
+    typeName: (name: string) =>
+      `Type ${name} to move it to the ${TRASH} with these files`,
+    trash: `Move to ${TRASH}`,
+    trashNote: "Laci can’t undo this.",
+    notYet: "Not possible yet. The reason is above.",
+    typeFirst: "Type the name above first.",
+    counting: (name: string) => `Moving ${name} to the ${TRASH}`,
+    moving: (name: string) => `Moving ${name} to the ${TRASH}…`,
+    moved: (name: string) => `Moved ${name} to the ${TRASH}`,
+    moveFailed: (name: string) => `Laci couldn’t move ${name} to the ${TRASH}.`,
+  },
+  archive: {
+    title: (name: string) => `Archive ${name}?`,
+    intro: "Laci moves it, with its AI chats, to your archive folder.",
+    checking: "Checking where it goes…",
+    unsafe:
+      "Back it up first. Archiving moves it as it is, and an archived project is easy to forget.",
+    onlyHidden: (n: number) =>
+      `You hid ${count(n, "warning")} about this project. Show details lists ${n === 1 ? "it" : "them"}.`,
+    backUpFirst: "Back up first",
+    backUpNote: (problem: string) =>
+      `Laci helps you with “${problem}” first. Archive it after that.`,
+    anyway: "Archive anyway",
+    anywayNote: "It goes to the archive as it is. You can undo it in Activity.",
+    archive: "Archive",
+    note: "You can undo it any time in Activity.",
+    cant: (name: string) => `Laci can’t archive ${name} there.`,
+    elsewhere:
+      "To archive it somewhere else, change “Goes to” under Show details.",
+    fullPath: "Write the full location, such as ~/archive/my-project.",
+    archiving: (name: string) => `Archiving ${name}…`,
+    archived: (name: string) => `Archived ${name}`,
+    archivedNote: "Find it in Projects, under Archived.",
+    failed: (name: string) => `Laci couldn’t archive ${name}.`,
+  },
+  clean: {
+    title: (name: string) => `Free up space in ${name}?`,
+    intro:
+      "Laci deletes the downloaded packages and build files in it. Your tools can make them again.",
+    whatGoes: "What goes",
+    forGood: "Deleted for good",
+    frees: (size: string) => `Frees ${size}.`,
+    comesBack:
+      "The next install or build brings them back. You need the internet to install them again.",
+    nothing: (name: string) => `There is nothing to free up in ${name} now.`,
+    free: (size: string) => `Free ${size}`,
+    freeNote: "Laci can’t undo this.",
+    counting: (name: string) =>
+      `Deleting the downloaded packages and build files in ${name}`,
+    freeing: (name: string) => `Freeing up space in ${name}…`,
+    freed: (size: string, name: string) => `Freed ${size} in ${name}`,
+    failed: (name: string) => `Laci couldn’t free up space in ${name}.`,
+  },
+};

@@ -931,6 +931,10 @@ const terminals: Record<string, (args: Body) => unknown> = {
   term_close: (args) => void channels.delete(String(args.id)),
 };
 
+// The version Settings › About shows, which the desktop answers outside `request` (`getVersion`): the
+// same one the pretend update starts from.
+terminals["plugin:app|version"] = () => PREVIEW_VERSION;
+
 /** Stands in for the desktop. Call before the window's own code is loaded. */
 export function installIpc(options: { os: Os; design: Design; theme: Theme }) {
   snapshot = clone(fixtures.snapshot);

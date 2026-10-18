@@ -3,7 +3,7 @@
 //! tells which have a file open.
 use super::ffi::RestartSession;
 use crate::{Result, platform::Holder};
-use process_wrap::std::{ChildWrapper, CommandWrap, JobObject};
+use process_wrap::std::{ChildWrapper, CommandWrap, CreationFlags, JobObject};
 use restart_manager::{Name, Verdict};
 use std::{
     fs::{self, File},
@@ -16,6 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 use windows_sys::Win32::{Foundation::MAX_PATH, System::RestartManager::RmRebootReasonDetectedSelf};
 
 mod restart_manager;
@@ -221,9 +222,12 @@ pub struct Group {
     child: Box<dyn ChildWrapper>,
 }
 
-/// The program starts suspended and runs only once it is in the job, so nothing it starts can slip out.
+/// The program starts suspended and runs only once it is in the job, so nothing it starts can slip out. The job sets
+/// the creation flags itself, so CREATE_NO_WINDOW goes through it too, as `process::command` gives it to every other
+/// child: a generator such as `pnpm create` would otherwise open a console window.
 pub fn spawn_group(command: Command) -> io::Result<Group> {
     let mut command = CommandWrap::from(command);
+    command.wrap(CreationFlags(CREATE_NO_WINDOW));
     command.wrap(JobObject);
     Ok(Group { child: command.spawn()? })
 }

@@ -7,7 +7,7 @@
 use crate::Result;
 use serde_json::{Value, json};
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::{File, Metadata},
     io,
     path::{Path, PathBuf},
@@ -178,9 +178,48 @@ pub fn copy_link(src: &Path, dest: &Path) -> Result<()> {
 }
 
 /// Where `path`, a list of folders as in PATH, finds the program `program`: the first folder with it as a file that
-/// can run. On Windows the name may also end in one of PATHEXT's extensions.
+/// can run. On Windows the name may also end in one of PATHEXT's extensions, and only a program (.exe, .com) or a
+/// batch file (.cmd, .bat) counts, in a folder named with its drive.
 pub fn which(program: &str, path: &OsStr) -> Option<PathBuf> {
     os::which(program, path)
+}
+
+/// What starts `program` with `args`, found on `path`. Linux starts a program by name, as it always has; so does
+/// macOS, apart from the stand-in Git that asks to install Apple's Command Line Tools (see `git`). Windows starts the
+/// file [`which`] finds: a shim npm, pnpm or yarn wrote as node with its script, and any other batch file only with
+/// arguments cmd.exe can't read as a command.
+pub fn program(program: &str, args: Vec<OsString>, path: &OsStr) -> Result<(PathBuf, Vec<OsString>)> {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = path;
+        Ok((program.into(), args))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        os::program(program, args, path)
+    }
+}
+
+/// The PATH the programs Laci starts get in place of Laci's own, where that isn't the user's: macOS gives an app
+/// started from the Dock launchd's short one, so there it is the one the user's login shell sets up, taken once.
+/// `None` elsewhere.
+pub fn child_path() -> Option<OsString> {
+    #[cfg(target_os = "macos")]
+    {
+        Some(os::login_path())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// The Git that macOS starts when `path` is the PATH: the first one there, except that the stand-in /usr/bin/git
+/// counts only while `xcode_select -p` names the developer folder Apple's Command Line Tools or Xcode put in place.
+/// Without them it would ask the user to install them, from a scan. [`program`] asks /usr/bin/xcode-select.
+#[cfg(target_os = "macos")]
+pub fn git(path: &OsStr, xcode_select: &Path) -> Result<PathBuf> {
+    os::git(path, xcode_select)
 }
 
 /// Whether `child`, a program Laci started, has finished. It stays unreaped, so its process id can't go to another

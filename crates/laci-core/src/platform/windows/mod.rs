@@ -15,7 +15,7 @@ pub use fs::{
 };
 pub use process::{Group, ensure_idle, exited, pid_alive, processes_in, spawn_group};
 pub use recycle::trash;
-pub use spawn::{open, which};
+pub use spawn::{open, program, which};
 pub use terminal::{DEFAULT_APPS, KNOWN_APPS, terminal_args, terminal_script_args};
 
 /// What the user is told about something Laci can't do on Windows yet.

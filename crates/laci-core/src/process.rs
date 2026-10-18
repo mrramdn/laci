@@ -1,4 +1,7 @@
-use crate::{Result, platform::exited};
+use crate::{
+    Result,
+    platform::{self, exited},
+};
 use std::{
     collections::BTreeSet,
     ffi::{OsStr, OsString},
@@ -11,8 +14,14 @@ use std::{
 
 /// AppRun's bundled libraries belong to Laci, not the host tools it launches.
 /// Return child-only overrides so WebKit keeps the parent process environment.
+/// On macOS the PATH is the one the user's login shell sets up ([`platform::child_path`]).
 pub fn host_env_overrides() -> Vec<(&'static str, Option<OsString>)> {
-    host_env_overrides_from(|key| std::env::var_os(key))
+    let mut overrides = host_env_overrides_from(|key| std::env::var_os(key));
+    if let Some(path) = platform::child_path() {
+        overrides.retain(|(key, _)| *key != "PATH");
+        overrides.push(("PATH", Some(path)));
+    }
+    overrides
 }
 
 fn absolute_path(path: &Path) -> Option<PathBuf> {
@@ -75,6 +84,11 @@ fn host_env_overrides_from(get: impl Fn(&str) -> Option<OsString>) -> Vec<(&'sta
     overrides
 }
 
+/// Windows' CREATE_NO_WINDOW: a console program gets no console window. Laci's window has no console to share, so
+/// each `git` of a scan would flash one.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     for (key, value) in host_env_overrides() {
@@ -84,7 +98,172 @@ pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
             command.env_remove(key);
         }
     }
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
     command
+}
+
+/// What starts `program` with `args`, found on the PATH children get ([`platform::program`]): on Windows the file
+/// itself, and node for an npm script; elsewhere the program by name.
+pub fn program(program: &str, args: Vec<OsString>) -> Result<(PathBuf, Vec<OsString>)> {
+    platform::program(program, args, &host_path())
+}
+
+/// [`command`] for `program` with `args`, started as [`program`] says, so Windows' rules for batch files hold for the
+/// child too.
+pub(crate) fn start(program: &str, args: &[impl AsRef<OsStr>]) -> Result<Command> {
+    let (program, args) = self::program(program, args.iter().map(|arg| arg.as_ref().to_owned()).collect())?;
+    let mut command = command(program);
+    command.args(args);
+    Ok(command)
+}
+
+/// What cmd.exe can read as part of a command in a batch file's arguments, however they are quoted: quotes, variables
+/// (`%`, and `!` where delayed expansion is on), its escape character, pipes, redirections, the command separator and
+/// line breaks (BatBadBut).
+const BATCH_UNSAFE: [char; 10] = ['"', '%', '!', '^', '&', '|', '<', '>', '\r', '\n'];
+
+/// Fails when an argument in `args` holds something cmd.exe could read as part of a command. Windows starts the batch
+/// file `script` (`.cmd` or `.bat`) through cmd.exe, which reads the arguments again after any quoting Laci can do.
+pub fn batch_args(script: &Path, args: &[OsString]) -> Result<()> {
+    let name = script.file_name().unwrap_or(script.as_os_str()).to_string_lossy();
+    for arg in args {
+        if let Some(found) = arg.to_string_lossy().chars().find(|c| BATCH_UNSAFE.contains(c)) {
+            let what =
+                if matches!(found, '\r' | '\n') { "a line break".to_owned() } else { format!("the character {found}") };
+            return Err(format!(
+                "Laci won't pass {what} to {name}: Windows runs a .cmd or .bat file through cmd.exe, which could read it as part of a command"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The script that `shim`, the `.cmd` file npm, pnpm or yarn writes for a program it installs, runs with node: as the
+/// shim names it after its own folder (`%~dp0`). Started as node with the script, Laci's arguments reach the program
+/// as they are, where the shim would put them through cmd.exe ([`batch_args`]). `None` for any other batch file, and
+/// for a shim with lines these don't write, such as a variable set for the program, which node alone would miss.
+pub fn npm_shim(shim: &str) -> Option<String> {
+    // Trimmed, without the leading `@`, in lower case. npm 7 and later write the first eleven; pnpm, yarn and older
+    // npm test for node.exe with `%~dp0`.
+    const KNOWN: [&str; 16] = [
+        "echo off",
+        "goto start",
+        ":find_dp0",
+        "set dp0=%~dp0",
+        "exit /b",
+        ":start",
+        "setlocal",
+        "call :find_dp0",
+        r#"if exist "%dp0%\node.exe" ("#,
+        r#"set "_prog=%dp0%\node.exe""#,
+        r#"set "_prog=node""#,
+        r#"if exist "%~dp0\node.exe" ("#,
+        "set pathext=%pathext:;.js;=;%",
+        ") else (",
+        ")",
+        "if not defined node_path (",
+    ];
+    let mut seen = BTreeSet::new();
+    let mut needs = BTreeSet::new();
+    let mut script: Option<String> = None;
+    for line in shim.lines() {
+        let line = line.trim();
+        let line = line.strip_prefix('@').unwrap_or(line);
+        let lower = line.to_ascii_lowercase();
+        // pnpm's NODE_PATH names where it hoisted modules, which only a package using modules it doesn't declare
+        // needs: node finds a package's own modules without it.
+        if line.is_empty() || (lower.starts_with(r#"set "node_path="#) && lower.ends_with('"')) {
+            continue;
+        }
+        if let Some(known) = KNOWN.iter().find(|known| **known == lower) {
+            seen.insert(*known);
+            continue;
+        }
+        let (program, dir, named) = shim_run(line)?;
+        // Without the lines that set them, cmd.exe would read %_prog% and %dp0% as empty.
+        if program == r#""%_prog%""# {
+            needs.insert(r#"set "_prog=node""#);
+        }
+        if dir == r"%dp0%\" {
+            needs.extend(["set dp0=%~dp0", "call :find_dp0"]);
+        }
+        if *script.get_or_insert_with(|| named.clone()) != named {
+            return None;
+        }
+    }
+    needs.is_subset(&seen).then_some(script?)
+}
+
+/// The program, the folder and the script in a shim's line that starts node on the script with the shim's own
+/// arguments: `node  "%~dp0\cli.js" %*`, or npm's `"%_prog%"  "%dp0%\cli.js" %*` after what keeps cmd.exe from asking
+/// whether to stop.
+fn shim_run(line: &str) -> Option<(&'static str, &'static str, String)> {
+    let mut rest = line;
+    for part in ["endlocal & goto #_undefined_# 2>nul || title %comspec% & ", "set pathext=%pathext:;.js;=;% & "] {
+        rest = strip_prefix_ignoring_case(rest, part).unwrap_or(rest);
+    }
+    let (program, rest) = rest.split_once(' ')?;
+    let program =
+        ["node", r#""%~dp0\node.exe""#, r#""%_prog%""#].into_iter().find(|p| p.eq_ignore_ascii_case(program))?;
+    // Without a space before %*, cmd.exe would join the first argument to the script's name.
+    let path = rest.trim_start().strip_suffix(" %*")?.trim_end().strip_prefix('"')?.strip_suffix('"')?;
+    let (dir, script) =
+        [r"%~dp0\", r"%dp0%\"].into_iter().find_map(|dir| Some((dir, strip_prefix_ignoring_case(path, dir)?)))?;
+    // cmd.exe would read a % in the name as a variable.
+    let plain = !script.is_empty() && !script.contains(['"', '%']) && !script.contains(char::is_control);
+    plain.then(|| (program, dir, script.to_owned()))
+}
+
+fn strip_prefix_ignoring_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = text.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix).then(|| &text[prefix.len()..])
+}
+
+/// Marks the PATH in what [`login_shell_path`] reads from the shell, among whatever its startup files print.
+#[cfg(unix)]
+const PATH_MARK: &str = "__laci_path__";
+
+/// The PATH that `shell`, started as an interactive login shell, sets up: where the user's own programs are found,
+/// which macOS doesn't give an app started from the Dock. `None` when the shell prints none; one still running after
+/// `timeout` is stopped, with whatever it started.
+#[cfg(unix)]
+pub fn login_shell_path(shell: &Path, timeout: Duration) -> Option<OsString> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut output = tempfile::tempfile().ok()?;
+    let mut command = Command::new(shell);
+    // printenv writes PATH as the shell exports it, also from a shell such as fish that keeps it as a list.
+    command
+        .args(["-ilc", &format!("echo {PATH_MARK}; /usr/bin/printenv PATH; echo {PATH_MARK}")])
+        .stdin(Stdio::null())
+        .stdout(output.try_clone().ok()?)
+        .stderr(Stdio::null());
+    let mut group = platform::spawn_group(command).ok()?;
+    let started = Instant::now();
+    while !group.exited().unwrap_or(true) {
+        if started.elapsed() >= timeout {
+            group.stop();
+            let _ = group.wait();
+            return None;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let _ = group.wait();
+    output.seek(SeekFrom::Start(0)).ok()?;
+    let mut text = Vec::new();
+    output.take(1_000_000).read_to_end(&mut text).ok()?;
+    marked_path(&text)
+}
+
+/// What stands between the first two [`PATH_MARK`]s in `output`.
+#[cfg(unix)]
+fn marked_path(output: &[u8]) -> Option<OsString> {
+    use std::os::unix::ffi::OsStrExt;
+    let mark = PATH_MARK.as_bytes();
+    let find = |text: &[u8]| text.windows(mark.len()).position(|window| window == mark);
+    let rest = &output[find(output)? + mark.len()..];
+    let path = rest[..find(rest)?].trim_ascii();
+    (!path.is_empty()).then(|| OsStr::from_bytes(path).to_owned())
 }
 
 pub(crate) fn host_path() -> OsString {
@@ -151,9 +330,8 @@ pub(crate) fn run_env_bytes(
     // Files avoid pipe backpressure and reader threads surviving a child with inherited descriptors.
     let output = tempfile::tempfile().map_err(|e| e.to_string())?;
     let errors = tempfile::tempfile().map_err(|e| e.to_string())?;
-    let mut command = command(program);
+    let mut command = start(program, args)?;
     command
-        .args(args)
         .stdin(Stdio::null())
         .stdout(output.try_clone().map_err(|e| e.to_string())?)
         .stderr(errors.try_clone().map_err(|e| e.to_string())?)

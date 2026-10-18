@@ -8,7 +8,7 @@ use crate::{
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
-    fs,
+    ffi::OsString,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
@@ -74,19 +74,7 @@ pub struct LaunchCommand {
 
 /// Where the host's PATH finds a program, if it does.
 pub(crate) fn located(program: &str) -> Option<PathBuf> {
-    std::env::split_paths(&crate::process::host_path()).map(|dir| dir.join(program)).find(|path| {
-        fs::metadata(path).is_ok_and(|m| {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                m.is_file() && m.permissions().mode() & 0o111 != 0
-            }
-            #[cfg(not(unix))]
-            {
-                m.is_file()
-            }
-        })
-    })
+    crate::platform::which(program, &crate::process::host_path())
 }
 fn installed(program: &str) -> bool {
     located(program).is_some()
@@ -107,10 +95,19 @@ pub fn resolve(env: &Env, request: &LaunchRequest, session: Option<&Value>) -> R
     } else {
         defaults(env, &request.provider)?
     };
-    let command = resolve_with_capabilities(env, request, session, &caps)?;
+    let mut command = resolve_with_capabilities(env, request, session, &caps)?;
     if !installed(&command.executable) {
         return Err(format!("{} is not installed or is not on PATH", command.executable));
     }
+    // The terminal starts what Laci's own children would: on Windows the file itself, never a name it looks up its
+    // own way, and node for an npm script.
+    let (executable, args) =
+        crate::process::program(&command.executable, command.args.iter().map(OsString::from).collect())?;
+    let text = |value: OsString| {
+        value.into_string().map_err(|value| format!("Laci can't hand {} to a terminal", value.to_string_lossy()))
+    };
+    command.executable = text(executable.into_os_string())?;
+    command.args = args.into_iter().map(text).collect::<Result<_>>()?;
     Ok(command)
 }
 fn resolve_with_capabilities(
@@ -267,14 +264,15 @@ fn discover(env: &Env, provider: &str, refresh: bool) -> Result<Value> {
         let found = if discovery == Discovery::Codex {
             codex_models(&env.home)
         } else {
-            // The agent keeps its state under home; it must be the home Laci reads, also on a demo home.
+            // The agent keeps its state under home; it must be the home Laci reads, also on a demo home. Windows
+            // programs read it from USERPROFILE.
             let home = env.home.to_string_lossy();
             crate::process::run_env(
                 "agy",
                 &["models"],
                 Some(&env.home),
                 Duration::from_secs(12),
-                &[("HOME", Some(home.as_ref()))],
+                &[("HOME", Some(home.as_ref())), ("USERPROFILE", Some(home.as_ref()))],
             )
             .and_then(|s| parse_agy_models(&s))
             .map(|mut models| {
@@ -349,10 +347,10 @@ fn parse_codex_models(result: &Value) -> Result<Vec<Value>> {
 fn codex_models(cwd: &Path) -> Result<Value> {
     // Only initialize/model-list messages; discovery never starts a thread or a turn.
     let output = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
-    let mut child = crate::process::command("codex")
-        .args(["app-server", "--listen", "stdio://"])
+    let mut child = crate::process::start("codex", &["app-server", "--listen", "stdio://"])?
         .current_dir(cwd)
         .env("HOME", cwd)
+        .env("USERPROFILE", cwd)
         .stdin(Stdio::piped())
         .stdout(output.reopen().map_err(|e| e.to_string())?)
         .stderr(Stdio::null())
@@ -431,6 +429,7 @@ fn quote(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     const ID: &str = "12345678-1234-1234-1234-123456789abc";
     fn request(env: &Env, provider: &str) -> LaunchRequest {
         LaunchRequest::from_value(&json!({"provider":provider,"projectPath":env.home})).unwrap()

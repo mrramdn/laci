@@ -72,7 +72,7 @@ fn same_program(command: &str, laci: &Path) -> bool {
     let path = Path::new(command);
     let found = if path.is_absolute() {
         Some(path.to_owned())
-    } else if command.contains('/') {
+    } else if command.contains(std::path::is_separator) {
         None
     } else {
         located(command)
@@ -215,13 +215,14 @@ pub fn apply(env: &Env, provider: &Provider, remove: bool) -> Result<Value> {
         let home = env.home.to_string_lossy();
         let run = |args: &[String]| {
             let args: Vec<_> = args.iter().map(String::as_str).collect();
-            // The agent must change the same home Laci reads, also when Laci runs on a demo home.
+            // The agent must change the same home Laci reads, also when Laci runs on a demo home. Windows programs
+            // read it from USERPROFILE.
             process::run_env(
                 &provider.command,
                 &args,
                 Some(&env.home),
                 Duration::from_secs(40),
-                &[("HOME", Some(home.as_ref()))],
+                &[("HOME", Some(home.as_ref())), ("USERPROFILE", Some(home.as_ref()))],
             )
         };
         if before["state"] != "missing" {

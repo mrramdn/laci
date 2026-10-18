@@ -2,7 +2,8 @@
 // the technical part and About. How Laci looks, the update choice and the copy of AI chats change at
 // once, each through its own request; the project folders, AI tools, summaries folder and apps wait
 // for the filled "Save changes", which sends them all through `setup/save` as Detailed's Settings
-// does, with Undo in Activity.
+// does, with Undo in Activity. Updates also says where the update stands, with the one button that
+// moves it on (updates.tsx).
 import "./settings.css";
 import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode, SetStateAction, SyntheticEvent } from "react";
@@ -49,6 +50,7 @@ import {
 } from "./model";
 import type { SettingsDraft, UpdateChoice } from "./model";
 import { Button, Callout, Card, Info, StatusChip } from "./ui";
+import { refreshUpdate, UpdatePanel } from "./updates";
 
 /** A change to the draft, as a value or from the draft as it is then. */
 type Edit = (change: SetStateAction<SettingsDraft>) => void;
@@ -669,7 +671,10 @@ function AppsCard({
 
 // --- Updates -------------------------------------------------------------------------------------
 
-/** How often Laci looks for a new version, saved at once through the `updates` request. */
+/**
+ * Where the update stands, with the one button that moves it on, and how often Laci looks for a new
+ * version, which is saved at once through the `updates` request.
+ */
 function UpdatesCard({
   prefs,
   onPrefs,
@@ -681,9 +686,12 @@ function UpdatesCard({
     void run(async () => {
       onPrefs(await api<Prefs>("updates", { updates }));
       toast(said.updatesSaved[updates]);
+      // The desktop says so itself; this covers a window that missed it.
+      refreshUpdate();
     });
   return (
     <Card title={said.updates} icon="refresh-cw">
+      <UpdatePanel />
       <Choices
         title={said.updatesQuestion}
         name="updates"

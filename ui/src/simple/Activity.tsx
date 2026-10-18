@@ -205,8 +205,8 @@ interface Told extends LogEntry {
   icon: string;
 }
 
-/** The log as Activity tells it. */
-function tell(log: ActivityLog | null): ActivityLog | null {
+/** The log as Activity tells it, and as a project's Recent changes does. */
+export function tell(log: ActivityLog | null): ActivityLog | null {
   if (!log) return null;
   const entries = log.entries.map(
     (entry): Told => ({

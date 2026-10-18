@@ -453,8 +453,6 @@ export const project = {
     undo: "Undo",
     undoThis: (title: string) => `Undo: ${title}`,
     undone: "Undone",
-    you: "You",
-    byAi: "Your AI",
     empty: "No changes yet. What you or your AI change here shows up in Activity.",
     loading: "Reading Activity…",
     failed: "Laci couldn’t read Activity just now.",
@@ -1640,7 +1638,7 @@ export const settings = {
   updateNotes: {
     daily:
       "Laci tells you when a new version is ready, and installs nothing until you choose to.",
-    off: "Laci won’t look by itself. You can still download a new version from GitHub.",
+    off: "Laci won’t look by itself. Use Check now to look once.",
   },
   updatesUnset: "You haven’t chosen yet, so Laci doesn’t look.",
   updatesPrivacy:
@@ -1915,5 +1913,67 @@ export const detailedSettings = {
   updatesSaved: {
     daily: "Laci looks for new versions once a day",
     off: "Laci won’t look for new versions",
+  },
+};
+
+/**
+ * Simple's update parts and the follow-ups from the review of its pages: the panel in Settings ›
+ * Updates and the card on Home say each step of an update in these words, and a summary item closed
+ * from AI helpers or Home says in Simple's words what it did. The desktop writes its own refusals and
+ * failures for the window ("Laci is busy with a change. Update when it's done."), so those show as
+ * they come.
+ */
+export const polish = {
+  updates: {
+    loading: "Reading the update status…",
+    unread: "Laci couldn’t read the update status.",
+    tryAgain: "Try again",
+    checking: "Looking for a new version…",
+    upToDate: "Up to date",
+    versionNow: (version: string) => `You have version ${version}.`,
+    lastChecked: (when: string) => `Last checked ${when}.`,
+    neverChecked: "Laci hasn’t looked for a new version yet.",
+    checkNow: "Check now",
+    checkAgain: "Check again",
+    readyToInstall: (version: string) => `Version ${version} is ready to install.`,
+    isAvailable: (version: string) => `Version ${version} is available.`,
+    released: (when: string) => `Released ${when}.`,
+    whatsNew: (version: string) => `What’s new in ${version}`,
+    install: (version: string) => `Install version ${version}`,
+    linkOnly:
+      "This copy of Laci can’t install updates itself. Get the new version from the release page.",
+    openRelease: "Open the release page",
+    macNote:
+      "After the update, macOS asks again whether Laci may open your folders, such as Documents, Desktop and Downloads. Choose Allow, or Laci can’t read the projects in them.",
+    downloading: (version: string) => `Downloading version ${version}…`,
+    progressLabel: "Download progress",
+    percent: (n: number) => `${n}%`,
+    readyToRestart: (version: string) => `Version ${version} is ready.`,
+    restartNote:
+      "Restart Laci to finish the update. Restarting closes the terminals in Laci, and the AI chats running in them.",
+    restart: "Restart Laci",
+    failed: "Laci couldn’t finish the update.",
+    // The release notes come from the web: pictures wait to be asked for, and only web and mail
+    // links open.
+    picturesHidden: (n: number) =>
+      `${count(n, "picture")} from the web ${n === 1 ? "isn’t" : "aren’t"} shown.`,
+    showPictures: "Show pictures",
+    linkBlocked: "Release notes can open web and mail links only.",
+    linkNotOpened: "Link not opened",
+  },
+  /** Home's card, which says it once for a version and then leaves it to Settings. */
+  card: {
+    title: "A new version of Laci is ready",
+    canInstall: (version: string) => `Version ${version} can be installed now.`,
+    notNow: "Not now",
+    hidden: (version: string) =>
+      `Laci won’t remind you about version ${version} here`,
+    hiddenNote: "You can still update in Settings.",
+  },
+  /** What closing a summary's item says, in the words of Still to do. */
+  summaryItem: {
+    done: "Marked as done",
+    dropped: "Marked as not needed",
+    open: "Back in Still to do",
   },
 };

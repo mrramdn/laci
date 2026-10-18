@@ -1,5 +1,10 @@
+// The styles of the ways to switch design (the toggle, the pictures of each design, first run's
+// choices) and of first run in Simple's look load with the first chunk, whichever design opens,
+// since the palette is always in it. Not from looks.tsx: settings.tsx imports that, and the tests
+// run settings.tsx in Node, without CSS.
+import "./styles/looks.css";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useApp, goToProject, rescan, setTheme } from "./store";
+import { useApp, goToProject, rescan, setDesign, setTheme } from "./store";
 import { useNow } from "./clock";
 import {
   ago,
@@ -21,10 +26,58 @@ import {
   restoreFocus,
 } from "./common";
 import { DeadlinePill } from "./deadline";
-import type { Node, View } from "./types";
+import type { Design, Node, View } from "./types";
+import { ago as agoInWords, search, views } from "./words";
+/** Detailed's names for the groups of results. Simple's are its own, in words.ts. */
+const DETAILED_GROUPS = {
+  projects: "Projects",
+  folders: "Folders",
+  chats: "Sessions",
+  summaries: "Reports",
+  todos: "To-dos",
+  actions: "Actions",
+};
+/**
+ * The palette's actions in `design`, as `[id, label, icon]`, in the order of its sidebar: each
+ * design's places in its own words, then the rest, and last the switch to the other design.
+ * `reports` is whether a reports folder is set: Detailed then has a Reports view of its own.
+ */
+export function actionsFor(design: Design, reports: boolean): string[][] {
+  if (design === "simple")
+    return [
+      ["view:today", search.actions.home, "house"],
+      ["view:folder", search.actions.projects, "folder-kanban"],
+      ["view:agents", search.actions.helpers, "sparkles"],
+      ["view:tidy", search.actions.cleanup, "brush-cleaning"],
+      ["view:log", search.actions.activity, "history"],
+      ["new", search.actions.newProject, "plus"],
+      ["help", search.actions.help, "circle-help"],
+      ["view:settings", search.actions.settings, "gear"],
+      ["rescan", search.actions.checkAgain, "refresh"],
+      ["theme", search.actions.theme, "moon"],
+      ["design", views.switchTo.detailed, "panels-top-left"],
+    ];
+  return [
+    ["view:today", "Open Today", "inbox"],
+    ["view:tidy", "Open Tidy up", "sparkles"],
+    ["view:agents", "Open Agents", "history"],
+    ...(reports ? [["view:reports", "Open Reports", "report"]] : []),
+    ["view:log", "Open Log", "scroll"],
+    ["new", "New project", "plus"],
+    ["shortcuts", "Keyboard shortcuts", "keyboard"],
+    ["view:settings", "Open Settings", "gear"],
+    ["rescan", "Scan again", "refresh"],
+    ["theme", "Switch theme", "moon"],
+    ["design", views.switchTo.simple, "panels-top-left"],
+  ];
+}
 export function Palette() {
   const s = useApp();
   useNow();
+  const simple = s.design === "simple";
+  const groups = simple ? search.groups : DETAILED_GROUPS;
+  // Simple says how long ago in words ("5 days ago"), Detailed in short ("5 d").
+  const when = (at?: string) => (simple ? agoInWords(at) : ago(at));
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -48,13 +101,13 @@ export function Palette() {
     .slice(0, 9)
     .map((n) => ({
       id: "node:" + n.id,
-      section: n.kind === "folder" ? "Folders" : "Projects",
+      section: n.kind === "folder" ? groups.folders : groups.projects,
       label: n.label,
       sub: tilde(n.path, snapshot.home),
       icon: "",
       project: "",
       node: n as Node | null,
-      acc: ago(n.lastActivity?.at),
+      acc: when(n.lastActivity?.at),
     }));
   const found = (
     id: string,
@@ -92,13 +145,13 @@ export function Palette() {
             const n = owner.get(sessionKey(session));
             return found(
               "session:" + sessionKey(session),
-              "Sessions",
+              groups.chats,
               session.title,
               `${providerName(snapshot, session.provider)} · ${
                 n ? n.label : tilde(session.cwd ?? "", snapshot.home)
               }`,
               "history",
-              ago(session.updatedAt),
+              when(session.updatedAt),
             );
           });
       })()
@@ -116,7 +169,7 @@ export function Palette() {
         .map(({ n, t }) =>
           found(
             `todo:${n.id}:${t.file}:${t.line}`,
-            "To-dos",
+            groups.todos,
             t.text,
             n.label,
             "check",
@@ -138,42 +191,31 @@ export function Palette() {
         .map((r) =>
           found(
             "report:" + r.id,
-            "Reports",
+            groups.summaries,
             r.title,
             [shortDay(r.date), projectNames(r.projects)]
               .filter(Boolean)
               .join(" · "),
             "report",
-            ago(r.modified),
+            when(r.modified),
           ),
         )
     : [];
-  const actions = [
-    ["view:today", "Open Today", "inbox"],
-    ["view:tidy", "Open Tidy up", "sparkles"],
-    ["view:agents", "Open Agents", "history"],
-    ...(snapshot.reportsDir ? [["view:reports", "Open Reports", "report"]] : []),
-    ["view:log", "Open Log", "scroll"],
-    ["new", "New project", "plus"],
-    ["shortcuts", "Keyboard shortcuts", "keyboard"],
-    ["view:settings", "Open Settings", "gear"],
-    ["rescan", "Scan again", "refresh"],
-    ["theme", "Switch theme", "moon"],
-  ]
+  const actions = actionsFor(s.design, Boolean(snapshot.reportsDir))
     .filter(([, label]) => matches(label))
     .map(([id, label, icon]) => ({
       id,
       label,
       icon,
       sub: "",
-      section: "Actions",
+      section: groups.actions,
       project: "",
       node: null as Node | null,
       acc: "",
     }));
   const items = [
-    ...hits.filter((i) => i.section === "Projects"),
-    ...hits.filter((i) => i.section === "Folders"),
+    ...hits.filter((i) => i.section === groups.projects),
+    ...hits.filter((i) => i.section === groups.folders),
     ...sessionHits,
     ...reportHits,
     ...todoHits,
@@ -208,6 +250,8 @@ export function Palette() {
     else if (id === "new") useApp.setState({ modal: { kind: "new" } });
     else if (id === "shortcuts")
       useApp.setState({ modal: { kind: "shortcuts" } });
+    else if (id === "help") s.navigate("help");
+    else if (id === "design") setDesign(simple ? "detailed" : "simple");
     else if (id === "rescan") rescan();
     else if (id === "theme") {
       const dark =
@@ -239,7 +283,7 @@ export function Palette() {
         className="pal"
         role="dialog"
         aria-modal="true"
-        aria-label="Jump to"
+        aria-label={simple ? search.label : "Jump to"}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -267,9 +311,11 @@ export function Palette() {
               setSelected(0);
             }}
             placeholder={
-              snapshot.reportsDir
-                ? "Search projects, sessions, reports, to-dos, actions…"
-                : "Search projects, sessions, to-dos, actions…"
+              simple
+                ? search.placeholder(Boolean(snapshot.reportsDir))
+                : snapshot.reportsDir
+                  ? "Search projects, sessions, reports, to-dos, actions…"
+                  : "Search projects, sessions, to-dos, actions…"
             }
             autoComplete="off"
             aria-label="Search"
@@ -318,19 +364,23 @@ export function Palette() {
               </div>
             );
           })}
-          {!items.length ? <div className="empty">No results found</div> : null}
+          {!items.length ? (
+            <div className="empty">
+              {simple ? search.none : "No results found"}
+            </div>
+          ) : null}
         </div>
         <div className="pal-foot">
           <span className="grow" />
           <span>
-            Open <kbd>↵</kbd>
+            {simple ? search.hints.open : "Open"} <kbd>↵</kbd>
           </span>
           <span>
-            Navigate <kbd>↑</kbd>
+            {simple ? search.hints.move : "Navigate"} <kbd>↑</kbd>
             <kbd>↓</kbd>
           </span>
           <span>
-            Close <kbd>esc</kbd>
+            {simple ? search.hints.close : "Close"} <kbd>esc</kbd>
           </span>
         </div>
       </div>

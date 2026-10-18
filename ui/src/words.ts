@@ -873,3 +873,105 @@ export const help = {
   reportUrl: "https://github.com/mrramdn/laci/issues",
   done: "Done",
 };
+
+/**
+ * Simple and Detailed, and the ways between them: the toggle at the foot of both sidebars, Search
+ * and actions, Settings › Appearance, and the card that offers Simple to someone who set Laci up
+ * before it had two designs. The words Simple's own toggle and theme menu use come from `shell`,
+ * so both designs say them the same way.
+ */
+export const views = {
+  names: { simple: shell.simple, detailed: shell.detailed },
+  /** What each design is, beside its picture. */
+  about: {
+    simple: "Calm and guided, in plain words.",
+    detailed: "Everything at once: paths, version details and long lists.",
+  },
+  recommended: "Recommended",
+  shown: "Shown now",
+  switchTo: {
+    simple: "Switch to Simple view",
+    detailed: shell.detailedSwitch,
+  },
+  /** Said where a design is chosen. */
+  anyTime: "You can switch any time at the bottom of the sidebar.",
+  appearance: "Appearance",
+  appearanceIntro: "How Laci looks. A change here shows at once and needs no saving.",
+  view: shell.view,
+  theme: shell.theme,
+  themes: shell.themes,
+  offerTitle: "New: Simple view",
+  offerBody:
+    "The same projects, AI chats and Undo, in a calmer layout with plain words.",
+  offerTry: "Try Simple view",
+  offerNo: "No thanks",
+};
+
+/**
+ * The first-run screen, in both designs: its welcome, the two questions after the folders, the AI
+ * tools and the apps, and what this computer needs first. A program to install is named by the
+ * caller, as the system's own words are, so the words around it stay plain.
+ */
+export const firstRun = {
+  welcome: "Welcome to Laci",
+  start: "Start using Laci",
+  lookTitle: "How should Laci look?",
+  updatesTitle: "New versions of Laci",
+  /** What a check sends, in one sentence. */
+  updatesSends:
+    "A check only asks GitHub which version is newest: like any visit to a website it shows your internet address, and it sends nothing about your projects.",
+  updates: {
+    daily: "Look for new versions once a day",
+    off: "Don’t look for new versions",
+  },
+  updatesNotes: {
+    daily:
+      "Recommended. Laci tells you when one is ready, and installs nothing until you choose to.",
+    off: "Laci won’t look by itself.",
+  },
+  updatesFailed: "Laci couldn’t save your choice about new versions",
+  folderAccessTitle: "macOS asks first",
+  folderAccess:
+    "The first time Laci looks in Documents, Desktop, Downloads or a drive, macOS asks whether it may. Choose Allow, so Laci can find your projects there. You can change it later in System Settings, under Privacy & Security, then Files and Folders.",
+  moveTitle: "Move Laci to Applications",
+  moveBody:
+    "Laci is running from where it was downloaded. Move it to the Applications folder and open it from there, so your AI tools can always find it.",
+  installTitle: (program: string) => `Install ${program}`,
+  installBody: (program: string) =>
+    `Laci reads the saved versions of your projects with ${program}, a free program that isn’t on this computer yet.`,
+  /** Followed by the line to type. */
+  installMac:
+    "macOS installs it with Apple’s command line tools. Open Terminal, type this line and press Enter:",
+  installLink: "How to install it",
+};
+
+/** Search and actions (Ctrl K, ⌘K on a Mac) in Simple: its groups, its actions and its hints. */
+export const search = {
+  label: "Search and actions",
+  placeholder: (summaries: boolean) =>
+    summaries
+      ? "Search projects, AI chats, summaries, to-dos and actions…"
+      : "Search projects, AI chats, to-dos and actions…",
+  groups: {
+    projects: "Projects",
+    folders: "Folders",
+    chats: "AI chats",
+    summaries: "Summaries",
+    todos: "To-dos",
+    actions: "Actions",
+  },
+  actions: {
+    home: "Go to Home",
+    projects: "Go to Projects",
+    helpers: "Go to AI helpers",
+    cleanup: "Go to Clean up",
+    activity: "Go to Activity",
+    settings: "Go to Settings",
+    help: "Help and keyboard shortcuts",
+    newProject: "New project",
+    checkAgain: "Check your project folders again",
+    theme: "Switch between light and dark",
+  },
+  none: "Nothing matches your search.",
+  hints: { open: "Open", move: "Move", close: "Close" },
+};

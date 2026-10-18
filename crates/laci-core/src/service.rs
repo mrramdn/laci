@@ -170,6 +170,7 @@ pub fn mutates(name: &str) -> bool {
             | "log/undo"
             | "theme"
             | "design"
+            | "updates"
             | "setup/save"
             | "new"
             | "new/template"
@@ -347,6 +348,16 @@ impl Service {
             );
         }
         out
+    }
+    /// The saved choices of config.json the window shows, with where the file is and which OS this is.
+    fn prefs(&self) -> Value {
+        let c = config::load(&self.env);
+        json!({
+            "theme":c["theme"],"design":c["design"],"updates":c["updates"],
+            "configured":c["roots"].is_array(),
+            "configPath":paths::tilde(&self.env.config_dir.join("config.json"),&self.env.home),
+            "os":std::env::consts::OS
+        })
     }
     pub fn request(&mut self, name: &str, b: &Value) -> Result<Value> {
         self.request_as(name, b, "app")
@@ -845,17 +856,23 @@ impl Service {
                 })?;
                 Ok(json!({"design":design}))
             }
+            // Whether Laci looks for a new version by itself once a day. It answers with the saved choices, as
+            // `prefs` does, so the window can show them at once.
+            "updates" => {
+                let updates = string(b, "updates");
+                if !["daily", "off"].contains(&updates) {
+                    return Err("Unknown update choice".into());
+                }
+                ops::with_lock(&self.env, || {
+                    let mut c = config::load(&self.env);
+                    c["updates"] = json!(updates);
+                    config::save(&self.env, &c)
+                })?;
+                Ok(self.prefs())
+            }
             // The saved choices the window shows. Its start-up script is fixed when the window opens, so the page
             // asks here after a reload.
-            "prefs" => {
-                let c = config::load(&self.env);
-                Ok(json!({
-                    "theme":c["theme"],"design":c["design"],"updates":c["updates"],
-                    "configured":c["roots"].is_array(),
-                    "configPath":paths::tilde(&self.env.config_dir.join("config.json"),&self.env.home),
-                    "os":std::env::consts::OS
-                }))
-            }
+            "prefs" => Ok(self.prefs()),
             "setup/info" => self.setup_info(),
             "setup/discover" => self.discover_roots(),
             "setup/save" => {
@@ -1377,6 +1394,34 @@ mod tests {
         let saved = fs::read(env.config_dir.join("config.json")).unwrap();
         for body in [json!({"design":"Simple"}), json!({"design":"classic"}), json!({"design":""}), json!({})] {
             assert_eq!(service.request("design", &body).unwrap_err(), "Unknown design");
+        }
+        assert_eq!(fs::read(env.config_dir.join("config.json")).unwrap(), saved);
+        assert!(activity::read_log(&env, 100).is_empty());
+    }
+
+    #[test]
+    fn updates_saves_the_choice_answers_like_prefs_and_leaves_no_log_entry() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let mut service = Service::new(env.clone());
+        assert!(mutates("updates") && !changes_history("updates"));
+        config::save(&env, &json!({"roots":["~/project"],"theme":"dark","design":"simple"})).unwrap();
+        for choice in ["daily", "off"] {
+            let answer = service.request("updates", &json!({"updates":choice})).unwrap();
+            assert_eq!(answer, service.request("prefs", &json!({})).unwrap());
+            assert_eq!((answer["updates"].as_str(), answer["design"].as_str()), (Some(choice), Some("simple")));
+            let saved = config::load(&env);
+            assert_eq!((saved["updates"].as_str(), saved["roots"][0].as_str()), (Some(choice), Some("~/project")));
+        }
+        let saved = fs::read(env.config_dir.join("config.json")).unwrap();
+        for body in [
+            json!({"updates":"weekly"}),
+            json!({"updates":"Daily"}),
+            json!({"updates":""}),
+            json!({"updates":true}),
+            json!({}),
+        ] {
+            assert_eq!(service.request("updates", &body).unwrap_err(), "Unknown update choice", "{body}");
         }
         assert_eq!(fs::read(env.config_dir.join("config.json")).unwrap(), saved);
         assert!(activity::read_log(&env, 100).is_empty());

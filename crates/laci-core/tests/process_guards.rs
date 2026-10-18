@@ -74,9 +74,10 @@ fn a_process_working_inside_a_folder_is_found() {
     let child = start(FOUND, "stay", &project.join("src"));
     let pid = child.0.id();
     let found = found_in(&project, &child);
-    // Linux keeps the first 15 bytes of a program's name.
+    // Linux keeps the first 15 bytes of a program's name. The test runner can give the child's main thread the
+    // test's name as it starts, and Linux then shows that instead, so either may be read.
     let program = std::env::current_exe().unwrap().file_name().unwrap().to_string_lossy().into_owned();
-    assert!(program.starts_with(&found.name), "{}", found.name);
+    assert!(program.starts_with(&found.name) || FOUND.starts_with(&found.name), "{}", found.name);
     assert_eq!(fs::canonicalize(&found.cwd).unwrap(), fs::canonicalize(project.join("src")).unwrap());
     let listed = |path: PathBuf| platform::processes_in(&[path]).unwrap().iter().any(|h| h.pid == pid);
     // As Laci keeps its folders: with links and Windows' short 8.3 names resolved.

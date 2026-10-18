@@ -245,10 +245,10 @@ pub fn plan(env: &Env, node: &Value) -> Result<Value> {
             ],
         ),
     };
-    checks.push(json!({"code":"ignored-files","severity":"med","title":"Ignored files are not backed up by Git","detail":"The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo."}));
+    checks.push(json!({"code":"ignored-files","severity":"med","title":"Ignored files are not backed up by Git","detail":format!("The entire project folder, including ignored files and history inside it, moves to {}. Restore it through your file manager; there is no Log Undo.",platform::BIN.bare)}));
     let unbacked = listed.unwrap_or_else(|_| json!({"files":[],"more":0}));
     Ok(json!({"allowed":allowed,"path":dir,"checks":checks,"unbacked":unbacked,"ops":[
-        {"kind":"delete","label":"Move the project folder to system Trash","from":dir},
+        {"kind":"delete","label":format!("Move the project folder to {}",platform::BIN.bare),"from":dir},
         {"kind":"keep","label":"Keep agent history outside the project","detail":"External session logs and memory are preserved. They may appear as detached history until the folder is restored."}
     ]}))
 }

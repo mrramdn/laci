@@ -632,7 +632,7 @@ impl Service {
                 crate::deletion::trash(&self.env, &node)?;
                 activity::record(
                     &self.env,
-                    json!({"by":by,"title":format!("Moved {} to system Trash",string(&node,"name")),"path":node["path"],"detail":"Restore through your file manager. External agent history was preserved."}),
+                    json!({"by":by,"title":format!("Moved {} to {}",string(&node,"name"),platform::BIN.bare),"path":node["path"],"detail":"Restore through your file manager. External agent history was preserved."}),
                 );
                 Ok(json!({}))
             }

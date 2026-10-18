@@ -429,7 +429,8 @@ fn transact(env: &Env, title: &str, work: impl FnOnce(&mut Tx<'_>) -> Result<()>
                         if recovery(&tx.journal).is_some() {
                             tx.journal["state"] = json!("failed");
                             tx.journal["error"] = json!(format!(
-                                "{error} · Reversible changes were rolled back. Check system Trash for any files already moved there."
+                                "{error} · Reversible changes were rolled back. Check {} for any files already moved there.",
+                                platform::BIN.bare
                             ));
                         } else {
                             tx.journal["state"] = json!("undone");
@@ -561,21 +562,24 @@ pub fn can_undo(journal: &Value) -> bool {
             .any(|e| matches!(e["kind"].as_str(), Some("move" | "rewrite" | "file" | "rmdir")))
 }
 
-pub fn recovery(journal: &Value) -> Option<&'static str> {
+pub fn recovery(journal: &Value) -> Option<String> {
     let trashed = journal["entries"].as_array().into_iter().flatten().any(|e| e["kind"] == "trash");
     let cleared = journal["entries"].as_array().into_iter().flatten().any(|e| e["kind"] == "cleared");
     if cleared && !trashed {
         return Some(if can_undo(journal) {
-            "Undo restores moves and edits; deleted build output comes back with the next install or build."
+            "Undo restores moves and edits; deleted build output comes back with the next install or build.".into()
         } else {
-            "Deleted build output comes back with the next install or build."
+            "Deleted build output comes back with the next install or build.".into()
         });
     }
     trashed.then(|| {
         if can_undo(journal) {
-            "Laci Undo restores moves and edits only. Restore trashed files separately through system Trash."
+            format!(
+                "Laci Undo restores moves and edits only. Restore trashed files separately through {}.",
+                platform::BIN.bare
+            )
         } else {
-            "Restore these files through system Trash; Laci Undo is unavailable."
+            format!("Restore these files through {}; Laci Undo is unavailable.", platform::BIN.bare)
         }
     })
 }
@@ -608,7 +612,7 @@ pub(crate) fn undo_unlocked(env: &Env, id: &str) -> Result<Value> {
         return Err("The copies this undo needs were removed to free space".into());
     }
     if !can_undo(&journal) {
-        return Err("Restore these files through system Trash; there is no Laci Undo".into());
+        return Err(format!("Restore these files through {}; there is no Laci Undo", platform::BIN.bare));
     }
     let entries = journal["entries"].as_array().ok_or("Invalid journal")?;
     validate_entries(env, entries)?;

@@ -156,7 +156,7 @@ fn pure_trash_has_no_laci_undo_and_mixed_journals_explain_partial_recovery() {
     let pure = log.iter().find(|e| e["journal"] == "pure").unwrap();
     let mixed = log.iter().find(|e| e["journal"] == "mixed").unwrap();
     assert_eq!(pure["canUndo"], false);
-    assert!(ops::undo(&env, "pure").unwrap_err().contains("system Trash"));
+    assert!(ops::undo(&env, "pure").unwrap_err().contains(laci_core::platform::BIN.bare));
     assert_eq!(mixed["canUndo"], true);
     assert!(mixed["recovery"].as_str().unwrap().contains("moves and edits only"));
 }

@@ -204,13 +204,30 @@ pub fn ensure_idle(sources: &[PathBuf]) -> Result<()> {
     os::ensure_idle(sources)
 }
 
-/// Moves `path` to the system Trash, where the user can restore it.
+/// Moves `path` to the system's bin ([`BIN`]), where the user can restore it. Where it can't go there, it stays where
+/// it is and this fails: nothing is deleted for good.
 pub fn trash(path: &Path) -> Result<()> {
     os::trash(path)
 }
 
-/// Opens a file, a folder or a web address in the app the system picks for it, started in `cwd`, without waiting for
-/// that app.
+/// The system's bin, in the words the UI uses for it too (`BIN` in ui/src/dialogs.tsx).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bin {
+    /// At the start of a sentence: "System Trash", on Windows "Recycle Bin".
+    pub name: &'static str,
+    /// Inside a sentence: "system Trash", on Windows "the Recycle Bin".
+    pub bare: &'static str,
+}
+
+/// Where [`trash`] moves things: the Trash on Linux and macOS, the Recycle Bin on Windows.
+pub const BIN: Bin = if cfg!(windows) {
+    Bin { name: "Recycle Bin", bare: "the Recycle Bin" }
+} else {
+    Bin { name: "System Trash", bare: "system Trash" }
+};
+
+/// Opens a file, a folder or a web address in the app the system picks for it, started in `cwd` (on Windows in
+/// Laci's own working folder), without waiting for that app.
 pub fn open(target: &str, cwd: &Path) -> Result<()> {
     os::open(target, cwd)
 }

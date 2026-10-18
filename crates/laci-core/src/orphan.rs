@@ -174,7 +174,7 @@ pub(crate) fn prepare(env: &Env, snapshot: &Value, proposal: &mut Value) {
             .collect();
         Ok(json!({"projects":projects,"roots":roots,"sources":sources}))
     })();
-    proposal["recovery"] = json!({"default":"quarantine","choices":["quarantine","trash"],"quarantine":"Laci Undo restores these exact history paths.","trash":"Restore these history paths through system Trash; Laci Undo is unavailable."});
+    proposal["recovery"] = json!({"default":"quarantine","choices":["quarantine","trash"],"quarantine":"Laci Undo restores these exact history paths.","trash":format!("Restore these history paths through {}; Laci Undo is unavailable.",platform::BIN.bare)});
     match check {
         Ok(token) => {
             // The public ID binds MCP confirmations to the reviewed sources across rescans.

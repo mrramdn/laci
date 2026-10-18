@@ -1,13 +1,13 @@
 //! MCP over stdio; the window toolkit is never started on this path.
 use laci_core::{
     env::Env,
-    paths, scan,
+    paths, platform, scan,
     service::{Service, array, string},
 };
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt, model::*, service::RequestContext};
 use serde_json::{Value, json};
 use std::{
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
 
@@ -336,11 +336,11 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             let proposal = array(&s["proposals"]).into_iter().find(|p| p["id"] == id).ok_or("Unknown suggestion")?;
             let recovery = args["recovery"].as_str().unwrap_or("quarantine");
             if !["quarantine", "trash"].contains(&recovery) {
-                return Err("Choose Quarantine or system Trash".into());
+                return Err(format!("Choose Quarantine or {}", platform::BIN.bare));
             }
             if args["confirm"] != true {
                 return Ok(
-                    json!({"plan":preview(&proposal, args),"selectedRecovery":recovery,"hint":if recovery=="trash" {"Orphan history will move to system Trash; restore it through the file manager. Show the exact source paths before confirming."}else{"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}}),
+                    json!({"plan":preview(&proposal, args),"selectedRecovery":recovery,"hint":if recovery=="trash" {format!("Orphan history will move to {}; restore it through the file manager. Show the exact source paths before confirming.",platform::BIN.bare)}else{"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true.".into()}}),
                 );
             }
             service.request_as("apply", &json!({"id":id,"recovery":recovery}), "agent")
@@ -985,6 +985,13 @@ fn validate_args(name: &str, args: &Value) -> Result<(), String> {
     }
     Ok(())
 }
+/// What delete_project says it does, with the system's own name for its bin.
+static DELETE_PROJECT: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "Move a project to {} only after live remote Git verification; requires confirm after preview",
+        platform::BIN.bare
+    )
+});
 fn tools() -> Vec<Tool> {
     let text = json!({"type":"string"});
     let boolean = json!({"type":"boolean"});
@@ -1095,16 +1102,11 @@ fn tools() -> Vec<Tool> {
             json!({"project":project,"destination":text,"trash_heavy":boolean,"confirm":boolean}),
             vec!["project"],
         ),
-        (
-            "delete_project",
-            "Move a project to system Trash only after live remote Git verification; requires confirm after preview",
-            json!({"project":project,"confirm":boolean}),
-            vec!["project"],
-        ),
+        ("delete_project", DELETE_PROJECT.as_str(), json!({"project":project,"confirm":boolean}), vec!["project"]),
         (
             "apply_suggestion",
             "Apply a Tidy suggestion; requires confirm after preview. The preview lists its operations a page at a time",
-            json!({"id":text,"confirm":boolean,"recovery":{"type":"string","enum":["quarantine","trash"],"description":"Orphan history only; Quarantine is the default and supports Laci Undo. System Trash recovery uses the file manager."},
+            json!({"id":text,"confirm":boolean,"recovery":{"type":"string","enum":["quarantine","trash"],"description":format!("Orphan history only; Quarantine is the default and supports Laci Undo. {} recovery uses the file manager.",platform::BIN.name)},
                 "limit":limit(40, 100),"offset":offset}),
             vec!["id"],
         ),
@@ -1279,7 +1281,7 @@ mod tests {
                 "action":{"type":"quarantine","moves":files.iter().map(|f| json!({"from":f,"to":format!("{kind}/{}", f.rsplit('/').next().unwrap_or(f))})).collect::<Vec<_>>()},
                 "recovery":{"default":"quarantine","choices":["quarantine","trash"],
                     "quarantine":"Laci Undo restores these exact history paths.",
-                    "trash":"Restore these history paths through system Trash; Laci Undo is unavailable."},
+                    "trash":format!("Restore these history paths through {}; Laci Undo is unavailable.",platform::BIN.bare)},
                 "availability":"missing",
                 "validation":{"projects":[format!("{home}/project/gone")],"roots":[{"path":format!("{home}/project"),"online":true}],
                     "sources":files.iter().enumerate().map(|(i, f)| json!({"path":f,"identity":hash(i)})).collect::<Vec<_>>()}})

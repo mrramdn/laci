@@ -1781,3 +1781,69 @@ export const dialogs = {
     failed: (name: string) => `Laci couldn’t free up space in ${name}.`,
   },
 };
+
+/**
+ * Detailed's words for a new version of Laci, at the foot of its sidebar and in its palette, and for
+ * the look for secret files before a fix that saves or uploads versions. Its buttons keep their Git
+ * names (FIX_LABEL in helpers.ts); what they open says it plainly.
+ */
+export const detailedData = {
+  update: {
+    /** The badge: what it says beside the new version, or beside how much of it has arrived. */
+    badge: {
+      available: "Update available",
+      downloading: "Downloading update",
+      ready: "Update ready",
+    },
+    /** What the badge says when it is pointed at, and to a screen reader after its words. */
+    badgeNote: {
+      available: (version: string) =>
+        `Laci ${version} is available. Settings shows how to get it.`,
+      downloading: (version: string) =>
+        `Laci is downloading ${version}. Settings shows how far it is.`,
+      ready: (version: string) =>
+        `Laci ${version} is installed. Restart Laci from Settings to use it.`,
+    },
+    check: "Check for updates",
+    install: "Install update",
+    restart: "Restart to update",
+    page: "Open the release page",
+    /** Beside a command: the version it brings. */
+    version: (version: string) => `Laci ${version}`,
+    /** Beside Restart to update while terminals are open: they close with Laci. */
+    closes: (n: number) => `closes ${count(n, "open terminal")}`,
+    checking: "Checking for updates…",
+    upToDate: "Laci is up to date",
+    current: (version: string) => `Version ${version} is the newest.`,
+    found: (version: string) => `Laci ${version} is available`,
+    foundClick: "Install it in Settings, or search for Install update.",
+    foundNotice: "Settings links to its release page.",
+    checkFailed: "Couldn’t check for updates",
+    downloading: (version: string) => `Downloading Laci ${version}…`,
+    downloadingNote: "Nothing changes until Laci restarts.",
+    installFailed: "Couldn’t install the update",
+    restartFailed: "Couldn’t restart",
+  },
+  secrets: {
+    title: (name: string) => `Files in ${name} look like passwords or keys`,
+    /** `fix` is the button that was pressed. */
+    intro: (fix: string) =>
+      `Laci looked at the names of the files before “${fix}”. It never opens them.`,
+    checking: "Looking for files that look like passwords or keys…",
+    loose: "Not in .gitignore yet",
+    tracked: "Already in the history",
+    trackedNote:
+      ".gitignore can’t take a file out of the history. Ask your AI to stop tracking it first.",
+    more: (n: number) => `and ${count(n, "more file")}`,
+    failed: "Laci couldn’t look for files like these.",
+    checkAgain: "Check again",
+    keepOut: "Keep these out",
+    keepNote:
+      "Keep these out adds them to .gitignore, then goes on. The Log can undo it.",
+    goOnFailed: "Continue goes on without the check.",
+    keeping: "Keeping them out…",
+    keptOut: "Added to .gitignore",
+    goOn: "Continue",
+    cancel: "Cancel",
+  },
+};

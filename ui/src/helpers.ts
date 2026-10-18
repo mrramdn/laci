@@ -367,15 +367,26 @@ export function counted(id: string, snapshot: Snapshot) {
     )
   );
 }
+const agentCounts = new WeakMap<Snapshot, WeakMap<Node, number>>();
+/**
+ * A project's conversations, and the agent history Laci has no session for. Worked out once for
+ * each node of a scan: a folder's rows ask for every project under them each time they draw.
+ */
 export function agentCount(node: Node, snapshot: Snapshot) {
-  return (
-    conversations(sessionsOf(node, snapshot)).length +
-    node.agents.items.filter(
-      (id) =>
-        counted(id, snapshot) &&
-        !hasSessionFile(snapshot.items[id].file, snapshot),
-    ).length
-  );
+  let counts = agentCounts.get(snapshot);
+  if (!counts) agentCounts.set(snapshot, (counts = new WeakMap()));
+  let count = counts.get(node);
+  if (count === undefined) {
+    count =
+      conversations(sessionsOf(node, snapshot)).length +
+      node.agents.items.filter(
+        (id) =>
+          counted(id, snapshot) &&
+          !hasSessionFile(snapshot.items[id].file, snapshot),
+      ).length;
+    counts.set(node, count);
+  }
+  return count;
 }
 export interface SessionGroup {
   session: Session;
@@ -629,6 +640,17 @@ export const FIX_LABEL: Record<string, string> = {
   "no-git": "Start tracking",
   behind: "Pull",
 };
+/**
+ * The fixes that save or upload versions. Before any of them both designs look for files that look
+ * like passwords or keys (`secrets/check`); simple/model.ts lists the same ones as SECRET_CHECKED.
+ */
+export const SECRET_FIXES: ReadonlySet<string> = new Set([
+  "no-remote",
+  "no-commits",
+  "no-git",
+  "dirty",
+  "unpushed",
+]);
 export const APP_NAMES: Record<string, string> = {
   code: "VS Code",
   codium: "VSCodium",

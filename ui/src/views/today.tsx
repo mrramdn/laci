@@ -14,31 +14,32 @@ import { BackupNotice } from "../backup";
 import { LookThumb } from "../looks";
 import { views } from "../words";
 import {
-  deadlinesOf,
   latestReport,
   LOCALE,
   plural,
-  recency,
-  risksOf,
   sessionsOf,
   shortDay,
-  taskIdentity,
 } from "../helpers";
+import { todayModel } from "../selectors";
 import { DeadlinePill } from "../deadline";
-import { api } from "../api";
-import { closeReportItem } from "../actions";
+import { closeReportItem, toggleTodo } from "../actions";
 import { requestResume } from "../session-ui";
 import { askAgent } from "../agent-launch";
-import type { Node } from "../types";
+import type { Node, Tab } from "../types";
 export function Today() {
-  const s = useApp();
-  useNow();
-  const snapshot = s.snapshot!;
-  const all = Object.values(snapshot.nodes);
-  const risks = risksOf(snapshot);
-  const deadlines = deadlinesOf(snapshot);
-  const selectedRow = (n: Node, key: string) =>
-    s.selectedRow === key || (s.selectedRow === null && s.selected === n.id);
+  // Only what Today shows: news of a scan in progress doesn't draw it again.
+  const snapshot = useApp((s) => s.snapshot!);
+  const selected = useApp((s) => s.selected);
+  const selectedRow = useApp((s) => s.selectedRow);
+  const allRisks = useApp((s) => Boolean(s.expanded.risks));
+  const now = useNow();
+  // Worked out once a day for each scan (selectors.ts).
+  const { risks, deadlines, overdue, recent, activeCount, checks, handoffs } =
+    todayModel(snapshot, new Date(now));
+  const isSelected = (n: Node, key: string) =>
+    selectedRow === key || (selectedRow === null && selected === n.id);
+  const select = (id: string, tab: Tab, row: string) =>
+    useApp.getState().select(id, tab, row);
   const shortDate = (deadline?: string) => {
     const [y, m, d] = (deadline ?? "").split("-").map(Number);
     return new Date(y, m - 1, d).toLocaleDateString(LOCALE, {
@@ -46,34 +47,6 @@ export function Today() {
       month: "short",
     });
   };
-  const recent = all
-    .filter((n) => n.kind === "project" && !n.archived)
-    .sort(recency)
-    .slice(0, 5);
-  const activeCount = all.filter(
-    (n) => n.kind === "project" && !n.archived && n.status.value === "active",
-  ).length;
-  const checks = all
-    .filter((n) => !n.archived)
-    .sort(recency)
-    .flatMap((n) =>
-      n.tasks
-        .filter((t) => t.kind === "check" && !t.done)
-        .map((t) => ({ n, t })),
-    );
-  const handoffs = all
-    .flatMap((n) =>
-      n.taskFiles
-        .map((f) => ({
-          n,
-          f,
-          open: n.tasks.filter(
-            (t) => t.file === f.file && t.kind === "list" && !t.done,
-          ).length,
-        }))
-        .filter((h) => h.open && !n.archived),
-    )
-    .sort((a, b) => b.f.at.localeCompare(a.f.at));
   if (!snapshot.roots.length)
     return (
       <>
@@ -92,7 +65,7 @@ export function Today() {
             </p>
             <button
               className="btn primary"
-              onClick={() => s.navigate("settings")}
+              onClick={() => useApp.getState().navigate("settings")}
             >
               Choose folders
             </button>
@@ -119,7 +92,7 @@ export function Today() {
               "due",
               "calendar",
               "sec-deadlines",
-              deadlines.some((d) => d.info.days <= 0) ? "bad" : "",
+              overdue ? "bad" : "",
             ],
             [risks.length, "at risk", "alert", "sec-risks", "bad"],
             [activeCount, "active", "play", "sec-recent", ""],
@@ -180,8 +153,8 @@ export function Today() {
                 key={n.id}
                 tabIndex={0}
                 data-id={n.id}
-                aria-selected={selectedRow(n, "deadline:" + n.id)}
-                onClick={() => s.select(n.id, "todo", "deadline:" + n.id)}
+                aria-selected={isSelected(n, "deadline:" + n.id)}
+                onClick={() => select(n.id, "todo", "deadline:" + n.id)}
               >
                 <SeverityGlyph
                   severity={
@@ -216,15 +189,15 @@ export function Today() {
           id="sec-risks"
         >
           {risks
-            .slice(0, s.expanded.risks ? undefined : 8)
+            .slice(0, allRisks ? undefined : 8)
             .map(({ n, issues }) => (
               <div
                 className="item"
                 key={n.id}
                 tabIndex={0}
                 data-id={n.id}
-                aria-selected={selectedRow(n, "risk:" + n.id)}
-                onClick={() => s.select(n.id, "health", "risk:" + n.id)}
+                aria-selected={isSelected(n, "risk:" + n.id)}
+                onClick={() => select(n.id, "health", "risk:" + n.id)}
               >
                 <SeverityGlyph severity={issues[0].severity} />
                 <span className="name">{n.label}</span>
@@ -283,9 +256,9 @@ export function Today() {
                 key={n.id}
                 tabIndex={0}
                 data-id={n.id}
-                aria-selected={selectedRow(n, "recent:" + n.id)}
+                aria-selected={isSelected(n, "recent:" + n.id)}
                 onClick={() =>
-                  s.select(
+                  select(
                     n.id,
                     sessionsOf(n, snapshot).length ? "agents" : "todo",
                     "recent:" + n.id,
@@ -373,21 +346,7 @@ export function Today() {
                 type="checkbox"
                 className="cb"
                 checked={t.done}
-                onChange={(e) =>
-                  void run(async () =>
-                    s.patch(
-                      await api<Node>("todo", {
-                        id: n.id,
-                        op: "toggle",
-                        file: t.file,
-                        line: t.line,
-                        text: t.text,
-                        ...taskIdentity(n, t),
-                        done: e.target.checked,
-                      }),
-                    ),
-                  )
-                }
+                onChange={(e) => void toggleTodo(n, t, e.target.checked)}
               />
               <span
                 className="t"
@@ -441,9 +400,9 @@ export function Today() {
                 key={`${n.id}:${f.file}`}
                 tabIndex={0}
                 data-id={n.id}
-                aria-selected={selectedRow(n, "todo:" + n.id + ":" + f.file)}
+                aria-selected={isSelected(n, "todo:" + n.id + ":" + f.file)}
                 onClick={() =>
-                  s.select(n.id, "todo", "todo:" + n.id + ":" + f.file)
+                  select(n.id, "todo", "todo:" + n.id + ":" + f.file)
                 }
               >
                 <Icon name="file" />

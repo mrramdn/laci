@@ -1,26 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LaciMark } from "../brand";
 import { Icon } from "../common";
 import { useApp, readListing, setDesign, setTheme, rescan } from "../store";
 import { useNow } from "../clock";
+import { useUpdateStatus } from "../palette";
 import { withMod } from "../platform";
-import { views } from "../words";
-import {
-  base,
-  cap,
-  deadlinesOf,
-  LOCALE,
-  plural,
-  risksOf,
-  todayBadge,
-  tilde,
-  within,
-} from "../helpers";
+import { navBadges, placesCounts } from "../selectors";
+import { detailedData, views } from "../words";
+import { base, cap, LOCALE, plural, tilde } from "../helpers";
 import type { Listing, View } from "../types";
 export function Sidebar() {
-  const s = useApp();
-  useNow();
-  const snapshot = s.snapshot!;
+  // Only what it shows: choosing a project or a toast doesn't draw the sidebar again.
+  const snapshot = useApp((s) => s.snapshot!);
+  const currentView = useApp((s) => s.view);
+  const reportsSeen = useApp((s) => s.reportsSeen);
+  const helpShown = useApp((s) => s.modal?.kind === "help");
+  const error = useApp((s) => s.error);
+  const updating = useApp((s) => s.busy || s.historyPending);
+  const currentTheme = useApp((s) => s.theme);
+  const now = useNow();
   const [railOpen, setRailOpen] = useState(false);
   const [placesOpen, setPlacesOpen] = useState(false);
   const navRef = useRef<HTMLElement>(null);
@@ -28,7 +26,6 @@ export function Sidebar() {
   const panel = useRef<HTMLDivElement>(null);
   const helpBtn = useRef<HTMLButtonElement>(null);
   const helpOpened = useRef(false);
-  const helpShown = s.modal?.kind === "help";
   useEffect(() => {
     // Help's dialog loads its code the first time it opens, after the window has gone inert and let
     // go of the focus, so it can't give the focus back to its opener: Help takes it back here.
@@ -36,38 +33,21 @@ export function Sidebar() {
     helpOpened.current = false;
     helpBtn.current?.focus();
   }, [helpShown]);
-  const hot = todayBadge(snapshot);
-  // Same projects todayBadge counts: due today or overdue, or a high risk. One that is both counts once.
-  const due = new Set(
-    deadlinesOf(snapshot)
-      .filter(({ info }) => info.days <= 0)
-      .map(({ n }) => n.id),
-  );
-  const atRisk = risksOf(snapshot).filter(
-    ({ n, issues }) =>
-      !due.has(n.id) && issues.some((i) => i.severity === "high"),
-  ).length;
-  const suggestions = snapshot.proposals.filter((p) => p.action).length;
-  const detached =
-    snapshot.orphans.claude.length + snapshot.orphans.items.length;
-  const reportsReady = Boolean(
-    snapshot.reportsDir && !snapshot.reportsDir.error,
-  );
-  const newReports = useMemo(
-    () =>
-      (snapshot.reports ?? []).filter(
-        (r) => Date.parse(r.modified) > s.reportsSeen,
-      ).length,
-    [snapshot.reports, s.reportsSeen],
-  );
-  const freshReports = reportsReady && s.view !== "reports" ? newReports : 0;
+  // Due today or overdue, or a high risk: a project that is both counts once.
+  const badges = navBadges(snapshot, reportsSeen, new Date(now));
+  const { today: hot, due, atRisk, suggestions, detached } = badges;
+  const freshReports = currentView !== "reports" ? badges.reports : 0;
+  const go = (view: View) => {
+    setRailOpen(false);
+    useApp.getState().navigate(view);
+  };
   const nav: [View, string, string, number, string][] = [
     [
       "today",
       "Today",
       "inbox",
       hot,
-      `${hot} need${hot === 1 ? "s" : ""} you today: ${plural(due.size, "deadline")} due or overdue, ${plural(atRisk, "other project")} at high risk`,
+      `${hot} need${hot === 1 ? "s" : ""} you today: ${plural(due, "deadline")} due or overdue, ${plural(atRisk, "other project")} at high risk`,
     ],
     [
       "tidy",
@@ -197,11 +177,8 @@ export function Sidebar() {
             key={view}
             title={count ? `${label}: ${what}` : label}
             aria-label={count ? `${label}, ${what}` : undefined}
-            aria-current={s.view === view ? "page" : undefined}
-            onClick={() => {
-              setRailOpen(false);
-              s.navigate(view);
-            }}
+            aria-current={currentView === view ? "page" : undefined}
+            onClick={() => go(view)}
           >
             <Icon name={icon} />
             <span>{label}</span>
@@ -236,36 +213,35 @@ export function Sidebar() {
         </div>
       ) : null}
       <div className="sb-foot">
+        <UpdateBadge
+          onOpen={() => {
+            go("settings");
+            showUpdates();
+          }}
+        />
         <button
           className="sb-item"
           onClick={rescan}
           title={
-            s.error ||
+            error ||
             `laci watches your folders and updates by itself. Last full scan ${new Date(snapshot.scannedAt).toLocaleTimeString(LOCALE)}. Click to scan everything again.`
           }
         >
-          {!s.error && (s.busy || s.historyPending) ? (
+          {!error && updating ? (
             <span className="spin sm" />
           ) : (
             <span className="live-dot" />
           )}
           <span>
-            {s.error
-              ? "Scan failed"
-              : s.busy || s.historyPending
-                ? "Updating…"
-                : "Up to date"}
+            {error ? "Scan failed" : updating ? "Updating…" : "Up to date"}
           </span>
         </button>
         <div className="sb-row">
           <button
             className="sb-item"
             title="Settings"
-            aria-current={s.view === "settings" ? "page" : undefined}
-            onClick={() => {
-              setRailOpen(false);
-              s.navigate("settings");
-            }}
+            aria-current={currentView === "settings" ? "page" : undefined}
+            onClick={() => go("settings")}
           >
             <Icon name="gear" className="sm" />
             <span>Settings</span>
@@ -292,7 +268,7 @@ export function Sidebar() {
                 key={theme}
                 title={theme === "system" ? "Follow the system" : cap(theme)}
                 aria-label={`${theme} theme`}
-                aria-pressed={s.theme === theme}
+                aria-pressed={currentTheme === theme}
                 onClick={() => setTheme(theme)}
               >
                 <Icon name={["monitor", "sun", "moon"][i]} />
@@ -332,6 +308,57 @@ export function DesignToggle() {
     </div>
   );
 }
+/**
+ * At the foot of the sidebar while there is a new version to get, when Laci looks for one by itself
+ * (updates: "daily"): available, on its way, or installed and waiting for a restart. In the narrow
+ * rail its version becomes a dot. Settings shows what to do about it.
+ */
+function UpdateBadge({ onOpen }: { onOpen: () => void }) {
+  const update = useUpdateStatus();
+  if (!update?.enabled || !update.version || update.state === "idle")
+    return null;
+  const said = detailedData.update;
+  const state =
+    update.state === "ready" || update.state === "downloading"
+      ? update.state
+      : "available";
+  const note = said.badgeNote[state](update.version);
+  return (
+    <button
+      className="sb-item"
+      data-ui="update-badge"
+      title={note}
+      aria-label={`${said.badge[state]}, ${note}`}
+      onClick={onOpen}
+    >
+      <Icon
+        name={state === "ready" ? "refresh-cw" : "cloud-download"}
+        className="sm"
+      />
+      <span>{said.badge[state]}</span>
+      <span className="n new">
+        {state === "downloading" && update.progress !== undefined
+          ? `${update.progress}%`
+          : update.version}
+      </span>
+    </button>
+  );
+}
+/**
+ * Brings Settings › About & updates into view once Settings has drawn it: Settings reads the
+ * settings before it shows them. A Settings without that section is left at its top.
+ */
+function showUpdates() {
+  let tries = 0;
+  const look = () => {
+    const section = document.getElementById("settings-updates");
+    if (section) {
+      section.scrollIntoView({ block: "start" });
+      section.focus({ preventScroll: true });
+    } else if (++tries < 40) setTimeout(look, 50);
+  };
+  setTimeout(look, 0);
+}
 function childDirs(listing: Listing | undefined, ancestors: string[]) {
   return (listing?.entries ?? [])
     .filter(
@@ -350,13 +377,17 @@ type TreeItem = {
   expandable: boolean;
 };
 function Tree({ onChoose }: { onChoose: () => void }) {
-  const s = useApp();
-  const snapshot = s.snapshot!;
+  const roots = useApp((s) => s.snapshot!.roots);
+  const home = useApp((s) => s.snapshot!.home);
+  const listings = useApp((s) => s.listings);
+  const tree = useApp((s) => s.tree);
+  // The folder shown in the folder view, which the tree marks.
+  const shown = useApp((s) => (s.view === "folder" ? s.cwd : null));
   const [focusPath, setFocusPath] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const items: TreeItem[] = [];
   const walk = (path: string, depth: number, ancestors: string[]) => {
-    const listing = s.listings[path];
+    const listing = listings[path];
     const children = childDirs(listing, ancestors);
     items.push({
       path,
@@ -364,20 +395,17 @@ function Tree({ onChoose }: { onChoose: () => void }) {
       ancestors,
       expandable: !(listing && !listing.error && !children.length),
     });
-    if (s.tree.has(path))
+    if (tree.has(path))
       for (const child of children)
         walk(child.path, depth + 1, [...ancestors, path]);
   };
-  for (const path of [
-    ...snapshot.roots,
-    ...(snapshot.roots.includes(snapshot.home) ? [] : [snapshot.home]),
-  ])
+  for (const path of [...roots, ...(roots.includes(home) ? [] : [home])])
     walk(path, 0, []);
   const has = (path: string | null) => items.some((i) => i.path === path);
   const active = has(focusPath)
     ? focusPath
-    : s.view === "folder" && has(s.cwd)
-      ? s.cwd
+    : shown !== null && has(shown)
+      ? shown
       : (items[0]?.path ?? null);
   const focusItem = (path: string) => {
     setFocusPath(path);
@@ -402,7 +430,7 @@ function Tree({ onChoose }: { onChoose: () => void }) {
     const at = items.findIndex((i) => i.path === row?.dataset.path);
     if (!row || at < 0) return;
     const item = items[at];
-    const open = s.tree.has(item.path);
+    const open = tree.has(item.path);
     let go: string | undefined;
     switch (event.key) {
       case "ArrowDown":
@@ -432,7 +460,7 @@ function Tree({ onChoose }: { onChoose: () => void }) {
         if (event.target !== row) return;
         event.preventDefault();
         onChoose();
-        s.cd(item.path);
+        useApp.getState().cd(item.path);
         return;
       default:
         return;
@@ -480,25 +508,22 @@ function TreeRow({
   active: boolean;
   onChoose: () => void;
 }) {
-  const s = useApp();
-  const snapshot = s.snapshot!;
-  const open = s.tree.has(path);
+  const snapshot = useApp((s) => s.snapshot!);
+  const open = useApp((s) => s.tree.has(path));
+  const listing = useApp((s) => s.listings[path]);
+  const current = useApp((s) => s.view === "folder" && s.cwd === path);
   const unavailable = snapshot.rootStatus?.find(
     (root) => root.path === path && !root.available,
   );
-  const listing = s.listings[path];
   useEffect(() => {
     if (open) void readListing(path);
   }, [open, path, listing]);
-  const count = Object.values(snapshot.nodes).filter(
-    (n) => n.kind === "project" && within(n.path, path),
-  ).length;
+  const count = placesCounts(snapshot)(path);
   const label = depth
     ? base(path)
     : path === snapshot.home
       ? "Home"
       : tilde(path, snapshot.home);
-  const current = s.view === "folder" && s.cwd === path;
   return (
     <div
       className="tree-row"
@@ -537,7 +562,7 @@ function TreeRow({
         tabIndex={-1}
         onClick={() => {
           onChoose();
-          s.cd(path);
+          useApp.getState().cd(path);
         }}
         title={unavailable?.reason}
       >

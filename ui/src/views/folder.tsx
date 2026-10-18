@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   Icon,
   KindIcon,
@@ -133,9 +134,23 @@ interface FolderRow extends Entry {
   pre?: string;
 }
 export function Folder() {
-  const s = useApp();
-  const snapshot = s.snapshot!;
-  const listing = s.listings[s.cwd];
+  const s = useApp(
+    useShallow((state) => ({
+      snapshot: state.snapshot!,
+      listing: state.listings[state.cwd],
+      cwd: state.cwd,
+      filter: state.filter,
+      sort: state.sort,
+      hidden: state.hidden,
+      foldersFirst: state.foldersFirst,
+      showArchived: state.showArchived,
+      display: state.display,
+      fileSelected: state.fileSelected,
+      cd: state.cd,
+    })),
+  );
+  const snapshot = s.snapshot;
+  const listing = s.listing;
   useEffect(() => {
     void readListing(s.cwd, true);
   }, [s.cwd, listing]);
@@ -439,9 +454,17 @@ export function Folder() {
   );
 }
 function FolderItem({ row }: { row: FolderRow }) {
-  const s = useApp();
-  const snapshot = s.snapshot!;
   const n = row.n;
+  // A row draws again when its own selection changes, not when another row is chosen.
+  const s = useApp(
+    useShallow((state) => ({
+      snapshot: state.snapshot!,
+      selected: n ? state.selected === n.id : state.fileSelected === row.path,
+      select: state.select,
+      cd: state.cd,
+    })),
+  );
+  const snapshot = s.snapshot;
   const kids = n ? descendants(n, snapshot) : [];
   const issues = n
     ? n.kind === "project"
@@ -478,7 +501,7 @@ function FolderItem({ row }: { row: FolderRow }) {
       role="row"
       data-id={row.path}
       data-kind={!row.dir ? "file" : n ? "node" : "dir"}
-      aria-selected={n ? s.selected === n.id : s.fileSelected === row.path}
+      aria-selected={s.selected}
       onClick={pick}
       onDoubleClick={() => (row.dir ? s.cd(row.path) : external(row.path))}
       title={!row.dir ? "Double-click to open" : undefined}

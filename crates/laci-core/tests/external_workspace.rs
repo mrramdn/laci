@@ -191,7 +191,7 @@ fn external_project_history_and_notes_survive_archive_and_undo() {
 fn exact_root_fixture() -> (tempfile::TempDir, Env, std::path::PathBuf, std::path::PathBuf) {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));
-    let source = temp.path().join("disk/demo");
+    let source = temp.path().join("disk").join("demo");
     let archive = temp.path().join("archive");
     write(&source.join("package.json"), "{}");
     fs::create_dir_all(&archive).unwrap();

@@ -1541,7 +1541,10 @@ mod tests {
         assert!(changes["entries"].as_array().unwrap().iter().all(|e| string(e, "path") == big));
         assert!(changes["total"].as_u64().unwrap() > 0);
         let words = call(&mut service, "recent_changes", &json!({"query":"notes p1"})).unwrap();
-        assert!(words["entries"].as_array().unwrap().iter().all(|e| string(e, "title").contains("p1")));
+        // The words are looked for in each entry's path too, which starts with this run's random temp folder.
+        if !service.env.home.to_string_lossy().to_lowercase().contains("p1") {
+            assert!(words["entries"].as_array().unwrap().iter().all(|e| string(e, "title").contains("p1")));
+        }
         let projects = call(&mut service, "list_projects", &json!({"limit":5,"offset":5})).unwrap();
         assert_eq!((projects["projects"].as_array().unwrap().len(), projects["total"].clone()), (5, json!(60)));
         let attention = call(&mut service, "needs_attention", &json!({"limit":200})).unwrap();

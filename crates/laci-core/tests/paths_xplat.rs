@@ -390,7 +390,7 @@ mod folding {
     /// A tool's log kept inside the project, found through a folder spelled in another case, moves with the project
     /// and names its new place.
     #[test]
-    #[ignore = "port:P5: macOS and Windows can't yet check which programs use a folder; Windows waits for port:P9b too"]
+    #[cfg_attr(windows, ignore = "port:P9b: Windows can't yet keep a rewritten file's times")]
     fn a_log_kept_inside_the_project_under_another_spelling_moves_with_it() {
         let (_temp, root) = folder();
         if !folds(&root) {
@@ -414,7 +414,7 @@ mod folding {
 
     /// A project renamed to another case of its name is a rename, not a clash with itself, and Undo renames it back.
     #[test]
-    #[ignore = "port:P5: macOS and Windows can't yet check which programs use a folder"]
+    #[cfg_attr(windows, ignore = "port:P9b: Windows can't yet keep a moved project's file times")]
     fn a_project_renamed_to_another_case_moves_and_undo_brings_the_old_name_back() {
         let (_temp, root) = folder();
         if !folds(&root) {

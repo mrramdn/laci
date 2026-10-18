@@ -294,6 +294,62 @@ export async function discardPutsBackWhatIsSaved() {
   assert.deepEqual(page.asked("setup/save"), []);
 }
 
+export async function aChangeMadeWhileSettingsAreReadAgainStays() {
+  // The first read answers at once; each later one waits until the test lets it answer.
+  const waiting = [];
+  let reads = 0;
+  const page = await settingsPage({
+    replies: {
+      "setup/info": () =>
+        ++reads === 1
+          ? structuredClone(INFO)
+          : new Promise((answer) => waiting.push(() => answer(structuredClone(INFO)))),
+    },
+  });
+  const tool = (name) =>
+    page
+      .find((n) => n.type === "label" && n.textContent.startsWith(name))
+      .children.find((n) => n.type === "input");
+  // A rescan moves the revision on, so the page reads what is saved again. Before the answer
+  // comes, an AI tool is ticked.
+  page.app.setState({ revision: 2 });
+  await page.settle();
+  assert.equal(waiting.length, 1);
+  page.act(() => tool("Antigravity").props.onChange({ target: { checked: true } }));
+  assert.ok(page.button(said.save));
+  waiting.shift()();
+  await page.settle();
+  // The tick stays, with the bar that saves it.
+  assert.equal(tool("Antigravity").props.checked, true);
+  assert.ok(page.button(said.save));
+  // Discard reads what is saved again too, and a change made before that answer stays as well.
+  page.act(() => page.button(said.discard).props.onClick());
+  await page.settle();
+  assert.equal(waiting.length, 1);
+  page.act(() => page.radio(said.targets.external).props.onChange());
+  waiting.shift()();
+  await page.settle();
+  assert.equal(page.radio(said.targets.external).props.checked, true);
+  assert.ok(page.button(said.save));
+}
+
+export async function aSwitchOfDesignWaitsWhileChangesAreUnsaved() {
+  // Detailed's Settings would start without them: the store holds a switch back while they wait.
+  const page = await settingsPage();
+  const waits = () => page.app.getState().settingsDirty;
+  assert.equal(waits(), false);
+  page.act(() => page.button(said.remove).props.onClick());
+  assert.equal(waits(), true);
+  page.act(() => page.button(said.discard).props.onClick());
+  await page.settle();
+  assert.equal(waits(), false);
+  // Leaving Settings drops the changes, as it always has, and nothing waits any more.
+  page.act(() => page.button(said.remove).props.onClick());
+  assert.equal(waits(), true);
+  page.mount(null);
+  assert.equal(waits(), false);
+}
+
 export async function saveChangesGivesTheFocusBackToTheSettingYouUsedLast() {
   const page = await settingsPage();
   const root = page.find((n) => String(n.props.className).startsWith("s-page s-settings"));

@@ -69,6 +69,11 @@ export function SettingsPage() {
   const dirty = Boolean(draft && saved && draftChanged(draft, saved));
   const waiting = useRef(dirty);
   waiting.current = dirty;
+  // Detailed's Settings would start without these changes, so a switch of design waits for them.
+  useEffect(() => {
+    useApp.setState({ settingsDirty: dirty });
+    return () => useApp.setState({ settingsDirty: false });
+  }, [dirty]);
   const page = useRef<HTMLDivElement>(null);
   // The control you used last: when the bar with Save changes and Discard goes, the focus goes back
   // there rather than on to the last control of the page. Tabbing on to the bar passes everything
@@ -88,9 +93,11 @@ export function SettingsPage() {
       (next) => {
         if (!live) return;
         setInfo(next);
+        setFailed("");
+        // Changes begun while it was read wait too: what is saved would undo them.
+        if (waiting.current) return;
         setSaved(draftOf(next));
         setDraft(draftOf(next));
-        setFailed("");
       },
       (error) => {
         if (live) setFailed(errorText(error));

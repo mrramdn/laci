@@ -1,18 +1,33 @@
-//! Processes on Windows: whether one still runs, which work in a folder or write to a file, and the programs Laci
-//! starts and stops. sysinfo lists the processes and reads their working folders.
+//! Processes on Windows: whether one still runs, which work in a folder or have a file open, and the programs Laci
+//! starts and stops. sysinfo lists the processes and reads their working folders and programs, and Restart Manager
+//! tells which have a file open.
+use super::ffi::RestartSession;
 use crate::{Result, platform::Holder};
 use process_wrap::std::{ChildWrapper, CommandWrap, JobObject};
+use restart_manager::{Name, Verdict};
 use std::{
-    fs::{self, OpenOptions},
+    fs::{self, File},
     io,
-    os::windows::fs::OpenOptionsExt,
+    os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus},
+    sync::OnceLock,
+    thread,
+    time::{Duration, Instant},
 };
 use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use windows_sys::Win32::{Foundation::MAX_PATH, System::RestartManager::RmRebootReasonDetectedSelf};
 
-/// ERROR_SHARING_VIOLATION: another program has the file open.
-const SHARING_VIOLATION: i32 = 32;
+mod restart_manager;
+
+// restart_manager builds on every OS, so it spells out what it reads of Windows; it must be Windows' own.
+const _: () = assert!(restart_manager::DETECTED_SELF == RmRebootReasonDetectedSelf as u32);
+const _: () = assert!(restart_manager::MAX_PATH == MAX_PATH as usize);
+
+/// How long the history check waits for another Laci process to let go of a log, such as the desktop app's scan while
+/// `laci mcp` cleans up. A scan's read is over in moments; a Laci process that still has the log open after this keeps
+/// the history in use.
+const LACI_WAIT: Duration = Duration::from_secs(3);
 
 /// Looked up in a fresh list of processes, which must show this one too.
 pub fn pid_alive(pid: u32) -> Result<bool> {
@@ -104,11 +119,19 @@ fn volume(spelled: &str) -> &str {
     &spelled[..end]
 }
 
+/// Refuses while a program works inside `sources` or has a file there open, and when that can't be checked. Restart
+/// Manager reports every process that has a file open, reading or writing alike: stricter than the writers-only check
+/// on Linux and macOS, and right for Windows, where a file another program holds open often can't be moved. This
+/// process and the helpers it runs are left out, as its own scan may be reading a log meanwhile. Another process that
+/// runs Laci's program, such as the desktop app's scan while `laci mcp` cleans up, gets up to [`LACI_WAIT`] to let
+/// go; any other program refuses at once. Restart Manager asks Windows who has each file open without opening it for
+/// reading or writing, so an agent appending to its log can't fail because of the check.
 pub fn ensure_idle(sources: &[PathBuf]) -> Result<()> {
     if !processes_in(sources)?.is_empty() {
         return Err("History is in use by a running process. Close it first.".into());
     }
-    let failed = || "Could not check running history writers".to_owned();
+    let failed = || restart_manager::FAILED.to_owned();
+    let (mut names, mut long) = (Vec::new(), None);
     for source in sources {
         if fs::symlink_metadata(source).is_err_and(|e| e.kind() == io::ErrorKind::NotFound) {
             continue;
@@ -118,19 +141,73 @@ pub fn ensure_idle(sources: &[PathBuf]) -> Result<()> {
             if !entry.file_type().is_file() {
                 continue;
             }
-            // Opening a file without sharing it fails while any other program has it open, reading or writing alike.
-            // That is stricter than on Linux and macOS, and right for Windows, where a file another program holds
-            // open often can't be moved.
-            match OpenOptions::new().read(true).share_mode(0).open(entry.path()) {
-                Ok(_) => {}
-                Err(e) if e.raw_os_error() == Some(SHARING_VIOLATION) => {
-                    return Err("History is open in another program. Stop the session before cleaning it up.".into());
-                }
-                Err(_) => return Err(failed()),
+            match restart_manager::name(&entry.path().as_os_str().encode_wide().collect::<Vec<_>>())? {
+                Name::Plain(name) => names.push(name),
+                Name::Long(name) if *long.get_or_insert_with(reads_long_paths) => names.push(name),
+                Name::Long(_) => return Err(restart_manager::TOO_LONG.into()),
             }
         }
     }
-    Ok(())
+    if names.is_empty() {
+        return Ok(());
+    }
+    let mut session = RestartSession::start().map_err(|_| failed())?;
+    for batch in restart_manager::batches(&names) {
+        session.register(batch).map_err(|_| failed())?;
+    }
+    let me = std::process::id();
+    let own = |pid| pid == me || crate::process::is_own_child(pid);
+    let asked = Instant::now();
+    loop {
+        let found = session.list().map_err(|_| failed())?;
+        match restart_manager::verdict(found.processes.iter().map(|p| p.dwProcessId), found.reasons, own, runs_laci) {
+            Verdict::Idle => return Ok(()),
+            Verdict::Refuse(why) => return Err(why.into()),
+            Verdict::Wait if asked.elapsed() >= LACI_WAIT => return Err(restart_manager::OPEN.into()),
+            Verdict::Wait => thread::sleep(Duration::from_millis(100)),
+        }
+    }
+}
+
+/// Whether `pid` runs Laci's own program, as the desktop app and each `laci mcp` do. A process whose program can't be
+/// read isn't taken for Laci.
+fn runs_laci(pid: u32) -> bool {
+    let pid = Pid::from_u32(pid);
+    let mut system = System::new();
+    let read = ProcessRefreshKind::nothing().with_exe(UpdateKind::Always);
+    system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, read);
+    let theirs = system.process(pid).and_then(Process::exe).map(fs::canonicalize);
+    let mine = std::env::current_exe().and_then(fs::canonicalize);
+    matches!((theirs, mine), (Some(Ok(theirs)), Ok(mine)) if theirs == mine)
+}
+
+/// Whether Restart Manager reads a name in the `\\?\` spelling as long as [`restart_manager::LONGEST`], which its
+/// documentation doesn't say. It is asked the first time a history needs it, and the answer is kept; an attempt that
+/// fails before Restart Manager answers is made again next time, and until it answers yes, such a path is refused.
+fn reads_long_paths() -> bool {
+    static READS: OnceLock<bool> = OnceLock::new();
+    if let Some(&reads) = READS.get() {
+        return reads;
+    }
+    long_path_found().is_ok_and(|reads| *READS.get_or_init(|| reads))
+}
+
+/// Whether Restart Manager finds this process holding a file named in the `\\?\` spelling, at least
+/// [`restart_manager::LONGEST`] long, deep in a folder of its own in the temporary folder.
+fn long_path_found() -> io::Result<bool> {
+    let temp = tempfile::tempdir()?;
+    let mut deep = fs::canonicalize(temp.path())?;
+    while deep.as_os_str().encode_wide().count() < restart_manager::LONGEST {
+        deep.push("l".repeat(100));
+    }
+    fs::create_dir_all(&deep)?;
+    let held = deep.join("held");
+    let _file = File::create(&held)?;
+    let mut session = RestartSession::start()?;
+    session.register(&[held.as_os_str().encode_wide().collect()])?;
+    let found = session.list()?;
+    let me = std::process::id();
+    Ok(found.reasons & restart_manager::DETECTED_SELF != 0 || found.processes.iter().any(|p| p.dwProcessId == me))
 }
 
 /// While Laci holds the child's handle, Windows keeps its process id from going to another process, so asking needs

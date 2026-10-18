@@ -12,6 +12,11 @@ use std::{
 
 mod support;
 
+/// What Windows' history check makes of Restart Manager's answer. It needs no Windows, so it is built here as well, and
+/// its tests run on every OS.
+#[path = "../src/platform/windows/process/restart_manager.rs"]
+mod restart_manager;
+
 /// Waits up to twenty seconds for `found` to give something: a program can be slow to start on Windows, where
 /// Defender looks at it first.
 fn soon<T>(what: &str, mut found: impl FnMut() -> Option<T>) -> T {
@@ -118,15 +123,18 @@ fn history_with_a_writer_or_a_process_inside_is_not_idle() {
     let idle = || platform::ensure_idle(sources).ok();
     soon("idle while nothing holds the history", idle);
     let reader = File::open(&log).unwrap();
-    if cfg!(windows) {
-        assert_eq!(platform::ensure_idle(sources).unwrap_err(), WRITER, "any other holder counts");
-    } else {
-        platform::ensure_idle(sources).unwrap();
-    }
+    // Linux and macOS look for writers only, and Windows leaves out what Laci itself has open.
+    platform::ensure_idle(sources).unwrap();
     drop(reader);
     soon("idle once the reader is closed", idle);
     let writer = OpenOptions::new().append(true).open(&log).unwrap();
-    assert_eq!(platform::ensure_idle(sources).unwrap_err(), WRITER);
+    if cfg!(windows) {
+        // Restart Manager doesn't tell Laci's own writer from its reader. Other programs' writers are checked in
+        // `an_agent_appending_to_history_is_refused_on_windows_and_keeps_writing`.
+        platform::ensure_idle(sources).unwrap();
+    } else {
+        assert_eq!(platform::ensure_idle(sources).unwrap_err(), WRITER);
+    }
     drop(writer);
     soon("idle once the writer is closed", idle);
     let inside = "History is in use by a running process. Close it first.";
@@ -283,4 +291,208 @@ fn moving_a_project_to_the_trash_waits_until_no_program_works_in_it() {
     assert_eq!(plan["checks"][0]["detail"], held.as_str());
     assert_eq!(deletion::trash(&env, &node).unwrap_err(), held);
     assert!(dir.join("README.md").is_file());
+}
+
+#[cfg(windows)]
+const APPENDING: &str = "an_agent_appending_to_history_is_refused_on_windows_and_keeps_writing";
+/// The log the writer in [`an_agent_appending_to_history_is_refused_on_windows_and_keeps_writing`] appends to the way
+/// an agent does, opening it for each line, and the file that tells it to stop.
+#[cfg(windows)]
+const AGENT_LOG: &str = "LACI_TEST_AGENT_LOG";
+#[cfg(windows)]
+const STOP: &str = "LACI_TEST_STOP";
+
+/// [`support::program`] run from a copy of this test binary in `dir`: a program of its own, as an agent is. The check
+/// takes this test binary for Laci's own program, and waits for it as for the desktop app.
+#[cfg(windows)]
+fn agent(test: &str, role: &str, dir: &Path) -> Command {
+    let copy = dir.join("agent.exe");
+    if !copy.exists() {
+        fs::copy(std::env::current_exe().unwrap(), &copy).unwrap();
+    }
+    let program = support::program(test, role);
+    let mut agent = Command::new(copy);
+    agent.args(program.get_args());
+    for (key, value) in program.get_envs() {
+        if let Some(value) = value {
+            agent.env(key, value);
+        }
+    }
+    agent
+}
+
+/// Restart Manager finds a program appending to history without opening the logs: every check refuses at once, and
+/// none of the program's writes fails, not even one that opens its log just then, as an exclusive open could make it.
+/// A reader in Laci itself doesn't count.
+#[cfg(windows)]
+#[test]
+fn an_agent_appending_to_history_is_refused_on_windows_and_keeps_writing() {
+    if support::role().is_some() {
+        return append();
+    }
+    let (_temp, root) = folder();
+    let history = root.join("history");
+    fs::create_dir(&history).unwrap();
+    let (log, agent_log) = (history.join("session.jsonl"), history.join("agent.jsonl"));
+    fs::write(&log, "{}\n").unwrap();
+    fs::write(&agent_log, "{}\n").unwrap();
+    let sources = std::slice::from_ref(&history);
+    let (ready, stop) = (root.join("ready"), root.join("stop"));
+    let mut writer = agent(APPENDING, "append", &root);
+    writer.env(LOG, &log).env(AGENT_LOG, &agent_log).env(READY, &ready).env(STOP, &stop).current_dir(&root);
+    let mut writer = Running(writer.stdout(Stdio::null()).spawn().unwrap());
+    soon("the writer has the log open", || ready.exists().then_some(()));
+    let before = fs::metadata(&agent_log).unwrap().len();
+    for _ in 0..20 {
+        let checked = Instant::now();
+        assert_eq!(platform::ensure_idle(sources).unwrap_err(), WRITER);
+        assert!(checked.elapsed() < Duration::from_secs(3), "refused without the wait another Laci gets");
+    }
+    assert!(fs::metadata(&agent_log).unwrap().len() > before, "it wrote while Laci checked");
+    fs::write(&stop, "").unwrap();
+    assert!(writer.0.wait().unwrap().success(), "none of its writes failed");
+    let reader = File::open(&log).unwrap();
+    soon("idle while only Laci reads the log", || platform::ensure_idle(sources).ok());
+    drop(reader);
+}
+
+/// The writer in [`an_agent_appending_to_history_is_refused_on_windows_and_keeps_writing`] and
+/// [`a_long_path_in_history_is_checked_or_refused_on_windows`]: it holds the session's log open for append and writes
+/// to it, and appends to the agent's log, opening it for each line, until the stop file appears. Its run fails when a
+/// write did.
+#[cfg(windows)]
+fn append() {
+    use std::io::Write;
+    let path = |name: &str| PathBuf::from(std::env::var_os(name).unwrap());
+    let (agent, stop) = (path(AGENT_LOG), path(STOP));
+    let mut log = OpenOptions::new().append(true).open(path(LOG)).unwrap();
+    fs::write(path(READY), "").unwrap();
+    let mut failed = 0;
+    while !stop.exists() {
+        failed += usize::from(log.write_all(b"{}\n").is_err());
+        let line = OpenOptions::new().append(true).open(&agent).and_then(|mut file| file.write_all(b"{}\n"));
+        failed += usize::from(line.is_err());
+    }
+    assert_eq!(failed, 0, "writes failed while Laci checked");
+}
+
+/// With no file to hold, history is idle: a source that is gone, and an empty folder.
+#[cfg(windows)]
+#[test]
+fn history_without_files_is_idle_on_windows() {
+    let (_temp, root) = folder();
+    let empty = root.join("empty");
+    fs::create_dir(&empty).unwrap();
+    platform::ensure_idle(&[root.join("gone")]).unwrap();
+    platform::ensure_idle(&[empty]).unwrap();
+}
+
+#[cfg(windows)]
+const LONG: &str = "a_long_path_in_history_is_checked_or_refused_on_windows";
+
+/// A file whose path is longer than MAX_PATH can be named to Restart Manager only in the `\\?\` spelling, which Laci
+/// uses once it has seen Restart Manager read it. Either way a program holding such a file never lets the history
+/// through: it is found, or the history is refused for its long path.
+#[cfg(windows)]
+#[test]
+fn a_long_path_in_history_is_checked_or_refused_on_windows() {
+    use std::os::windows::ffi::OsStrExt;
+    if support::role().is_some() {
+        return append();
+    }
+    let (_temp, root) = folder();
+    let history = root.join("history");
+    let deep = history.join("d".repeat(120)).join("e".repeat(120));
+    fs::create_dir_all(&deep).unwrap();
+    let log = deep.join("session.jsonl");
+    assert!(log.as_os_str().encode_wide().count() >= 260, "past MAX_PATH");
+    fs::write(&log, "{}\n").unwrap();
+    let (agent_log, ready, stop) = (root.join("agent.jsonl"), root.join("ready"), root.join("stop"));
+    fs::write(&agent_log, "{}\n").unwrap();
+    let mut writer = agent(LONG, "append", &root);
+    writer.env(LOG, &log).env(AGENT_LOG, &agent_log).env(READY, &ready).env(STOP, &stop).current_dir(&root);
+    let mut writer = Running(writer.stdout(Stdio::null()).spawn().unwrap());
+    soon("the writer has the log open", || ready.exists().then_some(()));
+    let sources = std::slice::from_ref(&history);
+    let held = platform::ensure_idle(sources).unwrap_err();
+    assert!(held == WRITER || held == restart_manager::TOO_LONG, "{held}");
+    fs::write(&stop, "").unwrap();
+    assert!(writer.0.wait().unwrap().success(), "none of its writes failed");
+    if held == WRITER {
+        eprintln!(r"Restart Manager reads long paths in the \\?\ spelling");
+        soon("idle once the writer is gone", || platform::ensure_idle(sources).ok());
+    } else {
+        eprintln!("Restart Manager wasn't seen reading long paths, so they are refused");
+        assert_eq!(platform::ensure_idle(sources).unwrap_err(), restart_manager::TOO_LONG);
+    }
+}
+
+/// A file whose name Windows changes before it opens it by the plain spelling, such as one that ends in a dot or a
+/// space or is named like a device, can be made only in the `\\?\` spelling. Restart Manager would look at another
+/// file in its place and find nobody holding it, so the history is refused instead.
+#[cfg(windows)]
+#[test]
+fn a_file_windows_reads_as_another_is_refused_on_windows() {
+    let (_temp, root) = folder();
+    for (kind, name) in [("dot", "log."), ("space", "log "), ("device", "aux.jsonl")] {
+        let history = root.join(kind);
+        fs::create_dir(&history).unwrap();
+        fs::write(fs::canonicalize(&history).unwrap().join(name), "{}\n").unwrap();
+        assert_eq!(platform::ensure_idle(&[history]).unwrap_err(), restart_manager::ODD_NAME, "{name:?}");
+    }
+}
+
+#[cfg(windows)]
+const LACI: &str = "another_laci_with_history_open_is_waited_for_on_windows";
+
+/// Another process that runs Laci's program with a log open, such as the desktop app's scan while `laci mcp` cleans
+/// up, is waited for: the check passes once it lets go, and refuses if it keeps the log open past the wait. To the
+/// check, this test binary is Laci's program, so that process is this test binary started again.
+#[cfg(windows)]
+#[test]
+fn another_laci_with_history_open_is_waited_for_on_windows() {
+    if support::role().is_some() {
+        return hold();
+    }
+    let (_temp, root) = folder();
+    let history = root.join("history");
+    fs::create_dir(&history).unwrap();
+    let log = history.join("session.jsonl");
+    fs::write(&log, "{}\n").unwrap();
+    let sources = std::slice::from_ref(&history);
+    let reader = |ready: &Path, stop: &Path| {
+        let mut reader = support::program(LACI, "hold");
+        reader.env(LOG, &log).env(READY, ready).env(STOP, stop).current_dir(&root);
+        let reader = Running(reader.stdout(Stdio::null()).spawn().unwrap());
+        soon("the other Laci has the log open", || ready.exists().then_some(()));
+        reader
+    };
+    let (ready, stop) = (root.join("ready"), root.join("stop"));
+    let mut brief = reader(&ready, &stop);
+    let letting_go = thread::spawn(move || {
+        thread::sleep(Duration::from_secs(1));
+        fs::write(stop, "").unwrap();
+    });
+    let checked = Instant::now();
+    platform::ensure_idle(sources).unwrap();
+    assert!(checked.elapsed() >= Duration::from_millis(900), "not idle while the other Laci had the log open");
+    letting_go.join().unwrap();
+    assert!(brief.0.wait().unwrap().success());
+    let _lasting = reader(&root.join("ready-again"), &root.join("stop-again"));
+    let checked = Instant::now();
+    assert_eq!(platform::ensure_idle(sources).unwrap_err(), WRITER);
+    assert!(checked.elapsed() >= Duration::from_secs(1), "refused once the wait was over");
+}
+
+/// The other Laci in [`another_laci_with_history_open_is_waited_for_on_windows`]: it holds the log open for reading,
+/// as a scan does, until the stop file appears.
+#[cfg(windows)]
+fn hold() {
+    let path = |name: &str| PathBuf::from(std::env::var_os(name).unwrap());
+    let stop = path(STOP);
+    let _log = File::open(path(LOG)).unwrap();
+    fs::write(path(READY), "").unwrap();
+    while !stop.exists() {
+        thread::sleep(Duration::from_millis(10));
+    }
 }

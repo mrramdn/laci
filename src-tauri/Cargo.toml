@@ -13,6 +13,9 @@ workspace = true
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+# A WebDriver server inside the app for scripts/window-smoke.mjs. Test builds only: anyone on this computer could
+# drive a window that has it.
+e2e = ["dep:tauri-plugin-wdio-webdriver"]
 
 [build-dependencies]
 tauri-build.workspace = true
@@ -22,6 +25,9 @@ laci-core = { path = "../crates/laci-core" }
 tauri.workspace = true
 tauri-plugin-single-instance.workspace = true
 tauri-plugin-dialog.workspace = true
+# Without `zip`: Laci's releases are the plain AppImage, NSIS installer and .app.tar.gz, never Tauri 1's archives.
+tauri-plugin-updater = { version = "2.14", default-features = false, features = ["rustls-tls", "system-proxy"] }
+tauri-plugin-wdio-webdriver = { version = "1.5", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 clap.workspace = true
@@ -30,6 +36,10 @@ rmcp.workspace = true
 portable-pty.workspace = true
 notify.workspace = true
 regex.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# The mock runtime, so update.rs tests the real updater against feeds of its own.
+tauri = { workspace = true, features = ["test"] }
+base64 = "0.22"

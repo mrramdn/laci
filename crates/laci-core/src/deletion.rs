@@ -93,7 +93,8 @@ fn check(dir: &Path) -> Result<String> {
         .find(|n| *n == "origin")
         .or_else(|| names.lines().next())
         .ok_or("This project has no remote backup")?;
-    let url = git(dir, &["remote", "get-url", remote])?;
+    // `--end-of-options` so a remote name read from the repository is always the name argument, never an option.
+    let url = git(dir, &["remote", "get-url", "--end-of-options", remote])?;
     if url.starts_with("file://") {
         return Err("File URL backups cannot be verified safely. Use a network remote or a plain local backup path outside this project.".into());
     }

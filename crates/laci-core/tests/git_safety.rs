@@ -1,5 +1,5 @@
 //! A scanned folder is not trusted. Reading its Git state must not start anything its own settings name.
-use laci_core::readers::git_info;
+use laci_core::readers::{git_info, health};
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
@@ -107,4 +107,53 @@ fn an_untracked_notes_file_is_not_a_change() {
     assert_eq!(git_info(&dir).unwrap()["dirty"], 0);
     fs::write(dir.join("draft.txt"), "real work\n").unwrap();
     assert_eq!(git_info(&dir).unwrap()["dirty"], 1);
+}
+
+/// One more commit on `dir`, so a later tag has something to count since.
+fn commit(dir: &Path, body: &str) {
+    fs::write(dir.join("notes.txt"), format!("{body}\n")).unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-qm", body]);
+}
+
+#[test]
+fn a_tag_named_like_an_option_does_not_make_the_health_read_touch_a_file() {
+    // A ref name cannot contain a path component that begins with a dot, so the sentinel lives under a
+    // plain prefix rather than tempfile's default `.tmp…`.
+    let home = tempfile::Builder::new().prefix("laci-tag").tempdir().unwrap();
+    let sentinel = home.path().join("sentinel");
+    fs::write(&sentinel, "ORIGINAL").unwrap();
+
+    let dir = home.path().join("project/evil-tag");
+    repo(&dir);
+    git(&dir, &["tag", "v1.0.0"]);
+    commit(&dir, "second");
+    // The kind of tag a repository can carry: a name that begins with a dash and names a file. Made with
+    // update-ref, beside the normal tag, and left as the one nearest HEAD so `describe` reports it.
+    let evil = format!("refs/tags/--output={}", sentinel.display());
+    git(&dir, &["update-ref", &evil, "HEAD"]);
+
+    let out = health(&dir);
+    assert_eq!(
+        fs::read_to_string(&sentinel).unwrap(),
+        "ORIGINAL",
+        "the health read wrote to a file through a tag name"
+    );
+    // The read still finished and produced a release block, rather than failing.
+    assert!(out["release"]["since"].is_u64(), "{:?}", out["release"]);
+}
+
+#[test]
+fn a_normal_tag_is_reported_with_its_date_and_the_count_since() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("project/tagged");
+    repo(&dir);
+    git(&dir, &["tag", "v1.0.0"]);
+    commit(&dir, "second");
+    commit(&dir, "third");
+
+    let out = health(&dir);
+    assert_eq!(out["release"]["tag"], "v1.0.0");
+    assert_eq!(out["release"]["since"], 2);
+    assert!(out["release"]["tagAt"].as_str().is_some_and(|at| at.starts_with("20")), "{:?}", out["release"]["tagAt"]);
 }

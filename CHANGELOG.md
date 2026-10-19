@@ -4,6 +4,18 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-10-20
+
+A security update for anyone who opens projects they didn't make themselves.
+
+### Security
+
+- Laci gives the programs it runs the names it reads from a project, such as Git tags, remotes and branches, always as names, never as options.
+
+### Changed
+
+- A package script whose name begins with a dash is no longer started from Laci; run it from a terminal.
+
 ## [2.5.1] - 2026-10-16
 
 MCP answers an agent can read in full, and an archive that no longer trips over Laci's own Git.

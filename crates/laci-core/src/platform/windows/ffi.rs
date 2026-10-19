@@ -116,96 +116,142 @@ pub fn file_info(file: &File) -> io::Result<FileInfo> {
     Ok(FileInfo { written: basic.LastWriteTime, changed: basic.ChangeTime, volume, file: index })
 }
 
-use windows_sys::Win32::{
-    Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS},
-    System::RestartManager::{
-        CCH_RM_SESSION_KEY, RM_PROCESS_INFO, RM_UNIQUE_PROCESS, RmEndSession, RmGetList, RmRegisterResources,
-        RmStartSession,
+use std::{
+    ffi::OsString,
+    fs::OpenOptions,
+    os::windows::{
+        ffi::OsStringExt,
+        fs::OpenOptionsExt,
+        io::{FromRawHandle, OwnedHandle},
+    },
+    path::PathBuf,
+};
+use windows_sys::{
+    Wdk::Storage::FileSystem::{FileProcessIdsUsingFileInformation, NtQueryInformationFile},
+    Win32::{
+        Foundation::{
+            ERROR_INVALID_PARAMETER, STATUS_BUFFER_OVERFLOW, STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS, WAIT_OBJECT_0,
+        },
+        Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE,
+        },
+        System::{
+            IO::IO_STATUS_BLOCK,
+            Threading::{
+                OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+                QueryFullProcessImageNameW, WaitForSingleObject,
+            },
+        },
     },
 };
 
-/// A Restart Manager session, which tells which processes have the files registered with it open. Windows answers
-/// from what it knows of each file, without opening it for reading or writing, so a program that writes to one
-/// meanwhile can't fail because of the question. Windows allows only so many sessions at once, so dropping this ends
-/// it, also on every early return.
-pub struct RestartSession(u32);
-
-/// What [`RestartSession::list`] found: each process that has a registered file open, as its id and start time, and
-/// Restart Manager's reboot reasons (RM_REBOOT_REASON bits), which also tell what it couldn't look into.
-pub struct InUse {
-    pub processes: Vec<RM_UNIQUE_PROCESS>,
-    pub reasons: u32,
-}
-
-impl RestartSession {
-    /// A new session. Any failure is an error, also when as many sessions run as Windows allows.
-    pub fn start() -> io::Result<Self> {
-        let (mut handle, mut key) = (0, [0u16; CCH_RM_SESSION_KEY as usize + 1]);
-        // SAFETY: `handle` and `key` live until the call returns. `key` has room for the CCH_RM_SESSION_KEY
-        // characters of the session key and its NUL, all the call writes there, and the flags must be 0.
-        let error = unsafe { RmStartSession(&mut handle, 0, key.as_mut_ptr()) };
-        if error != ERROR_SUCCESS {
-            return Err(io::Error::from_raw_os_error(error as i32));
-        }
-        Ok(Self(handle))
-    }
-
-    /// Registers the files `names` name, each in UTF-16 without the NUL that ends it, in one call. Restart Manager
-    /// reads each name as Windows does, so the caller spells it for that. Called again, it adds to what the session
-    /// has.
-    pub fn register(&mut self, names: &[Vec<u16>]) -> io::Result<()> {
-        let names = names.iter().map(|name| terminated(name)).collect::<io::Result<Vec<_>>>()?;
-        let pointers: Vec<*const u16> = names.iter().map(|name| name.as_ptr()).collect();
-        let count = u32::try_from(pointers.len()).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
-        // SAFETY: `pointers` holds `count` pointers, each to a NUL-terminated UTF-16 buffer in `names`, and both live
-        // until the call returns, which only reads them. No processes or services are registered, so those arrays
-        // are null, with a count of 0.
-        let error = unsafe { RmRegisterResources(self.0, count, pointers.as_ptr(), 0, ptr::null(), 0, ptr::null()) };
-        if error != ERROR_SUCCESS {
-            return Err(io::Error::from_raw_os_error(error as i32));
-        }
-        Ok(())
-    }
-
-    /// The processes that have a registered file open. One that opens a file between the call that counts them and
-    /// the call that lists them leaves the list too small, so it is asked for again with more room, a few times at
-    /// most. Called again, it looks again.
-    pub fn list(&self) -> io::Result<InUse> {
-        let mut room = 0;
-        for _ in 0..4 {
-            let mut found = vec![RM_PROCESS_INFO::default(); room as usize];
-            let (mut needed, mut filled, mut reasons) = (0, room, 0);
-            let buffer = if found.is_empty() { ptr::null_mut() } else { found.as_mut_ptr() };
-            // SAFETY: `needed`, `filled` and `reasons` live until the call returns. `buffer` is null while `filled`
-            // is 0, and otherwise points to `found`, which lives until the call returns and holds `filled`
-            // RM_PROCESS_INFO, so the call writes inside it. Every bit pattern is a valid RM_PROCESS_INFO.
-            let error = unsafe { RmGetList(self.0, &mut needed, &mut filled, buffer, &mut reasons) };
-            match error {
-                ERROR_SUCCESS => {
-                    found.truncate(filled as usize);
-                    return Ok(InUse { processes: found.iter().map(|info| info.Process).collect(), reasons });
-                }
-                ERROR_MORE_DATA => room = needed.saturating_add(8),
-                error => return Err(io::Error::from_raw_os_error(error as i32)),
+/// The processes that have the file at `path` open, reading or writing alike, as NTFS lists them
+/// (FileProcessIdsUsingFileInformation). The file is opened only to read its attributes and shares everything, so it
+/// is the file `path` names, a link itself rather than where it leads, and no other program's open, read or write
+/// fails because of the question. NTFS still counts that open as any other while it lasts, which is one query: a
+/// program that replaces the file meanwhile by renaming another file onto it, or that creates it anew after deleting
+/// it without POSIX semantics, can fail with ERROR_ACCESS_DENIED. A file system that can't list them, as some network
+/// shares can't, is an error.
+pub fn processes_using(path: &Path) -> io::Result<Vec<u32>> {
+    let file = OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+    // Room for this many processes at first, and four times as many again after an answer that doesn't fit, a few
+    // times at most.
+    let mut room = 64;
+    for _ in 0..4 {
+        // FILE_PROCESS_IDS_USING_FILE_INFORMATION: a u32 count, then the ids, a usize each, from the second usize on.
+        // The count starts as all ones, more than there is room for, so an answer that doesn't write it is refused.
+        let mut found = vec![0usize; 1 + room];
+        found[0] = usize::MAX;
+        let size =
+            u32::try_from(size_of_val(found.as_slice())).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let mut status = IO_STATUS_BLOCK::default();
+        // SAFETY: the handle stays open while `file` lives, past the call. `found` lives until the call returns, is
+        // aligned for usize as the structure needs and `size` bytes long, so the call writes inside it, and `status`
+        // is an IO_STATUS_BLOCK that lives until it returns. The handle isn't open for overlapped I/O, so nothing is
+        // written once the call has returned.
+        let answer = unsafe {
+            NtQueryInformationFile(
+                file.as_raw_handle(),
+                &mut status,
+                found.as_mut_ptr().cast(),
+                size,
+                FileProcessIdsUsingFileInformation,
+            )
+        };
+        match answer {
+            STATUS_SUCCESS => {
+                let [a, b, c, d, ..] = found[0].to_ne_bytes();
+                let count = usize::try_from(u32::from_ne_bytes([a, b, c, d])).unwrap_or(usize::MAX);
+                let ids =
+                    found.get(1..=count).ok_or_else(|| io::Error::other("NTFS listed more processes than fit"))?;
+                return ids
+                    .iter()
+                    .map(|&id| u32::try_from(id).map_err(|_| io::Error::other("Not a process id")))
+                    .collect();
+            }
+            STATUS_INFO_LENGTH_MISMATCH | STATUS_BUFFER_OVERFLOW => room *= 4,
+            answer => {
+                return Err(io::Error::other(format!(
+                    "NTFS couldn't list the processes using a file ({answer:#010x})"
+                )));
             }
         }
-        Err(io::Error::other("The list of processes kept growing"))
     }
+    Err(io::Error::other("The list of processes using a file kept growing"))
 }
 
-impl Drop for RestartSession {
-    fn drop(&mut self) {
-        // SAFETY: RmEndSession takes the handle by value and reads no memory of Laci's. The handle is the session
-        // `start` began, and only this ends it.
-        unsafe { RmEndSession(self.0) };
-    }
+/// What Windows tells of the program a process runs, in [`process_program`].
+pub enum Program {
+    /// The program, as Windows recorded it when the process started.
+    Known(PathBuf),
+    /// No process has the id any more, or the one that has it has ended.
+    Ended,
+    /// The process hasn't ended but doesn't tell its program: one that is ending no longer can for a while, before
+    /// Windows marks it ended, and some of Windows' own processes never can.
+    Untold,
 }
 
-/// `name` with the NUL that ends a string for the Windows API. An empty name names no file, and a NUL inside one would
-/// end it early, so either is an error.
-fn terminated(name: &[u16]) -> io::Result<Vec<u16>> {
-    if name.is_empty() || name.contains(&0) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "A file name is empty or holds a NUL character"));
+/// What Windows tells of the program process `pid` runs. The handle it is asked through keeps the id from going to
+/// another process meanwhile. A process Laci may not open, as it may not one of another user's, is an error.
+pub fn process_program(pid: u32) -> io::Result<Program> {
+    // SAFETY: OpenProcess reads no memory of Laci's: it takes the rights wanted, whether the handle is inherited (no)
+    // and the id.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE, 0, pid) };
+    if handle.is_null() {
+        let error = io::Error::last_os_error();
+        // ERROR_INVALID_PARAMETER: no process has this id now.
+        return if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+            Ok(Program::Ended)
+        } else {
+            Err(error)
+        };
     }
-    Ok(name.iter().copied().chain(iter::once(0)).collect())
+    // SAFETY: `handle` is the process handle OpenProcess just opened, which nothing else has, so `process` owns it and
+    // closes it once, when dropped.
+    let process = unsafe { OwnedHandle::from_raw_handle(handle) };
+    // The longest path Windows has, in UTF-16 units.
+    let mut length: u32 = 32_768;
+    let mut name = vec![0u16; length as usize];
+    // SAFETY: the handle stays open while `process` lives, past the call. `name` lives until the call returns and holds
+    // `length` UTF-16 units, the most the call writes, its NUL included; `length` is a u32 that lives until it returns,
+    // and the call puts there how many units it wrote.
+    let read = unsafe {
+        QueryFullProcessImageNameW(process.as_raw_handle(), PROCESS_NAME_WIN32, name.as_mut_ptr(), &mut length)
+    };
+    // Asked after the program, so a process that ended meanwhile counts as ended, whatever it told.
+    // SAFETY: the handle stays open while `process` lives and has SYNCHRONIZE, which waiting on it needs. The wait
+    // takes no time: it only tells whether the process has ended.
+    if unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } == WAIT_OBJECT_0 {
+        return Ok(Program::Ended);
+    }
+    if read == 0 {
+        return Ok(Program::Untold);
+    }
+    name.truncate(length as usize);
+    Ok(Program::Known(PathBuf::from(OsString::from_wide(&name))))
 }

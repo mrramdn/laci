@@ -35,10 +35,17 @@ pub fn link_dir(target: &Path, link: &Path) {
     #[cfg(windows)]
     {
         if std::os::windows::fs::symlink_dir(target, link).is_err() {
-            let made = Command::new("cmd").args(["/c", "mklink", "/J"]).arg(link).arg(target).output().unwrap();
-            assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+            junction(target, link);
         }
     }
+}
+
+/// Makes `link` a junction to the folder `target`, as pnpm fills node_modules on Windows. Unlike a symlink, a
+/// junction needs no privilege, and it holds the full path of where it leads.
+#[cfg(windows)]
+pub fn junction(target: &Path, link: &Path) {
+    let made = Command::new("cmd").args(["/c", "mklink", "/J"]).arg(link).arg(target).output().unwrap();
+    assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
 }
 
 /// Makes `link` a link to the file `target`. On Windows this needs Developer Mode or an administrator.

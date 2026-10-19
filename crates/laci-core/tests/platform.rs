@@ -434,12 +434,21 @@ mod windows {
         let before = id(&a);
         fs::rename(&a, root.join("moved")).unwrap();
         assert_eq!(id(&root.join("moved")), before, "a file keeps its identity when renamed");
-        let (dir, link) = (root.join("dir"), root.join("link"));
+        let (dir, link, junction) = (root.join("dir"), root.join("link"), root.join("junction"));
         fs::create_dir(&dir).unwrap();
         support::link_dir(&dir, &link);
-        assert_eq!(id(&link), id(&dir), "a link is followed");
-        let error = platform::identity(&link, &fs::symlink_metadata(&link).unwrap()).unwrap_err();
-        assert_eq!(error, "Laci can't tell links apart on Windows yet", "the link itself");
+        // pnpm's links, which need no privilege.
+        support::junction(&dir, &junction);
+        // The link itself, as `symlink_metadata` reads it, and never what it leads to.
+        let own = |path: &Path| platform::identity(path, &fs::symlink_metadata(path).unwrap()).unwrap();
+        for link in [&link, &junction] {
+            assert_eq!(id(link), id(&dir), "a link is followed");
+            assert_ne!(own(link), id(&dir), "the link itself");
+            assert_eq!(own(link), own(link));
+            let stamp = platform::change_stamp(link, &fs::symlink_metadata(link).unwrap()).unwrap();
+            assert_eq!(stamp.identity, own(link), "the link's own times come with its identity");
+        }
+        assert_ne!(own(&link), own(&junction));
     }
 
     #[test]

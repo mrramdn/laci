@@ -28,11 +28,11 @@ use windows_sys::Win32::Storage::FileSystem::{
 pub const IDENTITY_FIELDS: [&str; 2] = ["volume", "file"];
 
 /// The volume serial number and the file ID from FILE_ID_INFO, whose 128 bits tell files on ReFS and Dev Drives apart
-/// too. Volumes without it give the 64-bit file index. file-id reads through a link, so asking about a link itself
-/// fails.
+/// too. Volumes without it give the 64-bit file index. file-id reads through a link, so a link itself, as `meta` from
+/// `symlink_metadata` shows it, is read by [`link_stamp`].
 pub fn identity(path: &Path, meta: &Metadata) -> Result<Identity> {
     if meta.is_symlink() {
-        return Err(not_yet("tell links apart"));
+        return Ok(link_stamp(path)?.identity);
     }
     Ok(match file_id::get_file_id(path).map_err(|e| e.to_string())? {
         FileId::HighRes { volume_serial_number, file_id } => Identity { volume: volume_serial_number, file: file_id },
@@ -45,16 +45,32 @@ pub fn identity(path: &Path, meta: &Metadata) -> Result<Identity> {
 
 /// The write and change times from FILE_BASIC_INFO, which stable std doesn't give, and the file's identity from the
 /// same open handle. Opening a folder takes FILE_FLAG_BACKUP_SEMANTICS, and reading attributes only never stands in
-/// another program's way. As with [`identity`], a link itself is refused: opening it would read what it leads to.
+/// another program's way. As with [`identity`], a link itself is read by [`link_stamp`].
 pub fn change_stamp(path: &Path, meta: &Metadata) -> Result<Stamp> {
     if meta.is_symlink() {
-        return Err(not_yet("tell links apart"));
+        return link_stamp(path);
     }
     let file = OpenOptions::new()
         .access_mode(FILE_READ_ATTRIBUTES)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(path)
         .map_err(|e| e.to_string())?;
+    stamp(&file)
+}
+
+/// The stamp of the link at `path` itself, a symlink or a junction such as pnpm fills node_modules with, as Linux and
+/// macOS read a link's own inode. FILE_FLAG_OPEN_REPARSE_POINT opens the link, not what it leads to, and only its
+/// attributes are read. A path that is no link by the time it opens was replaced after it was looked at, and is
+/// refused.
+fn link_stamp(path: &Path) -> Result<Stamp> {
+    let file = OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    if !file.metadata().map_err(|e| e.to_string())?.is_symlink() {
+        return Err("The link changed while Laci read it".into());
+    }
     stamp(&file)
 }
 

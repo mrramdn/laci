@@ -436,16 +436,19 @@ function StartDialog({
 }: {
   request: Extract<NonNullable<Modal>, { kind: "agent" }>;
 }) {
-  const s = useApp();
-  const providers = agentProviders(s.snapshot?.connectors ?? []);
+  const snapshot = useApp((s) => s.snapshot);
+  const providers = agentProviders(snapshot?.connectors ?? []);
   const [draft, setDraft] = useState(() => ({
-    ...agentDraft(request.provider ?? providers[0]?.value, s.terminalTarget),
+    ...agentDraft(
+      request.provider ?? providers[0]?.value,
+      useApp.getState().terminalTarget,
+    ),
     prompt: request.prompt ?? "",
   }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const session = request.sessionId
-    ? allSessions(s.snapshot!).find(
+    ? allSessions(snapshot!).find(
         (session) =>
           session.provider === request.provider &&
           session.sessionId === request.sessionId,
@@ -468,7 +471,7 @@ function StartDialog({
           useApp.setState({ modal: null });
           toast(
             request.sessionId ? "Session resumed" : "Agent started",
-            providerName(s.snapshot, draft.provider),
+            providerName(snapshot, draft.provider),
           );
         } finally {
           setSaving(false);
@@ -482,7 +485,7 @@ function StartDialog({
     <DialogFrame
       title={
         request.sessionId
-          ? `Resume ${providerName(s.snapshot, request.provider)}`
+          ? `Resume ${providerName(snapshot, request.provider)}`
           : "Start an agent"
       }
       description={
@@ -499,7 +502,7 @@ function StartDialog({
             className={error ? "err" : "mono"}
             role={error ? "alert" : undefined}
           >
-            {error || tilde(request.projectPath, s.snapshot!.home)}
+            {error || tilde(request.projectPath, snapshot!.home)}
           </p>
           <button
             type="button"

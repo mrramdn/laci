@@ -8,9 +8,11 @@ import {
   Group,
   Expand,
 } from "../common";
-import { useApp, run, toast } from "../store";
+import { useApp, run, setDesign } from "../store";
 import { useNow } from "../clock";
 import { BackupNotice } from "../backup";
+import { LookThumb } from "../looks";
+import { views } from "../words";
 import {
   deadlinesOf,
   latestReport,
@@ -24,6 +26,7 @@ import {
 } from "../helpers";
 import { DeadlinePill } from "../deadline";
 import { api } from "../api";
+import { closeReportItem } from "../actions";
 import { requestResume } from "../session-ui";
 import { askAgent } from "../agent-launch";
 import type { Node } from "../types";
@@ -78,6 +81,8 @@ export function Today() {
           <h1>Today</h1>
         </div>
         <div className="body">
+          {/* Laci 2 let every folder stay unticked: that upgrade is offered Simple too. */}
+          <TrySimple />
           <div className="empty-box">
             <Icon name="folder" />
             <b>No folders selected yet</b>
@@ -159,6 +164,7 @@ export function Today() {
               </div>
             </div>
           ))}
+        <TrySimple />
         {deadlines.length ? (
           <Group
             title="Deadlines"
@@ -460,6 +466,40 @@ export function Today() {
     </>
   );
 }
+/**
+ * The one card that offers Simple, to someone who set Laci up before it had two designs and hasn't
+ * chosen one since. Either button saves a choice, so it never comes back: Try switches to Simple,
+ * and No thanks keeps Detailed and leaves the focus on Today.
+ */
+export function TrySimple() {
+  const offer = useApp((s) => s.designOffer);
+  if (!offer) return null;
+  return (
+    <div className="callout look-offer" data-ui="design-offer">
+      <LookThumb design="simple" />
+      <div className="txt">
+        <b>{views.offerTitle}</b>
+        <p>
+          {views.offerBody} {views.anyTime}
+        </p>
+      </div>
+      <div className="acts">
+        <button className="btn sm primary" onClick={() => setDesign("simple")}>
+          {views.offerTry}
+        </button>
+        <button
+          className="btn sm ghost"
+          onClick={() => {
+            if (setDesign("detailed"))
+              document.getElementById("main")?.focus({ preventScroll: true });
+          }}
+        >
+          {views.offerNo}
+        </button>
+      </div>
+    </div>
+  );
+}
 /** What the project's latest report left open; a click shows the report. */
 function ReportOpen({ node }: { node: Node }) {
   const snapshot = useApp((s) => s.snapshot!);
@@ -492,14 +532,7 @@ function ReportOpen({ node }: { node: Node }) {
         aria-label={`Close as done: ${report.open[0]}`}
         onClick={(event) => {
           event.stopPropagation();
-          void run(async () => {
-            await api("report/close", {
-              report: report.id,
-              item: 1,
-              state: "done",
-            });
-            toast("Closed in the report", report.open[0]);
-          });
+          void closeReportItem(report.id, report.open[0], "done");
         }}
       >
         <Icon name="check" className="sm" />

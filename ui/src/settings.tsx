@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { api, errorText } from "./api";
 import {
   agentInstruction,
@@ -17,16 +17,31 @@ import { OS } from "./platform";
 import { Select } from "./select";
 import { LaciMark } from "./brand";
 import { Icon } from "./common";
-import { useApp, acknowledge, changed, copyText, rescan, run } from "./store";
+import { LookPicker } from "./looks";
+import {
+  useApp,
+  acknowledge,
+  changed,
+  chooseDesign,
+  copyText,
+  rescan,
+  run,
+  setDesign,
+  setTheme,
+  urlOpen,
+} from "./store";
+import type { Theme } from "./store";
 import { useNow } from "./clock";
 import type {
   Apps,
   Change,
+  Design,
   Prefs,
   SetupInfo,
   Snapshot,
   TerminalTarget,
 } from "./types";
+import { firstRun, views } from "./words";
 /** Where another drive is found, for the examples of a path. */
 const OTHER_DRIVE =
   OS === "windows" ? "D:\\" : OS === "macos" ? "/Volumes" : "/mnt";
@@ -35,33 +50,122 @@ const USUAL_CONFIG_PATH =
   OS === "windows"
     ? "~\\AppData\\Local\\io.github.mrramdn.laci\\config.json"
     : "~/.config/laci/config.json";
-let configPathSaid: string | undefined;
-/** Where config.json is, as the desktop says. It keeps the file's usual place until it has. */
-export function useConfigPath() {
-  const [said, setSaid] = useState(configPathSaid);
+let prefsSaid: Prefs | undefined;
+/**
+ * The saved choices, as the desktop gave them when first asked; undefined until it answers. `fresh`
+ * asks again: first run can come back in the same session (an Undo of its setup), after the choices
+ * it preselects were saved.
+ */
+function usePrefs(fresh = false) {
+  const [said, setSaid] = useState(fresh ? undefined : prefsSaid);
   useEffect(() => {
     if (said !== undefined) return;
     let live = true;
     void api<Prefs>("prefs").then(
       (prefs) => {
-        configPathSaid = prefs.configPath;
-        if (live) setSaid(prefs.configPath);
+        prefsSaid = prefs;
+        if (live) setSaid(prefs);
       },
       () => {
-        // The usual place stays: it is only a hint.
+        // Nothing to show instead: every use of it is only a hint.
       },
     );
     return () => {
       live = false;
     };
   }, [said]);
-  return said || USUAL_CONFIG_PATH;
+  return said;
+}
+/** Where config.json is, as the desktop says. It keeps the file's usual place until it has. */
+export function useConfigPath() {
+  return usePrefs()?.configPath || USUAL_CONFIG_PATH;
+}
+type Updates = NonNullable<Prefs["updates"]>;
+/**
+ * What first run says about this computer, once the desktop tells `setup/info`: `git` is false when
+ * no Git can be run (on macOS, without Apple's command line tools), and `translocated` is true when
+ * macOS runs Laci from where it was downloaded instead of from Applications. The engine doesn't send
+ * them yet (the port's steps P6 and P10 add them), so until it does neither note shows.
+ */
+type ThisComputer = { git?: boolean; translocated?: boolean };
+/** The program a missing `git` asks for, where to get it, and how macOS installs it. */
+const GIT = "Git";
+const GIT_DOWNLOADS = "https://git-scm.com/downloads";
+const MAC_INSTALL = "xcode-select --install";
+/** The settings Save and rescan sends, the folders as full paths. */
+interface Setup {
+  roots: Set<string>;
+  archiveDir: string;
+  reportsDir: string;
+  presets: Set<string>;
+  apps: Apps;
+  terminalTarget: TerminalTarget;
+}
+/**
+ * Whether saving `now` would change what `saved` holds. The order of folders and tools doesn't
+ * count.
+ */
+function changedSetup(now: Setup, saved: Setup) {
+  const same = (a: Set<string>, b: Set<string>) =>
+    a.size === b.size && [...a].every((value) => b.has(value));
+  return (
+    !same(now.roots, saved.roots) ||
+    now.archiveDir !== saved.archiveDir ||
+    now.reportsDir !== saved.reportsDir ||
+    !same(now.presets, saved.presets) ||
+    now.apps.editor !== saved.apps.editor ||
+    now.apps.files !== saved.apps.files ||
+    now.apps.terminal !== saved.apps.terminal ||
+    now.terminalTarget !== saved.terminalTarget
+  );
+}
+/** Saves whether Laci looks for new versions. Returns why it couldn't, or "" once it has. */
+async function saveUpdates(updates: Updates) {
+  try {
+    await api<Prefs>("updates", { updates });
+    return "";
+  } catch (error) {
+    return `${firstRun.updatesFailed}: ${errorText(error)}`;
+  }
+}
+/**
+ * First run gives way to the window once it is saved or skipped, and the button that did it goes
+ * with it. The focus then goes to the window's page as soon as it is drawn (its code may still be
+ * loading), unless something has taken it meanwhile.
+ */
+function focusTheWindowOnceDrawn() {
+  if (typeof MutationObserver === "undefined") return;
+  const land = () => {
+    const main = document.getElementById("main");
+    if (!main || main.classList.contains("setup")) return false;
+    const focused = document.activeElement;
+    if (!focused || focused === document.body || !focused.isConnected)
+      main.focus({ preventScroll: true });
+    return true;
+  };
+  if (land()) return;
+  const observer = new MutationObserver(() => {
+    if (land()) observer.disconnect();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
 }
 export function Settings({ first = false }: { first?: boolean }) {
   const s = useApp();
   const snapshot = s.snapshot!;
-  const configPath = useConfigPath();
-  const [info, setInfo] = useState<SetupInfo | null>(null);
+  // When first run goes, the focus goes to the window drawn in its place.
+  useEffect(() => (first ? focusTheWindowOnceDrawn : undefined), [first]);
+  const prefs = usePrefs(first);
+  const configPath = prefs?.configPath || USUAL_CONFIG_PATH;
+  // First run: until one is picked, the design is the one the window shows (Simple for a new install,
+  // or another the palette switched to), and the choice about new versions the saved one, else once
+  // a day.
+  const [lookPicked, setLook] = useState<Design | null>(null);
+  const look = lookPicked ?? s.design;
+  const [updatesPicked, setUpdates] = useState<Updates | null>(null);
+  const updates = updatesPicked ?? prefs?.updates ?? "daily";
+  const lookTitle = useId();
+  const updatesTitle = useId();
+  const [info, setInfo] = useState<(SetupInfo & ThisComputer) | null>(null);
   const [roots, setRoots] = useState<Set<string>>(new Set());
   const [presets, setPresets] = useState<Set<string>>(new Set());
   const [extra, setExtra] = useState<string[]>([]);
@@ -75,13 +179,25 @@ export function Settings({ first = false }: { first?: boolean }) {
   const [reportsDir, setReportsDir] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  /** What is saved, as this page last read or saved it. */
+  const [saved, setSaved] = useState<Setup | null>(null);
   const retryScan = first && s.setupPending && Boolean(s.error);
+  /** A typed folder as an absolute path, with ~ expanded. */
+  const full = (raw: string) => expandHome(trimSep(raw.trim()), snapshot.home);
   useEffect(() => {
     let live = true;
     void api<SetupInfo>("setup/info").then(
       (info) => {
         if (!live) return;
         setInfo(info);
+        setSaved({
+          roots: new Set(info.roots),
+          archiveDir: full(info.archiveDir ?? ""),
+          reportsDir: full(info.reportsDir ?? ""),
+          presets: new Set(info.presets),
+          apps: info.apps,
+          terminalTarget: info.terminalTarget ?? "internal",
+        });
         setRoots(new Set(info.roots));
         setArchiveDir(info.archiveDir ?? "");
         setReportsDir(info.reportsDir ?? "");
@@ -136,8 +252,26 @@ export function Settings({ first = false }: { first?: boolean }) {
     else next.add(value);
     setter(next);
   }
-  /** A typed folder as an absolute path, with ~ expanded. */
-  const full = (raw: string) => expandHome(trimSep(raw.trim()), snapshot.home);
+  // Changes waiting for Save and rescan: a switch of design draws the other design's Settings
+  // without them, so it waits for them. First run stays on the screen through a switch.
+  const unsaved =
+    !first &&
+    saved !== null &&
+    changedSetup(
+      {
+        roots,
+        archiveDir: full(archiveDir),
+        reportsDir: full(reportsDir),
+        presets,
+        apps,
+        terminalTarget,
+      },
+      saved,
+    );
+  useEffect(() => {
+    useApp.setState({ settingsDirty: unsaved });
+    return () => useApp.setState({ settingsDirty: false });
+  }, [unsaved]);
   async function save() {
     const archivePath = full(archiveDir);
     if (archivePath && !isAbsolutePath(archivePath)) {
@@ -151,6 +285,8 @@ export function Settings({ first = false }: { first?: boolean }) {
       setError("Use a full reports folder path like ~/notes/agent-reports");
       return;
     }
+    // The design is saved before the setup, so the window first run opens on is the one picked.
+    if (first && !chooseDesign(look)) return;
     await run(
       async () => {
         setSaving(true);
@@ -166,7 +302,23 @@ export function Settings({ first = false }: { first?: boolean }) {
             apps,
             terminalTarget,
           });
-          changed(result, first ? "All set" : "Settings saved");
+          // The choice about new versions is the person's own: saved with the setup, never by Skip.
+          // A refusal joins the setup's toast, which keeps its Undo.
+          const refused = first ? await saveUpdates(updates) : "";
+          changed(
+            refused
+              ? { ...result, warnings: [...(result.warnings ?? []), refused] }
+              : result,
+            first ? "All set" : "Settings saved",
+          );
+          setSaved({
+            roots,
+            archiveDir: archivePath,
+            reportsDir: reportsPath,
+            presets,
+            apps,
+            terminalTarget,
+          });
           useApp.setState({
             apps,
             terminalTarget,
@@ -193,9 +345,9 @@ export function Settings({ first = false }: { first?: boolean }) {
           <span className="logo">
             <LaciMark size={64} />
           </span>
-          <h1>Welcome to laci</h1>
+          <h1>{firstRun.welcome}</h1>
           <p className="lead">
-            laci is a file manager that knows which folders are projects: their
+            Laci is a file manager that knows which folders are projects: their
             git state, README, to-dos and the AI sessions that worked on them.
             Tell it where to look.
           </p>
@@ -205,15 +357,43 @@ export function Settings({ first = false }: { first?: boolean }) {
         <div className="empty">{error || "Loading your settings…"}</div>
       ) : (
         <>
+          {first && OS === "macos" && info.translocated ? (
+            <Note warn title={firstRun.moveTitle}>
+              <p>{firstRun.moveBody}</p>
+            </Note>
+          ) : null}
+          {first && info.git === false ? (
+            <Note warn title={firstRun.installTitle(GIT)}>
+              <p>{firstRun.installBody(GIT)}</p>
+              {OS === "macos" ? (
+                <p>
+                  {firstRun.installMac}{" "}
+                  <code className="mono">{MAC_INSTALL}</code>
+                </p>
+              ) : null}
+              <button
+                className="linkbtn"
+                onClick={() => urlOpen(GIT_DOWNLOADS)}
+              >
+                {firstRun.installLink}
+              </button>
+            </Note>
+          ) : null}
           <section className="sset">
             <h2>
               <span className="num">1</span>Where do you keep projects?
             </h2>
             <p>
-              laci looks for projects in these folders, including mounted
-              drives. You can leave every folder unchecked and browse without
-              scanning.
+              {/* First run writes the name as a name; Detailed's Settings stay as they were. */}
+              {first ? "Laci" : "laci"} looks for projects in these folders,
+              including mounted drives. You can leave every folder unchecked and
+              browse without scanning.
             </p>
+            {first && OS === "macos" ? (
+              <Note title={firstRun.folderAccessTitle}>
+                <p>{firstRun.folderAccess}</p>
+              </Note>
+            ) : null}
             {candidates.map((c) => {
               const unavailable = info.rootStatus?.find(
                 (root) => root.path === c.path && !root.available,
@@ -405,13 +585,61 @@ export function Settings({ first = false }: { first?: boolean }) {
               ))}
             </div>
           </section>
-          {!first ? (
-            <ReportsSetting
-              value={reportsDir}
-              onChange={setReportsDir}
-              draft={full(reportsDir)}
-            />
-          ) : null}
+          {first ? (
+            <>
+              <section className="sset">
+                <h2 id={updatesTitle}>
+                  <span className="num">4</span>
+                  {firstRun.updatesTitle}
+                </h2>
+                <p>{firstRun.updatesSends}</p>
+                <div
+                  className="choices"
+                  role="radiogroup"
+                  aria-labelledby={updatesTitle}
+                  data-ui="updates-choice"
+                >
+                  {(["daily", "off"] as const).map((value) => (
+                    <label className="choice" key={value}>
+                      <input
+                        type="radio"
+                        name="updates"
+                        value={value}
+                        checked={updates === value}
+                        onChange={() => setUpdates(value)}
+                      />
+                      <div>
+                        <b>{firstRun.updates[value]}</b>
+                        <p>{firstRun.updatesNotes[value]}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </section>
+              <section className="sset">
+                <h2 id={lookTitle}>
+                  <span className="num">5</span>
+                  {firstRun.lookTitle}
+                </h2>
+                <p>{views.anyTime}</p>
+                <LookPicker
+                  form
+                  value={look}
+                  onChange={setLook}
+                  labelledBy={lookTitle}
+                />
+              </section>
+            </>
+          ) : (
+            <>
+              <ReportsSetting
+                value={reportsDir}
+                onChange={setReportsDir}
+                draft={full(reportsDir)}
+              />
+              <Appearance />
+            </>
+          )}
         </>
       )}
       <div className="setup-foot">
@@ -429,7 +657,10 @@ export function Settings({ first = false }: { first?: boolean }) {
           <button
             className="btn ghost"
             disabled={saving}
-            onClick={() => useApp.setState({ skipSetup: true })}
+            onClick={() => {
+              // Skipping keeps the design picked, so the first save in Settings can't change it.
+              if (chooseDesign(look)) useApp.setState({ skipSetup: true });
+            }}
           >
             Skip for now
           </button>
@@ -450,21 +681,22 @@ export function Settings({ first = false }: { first?: boolean }) {
               : s.setupPending
                 ? "Scanning your projects…"
                 : first
-                  ? "Start using laci"
+                  ? firstRun.start
                   : "Save and rescan"}
         </button>
       </div>
     </div>
   );
+  // First run is the whole window, so it is the page's main landmark.
   return first ? (
-    <div
+    <main
       className="setup"
       id="main"
       tabIndex={-1}
       inert={Boolean(s.modal || s.palette || s.working)}
     >
       {content}
-    </div>
+    </main>
   ) : (
     <>
       <div className="head">
@@ -546,6 +778,74 @@ function ReportsSetting({
           filled in. Paste it where your agent reads its instructions:
           CLAUDE.md, AGENTS.md or GEMINI.md.
         </small>
+      </div>
+    </section>
+  );
+}
+/**
+ * A note first run shows for this computer. What is missing is amber, with the sign Simple gives
+ * "Soon", so the colour is never the only sign; the rest is plain information.
+ */
+function Note({
+  title,
+  warn = false,
+  children,
+}: {
+  title: string;
+  warn?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`setup-note${warn ? " warn" : ""}`} data-ui="status">
+      <Icon name={warn ? "circle-alert" : "info"} />
+      <div>
+        <b>{title}</b>
+        {children}
+      </div>
+    </div>
+  );
+}
+const THEMES: [Theme, string][] = [
+  ["system", "monitor"],
+  ["light", "sun"],
+  ["dark", "moon"],
+];
+/**
+ * Settings › Appearance: the design and the theme. Both change at once, as the toggles at the foot
+ * of the sidebar do; the rest of Settings waits for Save and rescan.
+ */
+function Appearance() {
+  const design = useApp((s) => s.design);
+  const theme = useApp((s) => s.theme);
+  const title = useId();
+  const view = useId();
+  const themes = useId();
+  return (
+    <section className="sset" aria-labelledby={title} data-ui="appearance">
+      <h2 id={title}>
+        <span className="num">5</span>
+        {views.appearance}
+      </h2>
+      <p>{views.appearanceIntro}</p>
+      <div className="fld">
+        <span id={view}>{views.view}</span>
+        <LookPicker value={design} onChange={setDesign} labelledBy={view} />
+      </div>
+      <div className="fld">
+        <span id={themes}>{views.theme}</span>
+        <div className="look-themes" role="group" aria-labelledby={themes}>
+          {THEMES.map(([value, icon]) => (
+            <button
+              type="button"
+              key={value}
+              aria-pressed={theme === value}
+              onClick={() => setTheme(value)}
+            >
+              <Icon name={icon} />
+              {views.themes[value]}
+            </button>
+          ))}
+        </div>
       </div>
     </section>
   );

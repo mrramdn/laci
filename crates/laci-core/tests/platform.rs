@@ -135,9 +135,7 @@ mod unix {
     }
 
     /// The copy across devices is Laci's own: it stages the copy beside the destination and removes the source only
-    /// once the copy is in place. Undo goes back the same way. Linux only until macOS can tell which programs work in
-    /// a folder (the archive checks that first).
-    #[cfg(target_os = "linux")]
+    /// once the copy is in place. Undo goes back the same way.
     #[test]
     fn an_archive_on_another_device_is_copied_over_and_undone() {
         use laci_core::{config, env::Env, service::Service};
@@ -567,10 +565,6 @@ mod windows {
 /// Until macOS and Windows have their own, these checks fail there: a folder must never pass as "not in use".
 #[cfg(not(target_os = "linux"))]
 #[test]
-fn checks_not_written_for_this_os_fail_instead_of_answering() {
-    let here = std::env::temp_dir();
-    assert!(platform::processes_in(std::slice::from_ref(&here)).is_err());
-    assert!(platform::ensure_idle(std::slice::from_ref(&here)).is_err());
-    assert!(platform::pid_alive(std::process::id()).is_err());
-    assert!(platform::trash(&here.join("missing")).is_err());
+fn the_bin_refuses_what_isnt_there() {
+    assert!(platform::trash(&std::env::temp_dir().join("laci-missing-entry")).is_err());
 }

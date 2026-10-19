@@ -68,6 +68,8 @@ const keyboardFiles = [];
 let session;
 let fixtureHome;
 let originalTheme;
+/** The design config.json held before the suites pinned Detailed: null for none saved, undefined until read. */
+let originalDesign;
 let watchedFile;
 
 async function request(method, route, body, timeout = 180_000) {
@@ -1134,6 +1136,22 @@ async function reloadApp() {
     execute(() => Boolean(document.querySelector(".main .head h1"))),
   );
   await installErrorCollection();
+}
+/** The fixture's config.json. */
+const configFile = () => path.join(fixtureHome, ".config/laci/config.json");
+/**
+ * Puts back the design config.json held before the suites pinned Detailed. The `design` request only
+ * saves one, so a config that had none loses the key again by hand, as a setup from before there were
+ * two designs has it.
+ */
+async function restoreDesign() {
+  if (originalDesign) {
+    await api("design", { design: originalDesign });
+    return;
+  }
+  const saved = JSON.parse(await readFile(configFile(), "utf8"));
+  delete saved.design;
+  await writeFile(configFile(), `${JSON.stringify(saved, null, 2)}\n`);
 }
 
 async function newTerminalUI() {
@@ -3141,13 +3159,29 @@ try {
       "First-run fixture must have no config",
     );
     await check(
-      "First-run wizard saves roots, presets and apps through React",
+      "First-run wizard saves roots, presets, apps, the design and the update choice through React",
       async () => {
         await wait("native onboarding wizard", () =>
-          textContains(".setup h1", "Welcome to laci"),
+          textContains(".setup h1", "Welcome to Laci"),
         );
         await wait("onboarding choices loaded", () =>
           textContains(".setup .sset", "Where do you keep projects?"),
+        );
+        // No design is saved yet: a new install shows first run in Simple's colours, Simple picked.
+        assert.equal(
+          await execute(() => document.documentElement.dataset.design),
+          "simple",
+          "A new install opens in Simple",
+        );
+        assert.equal(
+          await execute(
+            () =>
+              document.querySelector(
+                '.setup [data-ui="design-choice"] input[value="simple"]',
+              )?.checked,
+          ),
+          true,
+          "First run preselects Simple",
         );
         assert.deepEqual(
           current.roots,
@@ -3285,9 +3319,30 @@ try {
           await select(selector, choice);
           selectedApps[kind] = choice;
         }
-        await click(".setup-foot button", "Start using laci", true);
+        // The suites after this one drive Detailed, so first run picks it.
+        await click('.setup [data-ui="design-choice"] input[value="detailed"]');
+        assert.equal(
+          await execute(() => document.documentElement.dataset.design),
+          "simple",
+          "Picking a design changes nothing until the setup is saved",
+        );
+        assert.equal(
+          await execute(
+            () =>
+              document.querySelector(
+                '.setup [data-ui="updates-choice"] input:checked',
+              )?.value,
+          ),
+          "daily",
+          "First run offers to look for new versions once a day",
+        );
+        await click(".setup-foot button", "Start using Laci", true);
         await wait("wizard finished and Today mounted", () =>
           textContains(".main .head h1", "Today"),
+        );
+        assert.equal(
+          await execute(() => document.documentElement.dataset.design),
+          "detailed",
         );
         current = await snapshot();
         assert.equal(current.configured, true);
@@ -3296,11 +3351,16 @@ try {
           current.connectors.filter((connector) => connector.builtin).length,
           presets.length,
         );
-        const saved = JSON.parse(
-          await readFile(
-            path.join(fixtureHome, ".config/laci/config.json"),
-            "utf8",
-          ),
+        const saved = JSON.parse(await readFile(configFile(), "utf8"));
+        assert.equal(
+          saved.design,
+          "detailed",
+          "First run saves the design picked",
+        );
+        assert.equal(
+          saved.updates,
+          "daily",
+          "First run saves the update choice through the `updates` request",
         );
         // A LACI_EDITOR, LACI_FILES or LACI_TERMINAL value is for this run only and is never written.
         assert.deepEqual(
@@ -3352,6 +3412,12 @@ try {
         return latest.configured && !latest.historyPending && latest;
       });
     }
+    // Every suite below drives Detailed. A new install opens in Simple, and an earlier run may have
+    // saved either design, so Detailed is saved and the window reloaded: the page takes the saved
+    // design from `prefs`, since its start-up script keeps the one the window opened with.
+    originalDesign = (await api("prefs")).design ?? null;
+    await api("design", { design: "detailed" });
+    await reloadApp();
     await wait("React app mounted", () =>
       execute(() => Boolean(document.querySelector(".main"))),
     );
@@ -4066,6 +4132,7 @@ try {
         theme: originalTheme === "system" ? "" : originalTheme,
       }).catch(() => {});
     }
+    if (originalDesign !== undefined) await restoreDesign().catch(() => {});
     await command("DELETE", "").catch(() => {});
   }
 }

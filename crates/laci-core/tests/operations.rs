@@ -62,7 +62,7 @@ fn v1(env: &Env, args: &[&str]) -> Value {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn rust_move_can_be_undone_by_v1_without_losing_bytes_or_time() {
     let (_temp, env) = home();
     let (snap, from, to, store, original) = fixture(&env);
@@ -80,7 +80,7 @@ fn rust_move_can_be_undone_by_v1_without_losing_bytes_or_time() {
     assert!(!to.exists());
 }
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn v1_move_can_be_undone_by_rust_without_losing_bytes_or_time() {
     let (_temp, env) = home();
     let (_snap, from, to, store, original) = fixture(&env);
@@ -98,7 +98,7 @@ fn v1_move_can_be_undone_by_rust_without_losing_bytes_or_time() {
     assert!(!to.exists());
 }
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn connectors_move_and_restore_while_mentions_and_inside_history_stay_intact() {
     let (_temp, env) = home();
     let (mut snap, from, to, store, original) = fixture(&env);
@@ -128,7 +128,7 @@ fn connectors_move_and_restore_while_mentions_and_inside_history_stay_intact() {
     assert_eq!(fs::read_to_string(store.join("session.jsonl")).unwrap(), original);
 }
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn failed_history_rewrite_rolls_back_project_and_refuses_symlinks() {
     let (temp, env) = home();
     let (mut snap, from, to, _store, _original) = fixture(&env);
@@ -146,7 +146,7 @@ fn failed_history_rewrite_rolls_back_project_and_refuses_symlinks() {
     assert_eq!(journal["state"], "undone");
 }
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn destinations_quarantine_and_undo_reject_escape_and_overwrite() {
     let (temp, env) = home();
     let (snap, from, to, _store, _original) = fixture(&env);
@@ -172,8 +172,8 @@ fn destinations_quarantine_and_undo_reject_escape_and_overwrite() {
     assert!(to.is_dir());
     assert!(ops::undo(&env, "../escape").is_err());
 }
-// Laci v1's lock holds a process id, which Linux checks in /proc; the busy check reads /proc too.
-#[cfg(target_os = "linux")]
+// Laci v1's lock holds a process id, and v1 ran on Unix alone; the busy program is the shell.
+#[cfg(unix)]
 #[test]
 fn compatible_pid_lock_and_busy_processes_prevent_changes() {
     let (_temp, env) = home();
@@ -272,7 +272,7 @@ fn project_creation_template_validation_and_sidecar_edits_preserve_other_section
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn merging_history_restores_both_source_and_existing_destination() {
     let (_temp, env) = home();
     let (snap, from, to, store, original) = fixture(&env);

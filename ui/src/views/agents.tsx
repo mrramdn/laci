@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Icon, KindIcon, Group, Expand } from "../common";
 import { useApp, backup, run, changed, toggleExpanded } from "../store";
 import { useNow } from "../clock";
@@ -51,9 +52,14 @@ function goneFolder(dir: ClaudeDir) {
 }
 
 export function AgentsView() {
-  const s = useApp();
+  const s = useApp(
+    useShallow((state) => ({
+      snapshot: state.snapshot!,
+      historyPending: state.historyPending,
+    })),
+  );
   useNow();
-  const snapshot = s.snapshot!;
+  const snapshot = s.snapshot;
   const sessions = allSessions(snapshot);
   const launchable = agentProviders(snapshot.connectors);
   const providerOf = (c: ConnectorState) => c.provider ?? c.id;
@@ -306,9 +312,15 @@ export function AgentsView() {
 const DAY = 86_400_000;
 type Show = "all" | "short" | "old" | "outside" | "kept" | "backup";
 function SessionsSection() {
-  const s = useApp();
+  const s = useApp(
+    useShallow((state) => ({
+      snapshot: state.snapshot!,
+      historyPending: state.historyPending,
+      showAll: !!state.expanded[MORE],
+    })),
+  );
   const now = useNow();
-  const snapshot = s.snapshot!;
+  const snapshot = s.snapshot;
   const all = allSessions(snapshot);
   const [query, setQuery] = useState("");
   const [agent, setAgent] = useState("all");
@@ -502,7 +514,7 @@ function SessionsSection() {
             items={shown}
             projectOf={projectOf}
             selection={selection}
-            limit={s.expanded[MORE] ? undefined : SESSION_LIMIT}
+            limit={s.showAll ? undefined : SESSION_LIMIT}
             fold={current !== "short"}
           />
           {shown.length > SESSION_LIMIT ? (
@@ -536,11 +548,16 @@ function SessionGroupBlock({
   selection: Selection;
   fold: boolean;
 }) {
-  const s = useApp();
   const key = `agents:group:${node?.id ?? "outside"}`;
+  const { toggled, all, select } = useApp(
+    useShallow((state) => ({
+      toggled: !!state.expanded[key],
+      all: !!state.expanded[`${key}:all`],
+      select: state.select,
+    })),
+  );
   // Chats outside projects are mostly quick questions: closed until asked for.
-  const open = node ? !s.expanded[key] : !!s.expanded[key];
-  const all = !!s.expanded[`${key}:all`];
+  const open = node ? !toggled : toggled;
   const shownRows = fold ? items.filter((c) => !c.short).length : items.length;
   return (
     <section className="session-block">
@@ -566,7 +583,7 @@ function SessionGroupBlock({
         {node ? (
           <button
             className="btn sm ghost"
-            onClick={() => s.select(node.id, "agents")}
+            onClick={() => select(node.id, "agents")}
           >
             Open project
           </button>
@@ -597,8 +614,7 @@ function SessionGroupBlock({
 }
 
 function StorageSection() {
-  const s = useApp();
-  const open = !!s.expanded[STORAGE];
+  const open = useApp((state) => !!state.expanded[STORAGE]);
   return (
     <section className="group agent-storage">
       <button
@@ -618,8 +634,15 @@ function StorageSection() {
 }
 
 function StorageBody() {
-  const s = useApp();
-  const snapshot = s.snapshot!;
+  const s = useApp(
+    useShallow((state) => ({
+      snapshot: state.snapshot!,
+      selected: state.selected,
+      select: state.select,
+      navigate: state.navigate,
+    })),
+  );
+  const snapshot = s.snapshot;
   const linked = Object.values(snapshot.nodes)
     .filter(
       (n) =>

@@ -1,5 +1,17 @@
 //! Project removal is explicit and uses system Trash; remote names alone are not a backup.
-use crate::{Result, env::Env, files, git::Repo, ops, paths, platform, service::string, sidecar};
+use crate::{
+    Result,
+    env::Env,
+    files,
+    git::Repo,
+    ops, paths,
+    platform::{
+        self,
+        path::{canonical, may_contain},
+    },
+    service::string,
+    sidecar,
+};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, fs, path::Path, time::Duration};
 
@@ -61,9 +73,9 @@ fn local_head(dir: &Path) -> Result<String> {
 fn local_backup(dir: &Path, remote: &Path) -> Result<()> {
     let common = git(remote, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
     let objects = git(remote, &["rev-parse", "--path-format=absolute", "--git-path", "objects"])?;
-    let common = Path::new(&common).canonicalize().map_err(|e| format!("Could not verify local remote: {e}"))?;
-    let objects = Path::new(&objects).canonicalize().map_err(|e| format!("Could not verify local remote: {e}"))?;
-    if common.starts_with(dir) || objects.starts_with(dir) {
+    let common = canonical(Path::new(&common)).map_err(|e| format!("Could not verify local remote: {e}"))?;
+    let objects = canonical(Path::new(&objects)).map_err(|e| format!("Could not verify local remote: {e}"))?;
+    if may_contain(dir, &common) || may_contain(dir, &objects) {
         return Err("The local remote stores Git data inside this project and would lose it when removed".into());
     }
     // Git stores loose objects one fanout level down and pack files directly under objects/pack.
@@ -96,6 +108,16 @@ fn local_backup(dir: &Path, remote: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Whether Git takes the remote `url` for a path on this computer rather than an SSH address: when no colon comes
+/// before its first slash, absolute paths included, and on Windows also when it starts with a drive letter, as in
+/// `C:\backup\repo.git`.
+fn local_url(url: &str, windows: bool) -> bool {
+    url.find(':').is_none_or(|colon| url.find('/').is_some_and(|slash| slash < colon))
+        || (windows
+            && url.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+            && url.as_bytes().get(1) == Some(&b':'))
+}
+
 fn check(dir: &Path) -> Result<String> {
     local_head(dir)?;
     let names = git(dir, &["remote"])?;
@@ -108,13 +130,11 @@ fn check(dir: &Path) -> Result<String> {
     if url.starts_with("file://") {
         return Err("File URL backups cannot be verified safely. Use a network remote or a plain local backup path outside this project.".into());
     }
-    // Git treats a path as local when a slash precedes its first colon (including absolute paths).
-    let local_path = url.find(':').is_none_or(|colon| url.find('/').is_some_and(|slash| slash < colon));
-    let local_remote = if local_path {
+    let local_remote = if local_url(&url, cfg!(windows)) {
         let local = Path::new(&url);
         let local = if local.is_absolute() { local.to_owned() } else { dir.join(local) };
-        let actual = local.canonicalize().map_err(|_| "The local remote backup is unavailable".to_owned())?;
-        if actual.starts_with(dir) {
+        let actual = canonical(&local).map_err(|_| "The local remote backup is unavailable".to_owned())?;
+        if may_contain(dir, &actual) {
             return Err("The remote is inside this project and would be removed with it".into());
         }
         local_backup(dir, &actual)?;
@@ -205,7 +225,7 @@ pub fn plan(env: &Env, node: &Value) -> Result<Value> {
     if !dir.is_dir() {
         return Err("That project is gone".into());
     }
-    if [&env.home, &env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|p| p.starts_with(&dir)) {
+    if [&env.home, &env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|p| may_contain(&dir, p)) {
         return Err("This folder contains Laci settings or recovery data and cannot be removed".into());
     }
     // Removal also waits until it is known what only this computer has: Simple asks for more before losing it.
@@ -225,10 +245,10 @@ pub fn plan(env: &Env, node: &Value) -> Result<Value> {
             ],
         ),
     };
-    checks.push(json!({"code":"ignored-files","severity":"med","title":"Ignored files are not backed up by Git","detail":"The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo."}));
+    checks.push(json!({"code":"ignored-files","severity":"med","title":"Ignored files are not backed up by Git","detail":format!("The entire project folder, including ignored files and history inside it, moves to {}. Restore it through your file manager; there is no Log Undo.",platform::BIN.bare)}));
     let unbacked = listed.unwrap_or_else(|_| json!({"files":[],"more":0}));
     Ok(json!({"allowed":allowed,"path":dir,"checks":checks,"unbacked":unbacked,"ops":[
-        {"kind":"delete","label":"Move the project folder to system Trash","from":dir},
+        {"kind":"delete","label":format!("Move the project folder to {}",platform::BIN.bare),"from":dir},
         {"kind":"keep","label":"Keep agent history outside the project","detail":"External session logs and memory are preserved. They may appear as detached history until the folder is restored."}
     ]}))
 }
@@ -246,4 +266,23 @@ pub fn trash(env: &Env, node: &Value) -> Result<()> {
         sidecar::plain_path(&dir)?;
         platform::trash(&dir)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_url;
+
+    #[test]
+    fn git_reads_a_drive_letter_as_a_path_only_on_windows() {
+        for url in ["/srv/backup.git", "../backup.git", "backup.git", "./odd:name.git", r"\\server\share\repo.git", ""]
+        {
+            assert!(local_url(url, false) && local_url(url, true), "{url}");
+        }
+        for url in ["git@github.com:me/repo.git", "host:repo", "ssh://host/repo", "https://github.com/me/repo"] {
+            assert!(!local_url(url, false) && !local_url(url, true), "{url}");
+        }
+        for url in [r"C:\backup\repo.git", "C:/backup/repo.git", "d:repo.git"] {
+            assert!(local_url(url, true) && !local_url(url, false), "{url}");
+        }
+    }
 }

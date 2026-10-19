@@ -2,7 +2,7 @@
 use laci_core::{
     activity, config,
     env::Env,
-    paths,
+    paths, platform,
     service::{Refresh, Service},
 };
 use serde_json::{Value, json};
@@ -98,7 +98,7 @@ fn reports_on_another_disk_link_by_projects_session_start_and_session_id() {
     let f = fixture();
     let mut service = Service::new(f.env.clone());
     let snapshot = save_reports_dir(&mut service, &json!(f.reports)).unwrap();
-    let dir = f.reports.canonicalize().unwrap();
+    let dir = platform::path::canonical(&f.reports).unwrap();
     assert_eq!(snapshot["reportsDir"], json!({"path":dir,"total":3}));
     assert_eq!(ids(&snapshot), ["2026-10-03-gamma.md", "2026-10-02-beta.md", "2026-10-01-alpha.md"]);
     let alpha = report(&snapshot, "2026-10-01-alpha.md");
@@ -156,7 +156,7 @@ fn open_items_close_and_reopen_in_laci_and_the_report_stays_as_written() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn a_moved_project_keeps_its_reports_through_their_session() {
     let f = fixture();
     let mut service = Service::new(f.env.clone());
@@ -164,6 +164,33 @@ fn a_moved_project_keeps_its_reports_through_their_session() {
     let dest = f.path("gamma-moved");
     let moved = service.request("move", &json!({"id":f.path("gamma"),"destination":dest})).unwrap();
     assert_eq!(report(&moved["snapshot"], "2026-10-03-gamma.md")["projects"], json!([dest]));
+}
+
+#[test]
+fn a_window_names_an_item_by_its_whole_text_and_a_stale_click_closes_nothing_else() {
+    let f = fixture();
+    let alpha = f.reports.join("2026-10-01-alpha.md");
+    let text = fs::read_to_string(&alpha).unwrap().replace("- Ship it\n", "- Ship it\n- Fix login\n- Fix login page\n");
+    write(&alpha, &text);
+    let mut service = Service::new(f.env.clone());
+    save_reports_dir(&mut service, &json!(f.reports)).unwrap();
+    let close = |service: &mut Service, text: &str, state: &str| {
+        service.request("report/close", &json!({"report":"2026-10-01-alpha.md","text":text,"state":state}))
+    };
+    // Its whole text names it, though its words are in another item too.
+    assert_eq!(close(&mut service, "Fix login", "done").unwrap()["item"], "Fix login");
+    // A second click on a list drawn before the first names an item closed now: nothing else closes, and the
+    // Log doesn't get a second entry.
+    let logged = activity::read_log(&f.env, 100).len();
+    assert_eq!(close(&mut service, "Fix login", "done").unwrap()["item"], "Fix login");
+    assert_eq!(activity::read_log(&f.env, 100).len(), logged);
+    assert!(close(&mut service, "Not in the report", "done").unwrap_err().contains("isn't in the report"));
+    let open = report(&service.snapshot().unwrap(), "2026-10-01-alpha.md")["open"].clone();
+    assert_eq!(open, json!(["Ship it", "Fix login page"]));
+    assert_eq!(close(&mut service, "Fix login", "open").unwrap()["item"], "Fix login");
+    let logged = activity::read_log(&f.env, 100).len();
+    close(&mut service, "Fix login", "open").unwrap();
+    assert_eq!(activity::read_log(&f.env, 100).len(), logged);
 }
 
 #[test]
@@ -231,7 +258,7 @@ fn the_reports_setting_is_validated_logged_and_undone() {
     assert_eq!(config::load(&f.env)["reportsDir"], "~/notes/reports");
     assert_eq!(service.request("setup/info", &json!({})).unwrap()["reportsDir"], json!(inside));
     save_reports_dir(&mut service, &json!(f.reports)).unwrap();
-    let outside = f.reports.canonicalize().unwrap();
+    let outside = platform::path::canonical(&f.reports).unwrap();
     assert_eq!(config::load(&f.env)["reportsDir"], json!(outside));
     let entry =
         activity::read_log(&f.env, 100).into_iter().find(|e| e["key"] == "settings" && e["canUndo"] == true).unwrap();

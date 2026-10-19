@@ -214,7 +214,7 @@ fn a_long_list_shows_fifty_and_counts_the_rest() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn keep_out_adds_one_anchored_line_each_and_undo_puts_the_old_bytes_back() {
     for (before, after) in [
         (None, "/.env\n/my\\[1].pem\n"),
@@ -255,7 +255,6 @@ fn keep_out_adds_one_anchored_line_each_and_undo_puts_the_old_bytes_back() {
 
 #[cfg(unix)]
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn keep_out_escapes_wildcards_and_keeps_the_file_mode() {
     use std::os::unix::fs::PermissionsExt;
     let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
@@ -278,7 +277,7 @@ fn keep_out_escapes_wildcards_and_keeps_the_file_mode() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn an_older_keep_out_waits_until_the_newer_one_is_undone() {
     let (_temp, env, dir) = fixture();
     write(&dir.join(".gitignore"), "dist\n");
@@ -299,7 +298,7 @@ fn an_older_keep_out_waits_until_the_newer_one_is_undone() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn undo_keeps_a_gitignore_that_changed_after_keep_out() {
     for existed in [true, false] {
         let (_temp, env, dir) = fixture();
@@ -325,7 +324,7 @@ fn undo_keeps_a_gitignore_that_changed_after_keep_out() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn undo_after_the_project_moved_brings_back_no_folder() {
     let (_temp, env, dir) = fixture();
     write(&dir.join(".gitignore"), "dist\n");
@@ -383,7 +382,6 @@ fn keep_out_refuses_anything_the_check_did_not_list() {
 
 #[cfg(unix)]
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
 fn keep_out_waits_for_the_change_lock_and_never_follows_a_link() {
     let (temp, env, dir) = fixture();
     write(&dir.join(".env"), "x");
@@ -539,7 +537,7 @@ fn a_trash_plan_names_ignored_files_whose_names_arent_valid_text() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn a_trash_plan_names_what_only_this_computer_has_but_not_dependencies() {
     let (_temp, env, dir, node) = backed_up();
     for name in [

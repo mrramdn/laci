@@ -237,3 +237,41 @@ export function useReportText(report: Report) {
   }, [key, report.id, attempt]);
   return { ...state, retry: () => setAttempt((n) => n + 1) };
 }
+
+/** readme.ts, which draws Markdown with marked and DOMPurify. */
+type Markdown = typeof import("./readme");
+let markdown: Markdown | undefined;
+let markdownLoading: Promise<Markdown | undefined> | undefined;
+/**
+ * Loads readme.ts, and marked and DOMPurify with it, the first time anything asks: they are not part
+ * of the code a window starts with. A view that will soon draw Markdown asks ahead. Undefined if it
+ * couldn't load; the next ask tries again.
+ */
+export function loadMarkdown() {
+  markdownLoading ??= import("./readme").then(
+    (module) => (markdown = module),
+    () => {
+      markdownLoading = undefined;
+      return undefined;
+    },
+  );
+  return markdownLoading;
+}
+/**
+ * readme.ts once it is in, else undefined while it loads. Until then a view draws no Markdown at all,
+ * never its raw text. A view drawn after the first load has it at once.
+ */
+export function useMarkdown() {
+  const [loaded, setLoaded] = useState(markdown);
+  useEffect(() => {
+    if (loaded) return;
+    let live = true;
+    void loadMarkdown().then((module) => {
+      if (live && module) setLoaded(module);
+    });
+    return () => {
+      live = false;
+    };
+  }, [loaded]);
+  return loaded ?? markdown;
+}

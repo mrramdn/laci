@@ -1,24 +1,17 @@
-//! Files on Windows: where Laci keeps its own, which file a path names, the change lock, renames and the Recycle Bin.
+//! Files on Windows: which file a path names and when it changed, the change lock and renames.
 use super::{ffi, not_yet};
 use crate::{
     Result,
-    platform::{Dirs, Identity, Stamp, path::plain_path},
+    platform::{Identity, Stamp, path::plain_path},
 };
 use file_id::FileId;
 use std::{
     fs::{File, Metadata, OpenOptions, TryLockError},
     io,
+    os::windows::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
-
-/// Windows has no HOME of its own, and the one Git Bash sets is a POSIX path.
-pub fn home_dir() -> Option<PathBuf> {
-    None
-}
-
-pub fn user_dirs(_home: &Path) -> Result<Dirs> {
-    Err(not_yet("choose where to keep its settings and data"))
-}
+use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES};
 
 /// The names config.json keeps an identity under: the volume's serial number and the file's ID.
 pub const IDENTITY_FIELDS: [&str; 2] = ["volume", "file"];
@@ -39,14 +32,39 @@ pub fn identity(path: &Path, meta: &Metadata) -> Result<Identity> {
     })
 }
 
-/// Not yet: the change time is in FILE_BASIC_INFO, which stable std doesn't give, and the ID of a file that is open
-/// takes a call file-id doesn't make.
-pub fn change_stamp(_path: &Path, _meta: &Metadata) -> Result<Stamp> {
-    Err(not_yet("tell when a file changed"))
+/// The write and change times from FILE_BASIC_INFO, which stable std doesn't give, and the file's identity from the
+/// same open handle. Opening a folder takes FILE_FLAG_BACKUP_SEMANTICS, and reading attributes only never stands in
+/// another program's way. As with [`identity`], a link itself is refused: opening it would read what it leads to.
+pub fn change_stamp(path: &Path, meta: &Metadata) -> Result<Stamp> {
+    if meta.is_symlink() {
+        return Err(not_yet("tell links apart"));
+    }
+    let file = OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    stamp(&file)
 }
 
-pub fn file_change_stamp(_file: &File, _meta: &Metadata) -> Result<Stamp> {
-    Err(not_yet("tell when a file changed"))
+pub fn file_change_stamp(file: &File, _meta: &Metadata) -> Result<Stamp> {
+    stamp(file)
+}
+
+fn stamp(file: &File) -> Result<Stamp> {
+    let info = ffi::file_info(file).map_err(|e| e.to_string())?;
+    Ok(Stamp {
+        identity: Identity { volume: info.volume, file: info.file },
+        modified: since_1970(info.written),
+        changed: since_1970(info.changed),
+    })
+}
+
+/// Seconds and nanoseconds since 1970 from Windows' 100-nanosecond steps since 1601.
+fn since_1970(steps: i64) -> (i64, i64) {
+    const STEPS_TO_1970: i64 = 116_444_736_000_000_000;
+    let steps = steps.saturating_sub(STEPS_TO_1970);
+    (steps.div_euclid(10_000_000), steps.rem_euclid(10_000_000) * 100)
 }
 
 /// The lock is on the open file, so Windows lets it go when the file closes, also when Laci stops unexpectedly. The
@@ -90,8 +108,4 @@ pub fn copy_link(src: &Path, _dest: &Path) -> Result<()> {
 
 pub fn preserve(_meta: &Metadata, _dest: &Path) -> Result<()> {
     Err(not_yet("keep a file's times and permissions"))
-}
-
-pub fn trash(_path: &Path) -> Result<()> {
-    Err(not_yet("move files to the Recycle Bin"))
 }

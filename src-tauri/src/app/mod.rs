@@ -1,6 +1,7 @@
 mod creation;
 mod state;
 mod terminal;
+mod update;
 mod watch;
 use laci_core::{
     Result, config,
@@ -37,6 +38,7 @@ struct AppState {
     agents_read: Mutex<(Option<Instant>, bool)>,
     /// The folder picker is open. On Linux it doesn't hold the window, so a second click could open another.
     picking: AtomicBool,
+    updates: update::Updates,
 }
 type Shared = Arc<AppState>;
 /// While an agent works its log changes every second. Its history is read again at most this often, so a
@@ -222,9 +224,14 @@ impl AppState {
                 return Ok(result);
             }
             "agent/launch" => return self.launch_agent(body),
+            // Checks and downloads wait for the network, never under the engine lock.
+            "update/status" | "update/check" | "update/install" | "update/restart" => {
+                return update::request(self, name);
+            }
             "new/start" => {
                 let env = {
                     let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
+                    self.updates.admit(name)?;
                     engine.begin_creation()?;
                     engine.service.env.clone()
                 };
@@ -295,6 +302,7 @@ impl AppState {
         let started = Instant::now();
         let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
         let waited = started.elapsed().as_millis();
+        self.updates.admit(name)?;
         let result = engine.execute(name, body);
         if let Err(error) = &result {
             engine.service.debug(&format!("{name}: {error}"));
@@ -319,6 +327,9 @@ impl AppState {
             self.notice(json!({"type":"snapshot"}));
             self.notice(json!({"type":"log"}));
             self.notice(self.status());
+        }
+        if name == "updates" {
+            update::consent_changed(self);
         }
         Ok(outcome.value)
     }
@@ -427,9 +438,9 @@ fn term_close(state: State<'_, Shared>, id: String) {
     state.terminals.close(&id);
 }
 
-/// The design a new install opens in. It stays Detailed until the Simple shell ships; first run then asks, with
-/// Simple preselected.
-const NEW_INSTALL_DESIGN: &str = "detailed";
+/// The design a new install opens in, and so the one its first-run screen preselects. NEW_INSTALL_DESIGN in
+/// ui/src/store.ts is the same; scripts/ui-tests/design.test.mjs checks that the two agree.
+const NEW_INSTALL_DESIGN: &str = "simple";
 
 /// The design a window opens in: the saved one, else Detailed for a setup made before designs existed and
 /// NEW_INSTALL_DESIGN for a new one.
@@ -486,7 +497,7 @@ pub fn run(env: Env) -> Result<()> {
     let (theme, configured) = (string(&saved, "theme").to_owned(), saved["roots"].is_array());
     let design = startup_design(string(&saved, "design"), configured);
     let script = init_script(&theme, string(&saved, "design"), configured, std::env::consts::OS);
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -496,9 +507,23 @@ pub fn run(env: Env) -> Result<()> {
         // Only Rust opens the folder picker; the window has no dialog permission. The plugin also replaces
         // window.alert and window.confirm in the page with calls that are refused, so the UI never uses them.
         .plugin(tauri_plugin_dialog::init())
+        // Only Rust checks for updates and installs them (update.rs); the window has no updater permission.
+        .plugin(tauri_plugin_updater::Builder::new().build());
+    // Test builds only: the WebDriver server scripts/window-smoke.mjs drives on 127.0.0.1:4445, or
+    // TAURI_WEBDRIVER_PORT.
+    #[cfg(feature = "e2e")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    builder
         .setup(move |app| {
+            // Granted here, not in capabilities/, which every build reads: a build without the plugin would fail on
+            // a permission it doesn't know.
+            #[cfg(feature = "e2e")]
+            app.add_capability(
+                tauri::ipc::CapabilityBuilder::new("e2e").window("main").permission("wdio-webdriver:default"),
+            )?;
             let (sender, receiver) = mpsc::channel();
             let watches = Watches::new(sender).ok();
+            let updates = update::Updates::new(&env, app.package_info().version.to_string(), update::install_kind());
             let service = Service::new(env);
             let queue = Arc::new(RefreshQueue::default());
             let state = Arc::new(AppState {
@@ -511,8 +536,10 @@ pub fn run(env: Env) -> Result<()> {
                 listings: Mutex::new(BTreeSet::new()),
                 agents_read: Mutex::new((None, false)),
                 picking: AtomicBool::new(false),
+                updates,
             });
             app.manage(Arc::clone(&state));
+            update::watch(&state);
             // 1440×900 shrinks to fit the main screen's work area, title bar included, and opens centred on it.
             // Wayland names no main screen and no work area, so there it fits the smallest screen with room for
             // panels, and the compositor places it.
@@ -587,6 +614,8 @@ mod tests {
     fn a_saved_design_wins_and_an_earlier_setup_stays_detailed_with_an_offer() {
         assert_eq!([startup_design("simple", true), startup_design("detailed", false)], ["simple", "detailed"]);
         assert_eq!([startup_design("", true), startup_design("", false)], ["detailed", NEW_INSTALL_DESIGN]);
+        // A new install opens in Simple, on Simple's colours, and first run asks with Simple preselected.
+        assert_eq!(startup_design("", false), "simple");
         let upgraded = init_script("", "", true, "linux");
         assert!(upgraded.contains("dataset;d.design='detailed';d.designOffer='1';d.os='linux';}"), "{upgraded}");
         let fresh = init_script("dark", "", false, "macos");

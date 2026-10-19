@@ -1,6 +1,12 @@
 //! Session reports: Markdown files that agents write at the end of a session, in a folder chosen in Settings.
 //! Laci only reads that folder. A report links to the sessions and projects its header names.
-use crate::{Result, activity, agents, config, env::Env, files, ops, paths, readers};
+use crate::{
+    Result, activity, agents, config,
+    env::Env,
+    files, ops, paths,
+    platform::path::{canonical, same_path},
+    readers,
+};
 use chrono::{DateTime, Local, NaiveDate, SecondsFormat, Utc};
 use regex::{Regex, RegexBuilder};
 use serde_json::{Value, json};
@@ -37,6 +43,11 @@ static TICKS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`\n]+)`").expe
 static BRACES: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"((?:~|/)[^\s{}`,;()\[\]<>"]*)\{([^{}\n]*)\}([^\s{}`,;()\[\]<>"]*)"#).expect("brace pattern")
 });
+/// [`BRACES`] for paths on Windows, which can also start with a drive letter or `\\`.
+static WINDOWS_BRACES: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"((?:~|/|\\\\|\b[A-Za-z]:[\\/])[^\s{}`,;()\[\]<>"]*)\{([^{}\n]*)\}([^\s{}`,;()\[\]<>"]*)"#)
+        .expect("Windows brace pattern")
+});
 static BULLET: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$").expect("bullet pattern"));
 static CHECKBOX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\[[ xX]\]\s*").expect("checkbox pattern"));
@@ -69,7 +80,7 @@ fn usable(path: &Path) -> std::result::Result<(), String> {
     if !meta.is_dir() {
         return Err("This is no longer a folder".into());
     }
-    if path.canonicalize().map_err(|_| "Folder not found".to_owned())? != path {
+    if !same_path(&canonical(path).map_err(|_| "Folder not found".to_owned())?, path) {
         return Err("The folder's path now leads through a link. Choose it again in Settings".into());
     }
     fs::read_dir(path).map(drop).map_err(|_| "Laci can't read this folder".into())
@@ -130,8 +141,9 @@ fn clip(text: &str, max: usize) -> String {
 }
 
 /// `~/project/{api, web}/src` names `~/project/api/src` and `~/project/web/src`.
-fn expand_braces(text: &str, separator: &str) -> String {
-    BRACES
+fn expand_braces(text: &str, separator: &str, windows: bool) -> String {
+    let braces = if windows { &WINDOWS_BRACES } else { &BRACES };
+    braces
         .replace_all(text, |c: &regex::Captures| {
             c[2].split(',')
                 .map(str::trim)
@@ -144,9 +156,21 @@ fn expand_braces(text: &str, separator: &str) -> String {
         .into_owned()
 }
 
+/// Whether `text` starts like a path a report names: `/…` or `~/…`, and on Windows also `~\…`, `C:\…`, `C:/…` and
+/// `\\server\share\…`.
+fn starts_like_path(text: &str, windows: bool) -> bool {
+    let drive = |t: &[u8]| t.len() > 2 && t[0].is_ascii_alphabetic() && t[1] == b':' && matches!(t[2], b'\\' | b'/');
+    text.starts_with('/')
+        || text.starts_with("~/")
+        || (windows && (text.starts_with(r"~\") || text.starts_with(r"\\") || drive(text.as_bytes())))
+}
+
 /// Paths named in a header field. A path in backticks may hold spaces; elsewhere words and punctuation
 /// separate them, and a web address or a branch name is never a path.
 fn path_tokens(text: &str) -> Vec<String> {
+    tokens(text, cfg!(windows))
+}
+fn tokens(text: &str, windows: bool) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut rest = String::new();
     let mut last = 0;
@@ -155,8 +179,8 @@ fn path_tokens(text: &str) -> Vec<String> {
         rest.push_str(&text[last..whole.start()]);
         rest.push(' ');
         let inner = c[1].trim();
-        if inner.starts_with('/') || inner.starts_with("~/") {
-            tokens.extend(expand_braces(inner, "\n").split('\n').map(|t| t.trim().to_owned()));
+        if starts_like_path(inner, windows) {
+            tokens.extend(expand_braces(inner, "\n", windows).split('\n').map(|t| t.trim().to_owned()));
         } else {
             rest.push_str(inner);
             rest.push(' ');
@@ -164,16 +188,17 @@ fn path_tokens(text: &str) -> Vec<String> {
         last = whole.end();
     }
     rest.push_str(&text[last..]);
-    let rest = expand_braces(&rest, " ");
+    let rest = expand_braces(&rest, " ", windows);
     tokens.extend(
         rest.split(|c: char| c.is_whitespace() || ",;()[]<>\"`".contains(c))
-            .filter(|t| (t.starts_with('/') && !t.starts_with("//")) || t.starts_with("~/"))
+            .filter(|t| starts_like_path(t, windows) && !t.starts_with("//"))
             .map(str::to_owned),
     );
     let mut seen = BTreeSet::new();
+    let trailing = |c: char| matches!(c, '.' | ':' | '/' | '*') || (windows && c == '\\');
     tokens
         .into_iter()
-        .map(|t| t.trim_end_matches(['.', ':', '/', '*']).to_owned())
+        .map(|t| t.trim_end_matches(trailing).to_owned())
         .filter(|t| t.len() > 1 && t != "~" && seen.insert(t.clone()))
         .collect()
 }
@@ -332,11 +357,20 @@ fn still_open(items: &[String], closed: &Value) -> (Vec<String>, usize) {
 
 /// Closes an open item of a report (state `done`, `dropped` or `moved`) or opens a closed one again (`open`).
 /// `item` is its number among the items it can apply to, from 1, or words that match only one of them.
+/// How a request names one of a report's items.
+pub enum ItemName<'a> {
+    /// Its place among the items in that state, from 1, or words from it: what an agent sends.
+    Loose(&'a str),
+    /// Its whole text: what a window sends, so a click on a list drawn before another change still names that item,
+    /// or none, never the next one nor one whose words include its words.
+    Exact(&'a str),
+}
+
 pub fn close_item(
     env: &Env,
     snapshot: &Value,
     id: &str,
-    item: &str,
+    item: ItemName<'_>,
     state: &str,
     note: &str,
     by: &str,
@@ -352,25 +386,37 @@ pub fn close_item(
         facts["items"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
     let closed = closed_items(env);
     let pool: Vec<&String> = all.iter().filter(|i| closed[id][item_key(i)].is_object() == (state == "open")).collect();
-    let chosen = match item.trim().parse::<usize>() {
-        // Without this, 0 would be taken as words and close whichever item happens to contain a 0.
-        Ok(0) => return Err("Items are numbered from 1".into()),
-        Ok(n) => *pool.get(n - 1).ok_or("No item has that number")?,
-        _ => {
-            let words: Vec<String> = item.split_whitespace().map(str::to_lowercase).collect();
-            if words.is_empty() {
-                return Err("Name the item by its number or by words from it".into());
+    let chosen = match item {
+        ItemName::Exact(exact) => match pool.iter().find(|i| i.as_str() == exact) {
+            Some(found) => *found,
+            // A second click finds it done already, and changes nothing: no second Log entry, no error.
+            None if all.iter().any(|i| i == exact) => {
+                return Ok(json!({"report":id,"item":exact,"state":state}));
             }
-            let matches: Vec<&&String> =
-                pool.iter().filter(|i| words.iter().all(|w| i.to_lowercase().contains(w))).collect();
-            match matches.as_slice() {
-                [one] => **one,
-                [] => {
-                    return Err(if state == "open" { "No closed item matches" } else { "No open item matches" }.into());
+            None => return Err("That item isn't in the report any more".into()),
+        },
+        ItemName::Loose(item) => match item.trim().parse::<usize>() {
+            // Without this, 0 would be taken as words and close whichever item happens to contain a 0.
+            Ok(0) => return Err("Items are numbered from 1".into()),
+            Ok(n) => *pool.get(n - 1).ok_or("No item has that number")?,
+            _ => {
+                let words: Vec<String> = item.split_whitespace().map(str::to_lowercase).collect();
+                if words.is_empty() {
+                    return Err("Name the item by its number or by words from it".into());
                 }
-                _ => return Err("More than one item matches; use more of its words or its number".into()),
+                let matches: Vec<&&String> =
+                    pool.iter().filter(|i| words.iter().all(|w| i.to_lowercase().contains(w))).collect();
+                match matches.as_slice() {
+                    [one] => **one,
+                    [] => {
+                        return Err(
+                            if state == "open" { "No closed item matches" } else { "No open item matches" }.into()
+                        );
+                    }
+                    _ => return Err("More than one item matches; use more of its words or its number".into()),
+                }
             }
-        }
+        },
     };
     let key = item_key(chosen);
     let title = snapshot["reports"]
@@ -502,7 +548,7 @@ impl Linker {
             .filter(|n| n["kind"] == "project")
             .filter_map(|n| n["path"].as_str().map(PathBuf::from))
             // Home and the folders above it hold everything; naming a file in them names no project.
-            .filter(|p| !env.home.starts_with(p))
+            .filter(|p| !paths::within(&env.home, p))
             .collect();
         projects.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
         let mut sessions: HashMap<String, Vec<PathBuf>> = HashMap::new();
@@ -520,7 +566,7 @@ impl Linker {
         Self { projects, sessions }
     }
     fn project(&self, path: &Path) -> Option<&PathBuf> {
-        self.projects.iter().find(|p| path.starts_with(p))
+        self.projects.iter().find(|p| paths::within(path, p))
     }
     /// A report names projects by path, by the folder its session started in, and through its session
     /// ids. The last survives a project that Laci moved: moves rewrite the paths in session logs.
@@ -640,7 +686,8 @@ fn listed(env: &Env, snapshot: &Value, id: &str) -> Result<PathBuf> {
     let dir = scanned_folder(env, snapshot)?;
     let file = dir.join(id);
     let plain = fs::symlink_metadata(&file).is_ok_and(|m| m.is_file());
-    if !plain || file.canonicalize().ok().as_deref().and_then(Path::parent) != Some(dir.as_path()) {
+    if !plain || !canonical(&file).ok().as_deref().and_then(Path::parent).is_some_and(|parent| same_path(parent, &dir))
+    {
         return Err("That report is gone".into());
     }
     Ok(file)
@@ -774,7 +821,7 @@ pub fn list(
                     .into_iter()
                     .flatten()
                     .filter_map(Value::as_str)
-                    .any(|p| Path::new(p).starts_with(under))
+                    .any(|p| paths::within(Path::new(p), under))
             })
         })
         .collect();
@@ -907,6 +954,20 @@ mod tests {
     }
 
     #[test]
+    fn windows_reports_name_paths_by_drive_share_or_home() {
+        let text = r"C:\Users\me\proj. and `C:\Users\me\my proj` \\nas\share\x, ~\notes c:/dev/{a,b} D: /c/d";
+        assert_eq!(
+            tokens(text, true),
+            [r"C:\Users\me\my proj", r"C:\Users\me\proj", r"\\nas\share\x", r"~\notes", "c:/dev/a", "c:/dev/b", "/c/d"]
+        );
+        assert_eq!(tokens(r"C:\Users\me `D:\x` ~\notes \\nas\share\x /c/d", false), ["/c/d"], "elsewhere no paths");
+        assert_eq!(
+            tokens(r"`C:\p\{api,web}\src` C:\q\{a, b}", true),
+            [r"C:\p\api\src", r"C:\p\web\src", r"C:\q\a", r"C:\q\b"]
+        );
+    }
+
+    #[test]
     fn shorthand_paths_name_every_project_in_the_braces() {
         assert_eq!(
             path_tokens("/home/u/personal/{raster, ledger} and `~/p/{api,web}/src`, {not, a, path}"),
@@ -944,29 +1005,30 @@ mod tests {
 
     #[test]
     fn reports_link_to_projects_never_to_folders_or_home() {
-        let env = Env::for_home(PathBuf::from("/h"));
+        // `/h/…`, an absolute path on this OS: on Windows on drive C.
+        let at = |path: &str| if cfg!(windows) { format!("C:{}", path.replace('/', r"\")) } else { path.to_owned() };
+        let env = Env::for_home(PathBuf::from(at("/h")));
+        let mut nodes = json!({});
+        let kinds = [("/h", "project"), ("/h/p", "project"), ("/h/p/nested", "project"), ("/h/q", "project")];
+        for (path, kind) in kinds.into_iter().chain([("/h/group", "folder")]) {
+            nodes[at(path)] = json!({"kind":kind,"path":at(path)});
+        }
         let snapshot = json!({
-            "nodes": {
-                "/h": {"kind":"project","path":"/h"},
-                "/h/p": {"kind":"project","path":"/h/p"},
-                "/h/p/nested": {"kind":"project","path":"/h/p/nested"},
-                "/h/q": {"kind":"project","path":"/h/q"},
-                "/h/group": {"kind":"folder","path":"/h/group"},
-            },
-            "sessions": [{"sessionId":"AAAAAAAA-0000-0000-0000-000000000000","cwd":"/h/p/nested/src"}],
-            "items": {"x": {"sessionId":"bbbbbbbb-0000-0000-0000-000000000000","cwd":"/h/q"}},
+            "nodes": nodes,
+            "sessions": [{"sessionId":"AAAAAAAA-0000-0000-0000-000000000000","cwd":at("/h/p/nested/src")}],
+            "items": {"x": {"sessionId":"bbbbbbbb-0000-0000-0000-000000000000","cwd":at("/h/q")}},
         });
         let linker = Linker::new(&env, &snapshot);
         let facts = json!({
-            "projectPaths": ["/h/p/file.md", "/h/group", "/etc/x", "~/q/readme"],
-            "sessionPaths": ["/h"],
+            "projectPaths": [at("/h/p/file.md"), at("/h/group"), at("/etc/x"), "~/q/readme"],
+            "sessionPaths": [at("/h")],
             "sessions": ["aaaaaaaa-0000-0000-0000-000000000000"],
         });
-        assert_eq!(linker.link(&env, &facts), ["/h/p", "/h/p/nested", "/h/q"]);
+        assert_eq!(linker.link(&env, &facts), [at("/h/p"), at("/h/p/nested"), at("/h/q")]);
         let antigravity =
-            json!({"projectPaths":[],"sessionPaths":["/h"],"sessions":["bbbbbbbb-0000-0000-0000-000000000000"]});
-        assert_eq!(linker.link(&env, &antigravity), ["/h/q"], "conversations listed as items link too");
-        let nothing = json!({"projectPaths":["/h/group/a", "~/notes"],"sessionPaths":["/h"],"sessions":[]});
+            json!({"projectPaths":[],"sessionPaths":[at("/h")],"sessions":["bbbbbbbb-0000-0000-0000-000000000000"]});
+        assert_eq!(linker.link(&env, &antigravity), [at("/h/q")], "conversations listed as items link too");
+        let nothing = json!({"projectPaths":[at("/h/group/a"), "~/notes"],"sessionPaths":[at("/h")],"sessions":[]});
         assert!(linker.link(&env, &nothing).is_empty());
     }
 

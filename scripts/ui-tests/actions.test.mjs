@@ -110,20 +110,20 @@ export async function aTodoThatCannotBeAddedSaysWhy() {
 
 export async function aReportItemClosesAndOpensAgain() {
   const a = app(async () => ({}));
-  await a.closeReportItem("2026-10-07-checkout.md", 1, "done", "Send the link");
+  await a.closeReportItem("2026-10-07-checkout.md", "Send the link", "done");
   assert.deepEqual(a.requests.at(-1), {
     name: "report/close",
-    body: { report: "2026-10-07-checkout.md", item: 1, state: "done" },
+    body: { report: "2026-10-07-checkout.md", text: "Send the link", state: "done" },
     working: "",
   });
   assert.deepEqual(
     [a.state().toast.title, a.state().toast.message],
     ["Closed in the report", "Send the link"],
   );
-  await a.closeReportItem("r.md", 2, "dropped", "Promo codes");
+  await a.closeReportItem("r.md", "Promo codes", "dropped");
   assert.equal(a.state().toast.title, "Closed in the report");
-  await a.closeReportItem("r.md", 1, "open", "Promo codes");
-  assert.deepEqual(a.requests.at(-1).body, { report: "r.md", item: 1, state: "open" });
+  await a.closeReportItem("r.md", "Promo codes", "open");
+  assert.deepEqual(a.requests.at(-1).body, { report: "r.md", text: "Promo codes", state: "open" });
   assert.equal(a.state().toast.title, "Opened again");
 }
 

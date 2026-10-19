@@ -112,7 +112,9 @@ export async function aReadmeImageIsFoundInAProjectOnADriveOrShare() {
 // ── A link in a report ─────────────────────────────────────────────────────────────────────────────
 
 const { reportLink } = load("views/reports.tsx", {
+  "../actions": { closeReportItem: noop },
   "../api": { api: noop, errorText: String },
+  "../hooks": { useMarkdown: noop, useReportSearch: noop, useReportText: noop },
   "../clock": { useNow: noop },
   "../common": {
     Expand: noop,

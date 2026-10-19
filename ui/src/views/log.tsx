@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Icon, Time, Group, Ops } from "../common";
-import { useApp, run, changed, toggleExpanded, refreshLog } from "../store";
+import { useApp, run, toggleExpanded, refreshLog } from "../store";
+import { undoLogEntry } from "../actions";
 import { useNow } from "../clock";
 import { dayLabel, logKind, plural } from "../helpers";
 import { api } from "../api";
-import type { Change } from "../types";
 const LOG_FILTERS = [
   ["all", "All"],
   ["moves", "Moves and archives"],
@@ -13,7 +14,15 @@ const LOG_FILTERS = [
   ["agent", "By agents"],
 ];
 export function LogView() {
-  const s = useApp();
+  const s = useApp(
+    useShallow((state) => ({
+      activity: state.activity,
+      logFilter: state.logFilter,
+      expanded: state.expanded,
+      historyPending: state.historyPending,
+      snapshot: state.snapshot,
+    })),
+  );
   useNow();
   const [query, setQuery] = useState("");
   const [undoable, setUndoable] = useState(false);
@@ -183,18 +192,7 @@ export function LogView() {
                             disabled={s.historyPending}
                             onClick={(e) => {
                               e.stopPropagation();
-                              void run(
-                                async () => {
-                                  changed(
-                                    await api<Change>("log/undo", {
-                                      id: entry.id,
-                                    }),
-                                    "Undone",
-                                  );
-                                },
-                                "Undoing…",
-                                { history: true },
-                              );
+                              void undoLogEntry(entry.id);
                             }}
                           >
                             <Icon name="undo" className="sm" />

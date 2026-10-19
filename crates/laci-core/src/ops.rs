@@ -3,7 +3,11 @@ use crate::{
     Result,
     env::Env,
     files, paths,
-    platform::{self, preserve},
+    platform::{
+        self,
+        path::{below, contains, may_contain, relocate, renames_case, rewrite_prefix, same_path, stays_below},
+        preserve,
+    },
     process, sidecar,
 };
 use serde_json::{Value, json};
@@ -115,6 +119,7 @@ fn remove(path: &Path) -> Result<()> {
 fn rename(src: &Path, dest: &Path) -> Result<()> {
     match platform::rename_noreplace(src, dest) {
         Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && renames_case(src, dest) => rename_case(src, dest),
         Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
             // Copy into a private sibling first, then publish atomically. A failed copy leaves the source intact.
             let staged = tempfile::Builder::new()
@@ -129,6 +134,18 @@ fn rename(src: &Path, dest: &Path) -> Result<()> {
         Err(e) => Err(e.to_string()),
     }
 }
+/// A rename that only changes the case of a name, where the file system counts the new name as taken by the old one.
+/// It goes by a free name in the same folder, and back if the second step fails.
+fn rename_case(src: &Path, dest: &Path) -> Result<()> {
+    let parent = src.parent().ok_or("Missing parent")?;
+    let staged =
+        parent.join(format!(".laci-rename-{:x}-{:x}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+    platform::rename_noreplace(src, &staged).map_err(|e| e.to_string())?;
+    platform::rename_noreplace(&staged, dest).map_err(|e| {
+        let _ = platform::rename_noreplace(&staged, src);
+        e.to_string()
+    })
+}
 /// The processes working inside `paths`, as messages and the UI show them. Fails where Laci can't list processes.
 pub(crate) fn busy_in(paths: &[PathBuf]) -> Result<Vec<Value>> {
     Ok(platform::processes_in(paths)?
@@ -142,10 +159,13 @@ pub(crate) fn busy_in(paths: &[PathBuf]) -> Result<Vec<Value>> {
 }
 /// How long a change waits for Git that another program runs in the folder, such as a second Laci or an editor.
 /// Such a read is over in moments; Git that is still there after this, or anything else, keeps the folder in use.
+/// Git for Windows' `git.exe` runs Git in a second process, which isn't Laci's helper even when the first is, so
+/// Laci's own Git can be waited for there too.
 const GIT_WAIT: Duration = Duration::from_secs(3);
 /// [`busy_in`] for checks that decide something. A process counts only if it is still in the folder a moment
 /// later, so one that is just passing through, such as a helper of another Laci still starting, doesn't make the
-/// folder busy. While Git is all that stays, it looks again for up to [`GIT_WAIT`].
+/// folder busy. While Git (`git…`, as `git.exe` on Windows) is all that stays, it looks again for up to
+/// [`GIT_WAIT`].
 pub(crate) fn still_busy(paths: &[PathBuf]) -> Result<Vec<Value>> {
     let started = Instant::now();
     let mut seen = busy_in(paths)?;
@@ -219,13 +239,15 @@ impl<'a> Tx<'a> {
     fn move_to(&mut self, src: &Path, dest: &Path) -> Result<()> {
         sidecar::plain_path(src)?;
         sidecar::plain_path(dest)?;
-        if exists(dest) {
+        // Where case doesn't matter, the name in its new case already finds the folder itself.
+        let recased = renames_case(src, dest);
+        if exists(dest) && !recased {
             return Err(format!("{} already exists", paths::tilde(dest, &self.env.home)));
         }
         if !exists(src) {
             return Err(format!("{} is gone", paths::tilde(src, &self.env.home)));
         }
-        if dest.starts_with(src) {
+        if contains(src, dest) && !recased {
             return Err("Can't move a folder into itself".into());
         }
         if src.is_dir() {
@@ -249,8 +271,12 @@ impl<'a> Tx<'a> {
         if src == dest {
             return Ok(());
         }
-        if !exists(dest) {
+        if !exists(dest) || renames_case(src, dest) {
             return self.move_to(src, dest);
+        }
+        // Another spelling of the same folder, on macOS and Windows: there is nothing to merge.
+        if same_path(src, dest) {
+            return Ok(());
         }
         sidecar::plain_path(src)?;
         sidecar::plain_path(dest)?;
@@ -299,11 +325,7 @@ impl<'a> Tx<'a> {
             let Ok(old) = serde_json::from_str::<String>(&c[2]) else {
                 return c[0].to_owned();
             };
-            let replacement = pairs.iter().find_map(|(from, to)| {
-                old.strip_prefix(from)
-                    .filter(|rest| rest.is_empty() || rest.starts_with('/'))
-                    .map(|rest| format!("{to}{rest}"))
-            });
+            let replacement = pairs.iter().find_map(|(from, to)| rewrite_prefix(&old, from, to));
             replacement
                 .map(|new| format!("{}{}", &c[1], serde_json::to_string(&new).unwrap()))
                 .unwrap_or_else(|| c[0].into())
@@ -407,7 +429,8 @@ fn transact(env: &Env, title: &str, work: impl FnOnce(&mut Tx<'_>) -> Result<()>
                         if recovery(&tx.journal).is_some() {
                             tx.journal["state"] = json!("failed");
                             tx.journal["error"] = json!(format!(
-                                "{error} · Reversible changes were rolled back. Check system Trash for any files already moved there."
+                                "{error} · Reversible changes were rolled back. Check {} for any files already moved there.",
+                                platform::BIN.bare
                             ));
                         } else {
                             tx.journal["state"] = json!("undone");
@@ -468,7 +491,7 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
     for e in entries.iter().filter(|e| e["kind"] == "move") {
         let from = journal_path(env, e, "from")?;
         let to = journal_path(env, e, "to")?;
-        if exists(&from) && exists(&to) {
+        if exists(&from) && exists(&to) && !renames_case(&to, &from) {
             return Err(format!("{} already exists; undo would overwrite it", from.display()));
         }
     }
@@ -478,7 +501,7 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
                 let from = journal_path(env, e, "from")?;
                 let to = journal_path(env, e, "to")?;
                 if exists(&to) {
-                    if exists(&from) {
+                    if exists(&from) && !renames_case(&to, &from) {
                         return Err(format!("{} already exists; undo would overwrite it", from.display()));
                     }
                     fs::create_dir_all(from.parent().ok_or("Missing parent")?).map_err(|e| e.to_string())?;
@@ -539,21 +562,24 @@ pub fn can_undo(journal: &Value) -> bool {
             .any(|e| matches!(e["kind"].as_str(), Some("move" | "rewrite" | "file" | "rmdir")))
 }
 
-pub fn recovery(journal: &Value) -> Option<&'static str> {
+pub fn recovery(journal: &Value) -> Option<String> {
     let trashed = journal["entries"].as_array().into_iter().flatten().any(|e| e["kind"] == "trash");
     let cleared = journal["entries"].as_array().into_iter().flatten().any(|e| e["kind"] == "cleared");
     if cleared && !trashed {
         return Some(if can_undo(journal) {
-            "Undo restores moves and edits; deleted build output comes back with the next install or build."
+            "Undo restores moves and edits; deleted build output comes back with the next install or build.".into()
         } else {
-            "Deleted build output comes back with the next install or build."
+            "Deleted build output comes back with the next install or build.".into()
         });
     }
     trashed.then(|| {
         if can_undo(journal) {
-            "Laci Undo restores moves and edits only. Restore trashed files separately through system Trash."
+            format!(
+                "Laci Undo restores moves and edits only. Restore trashed files separately through {}.",
+                platform::BIN.bare
+            )
         } else {
-            "Restore these files through system Trash; Laci Undo is unavailable."
+            format!("Restore these files through {}; Laci Undo is unavailable.", platform::BIN.bare)
         }
     })
 }
@@ -586,7 +612,7 @@ pub(crate) fn undo_unlocked(env: &Env, id: &str) -> Result<Value> {
         return Err("The copies this undo needs were removed to free space".into());
     }
     if !can_undo(&journal) {
-        return Err("Restore these files through system Trash; there is no Laci Undo".into());
+        return Err(format!("Restore these files through {}; there is no Laci Undo", platform::BIN.bare));
     }
     let entries = journal["entries"].as_array().ok_or("Invalid journal")?;
     validate_entries(env, entries)?;
@@ -629,11 +655,6 @@ fn roots(mut paths: Vec<String>) -> Vec<String> {
     }
     out
 }
-fn relocated(from: &Path, to: &Path, old: &Path) -> PathBuf {
-    let relative = old.strip_prefix(from).expect("validated project prefix");
-    if relative.as_os_str().is_empty() { to.to_owned() } else { to.join(relative) }
-}
-
 pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value) -> Result<Value> {
     let node = &snap["nodes"][id];
     if !node.is_object() {
@@ -641,16 +662,16 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
     }
     let src = value_path(env, &node["path"])?;
     let dest = path(env, dest)?;
-    if src == env.home || dest == env.home {
+    if same_path(&src, &env.home) || same_path(&dest, &env.home) {
         return Err("Can't move the home folder".into());
     }
     if [&env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|owned| {
-        let owned = owned.canonicalize().unwrap_or_else(|_| paths::normalize(owned));
-        owned.starts_with(&src) || dest.starts_with(&owned)
+        let owned = platform::path::canonical(owned).unwrap_or_else(|_| paths::normalize(owned));
+        may_contain(&src, &owned) || may_contain(&owned, &dest)
     }) {
         return Err("Can't move Laci's settings, history, cache or recovery data".into());
     }
-    if dest.starts_with(&src) {
+    if contains(&src, &dest) && !renames_case(&src, &dest) {
         return Err("Can't move a folder into itself".into());
     }
     let title = opts["title"].as_str().map(str::to_owned).unwrap_or_else(|| {
@@ -661,67 +682,79 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
         if opts["status"] == "archived" {
             crate::scan::check_archive_destination(env, &dest)?;
         }
+        // Which history belongs to the folder is asked while it is still there: on macOS and Windows another
+        // spelling of it counts only as long as the file system can confirm it.
+        let claude: Vec<(&Value, &Path, PathBuf)> = snap["claude"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(_, c)| {
+                let old = Path::new(c["path"].as_str()?);
+                Some((c, old, relocate(&src, &dest, old)?))
+            })
+            .collect();
+        // So is whether a tool's log file is kept inside the folder.
+        let items: Vec<(&Value, String, Option<PathBuf>)> = snap["items"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(_, item)| item)
+            .filter(|item| item["cleanupCapability"] != "unsupported")
+            .filter_map(|item| {
+                let newcwd = platform::path::moved_text(&src, &dest, item["cwd"].as_str()?)?;
+                let inside = item["file"].as_str().and_then(|file| below(&src, &paths::expand(file.trim(), &env.home)));
+                Some((item, newcwd, inside))
+            })
+            .collect();
         tx.move_to(&src, &dest)?;
-        if let Some(claude) = snap["claude"].as_object() {
-            for c in claude.values() {
-                let Some(old) = c["path"].as_str().map(Path::new).filter(|p| p.starts_with(&src)) else {
-                    continue;
-                };
-                let now = relocated(&src, &dest, old);
-                let from = value_path(env, &c["dir"])?;
-                let target = from.parent().ok_or("Invalid Claude store")?.join(paths::enc(&now.to_string_lossy()));
-                tx.merge(&from, &target)?;
-                let gone = c["gone"].as_array().cloned().unwrap_or_default();
-                let stale = roots(
-                    c["sessions"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|s| s["cwd"].as_str())
-                        .filter(|s| gone.iter().any(|g| g.as_str() == Some(*s)) && !Path::new(s).starts_with(old))
-                        .map(str::to_owned)
-                        .collect(),
-                );
-                let mut pairs = vec![(src.to_string_lossy().into_owned(), dest.to_string_lossy().into_owned())];
-                pairs.extend(stale.into_iter().map(|s| (s, now.to_string_lossy().into_owned())));
-                for f in jsonl(&target) {
-                    tx.rewrite(&f, &pairs, "cwd")?;
-                }
+        for (c, old, now) in claude {
+            let from = value_path(env, &c["dir"])?;
+            let target = from.parent().ok_or("Invalid Claude store")?.join(paths::enc(&now.to_string_lossy()));
+            tx.merge(&from, &target)?;
+            let gone = c["gone"].as_array().cloned().unwrap_or_default();
+            let stale = roots(
+                c["sessions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|s| s["cwd"].as_str())
+                    .filter(|s| gone.iter().any(|g| g.as_str() == Some(*s)) && !may_contain(old, Path::new(s)))
+                    .map(str::to_owned)
+                    .collect(),
+            );
+            let mut pairs = vec![(src.to_string_lossy().into_owned(), dest.to_string_lossy().into_owned())];
+            pairs.extend(stale.into_iter().map(|s| (s, now.to_string_lossy().into_owned())));
+            for f in jsonl(&target) {
+                tx.rewrite(&f, &pairs, "cwd")?;
             }
         }
         let connectors = snap["connectors"].as_array().cloned().unwrap_or_default();
         let mut moved = std::collections::HashSet::new();
-        if let Some(items) = snap["items"].as_object() {
-            for item in items.values().filter(|item| item["cleanupCapability"] != "unsupported") {
-                let Some(cwd) = item["cwd"].as_str().map(Path::new).filter(|p| p.starts_with(&src)) else {
-                    continue;
-                };
-                let Some(c) = connectors.iter().find(|c| c["id"] == item["connector"]) else {
-                    continue;
-                };
-                let link = &c["link"];
-                if link["kind"] == "cwd" {
-                    let mut file = value_path(env, &item["file"])?;
-                    if file.starts_with(&src) {
-                        file = dest.join(file.strip_prefix(&src).unwrap());
-                    }
-                    tx.rewrite(
-                        &file,
-                        &[(src.to_string_lossy().into_owned(), dest.to_string_lossy().into_owned())],
-                        link["field"].as_str().unwrap_or("cwd"),
-                    )?;
-                } else if link["kind"] == "named" {
-                    let from = value_path(env, &item["file"])?;
-                    if !moved.insert(from.clone()) {
-                        continue;
-                    }
-                    let newcwd = relocated(&src, &dest, cwd);
-                    let target =
-                        value_path(env, &link["dir"])?.join(crate::agents::store_name(link, &newcwd.to_string_lossy()));
-                    tx.merge(&from, &target)?;
+        for (item, newcwd, inside) in items {
+            let Some(c) = connectors.iter().find(|c| c["id"] == item["connector"]) else {
+                continue;
+            };
+            let link = &c["link"];
+            if link["kind"] == "cwd" {
+                let mut file = value_path(env, &item["file"])?;
+                if let Some(rest) = inside {
+                    file = dest.join(rest);
                 }
-                // Inside history travels with the folder. Mention documents retain their original wording.
+                tx.rewrite(
+                    &file,
+                    &[(src.to_string_lossy().into_owned(), dest.to_string_lossy().into_owned())],
+                    link["field"].as_str().unwrap_or("cwd"),
+                )?;
+            } else if link["kind"] == "named" {
+                let from = value_path(env, &item["file"])?;
+                if !moved.insert(from.clone()) {
+                    continue;
+                }
+                // The tool names the folder after the text of its working folder, so that text is moved as written.
+                let target = value_path(env, &link["dir"])?.join(crate::agents::store_name(link, &newcwd));
+                tx.merge(&from, &target)?;
             }
+            // Inside history travels with the folder. Mention documents retain their original wording.
         }
         if let Some(status) = opts["status"].as_str().filter(|s| !s.is_empty()) {
             tx.sidecar_status(&dest, status)?;
@@ -732,9 +765,7 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
         if opts["trashHeavy"].as_bool() == Some(true) {
             for part in node["size"]["parts"].as_array().into_iter().flatten() {
                 let raw = part["path"].as_str().ok_or("Invalid heavy folder")?;
-                if Path::new(raw).is_absolute()
-                    || Path::new(raw).components().any(|c| matches!(c, std::path::Component::ParentDir))
-                {
+                if !stays_below(Path::new(raw)) {
                     return Err("Invalid heavy folder".into());
                 }
                 tx.clear(&path(env, &dest.join(raw).to_string_lossy())?)?;
@@ -838,9 +869,7 @@ fn apply_action_checked(
                 let quarantine = data(env, "orphans")?;
                 for m in a["moves"].as_array().ok_or("Missing moves")? {
                     let rel = m["to"].as_str().ok_or("Missing destination")?;
-                    if Path::new(rel).is_absolute()
-                        || Path::new(rel).components().any(|c| matches!(c, std::path::Component::ParentDir))
-                    {
+                    if !stays_below(Path::new(rel)) {
                         return Err("Bad quarantine path".into());
                     }
                     let from = value_path(env, &m["from"])?;
@@ -876,7 +905,12 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
         {
             let src = value_path(env, &c["link"]["dir"])?;
             let connector = c["id"].as_str().ok_or("Missing connector")?;
-            if connector.is_empty() || connector.contains(['/', '\\']) || connector == ".." {
+            // On Windows a `C:` in front would make the join below start over on that drive.
+            if connector.is_empty()
+                || connector.contains(['/', '\\'])
+                || connector == ".."
+                || (cfg!(windows) && connector.contains(':'))
+            {
                 return Err("Invalid connector id".into());
             }
             if dest.starts_with(&src) {
@@ -987,8 +1021,11 @@ pub fn delete_sessions(env: &Env, snap: &Value, files: &[String]) -> Result<Valu
             .flatten()
             .find(|c| c["id"] == session["connector"])
             .ok_or("Connect this agent before deleting its sessions")?;
-        let id =
-            connector["id"].as_str().filter(|id| !id.is_empty() && !id.contains(['/', '.'])).ok_or("Unknown agent")?;
+        // On Windows `\` and a drive's `:` would lead the joins below out of the quarantine.
+        let id = connector["id"]
+            .as_str()
+            .filter(|id| !id.is_empty() && !id.contains(['/', '.']) && !(cfg!(windows) && id.contains(['\\', ':'])))
+            .ok_or("Unknown agent")?;
         let store = value_path(env, &connector["link"]["dir"])?;
         let source = value_path(env, &session["file"])?;
         let relative = source
@@ -1042,62 +1079,154 @@ pub fn backup_state(env: &Env) -> Option<Value> {
     Some(state)
 }
 
-/// These read /proc and start the shell and `sleep`, so they run on Linux alone.
-#[cfg(all(test, target_os = "linux"))]
+/// What macOS and Windows add to a move: a new case for a name.
+#[cfg(all(test, not(target_os = "linux")))]
+mod elsewhere {
+    use super::*;
+
+    #[test]
+    fn a_file_renamed_to_another_case_is_renamed_and_undo_renames_it_back() {
+        let temp = tempfile::tempdir().unwrap();
+        let env = Env::for_home(platform::path::canonical(temp.path()).unwrap().join("home"));
+        fs::create_dir_all(&env.home).unwrap();
+        let (src, dest) = (env.home.join("Notes.md"), env.home.join("notes.md"));
+        fs::write(&src, "kept").unwrap();
+        if !exists(&dest) {
+            eprintln!("This volume tells case apart; there is no such rename.");
+            return;
+        }
+        let names = || {
+            let mut names: Vec<_> =
+                files::entries(&env.home).iter().map(|e| e.file_name()).filter(|n| n != ".local").collect();
+            names.sort();
+            names
+        };
+        let journal = transact(&env, "Rename", |tx| tx.move_to(&src, &dest)).unwrap();
+        assert_eq!(names(), ["notes.md"]);
+        undo_entries(&env, journal["entries"].as_array().unwrap()).unwrap();
+        assert_eq!(names(), ["Notes.md"]);
+        assert_eq!(fs::read_to_string(&src).unwrap(), "kept");
+        // A name that another file has is still taken, in any case.
+        fs::write(env.home.join("other.md"), "other").unwrap();
+        assert!(transact(&env, "Rename", |tx| tx.move_to(&src, &env.home.join("OTHER.md"))).is_err());
+        assert_eq!(fs::read_to_string(env.home.join("other.md")).unwrap(), "other");
+    }
+
+    /// A history folder merged into itself, spelled with a folder above it in another case, stays as it is.
+    #[test]
+    fn a_folder_merged_into_itself_under_another_spelling_is_left_as_it_is() {
+        let temp = tempfile::tempdir().unwrap();
+        let env = Env::for_home(platform::path::canonical(temp.path()).unwrap().join("home"));
+        let store = env.home.join("store");
+        fs::create_dir_all(&store).unwrap();
+        fs::write(store.join("session.jsonl"), "{}\n").unwrap();
+        let other = env.home.with_file_name("HOME").join("store");
+        if !exists(&other) {
+            eprintln!("This volume tells case apart; there is nothing to merge.");
+            return;
+        }
+        let journal = transact(&env, "Merge", |tx| tx.merge(&store, &other)).unwrap();
+        assert_eq!(journal["entries"], json!([]));
+        assert_eq!(files::entries(&store).iter().map(|e| e.file_name()).collect::<Vec<_>>(), ["session.jsonl"]);
+        assert_eq!(fs::read_to_string(store.join("session.jsonl")).unwrap(), "{}\n");
+    }
+}
+
+/// These run on every OS. This test binary stands in for Git and the other programs: started again under their names,
+/// it runs only [`tests::stand_in`].
+#[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::{Child, Command};
+    use std::process::{Child, Command, Stdio};
 
-    /// A project folder and a stand-in for Git: `git`, a link to the shell. A program written here to start could
-    /// fail with "Text file busy" while another test starts a process.
-    fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    /// What [`stand_in`] does in a program these tests start: `stay <seconds>` works in its folder that long, and
+    /// `pass <file>` writes the file and ends a moment later.
+    const ROLE: &str = "LACI_OPS_TEST_ROLE";
+    /// The arguments that make this test binary run [`stand_in`] alone.
+    const STAND_IN: [&str; 4] = ["--exact", "ops::tests::stand_in", "--test-threads=1", "--quiet"];
+
+    /// Not a test: what this binary does when a test starts it as another program. As a test it does nothing.
+    #[test]
+    fn stand_in() {
+        let Ok(role) = std::env::var(ROLE) else { return };
+        match role.split_once(' ') {
+            Some(("stay", seconds)) => thread::sleep(Duration::from_secs_f64(seconds.parse().unwrap())),
+            Some(("pass", file)) => {
+                fs::write(file, "").unwrap();
+                thread::sleep(Duration::from_millis(20));
+            }
+            _ => panic!("No part called {role}"),
+        }
+    }
+
+    /// A project folder, and this test binary as each program in `names`. Linux gets links, as a program written
+    /// here could fail to start with "Text file busy" while another test starts a process; macOS and Windows get
+    /// copies, so each is listed under its own name. Each runs once first, as Windows can make a new program wait
+    /// while Defender looks at it.
+    fn fixture<const N: usize>(names: [&str; N]) -> (tempfile::TempDir, PathBuf, [PathBuf; N]) {
         let temp = tempfile::tempdir().unwrap();
-        // /proc names working folders with links resolved.
-        let root = temp.path().canonicalize().unwrap();
-        let (project, git) = (root.join("project"), root.join("bin/git"));
+        // Linux and macOS name working folders with links resolved; Windows keeps the spelling it was given.
+        let root = if cfg!(windows) { temp.path().to_owned() } else { temp.path().canonicalize().unwrap() };
+        let (project, bin) = (root.join("project"), root.join("bin"));
         fs::create_dir(&project).unwrap();
-        fs::create_dir(root.join("bin")).unwrap();
-        std::os::unix::fs::symlink("/bin/sh", &git).unwrap();
-        (temp, project, git)
+        fs::create_dir(&bin).unwrap();
+        let programs = names.map(|name| {
+            let (this, program) = (std::env::current_exe().unwrap(), bin.join(name));
+            let program = program.with_extension(std::env::consts::EXE_EXTENSION);
+            #[cfg(target_os = "linux")]
+            std::os::unix::fs::symlink(this, &program).unwrap();
+            #[cfg(not(target_os = "linux"))]
+            fs::copy(this, &program).unwrap();
+            let ran = Command::new(&program).args(STAND_IN).env(ROLE, "stay 0").stdout(Stdio::null()).status();
+            assert!(ran.unwrap().success(), "{name} runs");
+            program
+        });
+        (temp, project, programs)
     }
 
-    /// Arguments that keep `git` in the folder it starts in for `seconds`. It sleeps in a child outside the folder,
-    /// so it is the only process inside.
-    fn stay(seconds: &str) -> [&str; 4] {
-        ["-c", "(cd / && exec sleep \"$1\") & wait", "git", seconds]
+    /// The name the OS lists `program` under: `git`, or `git.exe` on Windows.
+    fn name(program: &Path) -> String {
+        program.file_name().unwrap().to_string_lossy().into_owned()
     }
 
-    /// Every process working in `dir`, with its name, Laci's own helpers included.
+    /// Runs `program` in `dir` as Laci runs Git, as one of its helpers.
+    fn helper(program: &Path, role: &str, dir: &Path, timeout: Duration) -> Result<String> {
+        process::run_env(program.to_str().unwrap(), &STAND_IN, Some(dir), timeout, &[(ROLE, Some(role))])
+    }
+
+    /// Every process working in `dir` but this one, Laci's own helpers included, with its name.
     fn inside(dir: &Path) -> Vec<(u32, String)> {
-        files::entries(Path::new("/proc"))
-            .into_iter()
-            .filter_map(|e| {
-                let pid = e.file_name().to_string_lossy().parse().ok()?;
-                fs::read_link(e.path().join("cwd")).ok().filter(|cwd| cwd.starts_with(dir))?;
-                Some((pid, fs::read_to_string(e.path().join("comm")).ok()?.trim().to_owned()))
-            })
-            .collect()
+        platform::processes_in(&[dir.to_owned()]).unwrap().into_iter().map(|h| (h.pid, h.name)).collect()
     }
 
-    /// The pid of the process in `dir` that `pick` accepts, once /proc names it `name`. Right after a spawn, the
-    /// child can still carry its parent's name for a moment.
-    fn started(dir: &Path, name: &str, pick: impl Fn(u32) -> bool) -> u32 {
+    /// Waits up to twenty seconds for `found` to give something.
+    fn soon<T>(what: &str, mut found: impl FnMut() -> Option<T>) -> T {
         let since = Instant::now();
         loop {
-            if let Some((pid, _)) = inside(dir).into_iter().find(|(pid, found)| found == name && pick(*pid)) {
-                return pid;
+            if let Some(value) = found() {
+                return value;
             }
-            assert!(since.elapsed() < Duration::from_secs(5), "no {name} started in {}", dir.display());
+            assert!(since.elapsed() < Duration::from_secs(20), "{what}");
             thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// The pid of the process in `dir` that `pick` accepts, once it is listed under `name`. Right after a spawn,
+    /// Linux can still list the child under its parent's name for a moment.
+    fn started(dir: &Path, name: &str, pick: impl Fn(u32) -> bool) -> u32 {
+        soon(&format!("{name} starts in {}", dir.display()), || {
+            inside(dir).into_iter().find(|(pid, found)| found == name && pick(*pid)).map(|(pid, _)| pid)
+        })
     }
 
     /// Started without [`process::run_env`], like Git from another Laci or a terminal. Killed and reaped when the
     /// test ends, also when it fails.
     struct Outside(Child);
     impl Outside {
-        fn start(program: &Path, args: &[&str], cwd: &Path) -> Self {
-            Self(Command::new(program).args(args).current_dir(cwd).spawn().unwrap())
+        fn start(program: &Path, role: &str, cwd: &Path) -> Self {
+            let mut command = Command::new(program);
+            command.args(STAND_IN).env(ROLE, role).current_dir(cwd).stdout(Stdio::null());
+            Self(command.spawn().unwrap())
         }
     }
     impl Drop for Outside {
@@ -1109,13 +1238,12 @@ mod tests {
 
     #[test]
     fn git_that_laci_runs_itself_never_makes_a_folder_busy() {
-        let (_temp, project, git) = fixture();
+        let (_temp, project, [git]) = fixture(["git"]);
         let folder = std::slice::from_ref(&project);
-        let program = git.to_str().unwrap();
-        let scan = || process::run_env(program, &stay("2"), Some(project.as_path()), Duration::from_secs(10), &[]);
+        let scan = || helper(&git, "stay 2", &project, Duration::from_secs(30));
         thread::scope(|scope| {
             let scan = scope.spawn(scan);
-            let pid = started(&project, "git", process::is_own_child);
+            let pid = started(&project, &name(&git), process::is_own_child);
             assert!(busy_in(folder).unwrap().iter().all(|b| b["pid"] != pid));
             let checked = Instant::now();
             guard(folder).unwrap();
@@ -1128,11 +1256,11 @@ mod tests {
 
     #[test]
     fn a_helper_is_forgotten_when_it_runs_out_of_time() {
-        let (_temp, project, _git) = fixture();
-        let slow = || process::run_env("sleep", &["30"], Some(project.as_path()), Duration::from_secs(2), &[]);
+        let (_temp, project, [git]) = fixture(["git"]);
+        let slow = || helper(&git, "stay 60", &project, Duration::from_secs(3));
         thread::scope(|scope| {
             let slow = scope.spawn(slow);
-            let pid = started(&project, "sleep", process::is_own_child);
+            let pid = started(&project, &name(&git), process::is_own_child);
             assert!(slow.join().unwrap().unwrap_err().contains("took too long"));
             assert!(!process::is_own_child(pid));
             assert!(inside(&project).is_empty(), "killed and reaped");
@@ -1141,22 +1269,23 @@ mod tests {
 
     #[test]
     fn a_change_waits_a_moment_for_git_that_another_program_runs() {
-        let (_temp, project, git) = fixture();
+        let (_temp, project, [git]) = fixture(["git"]);
         let folder = std::slice::from_ref(&project);
         // Another Laci's scan: Git in the folder that is not a helper of this process.
-        let mut other = Outside::start(&git, &stay("0.5"), &project);
+        let mut other = Outside::start(&git, "stay 0.5", &project);
         let pid = other.0.id();
-        started(&project, "git", |found| found == pid);
-        assert!(busy_in(folder).unwrap().iter().any(|b| b["pid"] == pid && b["name"] == "git"));
+        started(&project, &name(&git), |found| found == pid);
+        assert!(busy_in(folder).unwrap().iter().any(|b| b["pid"] == pid && b["name"] == name(&git)));
         guard(folder).unwrap();
         assert!(other.0.try_wait().unwrap().is_some(), "the change went ahead once that Git was done");
     }
 
     #[test]
     fn a_process_passing_through_does_not_make_a_folder_busy() {
-        let (_temp, project, _git) = fixture();
-        let brief = Outside::start(Path::new("sleep"), &["0.05"], &project);
-        started(&project, "sleep", |pid| pid == brief.0.id());
+        let (temp, project, [shell]) = fixture(["shell"]);
+        let passed = temp.path().join("passed");
+        let _brief = Outside::start(&shell, &format!("pass {}", passed.display()), &project);
+        soon("the program runs", || passed.exists().then_some(()));
         let checked = Instant::now();
         guard(std::slice::from_ref(&project)).unwrap();
         assert!(checked.elapsed() < Duration::from_secs(1), "{:?}", checked.elapsed());
@@ -1164,16 +1293,16 @@ mod tests {
 
     #[test]
     fn anything_besides_git_in_the_folder_makes_it_busy_at_once() {
-        let (_temp, project, git) = fixture();
+        let (_temp, project, [git, shell]) = fixture(["git", "shell"]);
         // Stands for a terminal Laci opened there: its own child, but not a helper. Git beside it changes nothing.
-        let shell = Outside::start(Path::new("sleep"), &["30"], &project);
-        let other = Outside::start(&git, &stay("2"), &project);
-        started(&project, "sleep", |pid| pid == shell.0.id());
-        started(&project, "git", |pid| pid == other.0.id());
+        let terminal = Outside::start(&shell, "stay 60", &project);
+        let other = Outside::start(&git, "stay 60", &project);
+        started(&project, &name(&shell), |pid| pid == terminal.0.id());
+        started(&project, &name(&git), |pid| pid == other.0.id());
         let checked = Instant::now();
         let error = guard(std::slice::from_ref(&project)).unwrap_err();
         assert!(checked.elapsed() < GIT_WAIT / 3, "no wait while something besides Git is there");
         assert!(error.starts_with("In use by ") && error.ends_with(". Close it first."), "{error}");
-        assert!(error.contains(&format!("sleep (pid {})", shell.0.id())), "{error}");
+        assert!(error.contains(&format!("{} (pid {})", name(&shell), terminal.0.id())), "{error}");
     }
 }

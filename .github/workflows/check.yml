@@ -106,6 +106,21 @@ jobs:
             xvfb-run -a dbus-run-session -- bash scripts/native-smoke.sh target/debug/laci "$laci_suite"
           done
       - run: pnpm build
+      # The WebDriver server lets anything on this computer drive the window: only `--features e2e` brings it in,
+      # and no release build may have it. A binary with the plugin holds its name, "wdio-webdriver"; the four
+      # letters "wdio" alone could turn up in compressed data by chance.
+      - name: No WebDriver server in release builds
+        run: |
+          if tree="$(cargo tree --target all -p laci --features custom-protocol -i tauri-plugin-wdio-webdriver 2>&1)" \
+            || ! grep -q 'did not match any packages' <<< "$tree"; then
+            echo "$tree"
+            echo "::error::tauri-plugin-wdio-webdriver is in the release build's dependencies"
+            exit 1
+          fi
+          if grep -qaF wdio-webdriver target/release/laci; then
+            echo "::error::The release binary holds the WebDriver plugin"
+            exit 1
+          fi
       - name: Validate production packages
         run: node scripts/package-smoke.mjs /tmp/laci-package-proof
       - name: Native production package regression
@@ -240,7 +255,111 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
 
-  # The one check to require. List every job in needs. A skipped job is fine; a failed or cancelled one is not.
+  # Screenshots of the real window (scripts/window-smoke.mjs): both designs, both themes, the four widths of Simple's
+  # tiers, from a build with the WebDriver server (`--features e2e`). Linux and Windows drive it through tauri-driver,
+  # macOS through the server inside the app. It only reports, on every OS: a failure never fails the run. The
+  # screenshots are kept as screenshots-<OS> for 7 days. Gated like the Windows and macOS jobs.
+  window-smoke:
+    needs: changes
+    if: >-
+      needs.changes.outputs.code == 'true' && (
+        github.event_name != 'pull_request' ||
+        !github.event.repository.private ||
+        contains(github.event.pull_request.labels.*.name, 'cross-platform')
+      )
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-26]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Rust toolchain
+        run: rustup toolchain install --no-self-update
+      # Reads the cache the other jobs save; the e2e build would only add its own features to it.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ${{ runner.os }}
+          save-if: false
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev patchelf git libglib2.0-bin xdg-utils webkit2gtk-driver xvfb
+      - run: pnpm install --frozen-lockfile
+      # tauri-build embeds ui/dist.
+      - run: pnpm -C ui build
+      # TMPDIR on macOS: the default one is under /var, a link, and Laci refuses to write through links.
+      - name: Build with the WebDriver server
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then export TMPDIR="$RUNNER_TEMP"; fi
+          cargo build -p laci --features custom-protocol,e2e
+      # The linux job's release guard looks for this name; a build with the plugin must hold it.
+      - name: The guard would see the WebDriver server
+        if: runner.os == 'Linux'
+        run: grep -qaF wdio-webdriver target/debug/laci
+      - name: tauri-driver
+        if: runner.os != 'macOS'
+        run: cargo install tauri-driver --locked
+      # msedgedriver has to match the WebView2 runtime the app runs in, which can differ from Edge's. Without a
+      # download, the runner's own one (EDGEWEBDRIVER, for Edge) is the next best.
+      - name: msedgedriver for the installed WebView2
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $client = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $version = @("HKLM:\SOFTWARE\WOW6432Node\$client", "HKCU:\Software\$client") |
+            ForEach-Object { (Get-ItemProperty -Path $_ -ErrorAction SilentlyContinue).pv } |
+            Where-Object { $_ } | Select-Object -First 1
+          if (-not $version) { throw 'No WebView2 runtime is installed' }
+          Write-Host "WebView2 $version"
+          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
+          $dir = Join-Path $env:RUNNER_TEMP 'edgedriver'
+          try {
+            Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $zip
+            Expand-Archive $zip -DestinationPath $dir
+            $driver = Join-Path $dir 'msedgedriver.exe'
+          } catch {
+            Write-Warning "No msedgedriver $version to download ($_); using the runner's, made for Edge"
+            $driver = Join-Path $env:EDGEWEBDRIVER 'msedgedriver.exe'
+          }
+          "LACI_NATIVE_DRIVER=$driver" >> $env:GITHUB_ENV
+      - name: Window screenshots
+        shell: bash
+        env:
+          LACI_SCREENSHOTS: ${{ runner.temp }}/screenshots
+        run: |
+          LACI_HOME="$(node -p "require('node:path').join(process.env.RUNNER_TEMP, 'laci-window', 'home')")"
+          export LACI_HOME
+          node scripts/demo.ts "$LACI_HOME"
+          case "$RUNNER_OS" in
+            Linux)
+              xvfb-run -a -s '-screen 0 1920x1200x24' dbus-run-session -- node scripts/window-smoke.mjs target/debug/laci
+              ;;
+            Windows) node scripts/window-smoke.mjs target/debug/laci.exe ;;
+            macOS) TMPDIR="$RUNNER_TEMP" node scripts/window-smoke.mjs target/debug/laci ;;
+          esac
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: screenshots-${{ runner.os }}
+          path: ${{ runner.temp }}/screenshots
+          if-no-files-found: warn
+          retention-days: 7
+
+  # The one check to require. List every job in needs, except window-smoke, which only reports and can take an hour.
+  # A skipped job is fine; a failed or cancelled one is not.
   ci-ok:
     needs: [changes, linux, windows, macos]
     if: always()

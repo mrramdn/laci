@@ -95,8 +95,8 @@ fn reconnect_stale_bytes_and_symlinks_reject_reviewed_cleanup() {
     }
 }
 
-// Linux only until macOS and Windows can tell which programs write to the history.
-#[cfg(target_os = "linux")]
+// The writer is the shell, holding the log open from another folder.
+#[cfg(unix)]
 #[test]
 fn open_history_writer_blocks_cleanup_even_when_its_cwd_is_elsewhere() {
     use std::{
@@ -120,9 +120,8 @@ fn open_history_writer_blocks_cleanup_even_when_its_cwd_is_elsewhere() {
     assert!(history.exists());
 }
 
-// Linux only until macOS and Windows can tell which programs write to the history.
-#[cfg(target_os = "linux")]
 #[test]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn quarantine_defaults_to_exact_restore_and_duplicate_submission_is_rejected() {
     let (_temp, env, history, mut service, proposal) = fixture();
     assert_eq!(proposal["availability"], "missing");
@@ -157,13 +156,13 @@ fn pure_trash_has_no_laci_undo_and_mixed_journals_explain_partial_recovery() {
     let pure = log.iter().find(|e| e["journal"] == "pure").unwrap();
     let mixed = log.iter().find(|e| e["journal"] == "mixed").unwrap();
     assert_eq!(pure["canUndo"], false);
-    assert!(ops::undo(&env, "pure").unwrap_err().contains("system Trash"));
+    assert!(ops::undo(&env, "pure").unwrap_err().contains(laci_core::platform::BIN.bare));
     assert_eq!(mixed["canUndo"], true);
     assert!(mixed["recovery"].as_str().unwrap().contains("moves and edits only"));
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore = "port:P5: macOS and Windows can't yet check which programs use a folder")]
+#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn invalid_default_archive_keeps_review_available_with_a_valid_alternative() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));

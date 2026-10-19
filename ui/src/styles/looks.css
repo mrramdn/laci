@@ -1,0 +1,579 @@
+/* The parts that choose between Simple and Detailed (ui/src/looks.tsx and its callers): the pictures
+   of each design, the choice of design on the first-run screen and in Settings › Appearance, the
+   notes first run shows for this computer, the toggle and Help at the foot of Detailed's sidebar,
+   the card on Today that offers Simple, and the times Search and actions gives in Simple's words.
+   They use the names both designs define (--accent, --border, --text…), so on the first-run screen
+   Simple's tokens re-skin them with the rest of the page. In @layer detailed, after Detailed's own
+   sheet, and only on classes of their own: Detailed's other parts look as they did. Simple's sizes
+   for them, and for the rest of the first-run screen, are in @layer simple at the end. */
+@layer detailed {
+  /* --- The pictures: each design in its own colours, for the theme shown. They only decorate. --- */
+  .look-thumb {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 10;
+    --lk-chip: transparent;
+  }
+  .look-thumb.simple {
+    --lk-canvas: #fbf8f3;
+    --lk-side: #fbf8f3;
+    --lk-card: #ffffff;
+    --lk-line: #e6ded2;
+    --lk-ink: #4a4239;
+    --lk-text: #c9bfb2;
+    --lk-brand: #0e7268;
+    --lk-soft: #d3ebe6;
+    --lk-sand: #e9dcc8;
+    --lk-chip: #fbe4b8;
+  }
+  .look-thumb.detailed {
+    --lk-canvas: #ffffff;
+    --lk-side: #f3f4f6;
+    --lk-card: #ffffff;
+    --lk-line: #e5e7eb;
+    --lk-ink: #374151;
+    --lk-text: #cdd1d8;
+    --lk-brand: #4f46e5;
+    --lk-soft: #e3e2fb;
+    --lk-chip: #fbe3c2;
+    --lk-risk: #dc2626;
+    --lk-attention: #d97706;
+    --lk-ok: #16a34a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .look-thumb.simple {
+      --lk-canvas: #181512;
+      --lk-side: #181512;
+      --lk-card: #221e1a;
+      --lk-line: #39322b;
+      --lk-ink: #d9d1c6;
+      --lk-text: #5c534a;
+      --lk-brand: #2bb3a3;
+      --lk-soft: #1b4a44;
+      --lk-sand: #3b332a;
+      --lk-chip: #4a3716;
+    }
+    :root:where(:not([data-theme="light"])) .look-thumb.detailed {
+      --lk-canvas: #09090b;
+      --lk-side: #131317;
+      --lk-card: #18181c;
+      --lk-line: #27272a;
+      --lk-ink: #d4d4d8;
+      --lk-text: #3f3f46;
+      --lk-brand: #818cf8;
+      --lk-soft: #26264a;
+      --lk-chip: #3d3112;
+      --lk-risk: #f87171;
+      --lk-attention: #fbbf24;
+      --lk-ok: #4ade80;
+    }
+  }
+  :root:where([data-theme="dark"]) .look-thumb.simple {
+    --lk-canvas: #181512;
+    --lk-side: #181512;
+    --lk-card: #221e1a;
+    --lk-line: #39322b;
+    --lk-ink: #d9d1c6;
+    --lk-text: #5c534a;
+    --lk-brand: #2bb3a3;
+    --lk-soft: #1b4a44;
+    --lk-sand: #3b332a;
+    --lk-chip: #4a3716;
+  }
+  :root:where([data-theme="dark"]) .look-thumb.detailed {
+    --lk-canvas: #09090b;
+    --lk-side: #131317;
+    --lk-card: #18181c;
+    --lk-line: #27272a;
+    --lk-ink: #d4d4d8;
+    --lk-text: #3f3f46;
+    --lk-brand: #818cf8;
+    --lk-soft: #26264a;
+    --lk-chip: #3d3112;
+    --lk-risk: #f87171;
+    --lk-attention: #fbbf24;
+    --lk-ok: #4ade80;
+  }
+  .look-thumb .lk-frame {
+    fill: var(--lk-canvas);
+    stroke: var(--lk-line);
+  }
+  .look-thumb .lk-side {
+    fill: var(--lk-side);
+  }
+  .look-thumb .lk-rule {
+    fill: none;
+    stroke: var(--lk-line);
+  }
+  .look-thumb .lk-card {
+    fill: var(--lk-card);
+    stroke: var(--lk-line);
+  }
+  .look-thumb .lk-ink {
+    fill: var(--lk-ink);
+  }
+  .look-thumb .lk-text {
+    fill: var(--lk-text);
+  }
+  .look-thumb .lk-brand {
+    fill: var(--lk-brand);
+  }
+  .look-thumb .lk-soft {
+    fill: var(--lk-soft);
+  }
+  .look-thumb .lk-sand {
+    fill: var(--lk-sand);
+  }
+  .look-thumb .lk-chip {
+    fill: var(--lk-chip);
+  }
+  .look-thumb .lk-risk {
+    fill: var(--lk-risk);
+  }
+  .look-thumb .lk-attention {
+    fill: var(--lk-attention);
+  }
+  .look-thumb .lk-ok {
+    fill: var(--lk-ok);
+  }
+
+  /* --- The choice of design: two cards, a radio each in a form, a button each elsewhere. ------- */
+  .look-pick {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+    gap: 12px;
+  }
+  .look {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "thumb thumb" "mark text";
+    align-items: start;
+    gap: 10px 8px;
+    padding: 10px 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      border-color 0.12s,
+      background 0.12s;
+  }
+  .look:hover {
+    border-color: var(--border-strong);
+  }
+  .look:has(input:checked),
+  .look[aria-pressed="true"] {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+    background: var(--accent-soft);
+  }
+  .look:has(input:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .look .look-thumb {
+    grid-area: thumb;
+    border-radius: 7px;
+  }
+  .look input {
+    grid-area: mark;
+    width: 15px;
+    height: 15px;
+    margin: 2px 0 0;
+    accent-color: var(--accent);
+  }
+  .look input:focus-visible {
+    outline: none;
+  }
+  /* A button's state as a radio would show it: an empty ring, or a check on the accent. */
+  .look-mark {
+    grid-area: mark;
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    border: 1.5px solid var(--border-strong);
+    border-radius: 50%;
+  }
+  .look[aria-pressed="true"] .look-mark {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .look-mark .i {
+    width: 11px;
+    height: 11px;
+    stroke-width: 3;
+  }
+  .look-text {
+    grid-area: text;
+    min-width: 0;
+  }
+  .look-name {
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .look-tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 7px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 18px;
+    vertical-align: 1px;
+  }
+  .look-tag.shown {
+    background: var(--hover);
+    color: var(--muted);
+  }
+  .look-about {
+    display: block;
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+  /* Settings › Appearance: the theme as three buttons, as the sidebar has it. */
+  .look-themes {
+    display: inline-flex;
+    flex-wrap: wrap;
+    justify-self: start;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 8px;
+    background: var(--hover);
+  }
+  .look-themes button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .look-themes button:hover {
+    color: var(--text);
+  }
+  .look-themes button[aria-pressed="true"] {
+    background: var(--bg);
+    color: var(--text);
+    box-shadow:
+      var(--shadow-sm),
+      0 0 0 1px var(--border);
+  }
+  .look-themes .i {
+    width: 14px;
+    height: 14px;
+  }
+
+  /* First run's choice about new versions: the dialogs' radio rows, framed inside a section. */
+  .sset .choices {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  /* --- What first run says about this computer. Amber only for what is missing. --------------- */
+  .setup-note {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--subtle);
+  }
+  .sset .setup-note {
+    margin: 0 0 12px;
+  }
+  .setup-note > .i {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    color: var(--accent);
+  }
+  .setup-note.warn > .i {
+    color: var(--amber);
+  }
+  .setup-note b {
+    display: block;
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .setup-note p {
+    margin: 2px 0 0;
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+  .setup-note .linkbtn {
+    margin-top: 4px;
+  }
+  /* The line to type in Terminal. */
+  .setup-note code {
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  /* --- The foot of Detailed's sidebar: Help, and Simple | Detailed where Simple has its own. ---- */
+  .sb-row .sb-item.sb-help {
+    flex: none;
+    width: auto;
+  }
+  .view-seg {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    gap: 1px;
+    padding: 2px;
+    border-radius: 7px;
+    background: var(--hover);
+  }
+  .view-seg button {
+    flex: 1;
+    min-width: 0;
+    height: 22px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 5px;
+    background: none;
+    /* Words, unlike the theme's icons beside them: muted, which stays readable on the grey. */
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition:
+      color 0.12s,
+      background 0.12s;
+  }
+  .view-seg button:hover {
+    color: var(--text);
+  }
+  .view-seg button[aria-pressed="true"] {
+    background: var(--bg);
+    color: var(--text);
+    box-shadow:
+      var(--shadow-sm),
+      0 0 0 1px var(--border);
+    cursor: default;
+  }
+  .view-seg .i {
+    display: none;
+  }
+  /* In the rail only the way to the other design is left, as an icon. The open rail has both. */
+  @media (max-width: 1240px) {
+    .side:not(.rail-open) .view-seg {
+      flex: none;
+      align-self: center;
+      flex-direction: column;
+    }
+    .side:not(.rail-open) .view-seg button[aria-pressed="true"] {
+      display: none;
+    }
+    /* An icon there, so as faint as the theme's beside it. */
+    .side:not(.rail-open) .view-seg button {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      padding: 0;
+      color: var(--faint);
+    }
+    .side:not(.rail-open) .view-seg button:hover {
+      color: var(--text);
+    }
+    .side:not(.rail-open) .view-seg .i {
+      display: block;
+      width: 13px;
+      height: 13px;
+    }
+    .side:not(.rail-open) .view-seg span {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
+
+  /* --- The card on Today that offers Simple: a picture of it, not a warning sign. -------------- */
+  .callout.look-offer .look-thumb {
+    flex: none;
+    width: 88px;
+    border-radius: 5px;
+  }
+}
+/* The same parts in Simple's look, from its own layer, which wins over Detailed's sheet and over the
+   look simple.css gives the parts both designs share. A new install shows first run (.setup) before
+   any design is chosen, on Simple's tokens: here it also takes Simple's type scale, canvas and
+   controls, so no text is under 13 px and every target is at least 24 px. Only the first-run
+   screen: Detailed's Settings use the same classes and stay as they are. */
+@layer simple {
+  :root[data-design="simple"] .look-name {
+    font-size: 15px;
+  }
+  :root[data-design="simple"] .look-tag {
+    font-size: 13px;
+    line-height: 20px;
+  }
+  :root[data-design="simple"] .look-about {
+    font-size: 14px;
+  }
+  /* Simple's focus ring goes round everything: the card of a design takes the ring for its radio
+     button, as it does in Detailed. */
+  :root[data-design="simple"] .look input:focus-visible {
+    outline: none;
+  }
+
+  /* --- First run ---------------------------------------------------------------------------------- */
+  :root[data-design="simple"] .setup {
+    background: var(--canvas);
+  }
+  :root[data-design="simple"] .setup h1 {
+    font: var(--text-display);
+    letter-spacing: 0;
+  }
+  :root[data-design="simple"] .setup .lead {
+    font: var(--text-body);
+    color: var(--ink-2);
+  }
+  :root[data-design="simple"] .setup .sset {
+    margin-bottom: var(--space-4);
+    padding: var(--space-5);
+    border-color: var(--line);
+    border-radius: var(--radius-card);
+  }
+  :root[data-design="simple"] .setup .sset h2 {
+    gap: 10px;
+    margin-bottom: 4px;
+    font: var(--text-section);
+  }
+  :root[data-design="simple"] .setup .sset h2 .num {
+    width: 26px;
+    height: 26px;
+    font: 650 13px/1 var(--font);
+    background: var(--brand-soft);
+    color: var(--brand-ink);
+  }
+  :root[data-design="simple"] .setup :is(.opt, .choice b, .setup-note b) {
+    font-size: 15px;
+  }
+  :root[data-design="simple"] .setup .opt {
+    min-height: 44px;
+  }
+  :root[data-design="simple"] .setup :is(.sset > p, .choice p, .setup-note p) {
+    font-size: 14px;
+    line-height: 20px;
+  }
+  :root[data-design="simple"] .setup :is(.opt .sub, .fld small, .setup-foot p) {
+    font-size: 13px;
+    line-height: 18px;
+  }
+  /* What a folder or a tool was found to be is said in words, not in code. */
+  :root[data-design="simple"] .setup .opt .r {
+    font: 500 13px/18px var(--font);
+  }
+  :root[data-design="simple"] .setup .fld > span {
+    font: 600 14px/20px var(--font);
+  }
+  :root[data-design="simple"] .setup .apps {
+    margin-top: var(--space-4);
+  }
+  :root[data-design="simple"] .setup .choice {
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  /* The notes in Simple's tones: what is missing is amber, with its words, as "Soon" is; the rest is
+     said plainly, since teal means safe. More contrast outlines them, as it does Simple's own. */
+  :root[data-design="simple"] .setup-note {
+    border-color: transparent;
+    background: var(--sunken);
+  }
+  :root[data-design="simple"] .setup-note > .i {
+    width: 20px;
+    height: 20px;
+    margin-top: 0;
+    color: var(--ink-2);
+  }
+  :root[data-design="simple"] .setup-note.warn {
+    background: var(--attention-soft);
+  }
+  :root[data-design="simple"] .setup-note.warn > .i {
+    color: var(--attention-icon);
+  }
+  :root[data-design="simple"] .setup-note.warn b {
+    color: var(--attention-text);
+  }
+  @media (prefers-contrast: more) {
+    :root[data-design="simple"] .setup-note {
+      border-color: var(--line-strong);
+      background: transparent;
+    }
+  }
+  /* Checkboxes and the rings of a choice at 24 px, as on Simple's own pages. */
+  :root[data-design="simple"] .setup .cb {
+    width: 24px;
+    height: 24px;
+    border-color: var(--line-strong);
+    border-radius: 7px;
+  }
+  :root[data-design="simple"] .setup .cb:checked {
+    border-color: var(--brand-fill);
+    background: var(--brand-fill);
+  }
+  :root[data-design="simple"] .setup .cb:checked::after {
+    width: 11px;
+    height: 6px;
+  }
+  :root[data-design="simple"] .setup input[type="radio"] {
+    appearance: none;
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 24px;
+    height: 24px;
+    margin: -2px 0 0;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 50%;
+    background: var(--surface);
+    cursor: pointer;
+  }
+  :root[data-design="simple"] .setup input[type="radio"]:checked {
+    border-color: var(--brand-fill);
+  }
+  :root[data-design="simple"] .setup input[type="radio"]:checked::after {
+    content: "";
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--brand-fill);
+  }
+
+  /* --- Search and actions ----------------------------------------------------------------------- */
+  /* Simple says how long ago in words ("5 days ago"), so in its own letters, not the code font. */
+  :root[data-design="simple"] .pal-item .acc {
+    font-family: var(--font);
+  }
+}

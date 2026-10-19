@@ -1,6 +1,14 @@
-use crate::{Result, env::Env, files, paths, platform};
+use crate::{
+    Result,
+    env::Env,
+    files, paths,
+    platform::{
+        self,
+        path::{may_contain, stays_below},
+    },
+};
 use serde_json::{Value, json};
-use std::sync::LazyLock;
+use std::{path::Path, sync::LazyLock};
 
 static APP_NAME: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^[\w.+-]{1,40}$").expect("app name pattern"));
@@ -137,10 +145,10 @@ pub fn validate_reports_dir(env: &Env, value: &Value) -> Result<Value> {
     let Some(path) = chosen_folder(env, value, "reportsDir", "Pick the reports folder")? else {
         return Ok(json!(""));
     };
-    if env.home.starts_with(&path) {
+    if may_contain(&path, &env.home) {
         return Err("Pick the folder that holds the reports, not your home folder or one above it".into());
     }
-    if [&env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|own| path.starts_with(own)) {
+    if [&env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|own| may_contain(own, &path)) {
         return Err("That folder belongs to Laci itself".into());
     }
     Ok(json!(paths::tilde(&path, &env.home)))
@@ -171,7 +179,14 @@ pub fn validate_connector(env: &Env, raw: &Value) -> Result<Value> {
         link = json!({"kind":"none"});
     } else if kind == "inside" {
         let p = link["path"].as_str().ok_or("Pick a path inside the project")?.trim().trim_end_matches('/');
-        if p.is_empty() || p.len() > 200 || p.starts_with('/') || p.split('/').any(|s| s == ".." || s.is_empty()) {
+        // On Linux the last check adds nothing to the ones before it; on Windows it also catches `..\x`, `\x` and the
+        // drives in `C:\x` and `C:x`.
+        if p.is_empty()
+            || p.len() > 200
+            || p.starts_with('/')
+            || p.split('/').any(|s| s == ".." || s.is_empty())
+            || !stays_below(Path::new(p))
+        {
             return Err("History path must stay inside the project".into());
         }
         link["path"] = json!(p);

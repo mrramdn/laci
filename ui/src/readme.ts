@@ -1,3 +1,6 @@
+// Draws a README or a report. Views load this file only when they draw one, with import() (see
+// useMarkdown in hooks.ts), so marked and DOMPurify stay out of the code a window starts with: a
+// static import of it from a view would bring them back.
 import type { MouseEvent } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { marked } from "marked";

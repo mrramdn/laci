@@ -1,8 +1,8 @@
+import { useShallow } from "zustand/react/shallow";
 import { Icon, Group, Ops } from "../common";
-import { useApp, run, changed, toast, toggleExpanded } from "../store";
+import { useApp, toggleExpanded } from "../store";
+import { applyProposal, dismissProposal } from "../actions";
 import { cap, plural } from "../helpers";
-import { api } from "../api";
-import type { Change } from "../types";
 const CATS: Record<string, [string, string, string]> = {
   reconnect: [
     "Reconnect",
@@ -23,14 +23,17 @@ const CATS: Record<string, [string, string, string]> = {
   orphan: ["Orphaned", "unlink", "History for folders that no longer exist"],
   status: ["Archive", "archive", "Projects with no activity for a long time"],
 };
-const dismiss = (id: string, undo = false) =>
-  void run(async () => {
-    await api("proposal/dismiss", { id, ...(undo ? { undo } : {}) });
-    toast(undo ? "Suggestion is back" : "Suggestion dismissed");
-  });
 export function Tidy() {
-  const s = useApp();
-  const snapshot = s.snapshot!;
+  const s = useApp(
+    useShallow((state) => ({
+      snapshot: state.snapshot!,
+      tidyFilter: state.tidyFilter,
+      expanded: state.expanded,
+      historyPending: state.historyPending,
+      select: state.select,
+    })),
+  );
+  const snapshot = s.snapshot;
   const counts: Record<string, number> = {};
   for (const p of snapshot.proposals)
     counts[p.category] = (counts[p.category] ?? 0) + 1;
@@ -143,32 +146,7 @@ export function Tidy() {
                             <button
                               className="btn sm primary"
                               disabled={s.historyPending}
-                              onClick={() => {
-                                if (p.category === "orphan") {
-                                  useApp.setState({
-                                    modal: { kind: "orphan", id: p.id },
-                                  });
-                                  return;
-                                }
-                                if (p.action?.type === "archive") {
-                                  useApp.setState({
-                                    modal: {
-                                      kind: "archive",
-                                      id: p.action.nodeId,
-                                    },
-                                  });
-                                  return;
-                                }
-                                void run(
-                                  async () =>
-                                    changed(
-                                      await api<Change>("apply", { id: p.id }),
-                                      "Changes applied",
-                                    ),
-                                  "Applying changes…",
-                                  { history: true },
-                                );
-                              }}
+                              onClick={() => void applyProposal(p)}
                             >
                               {p.category === "orphan"
                                 ? "Review history…"
@@ -197,7 +175,7 @@ export function Tidy() {
                           ) : null}
                           <button
                             className="btn sm ghost"
-                            onClick={() => dismiss(p.id)}
+                            onClick={() => void dismissProposal(p.id)}
                           >
                             Dismiss
                           </button>
@@ -247,7 +225,7 @@ export function Tidy() {
                     </span>
                     <button
                       className="btn sm ghost"
-                      onClick={() => dismiss(d.id, true)}
+                      onClick={() => void dismissProposal(d.id, true)}
                     >
                       Suggest again
                     </button>

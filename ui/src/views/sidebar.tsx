@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LaciMark } from "../brand";
 import { Icon } from "../common";
-import { useApp, readListing, setTheme, rescan } from "../store";
+import { useApp, readListing, setDesign, setTheme, rescan } from "../store";
 import { useNow } from "../clock";
 import { withMod } from "../platform";
+import { views } from "../words";
 import {
   base,
   cap,
@@ -25,6 +26,16 @@ export function Sidebar() {
   const navRef = useRef<HTMLElement>(null);
   const placesBtn = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
+  const helpBtn = useRef<HTMLButtonElement>(null);
+  const helpOpened = useRef(false);
+  const helpShown = s.modal?.kind === "help";
+  useEffect(() => {
+    // Help's dialog loads its code the first time it opens, after the window has gone inert and let
+    // go of the focus, so it can't give the focus back to its opener: Help takes it back here.
+    if (helpShown || !helpOpened.current) return;
+    helpOpened.current = false;
+    helpBtn.current?.focus();
+  }, [helpShown]);
   const hot = todayBadge(snapshot);
   // Same projects todayBadge counts: due today or overdue, or a high risk. One that is both counts once.
   const due = new Set(
@@ -259,6 +270,22 @@ export function Sidebar() {
             <Icon name="gear" className="sm" />
             <span>Settings</span>
           </button>
+          <button
+            className="sb-item sb-help"
+            ref={helpBtn}
+            title="Help"
+            onClick={() => {
+              setRailOpen(false);
+              helpOpened.current = true;
+              useApp.setState({ modal: { kind: "help" } });
+            }}
+          >
+            <Icon name="circle-help" className="sm" />
+            <span>Help</span>
+          </button>
+        </div>
+        <div className="sb-row">
+          <DesignToggle />
           <div className="seg" role="group" aria-label="Theme">
             {(["system", "light", "dark"] as const).map((theme, i) => (
               <button
@@ -275,6 +302,34 @@ export function Sidebar() {
         </div>
       </div>
     </nav>
+  );
+}
+/**
+ * Simple | Detailed, at the foot of the sidebar where Simple has its own toggle, made the same way:
+ * two buttons, the design shown pressed. After a switch the focus waits on the other design's
+ * toggle (store.ts). In the narrow rail only the way to Simple is left, as an icon.
+ */
+export function DesignToggle() {
+  return (
+    <div
+      className="view-seg"
+      role="group"
+      aria-label={views.view}
+      data-ui="design-toggle"
+    >
+      <button
+        type="button"
+        aria-pressed="false"
+        title={views.switchTo.simple}
+        onClick={() => setDesign("simple")}
+      >
+        <Icon name="panels-top-left" />
+        <span>{views.names.simple}</span>
+      </button>
+      <button type="button" aria-pressed="true">
+        <span>{views.names.detailed}</span>
+      </button>
+    </div>
   );
 }
 function childDirs(listing: Listing | undefined, ancestors: string[]) {

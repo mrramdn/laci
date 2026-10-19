@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, errorText } from "../api";
+import { useShallow } from "zustand/react/shallow";
+import { api } from "../api";
 import { useNow } from "../clock";
 import { Expand, Group, Highlight, Icon, KindIcon, Time } from "../common";
+import { closeReportItem } from "../actions";
+import { useMarkdown, useReportSearch, useReportText } from "../hooks";
 import {
   agentInstruction,
   allSessions,
@@ -17,12 +20,9 @@ import {
   providerName,
   reportById,
   reportList,
-  reportsOfProject,
-  reportsOfSessions,
   tilde,
   trimSep,
 } from "../helpers";
-import { proseClick, renderReadme } from "../readme";
 import {
   copyText,
   goToProject,
@@ -32,13 +32,7 @@ import {
   toast,
   useApp,
 } from "../store";
-import type {
-  Report,
-  ReportHit,
-  ReportText,
-  ReportsDir,
-  Session,
-} from "../types";
+import type { Report, ReportsDir, Session } from "../types";
 
 /** Rows shown before "Show all"; a search shows every match. */
 const LIST_LIMIT = 150;
@@ -46,79 +40,35 @@ const LIST_LIMIT = 150;
 const LARGE = 1_000_000;
 
 export function ReportsView() {
-  const s = useApp();
+  const s = useApp(
+    useShallow((state) => ({
+      snapshot: state.snapshot!,
+      reportFilter: state.reportFilter,
+      report: state.report,
+      showAll: !!state.expanded["reports:all"],
+      navigate: state.navigate,
+    })),
+  );
   useNow();
-  const snapshot = s.snapshot!;
+  const snapshot = s.snapshot;
   const dir = snapshot.reportsDir;
   const enabled = Boolean(dir && !dir.error);
   const all = reportList(snapshot);
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<{
-    query: string;
-    snippets: Map<string, string>;
-    failed?: boolean;
-  }>({ query: "", snippets: new Map() });
   const [opened, setOpened] = useState<Set<string>>(() => new Set());
   // What counts as new is fixed for this visit, so a dot stays until its report is opened.
   const [since] = useState(() => useApp.getState().reportsSeen);
-  const searchSeq = useRef(0);
   const listRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (enabled) markReportsSeen();
   }, [enabled, snapshot.reports]);
-  const needle = query.trim();
-  const fullText = needle.length >= 2 && enabled;
-  useEffect(() => {
-    if (!fullText) return;
-    const seq = ++searchSeq.current;
-    const timer = setTimeout(() => {
-      api<ReportHit[]>("reports/search", { query: needle }).then(
-        (found) => {
-          if (searchSeq.current === seq)
-            setHits({
-              query: needle,
-              snippets: new Map(found.map((hit) => [hit.id, hit.snippet])),
-            });
-        },
-        () => {
-          if (searchSeq.current === seq)
-            setHits({ query: needle, snippets: new Map(), failed: true });
-        },
-      );
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [needle, fullText, snapshot.reports]);
-  const found = fullText && hits.query === needle ? hits : undefined;
-  const label = (path: string) => snapshot.nodes[path]?.label ?? base(path);
   const filter = s.reportFilter;
-  const shown = useMemo(() => {
-    const scoped =
-      filter && "sessions" in filter
-        ? reportsOfSessions(snapshot, filter.sessions)
-        : filter && "project" in filter
-          ? reportsOfProject(snapshot, filter.project)
-          : all;
-    const terms = needle.toLowerCase().split(/\s+/).filter(Boolean);
-    if (!terms.length) return scoped;
-    return scoped.filter((r) => {
-      const text = [
-        r.title,
-        r.summary,
-        r.scope,
-        r.id,
-        ...r.open,
-        ...r.projects.map(
-          (path) => snapshot.nodes[path]?.label ?? base(path),
-        ),
-      ]
-        .join(" ")
-        .toLowerCase();
-      return (
-        terms.every((term) => text.includes(term)) ||
-        Boolean(found?.snippets.has(r.id))
-      );
-    });
-  }, [snapshot, all, filter, needle, found]);
+  const { needle, fullText, found, shown } = useReportSearch(
+    snapshot,
+    query,
+    filter,
+  );
+  const label = (path: string) => snapshot.nodes[path]?.label ?? base(path);
   const chosen = reportById(snapshot, s.report);
   const current = chosen ?? (s.report ? undefined : shown[0]);
   const gone = Boolean(s.report && !chosen);
@@ -230,8 +180,7 @@ export function ReportsView() {
       </>
     );
   const narrowed = Boolean(filter) || Boolean(needle);
-  const capped =
-    needle || s.expanded["reports:all"] ? shown : shown.slice(0, LIST_LIMIT);
+  const capped = needle || s.showAll ? shown : shown.slice(0, LIST_LIMIT);
   const groups = new Map<string, Report[]>();
   for (const report of capped) {
     const day = dayLabel(
@@ -455,41 +404,6 @@ function ReportRow({
   );
 }
 
-/** Texts already read, by report and version, so going back to one shows it at once. */
-const texts = new Map<string, string>();
-function useReportText(report: Report) {
-  const key = `${report.id}\n${report.modified}`;
-  const [state, setState] = useState<{ raw?: string; error?: string }>(() =>
-    texts.has(key) ? { raw: texts.get(key) } : {},
-  );
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    if (texts.has(key)) {
-      setState({ raw: texts.get(key) });
-      return;
-    }
-    let live = true;
-    // A newer version replaces the text when it arrives; until then the last one stays.
-    api<ReportText>("reports/read", { id: report.id }).then(
-      (read) => {
-        texts.set(key, read.raw);
-        if (texts.size > 30) {
-          const oldest = texts.keys().next().value;
-          if (oldest !== undefined) texts.delete(oldest);
-        }
-        if (live) setState({ raw: read.raw });
-      },
-      (error) => {
-        if (live) setState((was) => ({ ...was, error: errorText(error) }));
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [key, report.id, attempt]);
-  return { ...state, retry: () => setAttempt((n) => n + 1) };
-}
-
 const HEADER_FIELD = /^[-*+]\s+\*\*\s*(date|sessions?|projects?)\s*:?\s*\*\*/i;
 /** The title and header lines, which the reader shows above the text already. */
 function stripHeader(raw: string) {
@@ -540,14 +454,8 @@ export function reportLink(href: string, reports: Report[], folder: string) {
 function OpenItems({ report }: { report: Report }) {
   const closed = report.closed ?? [];
   if (!report.open.length && !closed.length) return null;
-  const close = (item: number | string, state: string, text: string) =>
-    void run(async () => {
-      await api("report/close", { report: report.id, item, state });
-      toast(
-        state === "open" ? "Opened again" : "Closed in the report",
-        text,
-      );
-    });
+  const close = (text: string, state: "done" | "dropped" | "open") =>
+    void closeReportItem(report.id, text, state);
   return (
     <section className="rp-items" aria-label="Open items">
       <div className="sec-t">
@@ -557,21 +465,21 @@ function OpenItems({ report }: { report: Report }) {
           Closing one changes nothing in the file
         </span>
       </div>
-      {report.open.map((item, i) => (
+      {report.open.map((item) => (
         <div className="rp-item" key={item}>
           <Icon name="check" className="sm faint" />
           <span className="txt">{item}</span>
           <button
             className="btn sm ghost"
             title="It is finished"
-            onClick={() => close(i + 1, "done", item)}
+            onClick={() => close(item, "done")}
           >
             Done
           </button>
           <button
             className="btn sm ghost"
             title="It no longer needs doing"
-            onClick={() => close(i + 1, "dropped", item)}
+            onClick={() => close(item, "dropped")}
           >
             Drop
           </button>
@@ -586,12 +494,12 @@ function OpenItems({ report }: { report: Report }) {
       {closed.length ? (
         <details className="rp-closed">
           <summary>Closed ({closed.length})</summary>
-          {closed.map((item, i) => (
+          {closed.map((item) => (
             <div className="rp-item done" key={item}>
               <span className="txt">{item}</span>
               <button
                 className="btn sm ghost"
-                onClick={() => close(i + 1, "open", item)}
+                onClick={() => close(item, "open")}
               >
                 Open again
               </button>
@@ -613,6 +521,7 @@ function ReportReader({
 }) {
   const snapshot = useApp((s) => s.snapshot!);
   const text = useReportText(report);
+  const markdown = useMarkdown();
   const [large, setLarge] = useState(report.bytes > LARGE);
   const [loadRemote, setLoadRemote] = useState(false);
   const body = useRef<HTMLDivElement>(null);
@@ -621,8 +530,8 @@ function ReportReader({
     () =>
       text.raw === undefined || large
         ? undefined
-        : renderReadme(stripHeader(text.raw), folder, loadRemote),
-    [text.raw, large, folder, loadRemote],
+        : markdown?.renderReadme(stripHeader(text.raw), folder, loadRemote),
+    [markdown, text.raw, large, folder, loadRemote],
   );
   const sessions = useMemo(() => {
     const byId = new Map<string, Session>();
@@ -836,7 +745,7 @@ function ReportReader({
             className="readme rp-body"
             dangerouslySetInnerHTML={{ __html: rendered.html }}
             onClick={(event) =>
-              proseClick(event, {
+              markdown?.proseClick(event, {
                 remote: () => setLoadRemote(true),
                 blocked:
                   "A report can open web and mail links, and other reports in its folder",
@@ -853,7 +762,10 @@ function ReportReader({
             }
           />
         </>
-      ) : null}
+      ) : (
+        // The text is in and what draws it is still loading: never the raw Markdown.
+        <div className="empty">Reading the report…</div>
+      )}
     </article>
   );
 }

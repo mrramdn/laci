@@ -9,7 +9,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::{env::Env, files, paths, platform, providers};
+use crate::{env::Env, files, paths, platform, platform::path::same_path, providers};
 
 pub fn catalog(env: &Env) -> Vec<Value> {
     vec![
@@ -120,9 +120,21 @@ pub fn safe(env: &Env, path: &Path) -> bool {
 }
 
 /// Resolve lossy Claude names by walking existing folders, never decoding punctuation blindly.
-/// Project folders must remain within home or an explicitly selected workspace root.
+/// Project folders must remain within home or an explicitly selected workspace root. Where names ignore case, Claude
+/// may have spelled a folder in another case, as under a terminal that reports `c:\`. Such a name counts only where
+/// Claude's spelling leads to the same folder, and only once no name matches as spelled.
 pub fn resolve_encoded(env: &Env, name: &str) -> Option<PathBuf> {
-    fn visit(env: &Env, dir: &Path, rest: &str, depth: usize) -> Option<PathBuf> {
+    /// `text` with its letters in the case `head` has them, where `head` is Claude's encoding of `text` in another
+    /// case: the encoding keeps letters in place, one character for each UTF-16 unit.
+    fn spelled(text: &str, head: &str) -> Option<String> {
+        let units: Vec<u16> = text
+            .encode_utf16()
+            .zip(head.bytes())
+            .map(|(unit, letter)| if letter.is_ascii_alphabetic() { letter.into() } else { unit })
+            .collect();
+        String::from_utf16(&units).ok()
+    }
+    fn visit(env: &Env, dir: &Path, rest: &str, depth: usize, fold: bool) -> Option<PathBuf> {
         if rest.is_empty() {
             return paths::workspace_path(&dir.to_string_lossy(), env).is_ok().then(|| dir.to_owned());
         }
@@ -130,15 +142,24 @@ pub fn resolve_encoded(env: &Env, name: &str) -> Option<PathBuf> {
             return None;
         }
         for entry in files::entries(dir) {
-            let piece = format!("-{}", paths::enc(&entry.file_name().to_string_lossy()));
-            if rest != piece && !rest.strip_prefix(&piece).is_some_and(|s| s.starts_with('-')) {
+            let text = entry.file_name().to_string_lossy().into_owned();
+            let piece = format!("-{}", paths::enc(&text));
+            let (Some(head), Some(next)) = (rest.get(..piece.len()), rest.get(piece.len()..)) else { continue };
+            if !next.is_empty() && !next.starts_with('-') {
                 continue;
             }
             let path = entry.path();
+            if head != piece
+                && !(fold
+                    && head.eq_ignore_ascii_case(&piece)
+                    && spelled(&text, &head[1..]).is_some_and(|other| same_path(&path, &dir.join(other))))
+            {
+                continue;
+            }
             if !path.is_dir() || paths::workspace_path(&path.to_string_lossy(), env).is_err() {
                 continue;
             }
-            if let Some(found) = visit(env, &path, &rest[piece.len()..], depth + 1) {
+            if let Some(found) = visit(env, &path, next, depth + 1, fold) {
                 return Some(found);
             }
         }
@@ -146,14 +167,25 @@ pub fn resolve_encoded(env: &Env, name: &str) -> Option<PathBuf> {
     }
     let mut roots = vec![env.home.clone()];
     roots.extend(paths::workspace_roots(env));
-    for root in roots {
-        let prefix = paths::enc(&root.to_string_lossy());
-        let Some(rest) = name.strip_prefix(&prefix) else { continue };
-        if !rest.is_empty() && !rest.starts_with('-') {
-            continue;
-        }
-        if let Some(found) = visit(env, &root, rest, 0) {
-            return Some(found);
+    let passes: &[bool] = if platform::path::FOLDS_CASE { &[false, true] } else { &[false] };
+    for &fold in passes {
+        for root in &roots {
+            let text = root.to_string_lossy();
+            let prefix = paths::enc(&text);
+            let (Some(head), Some(rest)) = (name.get(..prefix.len()), name.get(prefix.len()..)) else { continue };
+            if head != prefix
+                && !(fold
+                    && head.eq_ignore_ascii_case(&prefix)
+                    && spelled(&text, head).is_some_and(|other| same_path(root, Path::new(&other))))
+            {
+                continue;
+            }
+            if !rest.is_empty() && !rest.starts_with('-') {
+                continue;
+            }
+            if let Some(found) = visit(env, root, rest, 0, fold) {
+                return Some(found);
+            }
         }
     }
     None
@@ -1293,8 +1325,10 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let env = Env::for_home(home.path().to_owned());
         let log = env.home.join("session.jsonl");
+        // A working folder only counts when it is absolute, and on Windows that takes a drive.
+        let cwd = if cfg!(windows) { r"C:\p" } else { "/p" };
         let line = |text: &str| {
-            format!("{}\n", json!({"type":"user","sessionId":ID,"cwd":"/p","message":{"role":"user","content":text}}))
+            format!("{}\n", json!({"type":"user","sessionId":ID,"cwd":cwd,"message":{"role":"user","content":text}}))
         };
         fs::write(&log, line("First")).unwrap();
         let mut cache = Cache::load(&env);
@@ -1314,7 +1348,7 @@ mod tests {
         assert_eq!(reads, [Some(stopped)]);
         assert_eq!(grown["prompts"], 2);
         assert_eq!(grown["lastPrompt"], "Second");
-        assert_eq!(grown["cwds"], json!({"/p":2}));
+        assert_eq!(grown["cwds"], json!({cwd:2}));
         assert_eq!(grown["ownershipComplete"], false, "an unfinished line is not proof yet");
         // The writer finishes the line: only that line is read, and ownership is complete again.
         let finished = format!("{}{}\n", text.trim_end_matches(r#"{"type":"user","sess"#), line("Third").trim_end());

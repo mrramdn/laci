@@ -124,10 +124,8 @@ fn which_finds_the_first_file_that_can_run_in_path_order() {
 /// `PATH` set.
 #[cfg(unix)]
 fn shell(dir: &Path, name: &str, body: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let path = dir.join(name);
-    fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    support::script(&path, &format!("#!/bin/sh\n{body}\n"));
     path
 }
 
@@ -165,7 +163,6 @@ fn the_login_shell_path_is_read_between_what_its_startup_files_print() {
 fn an_agent_started_for_a_demo_home_gets_it_as_home_and_as_userprofile() {
     use laci_core::{launch, mcp_setup, providers};
     use serde_json::json;
-    use std::os::unix::fs::PermissionsExt;
     const TEST: &str = "an_agent_started_for_a_demo_home_gets_it_as_home_and_as_userprofile";
     if support::role().as_deref() == Some("agents") {
         let home = PathBuf::from(std::env::var_os("LACI_TEST_HOME").unwrap());
@@ -188,13 +185,10 @@ fn an_agent_started_for_a_demo_home_gets_it_as_home_and_as_userprofile() {
     fs::create_dir_all(&home).unwrap();
     fs::create_dir_all(&bin).unwrap();
     for program in ["codex", "agy", "agent"] {
-        let stub = bin.join(program);
-        fs::write(
-            &stub,
-            format!("#!/bin/sh\nprintf '%s\\n%s\\n' \"$HOME\" \"$USERPROFILE\" > \"$HOME/{program}-env\"\n"),
-        )
-        .unwrap();
-        fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+        support::script(
+            &bin.join(program),
+            &format!("#!/bin/sh\nprintf '%s\\n%s\\n' \"$HOME\" \"$USERPROFILE\" > \"$HOME/{program}-env\"\n"),
+        );
     }
     let path = std::env::join_paths(
         std::iter::once(bin.clone()).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),

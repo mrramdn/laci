@@ -72,3 +72,19 @@ pub fn program(test: &str, role: &str) -> Command {
     command.args(["--exact", test, "--nocapture", "--test-threads=1"]).env(ROLE, role);
     command
 }
+
+/// Writes `body` to `path` as a program that can run. A child writes it, so this process never has the file open for
+/// writing: such a file goes along into every program another test thread starts meanwhile, and Linux won't start a
+/// program that any process has open for writing ("Text file busy").
+#[cfg(unix)]
+pub fn script(path: &Path, body: &str) {
+    use std::{io::Write, process::Stdio};
+    let mut writer = Command::new("/bin/sh")
+        .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writer.stdin.take().unwrap().write_all(body.as_bytes()).unwrap();
+    assert!(writer.wait().unwrap().success(), "couldn't write {}", path.display());
+}

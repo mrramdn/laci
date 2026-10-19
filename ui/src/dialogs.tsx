@@ -601,7 +601,7 @@ function Archive({ id }: { id: string }) {
     >
       <label className="fld">
         <span>Destination</span>
-        <div className="addrow" style={{ margin: 0 }}>
+        <div className="addrow">
           <input
             className="inp mono"
             value={destination}
@@ -622,6 +622,7 @@ function Archive({ id }: { id: string }) {
           {/* The folder chosen takes the project inside, under its own name. */}
           <ChooseFolder
             label={said.choose}
+            name={said.destinationTitle(n.name)}
             title={said.destinationTitle(n.name)}
             defaultPath={pickFrom}
             disabled={saving}

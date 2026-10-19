@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, errorText } from "./api";
@@ -321,27 +321,57 @@ function SecretsFound({
 }) {
   const said = detailedData.secrets;
   const historyPending = useApp((s) => s.historyPending);
-  /** Null while Laci looks again. */
-  const [looked, setLooked] = useState<Looked | null>(first);
+  const [looked, setLooked] = useState<Looked>(first);
+  /** Laci looks again after a look that failed. */
+  const [looking, setLooking] = useState(false);
+  // Another click on Check again while it looks adds nothing.
+  const busy = useRef(false);
   const [error, setError] = useState("");
   const mounted = useRef(true);
+  const box = useRef<HTMLDivElement>(null);
+  const previous = useRef(
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
   useEffect(() => {
     mounted.current = true;
-    // Drawn over the window rather than as the store's dialog, as Simple's sheets are: the window's
-    // keys and the toast wait while it is open.
+    // Drawn over the window rather than as the store's dialog, as Simple's sheets are: the window is
+    // inert, and its keys and the toast wait, while it is open.
     useApp.setState((s) => ({ sheets: s.sheets + 1 }));
+    const before = previous.current;
     return () => {
       mounted.current = false;
       useApp.setState((s) => ({ sheets: s.sheets - 1 }));
+      // The window stays inert until it draws again without this dialog, so the frame can't give
+      // the focus back as it closes. It goes back once the window has drawn.
+      setTimeout(() => {
+        if (!mounted.current) restoreFocus(before);
+      });
     };
   }, []);
-  const found = looked && "found" in looked ? looked.found : undefined;
+  // A button that goes with the answer it was for takes the focus with it to the page: Check again
+  // once files turn up, or Keep these out when files stay that it can't keep out. The focus comes
+  // back to the dialog's first control, where the dialog put it when it opened.
+  useLayoutEffect(() => {
+    const host = box.current;
+    if (!host || host.contains(document.activeElement)) return;
+    host.querySelectorAll<HTMLElement>("button:not(:disabled)")[0]?.focus();
+  }, [looked]);
+  const found = "found" in looked ? looked.found : undefined;
   const loose = found?.files.filter((file) => !file.tracked) ?? [];
   const tracked = found?.files.filter((file) => file.tracked) ?? [];
   const lookAgain = async () => {
-    setLooked(null);
+    if (busy.current) return;
+    busy.current = true;
+    setLooking(true);
     const again = await lookForSecrets(node.id);
-    if (mounted.current) setLooked(again);
+    busy.current = false;
+    if (!mounted.current) return;
+    setLooking(false);
+    // Nothing to ask about now: the fix goes on, as it does when the first look finds nothing.
+    if (nothingFound(again)) onFix();
+    else setLooked(again);
   };
   const keepOut = async () => {
     setError("");
@@ -391,6 +421,7 @@ function SecretsFound({
     // Its clicks and keys stay out of the row behind it, and out of Detailed's keys for lists and
     // folders. Escape and Tab go on to the dialog's frame.
     <div
+      ref={box}
       style={{ display: "contents" }}
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
@@ -399,7 +430,9 @@ function SecretsFound({
       }}
     >
       <DialogFrame
-        title={said.title(node.label)}
+        title={
+          found ? said.title(node.label) : said.checkTitle(node.label)
+        }
         description={said.intro(FIX_LABEL[code])}
         onDismiss={onClose}
         footer={
@@ -429,23 +462,30 @@ function SecretsFound({
           </>
         }
       >
-        {!looked ? (
-          <p role="status">{said.checking}</p>
-        ) : !found ? (
+        {!found ? (
           <>
-            <div className="warnbox">
-              <div className="issue">
-                <SeverityGlyph severity="med" />
-                <div className="txt">
-                  <p>{said.failed}</p>
-                  {"error" in looked ? (
-                    <p className="d">{looked.error}</p>
-                  ) : null}
-                  <p className="d">{said.goOnFailed}</p>
+            {looking ? (
+              <p role="status">{said.checking}</p>
+            ) : (
+              <div className="warnbox">
+                <div className="issue">
+                  <SeverityGlyph severity="med" />
+                  <div className="txt">
+                    <p>{said.failed}</p>
+                    {"error" in looked ? (
+                      <p className="d">{looked.error}</p>
+                    ) : null}
+                    <p className="d">{said.goOnFailed}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-            <button className="btn sm" onClick={() => void lookAgain()}>
+            )}
+            {/* It stays while Laci looks, so the focus stays on it. */}
+            <button
+              className="btn sm"
+              aria-busy={looking || undefined}
+              onClick={() => void lookAgain()}
+            >
               {said.checkAgain}
             </button>
           </>

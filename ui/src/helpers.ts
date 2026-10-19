@@ -34,6 +34,12 @@ export const rootOf = (path: string) =>
 /** Whether the path names one place by itself, not one relative to where you are. */
 export const isAbsolutePath = (path: string) =>
   path.startsWith("/") || isWindowsPath(path);
+/**
+ * Whether the path is a whole disk: "/", or a drive such as `C:\`, with any separators at its end. A
+ * share (`\\server\share`) is a folder that a server shares, not a disk.
+ */
+export const isWholeDisk = (path: string) =>
+  /^(?:\/+|[A-Za-z]:[\\/]+)$/.test(path);
 /** The folder names in a path, after its root. */
 export function segments(path: string) {
   const root = winRoot(path);

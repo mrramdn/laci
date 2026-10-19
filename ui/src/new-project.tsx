@@ -417,7 +417,7 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
           </label>
           <label className="fld">
             <span>In</span>
-            <div className="addrow" style={{ margin: 0 }}>
+            <div className="addrow">
               <Select
                 label="Project location"
                 disabled={saving || !!created}
@@ -430,6 +430,7 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
               />
               <ChooseFolder
                 label={said.choose}
+                name={said.locationTitle}
                 title={said.locationTitle}
                 defaultPath={draft.parent}
                 disabled={saving || !!created}
@@ -498,7 +499,7 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
             </label>
             <label className="fld">
               <span>Reference a local folder</span>
-              <div className="addrow" style={{ margin: 0 }}>
+              <div className="addrow">
                 <input
                   className="inp mono"
                   value={templatePath}
@@ -507,6 +508,7 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
                 />
                 <ChooseFolder
                   label={said.choose}
+                  name={said.templateTitle}
                   title={said.templateTitle}
                   defaultPath={templatePath.trim() || "~"}
                   onPick={setTemplatePath}

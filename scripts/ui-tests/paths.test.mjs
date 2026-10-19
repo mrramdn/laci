@@ -13,6 +13,7 @@ const {
   breadcrumbs,
   expandHome,
   isAbsolutePath,
+  isWholeDisk,
   isWindowsPath,
   joinPath,
   parentOf,
@@ -174,6 +175,26 @@ export async function aShareIsARootLikeADrive() {
   // A server with no share is nothing to open.
   assert.equal(isAbsolutePath("\\\\nas"), false);
   assert.equal(isAbsolutePath("\\\\nas\\"), false);
+}
+
+export async function aWholeDiskIsTheRootOrADriveButNotAShare() {
+  // What Settings and Home refuse as a place to keep projects.
+  for (const disk of ["/", "//", "C:\\", "c:/", "D:\\\\", "e:\\/"])
+    assert.equal(isWholeDisk(disk), true, disk);
+  for (const folder of [
+    "",
+    "/home",
+    "/mnt/data",
+    "C:",
+    "C:\\Users",
+    "c:/projects/",
+    SHARE,
+    `${SHARE}\\`,
+    `${SHARE}\\clients`,
+    "~",
+    "projects",
+  ])
+    assert.equal(isWholeDisk(folder), false, folder);
 }
 
 export async function windowsPathsAreComparedWithoutCaseAndWithEitherSeparator() {

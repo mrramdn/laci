@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { load, requireUi } from "../ui-module.mjs";
 import { event, Host, standIn } from "./react-stand-in.mjs";
 
-const { createElement: h } = requireUi("react");
+const { createElement: h, Fragment } = requireUi("react");
 const fixtures = requireUi("./src/preview/fixtures.json");
 const noop = () => {};
 const KOPI = "/home/demo/project/clients/kopi-landing";
@@ -666,4 +666,133 @@ export async function aSecondClickWhileItLooksAsksNothingMore() {
   await app.page.settle();
   assert.deepEqual(app.opened, [[KOPI, "fix", "no-commits"]]);
   assert.equal(app.page.button("First commit").props["aria-busy"], undefined);
+}
+
+export async function aSecondLookThatFindsNothingLetsTheFixGoOn() {
+  let answer;
+  const checks = [new Error("git: not found")];
+  const app = fixButton("no-commits", [], {
+    "secrets/check": () => {
+      const next = checks.shift();
+      if (next) throw next;
+      return new Promise((resolve) => (answer = resolve));
+    },
+  });
+  await app.press("First commit");
+  // The look failed: nothing is known to look like a secret, and the title doesn't say so.
+  assert.equal(app.frame().title, words.secrets.checkTitle("kopi-landing"));
+  const again = app.page.button(words.secrets.checkAgain);
+  again.focus();
+  await app.press(words.secrets.checkAgain);
+  // While Laci looks, Check again stays where it was, with the focus on it, and says it is busy.
+  assert.equal(app.page.button(words.secrets.checkAgain), again);
+  assert.equal(again.props["aria-busy"], true);
+  assert.equal(app.page.document.activeElement, again);
+  assert.ok(app.dialog().textContent.includes(words.secrets.checking));
+  await app.press(words.secrets.checkAgain);
+  assert.equal(app.asked("secrets/check").length, 2, "a second click asks nothing more");
+  // Nothing looks like a secret this time: the fix goes on, as when the first look finds nothing.
+  // No empty list is drawn under a title that says files look like secrets.
+  answer(looks());
+  await app.page.settle();
+  assert.deepEqual(app.opened, [[KOPI, "fix", "no-commits"]]);
+  assert.equal(app.dialog(), undefined);
+  assert.equal(app.state().sheets, 0);
+}
+
+/** What the dialog's first control is found among: its buttons that can be pressed. */
+const buttonsIn = (_selector, root) =>
+  root.descendants().filter((n) => n.type === "button" && !n.props.disabled);
+
+export async function theFocusStaysInTheDialogWhenTheButtonItWasOnGoes() {
+  // Check again, once files turn up: it goes with the failure it was for. The files are listed
+  // under the title that says so, and the focus is on the dialog's first control.
+  const failed = fixButton("no-remote", [new Error("git: not found"), looks(CREDENTIALS)]);
+  failed.page.query = buttonsIn;
+  await failed.press("Create remote");
+  failed.page.button(words.secrets.checkAgain).focus();
+  await failed.press(words.secrets.checkAgain);
+  assert.equal(failed.frame().title, words.secrets.title("kopi-landing"));
+  assert.ok(failed.dialog().textContent.includes(CREDENTIALS.path));
+  assert.equal(failed.page.button(words.secrets.checkAgain), undefined);
+  assert.equal(failed.page.document.activeElement, failed.page.button(words.secrets.cancel));
+  // Keep these out, when a file stays that it can't keep out: it goes, and so does the focus on it.
+  const kept = fixButton("no-commits", [looks(ENV, CREDENTIALS), looks(CREDENTIALS)]);
+  kept.page.query = buttonsIn;
+  await kept.press("First commit");
+  kept.page.button(words.secrets.keepOut).focus();
+  await kept.press(words.secrets.keepOut);
+  assert.equal(kept.page.button(words.secrets.keepOut), undefined);
+  assert.equal(kept.page.document.activeElement, kept.page.button(words.secrets.cancel));
+}
+
+/** DetailedShell.tsx with every view and part left out, on an app state made by `patch`: its window. */
+function detailedWindow(patch = {}) {
+  const page = standIn();
+  const nothing = () => null;
+  const app = page.store({
+    view: "today",
+    cwd: "",
+    filter: "",
+    tidyFilter: "",
+    logFilter: "",
+    selected: null,
+    snapshot: scan(),
+    modal: null,
+    palette: false,
+    working: "",
+    sheets: 0,
+    ...patch,
+  });
+  Object.assign(page.document, { querySelector: () => null });
+  const { default: DetailedShell } = load(
+    "detailed/DetailedShell.tsx",
+    {
+      react: { ...page.react, lazy: () => nothing, Suspense: Fragment },
+      "../store": { useApp: app, FULL_WIDTH: [] },
+      "../hotkeys": { namePanes: noop, useDetailedHotkeys: noop },
+      "../terminal-api": { useTerms: () => false },
+      "../views/sidebar": { Sidebar: nothing },
+      "../views/today": { Today: nothing },
+      "../views/folder": { Folder: nothing },
+      "../views/tidy": { Tidy: nothing },
+      "../views/agents": { AgentsView: nothing },
+      "../views/log": { LogView: nothing },
+      "../views/reports": { ReportsView: nothing },
+      "../settings": { Settings: nothing },
+      "../inspector": { Inspector: nothing },
+    },
+    { document: page.document },
+  );
+  page.mount(h(DetailedShell));
+  return page.find((n) => n.props.id === "app");
+}
+
+export async function theWindowIsInertWhileTheLookForSecretFilesIsOpen() {
+  // The dialog is drawn over the window as Simple's sheets are, and counts as they do.
+  for (const [patch, covered] of [
+    [{}, false],
+    [{ sheets: 1 }, true],
+    [{ modal: { kind: "help" } }, true],
+    [{ palette: true }, true],
+    [{ working: "Moving…" }, true],
+  ])
+    assert.equal(detailedWindow(patch).props.inert, covered, JSON.stringify(patch));
+}
+
+export async function theFocusGoesBackToTheFixButtonOnceTheWindowHasDrawn() {
+  const app = fixButton("unpushed", [looks(ENV)]);
+  const push = app.page.button("Push");
+  push.focus();
+  await app.press("Push");
+  assert.equal(app.state().sheets, 1, "the window behind is inert");
+  app.page.button(words.secrets.cancel).focus();
+  await app.press(words.secrets.cancel);
+  assert.equal(app.dialog(), undefined);
+  assert.equal(app.state().sheets, 0);
+  // The window stays inert until it draws again, so the focus goes back after that: to the button
+  // that opened the dialog.
+  assert.notEqual(app.page.document.activeElement, push);
+  app.runTimers();
+  assert.equal(app.page.document.activeElement, push);
 }

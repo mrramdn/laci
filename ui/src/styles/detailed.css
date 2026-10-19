@@ -2823,6 +2823,10 @@ textarea.notes:focus {
   gap: 8px;
   margin: 8px 0 6px;
 }
+/* A box and its button in a field: the row is spaced as the box was alone in its field. */
+.fld > .addrow {
+  margin: 0;
+}
 .apps {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

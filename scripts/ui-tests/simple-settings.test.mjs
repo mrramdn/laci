@@ -115,10 +115,14 @@ function settingsOnce() {
       "../brand": { LaciMark: () => null },
       "../common": { Icon: () => null },
       "../pick": {
-        ChooseFolder: ({ label, onPick }) =>
+        ChooseFolder: ({ label, name, onPick }) =>
           createElement(
             "button",
-            { type: "button", onClick: () => onPick(settingsKit.box.current.picked) },
+            {
+              type: "button",
+              "aria-label": name,
+              onClick: () => onPick(settingsKit.box.current.picked),
+            },
             label,
           ),
       },
@@ -385,6 +389,80 @@ export async function aFolderFromThePickerJoinsTheProjectFoldersOnce() {
   page.act(() => page.button(said.save).props.onClick());
   await page.settle();
   assert.deepEqual(page.asked("setup/save")[0][1].roots, ["/home/demo/project", "/home/demo/work"]);
+}
+
+export async function aWholeDiskIsNoProjectFolder() {
+  const page = await settingsPage();
+  // "/", or a drive in either case and with either separator: a toast says why, and nothing changes.
+  for (const disk of ["/", "C:\\", "d:/"]) {
+    settingsKit.box.current.picked = disk;
+    page.act(() => page.button(said.addFolder).props.onClick());
+    assert.deepEqual(page.toasts.at(-1), [said.wholeDisk, said.wholeDiskNote], disk);
+  }
+  assert.equal(page.button(said.save), undefined, "nothing waits to be saved");
+  // A share, and a folder on a drive, are folders.
+  for (const folder of ["\\\\nas\\projects", "C:\\Users\\Demo\\Projects"]) {
+    settingsKit.box.current.picked = folder;
+    page.act(() => page.button(said.addFolder).props.onClick());
+  }
+  page.act(() => page.button(said.save).props.onClick());
+  await page.settle();
+  assert.deepEqual(page.asked("setup/save")[0][1].roots, [
+    "/home/demo/project",
+    "\\\\nas\\projects",
+    "C:\\Users\\Demo\\Projects",
+  ]);
+}
+
+export async function homeAddsNoWholeDiskEither() {
+  // Home's "Choose folder…", when no project folder is set yet, saves the folder at once.
+  const asked = [];
+  const toasts = [];
+  const act = load("simple/act.ts", {
+    "../api": {
+      api: async (name, body) => {
+        asked.push([name, body]);
+        return name === "setup/info" ? structuredClone(INFO) : { revision: 2 };
+      },
+    },
+    "../agent-launch": { agentProviders: () => [] },
+    "../session-ui": { requestResume: noop },
+    "../store": {
+      changed: (_change, title, message) => void toasts.push([title, message]),
+      run: (task) => task(),
+      toast: (title, message, options) => void toasts.push([title, message, options]),
+      useApp: { setState: noop },
+    },
+  });
+  for (const disk of ["/", "C:\\", "d:/"]) await act.addProjectFolder(disk);
+  assert.deepEqual(asked, [], "nothing is read or saved");
+  assert.deepEqual(
+    toasts,
+    ["/", "C:\\", "d:/"].map(() => [said.wholeDisk, said.wholeDiskNote, { error: true }]),
+  );
+  // A folder is added as it always was, with every other setting as it is saved.
+  await act.addProjectFolder("/home/demo/work");
+  assert.deepEqual(asked.map(([name]) => name), ["setup/info", "setup/save"]);
+  assert.deepEqual(asked[1][1].roots, ["/home/demo/project", "/home/demo/work"]);
+  assert.deepEqual(toasts.at(-1), [words.home.addedFolder, "work"]);
+}
+
+export async function eachFolderButtonSaysWhichFolderItChooses() {
+  const page = await settingsPage();
+  const named = (name) =>
+    page.find((n) => n.type === "button" && n.props["aria-label"] === name);
+  // Two of them say "Choose folder…". A screen reader names each by its folder, in a name that
+  // starts with the button's own words, so a voice command finds it by them too.
+  for (const [shown, name] of [
+    [said.addFolder, said.addFolderName],
+    [said.chooseArchive, said.chooseArchiveName],
+    [said.chooseSummaries, said.chooseSummariesName],
+  ]) {
+    assert.equal(named(name)?.textContent, shown, name);
+    assert.ok(name.startsWith(shown.replace("…", "")), name);
+  }
+  assert.equal(said.chooseArchive, said.chooseSummaries);
+  assert.notEqual(said.chooseArchiveName, said.chooseSummariesName);
 }
 
 export async function theUpdateChoiceIsSavedAtOnceThroughItsOwnRequest() {

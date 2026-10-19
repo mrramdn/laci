@@ -1,7 +1,8 @@
 // Simple's update parts (ui/src/simple/updates.tsx: the panel in Settings › Updates and the card on
 // Home) on the update store with a desktop of the test's own, and the two follow-ups of M4's review:
 // a summary item closed in Simple's words (ui/src/actions.ts) and a project's Recent changes told as
-// Activity tells them (ui/src/simple/ProjectPage.tsx).
+// Activity tells them (ui/src/simple/ProjectPage.tsx). The release notes' links are underlined as
+// every link in Simple is (ui/src/simple/simple.css).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { load, requireUi } from "../ui-module.mjs";
@@ -594,10 +595,10 @@ export async function theReleaseNotesAreDrawnWithTheReadmeCleanerOnlyOnceTheyAre
   assert.equal(first.raw, NEW.notes);
   assert.equal(first.remote, false);
   assert.ok(!first.project.startsWith("/") && first.project !== "", first.project);
-  // A link is underlined, so it isn't known by its colour alone; nothing else is touched.
+  // Drawn as the cleaner wrote them. Their links are underlined as every link in Simple is, by its
+  // stylesheet (everyLinkInSimpleIsUnderlined), so they aren't known by their colour alone.
   const html = page.find((n) => n.props.className === "s-prose").props.dangerouslySetInnerHTML.__html;
-  assert.match(html, /<a style="text-decoration: underline" href="https:\/\/example\.test\/x">/);
-  assert.match(html, /<abbr>abbr<\/abbr>/);
+  assert.equal(html, `<p>${NEW.notes} <a href="https://example.test/x">a link</a> <abbr>abbr</abbr></p>`);
   // Pictures from the web wait to be asked for.
   assert.match(page.text(), new RegExp(say.picturesHidden(2)));
   page.act(() => page.button(say.showPictures).props.onClick());
@@ -613,6 +614,32 @@ export async function theReleaseNotesAreDrawnWithTheReadmeCleanerOnlyOnceTheyAre
   // A version with no notes has no "What's new".
   await page.told(status("available", { ...NEW, notes: " " }));
   assert.ok(!page.button(say.whatsNew("3.0.1")), "no notes, no What's new");
+}
+
+/** What the rule for `selector` in a stylesheet of ui/src sets, as `{ property: value }`. */
+function ruleOf(file, selector) {
+  const css = readFileSync(new URL(`../../ui/src/${file}`, import.meta.url), "utf8");
+  const quoted = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const body = new RegExp(`(?:^|\\n)\\s*${quoted}\\s*\\{([^}]*)\\}`).exec(css)?.[1];
+  assert.ok(body !== undefined, `${file} has a rule for ${selector}`);
+  return Object.fromEntries(
+    body
+      .split(";")
+      .map((declaration) => declaration.split(":").map((part) => part.trim()))
+      .filter(([property, value]) => property && value),
+  );
+}
+
+export async function everyLinkInSimpleIsUnderlined() {
+  // Simple's links sit in running text: a README, a summary, release notes. An underline tells them
+  // apart by more than their colour (WCAG 1.4.1, axe's link-in-text-block). Simple's sheet is the
+  // last layer, so its rule wins over Detailed's.
+  const simple = ruleOf("simple/simple.css", ':root[data-design="simple"] a');
+  assert.equal(simple["text-decoration"], "underline");
+  assert.equal(simple.color, "var(--brand)");
+  // Detailed's links stay as they were: underlined when pointed at.
+  assert.equal(ruleOf("styles/detailed.css", "a")["text-decoration"], "none");
+  assert.equal(ruleOf("styles/detailed.css", "a:hover")["text-decoration"], "underline");
 }
 
 // ── Home's card ────────────────────────────────────────────────────────────────────────────────────

@@ -177,16 +177,10 @@ function Progress({ percent }: { percent: number | undefined }) {
 type Readme = typeof import("../readme");
 
 /**
- * A link in a sentence is told apart by more than its colour (WCAG 1.4.1), so each is underlined.
- * The markup is what the README cleaner wrote, where an anchor starts with "<a " and nothing else does.
- */
-const underlined = (html: string) =>
-  html.replaceAll("<a ", '<a style="text-decoration: underline" ');
-
-/**
  * Release notes, drawn as text only: they come from the web, so they are not trusted. They are
  * drawn as a README is, with marked and its cleaner loading the first time. A picture from the web
- * waits to be asked for, and a relative one finds no file: the notes belong to no folder.
+ * waits to be asked for, and a relative one finds no file: the notes belong to no folder. Their
+ * links are underlined as every link in Simple is (simple.css).
  */
 function Notes({ notes }: { notes: string }) {
   const [remote, setRemote] = useState(false);
@@ -198,7 +192,7 @@ function Notes({ notes }: { notes: string }) {
       if (!live) return;
       module.current = readme;
       const drawn = readme.renderReadme(notes, "release-notes", remote);
-      setShown({ html: underlined(drawn.html), remote: drawn.remote });
+      setShown({ html: drawn.html, remote: drawn.remote });
     });
     return () => {
       live = false;

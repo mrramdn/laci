@@ -19,8 +19,11 @@
     outline: var(--focus-width) solid var(--brand);
     outline-offset: var(--focus-offset);
   }
+  /* A link sits in running text (a README, a summary, release notes): it is underlined, so it is
+     told apart by more than its colour (WCAG 1.4.1). Detailed's links stay as they are. */
   :root[data-design="simple"] a {
     color: var(--brand);
+    text-decoration: underline;
   }
   :root[data-design="simple"] .mono,
   .s-mono {

@@ -1578,7 +1578,15 @@ export const settings = {
   remove: "Remove",
   removeFor: (folder: string) => `Remove ${folder}`,
   addFolder: "Add a folder…",
+  /**
+   * What a screen reader calls this button, which says which folder it chooses. Like
+   * chooseArchiveName and chooseSummariesName, it starts with the button's own words.
+   */
+  addFolderName: "Add a folder where you keep projects",
   addFolderTitle: "Choose a folder where you keep projects",
+  /** A whole disk chosen as a project folder, here or on Home: Laci doesn’t take it. */
+  wholeDisk: "Laci doesn’t look through a whole disk",
+  wholeDiskNote: "Choose the folder where you keep projects.",
   suggest: "Suggest folders",
   suggesting: "Looking for folders…",
   suggestions: "Folders with projects in them",
@@ -1589,6 +1597,7 @@ export const settings = {
   archive: "Archive folder",
   archiveNearest: "Each project goes to the nearest folder named _archive.",
   chooseArchive: "Choose folder…",
+  chooseArchiveName: "Choose folder for archived projects",
   chooseArchiveTitle: "Choose your archive folder",
   useNearest: "Use the nearest _archive folder",
 
@@ -1609,6 +1618,7 @@ export const settings = {
     read: (n: number) => `${count(n, "summary", "summaries")} found.`,
   },
   chooseSummaries: "Choose folder…",
+  chooseSummariesName: "Choose folder for summaries",
   chooseSummariesTitle: "Choose the folder your AI writes summaries in",
   stopSummaries: "Stop showing summaries",
   models: "Model and thinking effort",
@@ -1824,6 +1834,8 @@ export const detailedData = {
   },
   secrets: {
     title: (name: string) => `Files in ${name} look like passwords or keys`,
+    /** The title while Laci looks again, or when it couldn't look: nothing is known to be found. */
+    checkTitle: (name: string) => `Check ${name} for passwords or keys`,
     /** `fix` is the button that was pressed. */
     intro: (fix: string) =>
       `Laci looked at the names of the files before “${fix}”. It never opens them.`,
@@ -1855,7 +1867,10 @@ export const detailedData = {
 export const detailedSettings = {
   /** The button beside a folder field, which opens the system's folder picker. */
   choose: "Choose…",
-  /** The picker's title for each field. */
+  /**
+   * The picker's title for each field. It is also what a screen reader calls the field's Choose…
+   * button, so each button says which folder it chooses; each starts with the button's own word.
+   */
   addFolderTitle: "Choose a folder where you keep projects",
   archiveFolderTitle: "Choose your archive folder",
   reportsFolderTitle: "Choose the folder for reports",
@@ -1890,7 +1905,6 @@ export const detailedSettings = {
   checking: "Checking…",
   install: "Install",
   installing: "Installing…",
-  retry: "Try again",
   restart: "Restart",
   releasePage: "Open the release page",
   restartNote:

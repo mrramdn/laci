@@ -11,7 +11,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { api, errorText } from "../api";
 import { LaciMark } from "../brand";
 import { Icon } from "../common";
-import { agentInstruction, base, tilde } from "../helpers";
+import { agentInstruction, base, isWholeDisk, tilde } from "../helpers";
 import { ChooseFolder } from "../pick";
 import {
   changed,
@@ -402,9 +402,15 @@ function ProjectsCard({
         <ChooseFolder
           className="s-btn s-btn-outline s-btn-small"
           label={said.addFolder}
+          name={said.addFolderName}
           title={said.addFolderTitle}
           defaultPath="~"
-          onPick={(path) => edit((d) => withRoot(d, path))}
+          onPick={(path) => {
+            // A whole disk ("/", or a drive such as C:\) isn't a folder Laci looks through.
+            if (isWholeDisk(path))
+              toast(said.wholeDisk, said.wholeDiskNote, { error: true });
+            else edit((d) => withRoot(d, path));
+          }}
         />
         <Button kind="text" small icon="search" disabled={looking} onClick={suggest}>
           {looking ? said.suggesting : said.suggest}
@@ -454,6 +460,7 @@ function ProjectsCard({
         <ChooseFolder
           className="s-btn s-btn-outline s-btn-small"
           label={said.chooseArchive}
+          name={said.chooseArchiveName}
           title={said.chooseArchiveTitle}
           defaultPath={draft.archiveDir || "~"}
           onPick={(path) => edit((d) => ({ ...d, archiveDir: path }))}
@@ -558,6 +565,7 @@ function AiCard({
         <ChooseFolder
           className="s-btn s-btn-outline s-btn-small"
           label={said.chooseSummaries}
+          name={said.chooseSummariesName}
           title={said.chooseSummariesTitle}
           defaultPath={draft.reportsDir || "~"}
           onPick={(path) => edit((d) => ({ ...d, reportsDir: path }))}

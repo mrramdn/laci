@@ -12,6 +12,7 @@ import {
   cap,
   expandHome,
   isAbsolutePath,
+  isWholeDisk,
   joinPath,
   pathKey,
   plural,
@@ -270,9 +271,9 @@ export function Settings({ first = false }: { first?: boolean }) {
    */
   function addFolder(raw: string, chosen = false) {
     let path = trimSep(raw.trim());
-    // Not "/", which was never taken as a folder to scan. A typed one is passed over; a chosen one
-    // says why nothing was added.
-    if (!path || path === "/") {
+    // Not a whole disk ("/", or a drive such as C:\): Laci doesn't look through one. A typed one is
+    // passed over, as "/" always was; a chosen one says why nothing was added.
+    if (!path || isWholeDisk(path)) {
       if (path && chosen) setError(said.wholeDisk);
       return;
     }
@@ -500,6 +501,7 @@ export function Settings({ first = false }: { first?: boolean }) {
               {/* A folder chosen is added at once: nothing is left in the box to add after it. */}
               <ChooseFolder
                 label={said.choose}
+                name={said.addFolderTitle}
                 title={said.addFolderTitle}
                 defaultPath={folder.trim() || "~"}
                 onPick={(path) => addFolder(path, true)}
@@ -508,8 +510,7 @@ export function Settings({ first = false }: { first?: boolean }) {
             </form>
             <label className="fld">
               <span>Default archive folder</span>
-              {/* A box and its button in a row, spaced as the box was alone in its field. */}
-              <div className="addrow" style={{ margin: 0 }}>
+              <div className="addrow">
                 <input
                   className="inp mono"
                   value={archiveDir}
@@ -520,6 +521,7 @@ export function Settings({ first = false }: { first?: boolean }) {
                 />
                 <ChooseFolder
                   label={said.choose}
+                  name={said.archiveFolderTitle}
                   title={said.archiveFolderTitle}
                   defaultPath={archiveDir.trim() || "~"}
                   onPick={(path) => setArchiveDir(tilde(path, snapshot.home))}
@@ -792,7 +794,7 @@ function ReportsSetting({
       </p>
       <label className="fld">
         <span>Reports folder</span>
-        <div className="addrow" style={{ margin: 0 }}>
+        <div className="addrow">
           <input
             className="inp mono"
             value={value}
@@ -803,6 +805,7 @@ function ReportsSetting({
           />
           <ChooseFolder
             label={said.choose}
+            name={said.reportsFolderTitle}
             title={said.reportsFolderTitle}
             defaultPath={value.trim() || "~"}
             onPick={(path) => onChange(tilde(path, snapshot.home))}
@@ -970,15 +973,13 @@ export function updateView(
         hint: said.restartNote,
       };
     case "error":
-      // A download that failed keeps its version, so the same button tries it again.
+      // The desktop keeps the version it found whether the check, the download or the restart
+      // failed, and doesn't say which. So the button looks again, as Simple's does, and a version
+      // still on offer comes back with its Install. A copy that only links keeps its link.
       return {
         line: status.error || said.failed,
         bad: true,
-        action: !version
-          ? check
-          : install.kind === "install"
-            ? { ...install, label: said.retry }
-            : install,
+        action: install.kind === "release" ? install : check,
         hint,
       };
     default:

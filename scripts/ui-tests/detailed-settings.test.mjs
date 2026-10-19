@@ -1,8 +1,8 @@
 // Detailed's Settings, Archive and New project (ui/src/settings.tsx, dialogs.tsx and new-project.tsx),
 // after the folder picker and Settings › About & updates reached them (ui:23 and the window's part of
 // rel:U1):
-// - a "Choose…" button sits beside each folder field and puts the folder the system's picker gives into
-//   it, opening at the folder the field holds; typing a path still works;
+// - a "Choose…" button, named for its folder, sits beside each folder field and puts the folder the
+//   system's picker gives into it, opening at the folder the field holds; typing a path still works;
 // - About & updates is the last section of Settings, with one button that follows where the update
 //   stands, the notes of a new version, and the choice about looking for new versions.
 // The real components are drawn into a small stand-in for React, on the real update store, with the
@@ -56,11 +56,12 @@ const FOUND = {
 /** The system's folder picker as a button that says what it was asked for and hands over `box.picked`. */
 function chooser(box) {
   return {
-    ChooseFolder: ({ label, title, defaultPath, disabled, onPick }) =>
+    ChooseFolder: ({ label, name, title, defaultPath, disabled, onPick }) =>
       createElement(
         "button",
         {
           type: "button",
+          "aria-label": name,
           "data-picker": title,
           "data-from": defaultPath,
           disabled: Boolean(disabled),
@@ -69,6 +70,20 @@ function chooser(box) {
         label,
       ),
   };
+}
+/**
+ * A Choose… button's name for a screen reader says which folder it chooses: it is the picker's own
+ * title, which starts with the word the button shows.
+ */
+function namedForItsFolder(button) {
+  assert.equal(button.textContent, said.choose);
+  assert.equal(button.props["aria-label"], button.props["data-picker"]);
+  assert.ok(button.props["aria-label"].startsWith(said.choose.replace("…", "")), button.props["aria-label"]);
+}
+/** A box and its button share a row, which the stylesheet spaces (in a field, `.fld > .addrow`), not the element. */
+function aRowOfItsField(button) {
+  assert.equal(button.parent.props.className, "addrow");
+  assert.equal(button.parent.props.style, undefined);
 }
 const picker = (page, title) => page.find((n) => n.props["data-picker"] === title);
 const field = (page, label) => page.find((n) => n.type === "input" && n.props["aria-label"] === label);
@@ -259,7 +274,9 @@ export async function aChooseButtonSitsBesideEachFolderFieldOfSettings() {
   ]) {
     const button = picker(p, title);
     assert.equal(button.parent, field(p, label).parent, `${label}: the button is in its row`);
-    assert.equal(button.parent.props.className, "addrow", label);
+    aRowOfItsField(button);
+    // Three buttons that say "Choose…" are told apart by their names.
+    namedForItsFolder(button);
   }
   // The picker opens at the folder a field holds, and at the home folder when it holds none.
   assert.equal(picker(p, said.addFolderTitle).props["data-from"], "~");
@@ -269,6 +286,14 @@ export async function aChooseButtonSitsBesideEachFolderFieldOfSettings() {
   type(p, field(p, "Another folder"), "/mnt/projects");
   assert.equal(picker(p, said.archiveFolderTitle).props["data-from"], "~/backup/archive");
   assert.equal(picker(p, said.addFolderTitle).props["data-from"], "/mnt/projects");
+}
+
+export async function aFieldsRowIsSpacedByTheStylesheet() {
+  const css = readFileSync(new URL("../../ui/src/styles/detailed.css", import.meta.url), "utf8");
+  // A row of its own, as Add folder's, keeps its space; in a field it takes none, as the box alone
+  // took none. The elements set nothing themselves (aRowOfItsField).
+  assert.match(css, /\n\.addrow \{[^}]*\n {2}margin: 8px 0 6px;/);
+  assert.match(css, /\n\.fld > \.addrow \{\n {2}margin: 0;\n\}/);
 }
 
 export async function aFolderChosenIsAddedAtOnceAndATypedOneStillWorks() {
@@ -319,6 +344,35 @@ export async function theWholeDiskIsNotAFolderToKeepProjectsIn() {
   q.act(() => q.find((n) => n.type === "form").props.onSubmit({ preventDefault: noop }));
   assert.deepEqual(folders(q), [["~/project", true]]);
   assert.equal(alert(q), undefined);
+}
+
+export async function aWindowsDriveIsAWholeDiskTooButAShareIsAFolder() {
+  // The picker gives a drive as C:\, in either case and with either separator: the whole disk, as "/" is.
+  for (const drive of ["C:\\", "c:/", "D:\\\\"]) {
+    const p = await settingsPage();
+    p.box.picked = drive;
+    p.act(() => picker(p, said.addFolderTitle).props.onClick());
+    assert.deepEqual(folders(p), [["~/project", true]], `${drive}: nothing added`);
+    assert.equal(alert(p), said.wholeDisk, drive);
+  }
+  // A drive typed is passed over without a word, as "/" is.
+  const typed = await settingsPage();
+  type(typed, field(typed, "Another folder"), "C:\\");
+  typed.act(() => typed.find((n) => n.type === "form").props.onSubmit({ preventDefault: noop }));
+  assert.deepEqual(folders(typed), [["~/project", true]]);
+  assert.equal(alert(typed), undefined);
+  // A share is a folder a server shares, and a folder on a drive is a folder: both are added.
+  const p = await settingsPage();
+  for (const folder of ["\\\\nas\\projects", "C:\\Users\\Demo\\Projects"]) {
+    p.box.picked = folder;
+    p.act(() => picker(p, said.addFolderTitle).props.onClick());
+  }
+  assert.deepEqual(folders(p), [
+    ["~/project", true],
+    ["\\\\nas\\projects", true],
+    ["C:\\Users\\Demo\\Projects", true],
+  ]);
+  assert.equal(alert(p), undefined);
 }
 
 export async function theFoldersChosenForArchiveAndReportsAreWhatSaveSends() {
@@ -461,14 +515,33 @@ export async function aCopyThatCannotInstallLinksToItsReleaseInstead() {
   // With no page to open the button can only look again.
   await p.emit(status("available", { ...FOUND, install: "notice", url: undefined }));
   assert.equal(action(p).textContent, said.check);
-  // A failed download of a copy that installs itself offers to try again.
+  // A failed download of a copy that installs itself keeps its version, but so does a failed check:
+  // the button looks again, and the version comes back with its Install.
   await p.emit(status("error", { ...FOUND, error: "The download stopped. Check the connection and try again." }));
   assert.equal(part(p, "update-status").textContent, "The download stopped. Check the connection and try again.");
   assert.equal(part(p, "update-status").props.className, "rp-status bad", "a failure is red");
-  assert.equal(action(p).textContent, said.retry);
+  assert.equal(action(p).textContent, said.check);
   // A failed look has no version to install, so the button looks again.
   await p.emit(status("error", { error: "Laci couldn't reach the update server. Check the connection and try again." }));
   assert.equal(action(p).textContent, said.check);
+}
+
+export async function aCheckThatFailedWithAVersionOnOfferLooksAgainAndInstallsNothing() {
+  const p = await settingsPage();
+  // The daily look found a version. Offline, a check the user asked for fails, and the desktop
+  // keeps the version on offer without saying which step failed.
+  await p.emit(status("available", { ...FOUND }));
+  const offline = "Laci couldn't reach the update server. Check the connection and try again.";
+  await p.emit(status("error", { ...FOUND, error: offline }));
+  assert.equal(part(p, "update-status").textContent, offline);
+  assert.equal(action(p).textContent, said.check, "the button says what it does");
+  p.act(() => action(p).props.onClick());
+  await p.done();
+  assert.equal(p.asked("update/check").length, 1);
+  assert.equal(p.asked("update/install").length, 0, "nothing is downloaded or installed");
+  // The version is on offer again, and installing it is a click of its own.
+  assert.equal(part(p, "update-status").textContent, said.available("3.0.1", "2 days ago"));
+  assert.equal(action(p).textContent, said.install);
 }
 
 export async function macOSSaysItsFoldersAreAskedAgainBeforeAnInstall() {
@@ -659,15 +732,22 @@ export async function updateViewSaysWhereItStandsInWords() {
     action: action("restart", said.restart),
     hint: said.restartNote,
   });
-  // A failure is said as the desktop says it. With a version the same button goes on with it.
+  // A failure is said as the desktop says it. The desktop keeps a version found whether the check,
+  // the download or the restart failed, so the button looks again: it never installs in its place.
   assert.deepEqual(view("error", { error: "No connection." }), {
     line: "No connection.",
     bad: true,
     action: action("check", said.check),
     hint: "",
   });
-  assert.deepEqual(view("error", { ...FOUND, error: "The download stopped." }).action, action("install", said.retry));
+  assert.deepEqual(view("error", { ...FOUND, error: "The download stopped." }), {
+    line: "The download stopped.",
+    bad: true,
+    action: action("check", said.check),
+    hint: "",
+  });
   assert.deepEqual(view("error", { ...FOUND, install: "notice" }).action, action("release", said.releasePage));
+  assert.equal(view("error", { ...FOUND, install: "notice" }).hint, said.noticeNote);
   assert.equal(view("error").line, said.failed, "when it gives no reason");
 }
 
@@ -752,7 +832,8 @@ export async function theArchiveDestinationTakesAChosenFolderAndTheProjectInside
   const button = () => picker(p, said.destinationTitle("acme-store"));
   assert.equal(button().textContent, "Choose…");
   assert.equal(button().parent, input().parent, "in the row of the field");
-  assert.equal(button().parent.props.className, "addrow");
+  aRowOfItsField(button());
+  namedForItsFolder(button());
   // The destination is the project's own new folder, so the picker opens in the folder above it.
   assert.equal(button().props["data-from"], `${HOME}/project/_archive/clients`);
   // The folder chosen takes the project inside, under its own name, and the plan is asked for there.
@@ -832,7 +913,8 @@ export async function newProjectChoosesItsLocationAndATemplateFolderWithThePicke
   const button = picker(p, said.locationTitle);
   assert.equal(button.textContent, "Choose…");
   assert.equal(button.parent, where().parent, "beside the location");
-  assert.equal(button.parent.props.className, "addrow");
+  aRowOfItsField(button);
+  namedForItsFolder(button);
   assert.equal(button.props["data-from"], `${HOME}/project`, "it opens where the project would go now");
   assert.equal(button.props.disabled, false);
   p.box.picked = `${HOME}/work`;
@@ -848,6 +930,8 @@ export async function newProjectChoosesItsLocationAndATemplateFolderWithThePicke
   const add = () => p.button("Add template folder");
   assert.equal(add().props.disabled, true, "nothing to add yet");
   assert.equal(picker(p, said.templateTitle).parent, starter().parent);
+  aRowOfItsField(picker(p, said.templateTitle));
+  namedForItsFolder(picker(p, said.templateTitle));
   assert.equal(picker(p, said.templateTitle).props["data-from"], "~");
   p.box.picked = `${HOME}/templates/starter`;
   p.act(() => picker(p, said.templateTitle).props.onClick());

@@ -3,7 +3,19 @@ on:
   pull_request:
   push:
     branches: [main]
+  # A manual run can check one OS only (`gh workflow run check.yml --ref <branch> -f os=windows`), so a branch
+  # that changes Windows code waits for Windows alone.
   workflow_dispatch:
+    inputs:
+      os:
+        description: Which OS to check
+        type: choice
+        options: [all, linux, windows, macos]
+        default: all
+      window_smoke:
+        description: Take screenshots of the real window too
+        type: boolean
+        default: true
 
 # A new push cancels the older run of the same pull request. Runs on main and manual runs each get a group of
 # their own, so they finish.
@@ -28,6 +40,10 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.diff.outputs.code }}
+      linux: ${{ steps.pick.outputs.linux }}
+      windows: ${{ steps.pick.outputs.windows }}
+      macos: ${{ steps.pick.outputs.macos }}
+      smoke: ${{ steps.pick.outputs.smoke }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,10 +63,33 @@ jobs:
             fi
           fi
           echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+      # Which OS jobs run, and the runners window-smoke takes screenshots on: all of them, except in a manual run
+      # that picks one OS or no screenshots.
+      - id: pick
+        env:
+          OS: ${{ inputs.os }}
+          SMOKE: ${{ inputs.window_smoke }}
+        run: |
+          runners=()
+          for os in linux windows macos; do
+            if [ -z "$OS" ] || [ "$OS" = all ] || [ "$OS" = "$os" ]; then
+              echo "$os=true" | tee -a "$GITHUB_OUTPUT"
+              if [ "$SMOKE" != false ]; then
+                case "$os" in
+                  linux) runners+=('"ubuntu-24.04"') ;;
+                  windows) runners+=('"windows-2025"') ;;
+                  macos) runners+=('"macos-26"') ;;
+                esac
+              fi
+            else
+              echo "$os=false" | tee -a "$GITHUB_OUTPUT"
+            fi
+          done
+          echo "smoke=[$(IFS=,; echo "${runners[*]}")]" | tee -a "$GITHUB_OUTPUT"
 
   linux:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.linux == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -80,6 +119,23 @@ jobs:
       - run: pnpm -C ui typecheck
       - run: pnpm -C ui lint
       - run: cargo fmt --all -- --check
+      # The workspace denies unsafe code (Cargo.toml's lints). Only the two Windows modules that call the system's C
+      # API allow it, and each of their unsafe blocks says why it is sound. Another allow, or a crate that stops using
+      # the workspace's lints, fails here.
+      - name: Unsafe code only in the Windows system calls
+        run: |
+          found="$(grep -rl unsafe_code --include='*.rs' crates src-tauri | sort)"
+          expected="$(printf '%s\n' crates/laci-core/src/platform/windows/ffi.rs crates/laci-core/src/platform/windows/recycle.rs)"
+          if [ "$found" != "$expected" ]; then
+            echo "::error::Only ffi.rs and recycle.rs may mention unsafe_code; these do:"
+            echo "$found"
+            exit 1
+          fi
+          grep -qx 'unsafe_code = "deny"' Cargo.toml || { echo '::error::Cargo.toml no longer denies unsafe_code'; exit 1; }
+          for manifest in crates/laci-core/Cargo.toml src-tauri/Cargo.toml; do
+            grep -A1 -x '\[lints\]' "$manifest" | grep -qx 'workspace = true' \
+              || { echo "::error::$manifest doesn't use the workspace's lints"; exit 1; }
+          done
       - run: pnpm -C ui build
       # After the build: one of its tests checks that no preview code is in ui/dist.
       - run: node scripts/ui-state-smoke.mjs
@@ -162,7 +218,7 @@ jobs:
   windows:
     needs: changes
     if: >-
-      needs.changes.outputs.code == 'true' && (
+      needs.changes.outputs.code == 'true' && needs.changes.outputs.windows == 'true' && (
         github.event_name != 'pull_request' ||
         !github.event.repository.private ||
         contains(github.event.pull_request.labels.*.name, 'cross-platform')
@@ -191,16 +247,16 @@ jobs:
       - run: pnpm -C ui build
       - run: cargo check --workspace --all-targets --features custom-protocol
       - run: cargo clippy --workspace --all-targets --features custom-protocol -- -D warnings
-      # The tests must build. Until the port's steps for folders, paths, processes and the Recycle Bin land (M4 and
-      # M5), many of them are refused on Windows, as they should be, so running them only reports how far it got.
+      # The tests must build. A few still fail on Windows until M5's last steps land (the terminal's, for one), so
+      # running them only reports how far they got.
       - run: cargo test --workspace --features custom-protocol --no-run
-      - name: cargo test (a report until the port lands)
+      - name: cargo test (a report until port:P14)
         run: cargo test --workspace --features custom-protocol --no-fail-fast
         continue-on-error: true
         timeout-minutes: 15
       - run: cargo build -p laci --features custom-protocol
-      # mcp-smoke checks that the file it is given exists, so the name ends in .exe. Its moves need port:P5.
-      - name: MCP smoke (a report until port:P5)
+      # mcp-smoke checks that the file it is given exists, so the name ends in .exe.
+      - name: MCP smoke (a report until port:P14)
         run: node scripts/mcp-smoke.mjs target/debug/laci.exe
         continue-on-error: true
         timeout-minutes: 5
@@ -213,7 +269,7 @@ jobs:
   macos:
     needs: changes
     if: >-
-      needs.changes.outputs.code == 'true' && (
+      needs.changes.outputs.code == 'true' && needs.changes.outputs.macos == 'true' && (
         github.event_name != 'pull_request' ||
         !github.event.repository.private ||
         contains(github.event.pull_request.labels.*.name, 'cross-platform')
@@ -247,18 +303,22 @@ jobs:
       - run: cargo clippy --workspace --all-targets --features custom-protocol -- -D warnings
         env:
           TMPDIR: ${{ runner.temp }}
-      # The tests that need port:P5's check of which programs use a folder are ignored outside Linux until then.
       - run: cargo test --workspace --features custom-protocol
         env:
           TMPDIR: ${{ runner.temp }}
       - run: cargo build -p laci --features custom-protocol
-      # Its moves need port:P5 too.
-      - name: MCP smoke (a report until port:P5)
+      - name: MCP smoke (a report until port:P14)
         run: node scripts/mcp-smoke.mjs target/debug/laci
         continue-on-error: true
         timeout-minutes: 5
         env:
           TMPDIR: ${{ runner.temp }}
+      # People's own temporary files are under /var too, so this shows how far the tests get with macOS's own
+      # TMPDIR. A report until port:P14 makes it count.
+      - name: cargo test with macOS's TMPDIR (a report until port:P14)
+        run: cargo test --workspace --features custom-protocol --no-fail-fast
+        continue-on-error: true
+        timeout-minutes: 15
 
   # Screenshots of the real window (scripts/window-smoke.mjs): both designs, both themes, the four widths of Simple's
   # tiers, from a build with the WebDriver server (`--features e2e`). Linux and Windows drive it through tauri-driver,
@@ -267,7 +327,7 @@ jobs:
   window-smoke:
     needs: changes
     if: >-
-      needs.changes.outputs.code == 'true' && (
+      needs.changes.outputs.code == 'true' && needs.changes.outputs.smoke != '[]' && (
         github.event_name != 'pull_request' ||
         !github.event.repository.private ||
         contains(github.event.pull_request.labels.*.name, 'cross-platform')
@@ -275,7 +335,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025, macos-26]
+        # ubuntu-24.04, windows-2025 and macos-26, or fewer in a manual run (see changes).
+        os: ${{ fromJSON(needs.changes.outputs.smoke) }}
     runs-on: ${{ matrix.os }}
     continue-on-error: true
     timeout-minutes: 60

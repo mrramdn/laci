@@ -96,8 +96,8 @@ type Updates = NonNullable<Prefs["updates"]>;
 /**
  * What first run says about this computer, once the desktop tells `setup/info`: `git` is false when
  * no Git can be run (on macOS, without Apple's command line tools), and `translocated` is true when
- * macOS runs Laci from where it was downloaded instead of from Applications. The engine doesn't send
- * them yet (the port's steps P6 and P10 add them), so until it does neither note shows.
+ * macOS runs Laci from where it was downloaded instead of from Applications. The engine sends `git`
+ * (the port's step P6); `translocated` comes with step P10, and until then its note never shows.
  */
 type ThisComputer = { git?: boolean; translocated?: boolean };
 /** The program a missing `git` asks for, where to get it, and how macOS installs it. */

@@ -158,7 +158,7 @@ jobs:
           trap 'rm -rf "$laci_fixture_dir"' EXIT
           export LACI_HOME="$laci_fixture_dir/home"
           node scripts/demo.ts "$LACI_HOME"
-          for laci_suite in onboarding watcher full; do
+          for laci_suite in onboarding watcher full simple; do
             xvfb-run -a dbus-run-session -- bash scripts/native-smoke.sh target/debug/laci "$laci_suite"
           done
       - run: pnpm build

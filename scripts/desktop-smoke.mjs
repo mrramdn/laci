@@ -10,6 +10,8 @@
  * LACI_ONBOARDING_ONLY=1 checks the first-run wizard on an unconfigured fixture.
  * LACI_WATCHER_ONLY=1 checks archived/worktree Git and continuously written session logs.
  * LACI_MODULAR_ONLY=1 checks external scan and archive folders, project Trash, and session reports.
+ * LACI_SIMPLE_ONLY=1 checks Simple: its places, the palette, a to-do's Undo, archive and Undo from Activity, a
+ * Countdown's Cancel, one Clean up suggestion, switching designs, the card that offers Simple, and 720×560.
  * LACI_KEYBOARD_ONLY=1 checks modal, connector, row and terminal keyboard behavior.
  * LACI_PATCH_ONLY=1 checks themed selects, empty roots after reload, and isolated generator cancellation/failure.
  * LACI_AGENT_ONLY=1 uses fixture bin scripts and LACI_AGENT_CAPTURE; driver PATH must be fixture/bin:/usr/bin:/bin.
@@ -50,6 +52,7 @@ const onboardingOnly = process.env.LACI_ONBOARDING_ONLY === "1";
 const watcherOnly = process.env.LACI_WATCHER_ONLY === "1";
 const keyboardOnly = process.env.LACI_KEYBOARD_ONLY === "1";
 const modularOnly = process.env.LACI_MODULAR_ONLY === "1";
+const simpleOnly = process.env.LACI_SIMPLE_ONLY === "1";
 const patchOnly = process.env.LACI_PATCH_ONLY === "1";
 const agentOnly = process.env.LACI_AGENT_ONLY === "1";
 const fakeAgentProcesses = new Map();
@@ -71,6 +74,97 @@ let originalTheme;
 /** The design config.json held before the suites pinned Detailed: null for none saved, undefined until read. */
 let originalDesign;
 let watchedFile;
+/**
+ * What the helpers look for in each design, so `nav`, `showProject` and the rest drive Detailed and Simple alike.
+ * Detailed's are the selectors the suites used before there were two designs.
+ */
+const SELECTORS = {
+  detailed: {
+    /** The window, once its code is in. */
+    shell: "#app",
+    /** A place in the sidebar, found by its words. */
+    place: ".sb-item",
+    /** The heading of the view that is open. */
+    heading: ".main .head h1",
+    /** Where the selected project's name shows, and what a failure calls it. */
+    project: ".insp .ititle h2",
+    projectIn: "inspector",
+    /** The sidebar's spinner while a scan runs. */
+    busy: ".sb-foot .spin",
+    /** A dialog's error. */
+    alert: ".dialog [role=alert]",
+    /** Each place, with words its heading holds. */
+    places: [
+      ["Today", "Today"],
+      ["Tidy up", "Tidy up"],
+      ["Agents", "Agents"],
+      ["Log", "Log"],
+      ["Settings", "Settings"],
+    ],
+    /**
+     * What says the view's content is still on its way: a box marked busy, or a placeholder whose words end in
+     * "…", as "Loading your settings…" and "Reading the log…".
+     */
+    loading: {
+      busy: '.main [aria-busy="true"], .insp [aria-busy="true"]',
+      words:
+        ".main .empty, .main [role=status], .insp .empty, .insp [role=status]",
+    },
+    /** What a small window must keep in reach on a place: the sidebar, and the view's heading and buttons. */
+    reach: [
+      "#side button",
+      ".main .head h1",
+      ".main .head button",
+      ".main .filterbar button",
+    ],
+    /** And with a project selected: its details, a sheet over the view below 880 px. */
+    reachProject: [
+      "#side button",
+      ".insp .head button",
+      ".insp .ititle h2",
+      ".insp .iacts button",
+    ],
+  },
+  simple: {
+    shell: ".s-shell",
+    place: '[data-ui="place"]',
+    heading: ".s-main h1",
+    project: ".s-project-head h1",
+    projectIn: "project page",
+    busy: ".s-scan .s-spinner",
+    alert: '[data-ui="sheet"] [role=alert]',
+    // Home greets by the time of day: Good morning, Good afternoon or Good evening.
+    places: [
+      ["Home", "Good"],
+      ["Projects", "Projects"],
+      ["AI helpers", "AI helpers"],
+      ["Clean up", "Clean up"],
+      ["Activity", "Activity"],
+      ["Settings", "Settings"],
+      ["Help", "Help"],
+    ],
+    // Simple marks every placeholder: a card marked busy, or the spinner with its words.
+    loading: {
+      busy: '.s-main [aria-busy="true"], .s-main .s-working',
+      words: "",
+    },
+    reach: [
+      '[data-ui="nav"] button',
+      ".s-main h1",
+      '.s-main [data-ui="primary"]',
+      ".s-main .s-toolbar button",
+    ],
+    reachProject: [
+      '[data-ui="nav"] button',
+      ".s-project-head h1",
+      ".s-project-head button",
+    ],
+  },
+};
+/** The design the window shows, whose selectors the helpers use. The suites drive Detailed unless they switch. */
+let design = "detailed";
+/** The words on each design's button in the Simple | Detailed toggle at the foot of both sidebars. */
+const DESIGN_NAMES = { simple: "Simple", detailed: "Detailed" };
 
 async function request(method, route, body, timeout = 180_000) {
   const response = await fetch(driver + route, {
@@ -153,7 +247,10 @@ async function settled(label) {
     const status = await api("status");
     if (status.busy || status.historyPending) {
       idleSince = undefined;
-      return false;
+      // wait() retries and keeps this, so a timeout says what was still running.
+      throw new Error(
+        status.busy ? "a scan is running" : "the history is being read",
+      );
     }
     idleSince ??= Date.now();
     return Date.now() - idleSince >= 1_200;
@@ -166,10 +263,11 @@ async function waitAccepted(label, condition, timeout) {
     label,
     async () => {
       refusal = await execute(
-        () =>
-          [...document.querySelectorAll(".dialog [role=alert]")]
+        (selector) =>
+          [...document.querySelectorAll(selector)]
             .map((alert) => alert.textContent.trim())
             .find(Boolean) ?? "",
+        SELECTORS[design].alert,
       );
       // wait() retries when its condition throws, so a refusal ends it as a value and is thrown below.
       return refusal || condition();
@@ -240,7 +338,8 @@ async function diagnose(name, error) {
         withTimeout(
           15_000,
           execute(() => {
-            const dialog = document.querySelector(".dialog");
+            // Detailed's dialog, or one of Simple's sheets.
+            const dialog = document.querySelector('.dialog, [data-ui="sheet"]');
             const open = dialog ? `Open dialog:\n${dialog.innerText}\n\n` : "";
             return `${open}Page:\n${document.body.innerText}\n`;
           }),
@@ -275,25 +374,39 @@ async function check(name, task) {
   console.log(`PASS ${name}`);
 }
 async function element(selector, text, exact = false) {
-  return wait(`element ${selector}${text ? ` “${text}”` : ""}`, () =>
-    execute(
+  return wait(`element ${selector}${text ? ` “${text}”` : ""}`, async () => {
+    const { found, seen } = await execute(
       (selector, text, exact) => {
-        return (
-          [...document.querySelectorAll(selector)].find((element) => {
+        const all = [...document.querySelectorAll(selector)];
+        const found =
+          all.find((element) => {
             const visible = element.getClientRects().length > 0;
             const value = element.textContent.trim();
             return (
               visible &&
               (!text || (exact ? value === text : value.includes(text)))
             );
-          }) ?? null
-        );
+          }) ?? null;
+        // A timeout names what the selector found instead, and whether it was drawn.
+        const seen = found
+          ? []
+          : all
+              .slice(0, 6)
+              .map(
+                (element) =>
+                  `${element.getClientRects().length ? "" : "hidden "}“${element.textContent.trim().replace(/\s+/g, " ").slice(0, 60)}”`,
+              );
+        return { found, seen };
       },
       selector,
       text ?? "",
       exact,
-    ),
-  );
+    );
+    if (found) return found;
+    throw new Error(
+      seen.length ? `saw ${seen.join(", ")}` : "nothing matches",
+    );
+  });
 }
 async function click(selector, text, exact = false) {
   const target = await element(selector, text, exact);
@@ -438,9 +551,27 @@ async function textContains(selector, text) {
     text,
   );
 }
+/** The words of the first few things `selector` finds, for a failure: what the window showed instead. */
+async function shownText(selector) {
+  const words = await execute(
+    (selector) =>
+      [...document.querySelectorAll(selector)]
+        .slice(0, 8)
+        .map((element) =>
+          element.textContent.trim().replace(/\s+/g, " ").slice(0, 80),
+        ),
+    selector,
+  );
+  return words.length ? words.map((text) => `“${text}”`).join(", ") : "nothing";
+}
+/** Opens a place from the sidebar of the design shown, and waits for its heading. */
 async function nav(label, heading) {
-  await click(".sb-item", label);
-  await wait(`${heading} view`, () => textContains(".main .head h1", heading));
+  const ui = SELECTORS[design];
+  await click(ui.place, label);
+  await wait(`${heading} view`, async () => {
+    if (await textContains(ui.heading, heading)) return true;
+    throw new Error(`the heading is ${await shownText(ui.heading)}`);
+  });
 }
 async function shot(name, settle = true) {
   if (!screenshotDir) return;
@@ -450,7 +581,10 @@ async function shot(name, settle = true) {
       const status = await api("status");
       return (
         !status.busy &&
-        (await execute(() => !document.querySelector(".sb-foot .spin")))
+        (await execute(
+          (busy) => !document.querySelector(busy),
+          SELECTORS[design].busy,
+        ))
       );
     });
   await asyncExecute(() =>
@@ -469,16 +603,24 @@ async function shot(name, settle = true) {
     Buffer.from(encoded, "base64"),
   );
 }
+/** Opens `project` from the palette (Ctrl+K): its details beside the view in Detailed, its page in Simple. */
 async function showProject(project) {
   await key("k", true);
   await type("#pal-in", project.path);
-  await wait("project search hit", () =>
-    textContains(".pal-item", project.name),
-  );
+  await wait("project search hit", async () => {
+    if (await textContains(".pal-item", project.name)) return true;
+    throw new Error(`the palette lists ${await shownText(".pal-item")}`);
+  });
   await key("\uE007");
-  await wait(`inspector for ${project.name}`, () =>
-    textContains(".insp .ititle h2", project.name),
-  );
+  await showsProject(project);
+}
+/** Waits until the design shown has `project` selected: its details in Detailed, its page in Simple. */
+async function showsProject(project) {
+  const ui = SELECTORS[design];
+  await wait(`${ui.projectIn} for ${project.name}`, async () => {
+    if (await textContains(ui.project, project.name)) return true;
+    throw new Error(`it shows ${await shownText(ui.project)}`);
+  });
 }
 async function modularRegressions() {
   const external = await mkdtemp(
@@ -1132,26 +1274,288 @@ async function reloadApp() {
     ...(await execute(() => window.__LACI_SMOKE_ERRORS__ ?? [])),
   );
   await command("POST", "/refresh", {});
-  await wait("React restored after reload", () =>
-    execute(() => Boolean(document.querySelector(".main .head h1"))),
-  );
+  // The page comes back in the design config.json holds: the suite has set `design` to it.
+  await wait("React restored after reload", async () => {
+    const shown = await execute(
+      (heading) =>
+        document.querySelector(heading)
+          ? ""
+          : `the window shows ${document.documentElement.dataset.design || "no design"}${document.querySelector(".boot") ? ", still starting" : ""}`,
+      SELECTORS[design].heading,
+    );
+    if (!shown) return true;
+    throw new Error(`${shown}, not ${design}`);
+  });
   await installErrorCollection();
 }
 /** The fixture's config.json. */
 const configFile = () => path.join(fixtureHome, ".config/laci/config.json");
 /**
- * Puts back the design config.json held before the suites pinned Detailed. The `design` request only
- * saves one, so a config that had none loses the key again by hand, as a setup from before there were
- * two designs has it.
+ * Takes the design out of config.json by hand, as a setup from before there were two designs has it: the
+ * `design` request only saves one.
  */
+async function forgetDesign() {
+  const saved = JSON.parse(await readFile(configFile(), "utf8"));
+  delete saved.design;
+  await writeFile(configFile(), `${JSON.stringify(saved, null, 2)}\n`);
+}
+/** Puts back the design config.json held before the suites pinned Detailed, or none if it held none. */
 async function restoreDesign() {
   if (originalDesign) {
     await api("design", { design: originalDesign });
     return;
   }
-  const saved = JSON.parse(await readFile(configFile(), "utf8"));
-  delete saved.design;
-  await writeFile(configFile(), `${JSON.stringify(saved, null, 2)}\n`);
+  await forgetDesign();
+}
+/** Waits until the window shows `next` and drives it from then on: the helpers use its selectors. */
+async function untilDesign(next) {
+  design = next;
+  await wait(`the ${next} window`, async () => {
+    const shown = await execute(
+      (shell) => ({
+        design: document.documentElement.dataset.design ?? "",
+        drawn: Boolean(document.querySelector(shell)),
+      }),
+      SELECTORS[next].shell,
+    );
+    if (shown.design === next && shown.drawn) return true;
+    throw new Error(
+      `the window shows ${shown.design || "no design"}${shown.drawn ? "" : `, with no ${SELECTORS[next].shell}`}`,
+    );
+  });
+}
+/** Switches to `next` with the Simple | Detailed toggle at the foot of the sidebar, as a person would. */
+async function switchDesign(next) {
+  await click('[data-ui="design-toggle"] button', DESIGN_NAMES[next], true);
+  await untilDesign(next);
+}
+/** Waits for the toast to go, so that it covers nothing the next step clicks or measures. */
+async function noToast() {
+  await wait(
+    "the toast went away",
+    async () => {
+      const toast = await execute(
+        () =>
+          document
+            .querySelector(".toast")
+            ?.textContent.trim()
+            .replace(/\s+/g, " ") ?? "",
+      );
+      if (!toast) return true;
+      throw new Error(`it still says “${toast}”`);
+    },
+    40_000,
+  );
+}
+/**
+ * Makes the page `width`×`height` CSS pixels: a window manager's frame, if there is one, is added once its
+ * size is known. The window can't get smaller than 720×560.
+ */
+async function windowSize(width, height) {
+  // A resize reaches the page a moment after the window: read until it is the size asked for, or has kept
+  // another size for a second. Two equal reads in a row can both come before the resize.
+  const inner = async () => {
+    let last = [];
+    let since = Date.now();
+    for (const end = Date.now() + 5_000; Date.now() < end; await sleep(100)) {
+      const size = await execute(() => [window.innerWidth, window.innerHeight]);
+      if (size[0] === width && size[1] === height) return size;
+      if (size[0] !== last[0] || size[1] !== last[1]) {
+        last = size;
+        since = Date.now();
+      } else if (Date.now() - since >= 1_000) return size;
+    }
+    return last;
+  };
+  let rect = { width, height };
+  let seen = [];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await command("POST", "/window/rect", rect);
+    seen = await inner();
+    if (seen[0] === width && seen[1] === height) return;
+    const outer = await command("GET", "/window/rect");
+    rect = {
+      width: outer.width + width - seen[0],
+      height: outer.height + height - seen[1],
+    };
+  }
+  throw new Error(
+    `The page is ${seen[0]}×${seen[1]} after asking three times for ${width}×${height}`,
+  );
+}
+/**
+ * Runs in the page: whether the window or any box in it scrolls sideways, and which of `reach` can't be brought
+ * into view by scrolling up and down and clicked at its centre, as WebDriver's click needs. One problem per line.
+ */
+function narrowProblems(reach) {
+  const problems = [];
+  const html = document.documentElement;
+  /** A box by its tag, id and first classes: its words would be the whole page's. */
+  const where = (element) => {
+    const classes =
+      typeof element.className === "string"
+        ? element.className.trim().split(/\s+/).filter(Boolean).slice(0, 2)
+        : [];
+    return `${element.tagName.toLowerCase()}${element.id ? `#${element.id}` : ""}${classes.map((c) => `.${c}`).join("")}`;
+  };
+  const name = (element) => {
+    const words = (
+      element.getAttribute("aria-label") ||
+      element.textContent.trim().replace(/\s+/g, " ")
+    ).slice(0, 50);
+    return `${where(element)}${words ? ` “${words}”` : ""}`;
+  };
+  /**
+   * What makes `box` too wide: what reaches past `right`, and what holds wider words than it has room for (the
+   * innermost of those, so a button's text is named, not every box around it). The first three, named.
+   */
+  const past = (box, right) => {
+    const drawn = [...box.querySelectorAll("*")].filter(
+      // A 1 px box is a screen reader's text, clipped on purpose.
+      (element) => element.getBoundingClientRect().width > 1,
+    );
+    const spills = drawn.filter(
+      (element) =>
+        element.scrollWidth > element.clientWidth + 1 &&
+        getComputedStyle(element).overflowX === "visible",
+    );
+    return drawn
+      .filter(
+        (element) =>
+          element.getBoundingClientRect().right > right + 1 ||
+          (spills.includes(element) &&
+            !spills.some((other) => other !== element && element.contains(other))),
+      )
+      .slice(0, 3)
+      .map((element) =>
+        element.getBoundingClientRect().right > right + 1
+          ? `${name(element)} ends at ${Math.round(element.getBoundingClientRect().right)} px`
+          : `${name(element)} holds ${element.scrollWidth} px in ${element.clientWidth} px`,
+      )
+      .join("; ");
+  };
+  const wide = Math.max(html.scrollWidth, document.body.scrollWidth);
+  if (wide > html.clientWidth + 1)
+    problems.push(
+      `the window scrolls sideways: ${wide} px of content in ${html.clientWidth} px (${past(document.body, html.clientWidth)})`,
+    );
+  // Every box that scrolls by itself, whichever it is: a page, a sidebar, a row of filters. A visible overflow
+  // makes the window wider, measured above. Code keeps its lines, a text field scrolls its own text and the
+  // terminal is its own, so those are left out.
+  for (const box of document.body.querySelectorAll("*")) {
+    if (box.closest("pre, code, input, textarea, select, .xterm")) continue;
+    if (!box.getClientRects().length) continue;
+    if (!["auto", "scroll"].includes(getComputedStyle(box).overflowX))
+      continue;
+    if (box.scrollWidth > box.clientWidth + 1)
+      problems.push(
+        `${where(box)} scrolls sideways: ${box.scrollWidth} px of content in ${box.clientWidth} px (${past(box, box.getBoundingClientRect().left + box.clientWidth)})`,
+      );
+  }
+  for (const selector of reach)
+    for (const element of document.querySelectorAll(selector)) {
+      // What this width doesn't draw, such as Detailed's labels in the rail, isn't meant to be reached.
+      if (
+        !element.getClientRects().length ||
+        getComputedStyle(element).visibility === "hidden"
+      )
+        continue;
+      // Up and down only. A control that comes into view only when a box around it moves sideways, even a box
+      // that hides what overflows it, is out of reach: that box goes back, and the control is named.
+      const lefts = [];
+      for (let box = element.parentElement; box; box = box.parentElement)
+        lefts.push([box, box.scrollLeft]);
+      element.scrollIntoView({ block: "nearest", inline: "nearest" });
+      const moved = lefts.filter(([box, left]) => box.scrollLeft !== left);
+      for (const [box, left] of moved) box.scrollLeft = left;
+      if (moved.length) {
+        problems.push(
+          `${name(element)} is in reach only by scrolling ${where(moved[0][0])} sideways`,
+        );
+        continue;
+      }
+      const box = element.getBoundingClientRect();
+      if (!box.width || !box.height) continue;
+      const x = box.left + box.width / 2;
+      const y = box.top + box.height / 2;
+      if (x < 0 || y < 0 || x > html.clientWidth || y > window.innerHeight) {
+        problems.push(
+          `${name(element)} stays out of view, its centre at ${Math.round(x)},${Math.round(y)}`,
+        );
+        continue;
+      }
+      const hit = document.elementFromPoint(x, y);
+      if (!hit || (hit !== element && !element.contains(hit)))
+        problems.push(
+          `${name(element)} is covered by ${hit ? name(hit) : "nothing"}`,
+        );
+    }
+  return problems;
+}
+/**
+ * Waits until the page shown has its content in: the scan and the history settled, and nothing on the page that
+ * says it is still on its way, as Settings' cards before `setup/info` replies. A page measured before that would
+ * be measured with its placeholder.
+ */
+async function loaded(screen) {
+  await settled(`the scan and the history settle on ${screen}`);
+  const { busy, words } = SELECTORS[design].loading;
+  await wait(`${screen} has its content in`, async () => {
+    const left = await execute(
+      (busy, words) =>
+        [
+          ...document.querySelectorAll(busy),
+          ...(words
+            ? [...document.querySelectorAll(words)].filter((element) =>
+                element.textContent.trim().endsWith("…"),
+              )
+            : []),
+        ]
+          .filter((element) => element.getClientRects().length)
+          .map((element) =>
+            element.textContent.trim().replace(/\s+/g, " ").slice(0, 80),
+          ),
+      busy,
+      words,
+    );
+    if (!left.length) return true;
+    throw new Error(
+      `it still shows ${left.map((text) => `“${text}”`).join(", ")}`,
+    );
+  });
+}
+/**
+ * narrowProblems for the design shown once its page is in, each problem named with the design and the screen. A
+ * screen with problems is kept with the diagnostics, as the window is made larger again before a failure is saved.
+ */
+async function narrowLooks(screen, reach) {
+  await loaded(screen);
+  await noToast();
+  await painted();
+  const problems = await execute(narrowProblems, reach);
+  if (problems.length) await keepScreen(`720x560 ${design} ${screen}`);
+  return problems.map((problem) => `${design}, ${screen}: ${problem}`);
+}
+/** A screenshot in the diagnostics folder when there is one (CI sets it). Never throws: it only helps explain. */
+async function keepScreen(name) {
+  if (!process.env.LACI_SMOKE_DIAGNOSTICS) return;
+  try {
+    const folder = path.resolve(process.env.LACI_SMOKE_DIAGNOSTICS);
+    const file = `${stamp}-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.png`;
+    await mkdir(folder, { recursive: true });
+    await writeFile(
+      path.join(folder, file),
+      Buffer.from(
+        await withTimeout(15_000, command("GET", "/screenshot")),
+        "base64",
+      ),
+    );
+    console.error(`Screenshot of ${name}: ${path.join(folder, file)}`);
+  } catch (problem) {
+    console.error(
+      `Could not keep a screenshot of ${name}: ${problem?.message ?? problem}`,
+    );
+  }
 }
 
 async function newTerminalUI() {
@@ -3103,6 +3507,696 @@ async function tidyRegressions() {
   );
 }
 
+/**
+ * Simple in the real window: its places, the palette, a to-do and its Undo, archive and Undo from Activity, a
+ * Countdown's Cancel, one Clean up suggestion, switching designs, the card that offers Simple after an upgrade,
+ * and both designs at 720×560. A project of its own takes the changes, backed up to a folder beside the fixture
+ * so that Delete gets as far as its Countdown; it and everything else made here are removed at the end.
+ */
+async function simpleRegressions() {
+  const name = `simple-${stamp}`;
+  const source = path.join(fixtureHome, "project", name);
+  const external = await mkdtemp(
+    path.join(path.dirname(fixtureHome), "laci-simple-"),
+  );
+  const backup = path.join(external, "backup.git");
+  const trashRoot = path.join(fixtureHome, ".local/share/Trash");
+  // An AI chat whose project folder is gone: Clean up offers to set it aside.
+  const gone = path.join(fixtureHome, "project", `simple-gone-${stamp}`);
+  const store = path.join(
+    fixtureHome,
+    ".claude/projects",
+    gone.replace(/[^A-Za-z0-9]/g, "-"),
+  );
+  const chat = path.join(store, `${stamp}.jsonl`);
+  const todo = `Simple to-do ${stamp}`;
+  const git = (dir, args) =>
+    execFileSync("git", ["-C", dir, ...args], {
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_AUTHOR_NAME: "Native Fixture",
+        GIT_AUTHOR_EMAIL: "fixture@example.test",
+        GIT_COMMITTER_NAME: "Native Fixture",
+        GIT_COMMITTER_EMAIL: "fixture@example.test",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  /** The words of the open sheet, for a failure. */
+  const sheetText = () =>
+    execute(
+      () =>
+        document
+          .querySelector('[data-ui="sheet"]')
+          ?.innerText.replace(/\s+/g, " ")
+          .slice(0, 400) ?? "no sheet is open",
+    );
+  /** Chooses `item` from the ⋯ More actions menu on the project's page. */
+  const moreAction = async (item) => {
+    await click('.s-project-head button[aria-label="More actions"]');
+    await click('[role="menu"] [role="menuitem"]', item);
+  };
+  /** Waits until Simple's sidebar marks the place for `view` as the one open. */
+  const placeOpen = async (view) => {
+    await wait(`${view} marked open in Simple's sidebar`, async () => {
+      const open = await execute(
+        () =>
+          document.querySelector('[data-ui="place"][aria-current="page"]')
+            ?.dataset.view ?? "",
+      );
+      if (open === view) return true;
+      throw new Error(`the sidebar marks ${open || "no place"} as open`);
+    });
+  };
+  /** The to-do on the project's To-do card, open or ticked, as the card shows it. */
+  const todoShown = () =>
+    execute((text) => {
+      const row = [...document.querySelectorAll(".s-todo-card .s-todo")].find(
+        (row) => row.querySelector(".s-todo-text span")?.textContent.trim() === text,
+      );
+      const box = row?.querySelector("input.s-cb");
+      return box ? { box, checked: box.checked } : null;
+    }, todo);
+  /** Where the archive put the project, until Undo brings it back. */
+  let archived;
+  /** The Clean up change, until it is undone, and where it set the chat aside. */
+  let journal;
+  let setAside;
+  try {
+    await mkdir(source, { recursive: true });
+    await mkdir(backup);
+    git(backup, ["init", "--bare", "--initial-branch=main"]);
+    git(source, ["init", "--initial-branch=main"]);
+    await writeFile(
+      path.join(source, "README.md"),
+      "# Simple smoke\nA project the Simple suite changes and puts back.\n",
+    );
+    // To-dos go to .laci.md. Kept out of Git, they leave nothing unsaved, so Delete reaches its Countdown.
+    await writeFile(path.join(source, ".git/info/exclude"), ".laci.md\n");
+    git(source, ["add", "README.md"]);
+    git(source, ["commit", "-m", "initial"]);
+    git(source, ["remote", "add", "origin", backup]);
+    git(source, ["push", "-u", "origin", "main"]);
+    await api("rescan");
+    const project = await wait(`${name} in the scan`, async () => {
+      const current = await snapshot();
+      const node = current.nodes[source];
+      if (node && !current.historyPending) return node;
+      throw new Error(node ? "the history is still being read" : "not yet");
+    });
+
+    await check(
+      "Detailed offers Simple after an upgrade, and the card goes once used",
+      async () => {
+        const offer = () =>
+          execute(() => ({
+            design: document.documentElement.dataset.design ?? "",
+            offer: document.documentElement.dataset.designOffer ?? "",
+            heading:
+              document.querySelector(".main .head h1")?.textContent.trim() ??
+              "",
+            card: Boolean(document.querySelector('[data-ui="design-offer"]')),
+          }));
+        await forgetDesign();
+        await reloadApp();
+        await wait("the Try Simple card on Detailed's Today", async () => {
+          const shown = await offer();
+          if (
+            shown.design === "detailed" &&
+            shown.offer === "1" &&
+            shown.heading === "Today" &&
+            shown.card
+          )
+            return true;
+          throw new Error(`saw ${JSON.stringify(shown)}`);
+        });
+        await shot("detailed-try-simple");
+        await click('[data-ui="design-offer"] button', "Try Simple view", true);
+        await untilDesign("simple");
+        await placeOpen("today");
+        await wait("config.json keeps Simple", async () => {
+          const saved = JSON.parse(await readFile(configFile(), "utf8"));
+          if (saved.design === "simple") return true;
+          throw new Error(
+            `config.json holds design ${JSON.stringify(saved.design)}`,
+          );
+        });
+        await switchDesign("detailed");
+        await wait("Today without the card", async () => {
+          const shown = await offer();
+          if (shown.heading === "Today" && !shown.card && !shown.offer)
+            return true;
+          throw new Error(`saw ${JSON.stringify(shown)}`);
+        });
+        await reloadApp();
+        const reloaded = await offer();
+        assert.deepEqual(
+          { card: reloaded.card, offer: reloaded.offer },
+          { card: false, offer: "" },
+          "The card stays gone after a reload",
+        );
+      },
+    );
+
+    await check("Switching designs keeps the selected project", async () => {
+      await showProject(project);
+      await switchDesign("simple");
+      await showsProject(project);
+      await placeOpen("folder");
+      await switchDesign("detailed");
+      await showsProject(project);
+      await wait("Today beside the project's details", async () => {
+        if (await textContains(SELECTORS.detailed.heading, "Today"))
+          return true;
+        throw new Error(
+          `the heading is ${await shownText(SELECTORS.detailed.heading)}`,
+        );
+      });
+      await switchDesign("simple");
+      await showsProject(project);
+    });
+
+    await check(
+      "Simple's five places, Settings and Help open from its sidebar",
+      async () => {
+        for (const [label, heading] of SELECTORS.simple.places) {
+          await nav(label, heading);
+          await wait(`${label} marked open in the sidebar`, async () => {
+            const open = await execute(() =>
+              [
+                ...document.querySelectorAll(
+                  '[data-ui="place"][aria-current="page"]',
+                ),
+              ].map((place) => place.textContent.trim().replace(/\s+/g, " ")),
+            );
+            if (open.length === 1 && open[0].includes(label)) return true;
+            throw new Error(
+              `the sidebar marks ${open.length ? open.map((text) => `“${text}”`).join(", ") : "nothing"} as open`,
+            );
+          });
+          await shot(`simple-${label.toLowerCase().replaceAll(" ", "-")}`);
+        }
+      },
+    );
+
+    await check("Ctrl+K opens a project's page in Simple", async () => {
+      await showProject(project);
+      await placeOpen("folder");
+      await shot("simple-project");
+    });
+
+    await check(
+      "A to-do ticked on its project's page is undone from Recent changes",
+      async () => {
+        const task = async () =>
+          (await snapshot()).nodes[source]?.tasks.find(
+            (task) => task.text === todo,
+          );
+        await type(".s-todo-card .s-add input", todo);
+        await key("\uE007");
+        await wait("the to-do added", async () => {
+          const found = await task();
+          if (found && !found.done) return true;
+          throw new Error(found ? "it is ticked already" : "it isn't there");
+        });
+        const shown = await wait("the to-do on the To-do card", async () => {
+          const found = await todoShown();
+          if (found) return found;
+          throw new Error(
+            `the card lists ${await shownText(".s-todo-card .s-todo-text")}`,
+          );
+        });
+        await command("POST", `/element/${shown.box[elementKey]}/click`, {});
+        await wait("the to-do ticked", async () => {
+          const found = await task();
+          if (found?.done) return true;
+          throw new Error(found ? "it is still open" : "it is gone");
+        });
+        // The card's Undo is named after the change, in Activity's words.
+        const undo = `.s-project button[aria-label=${JSON.stringify(`Undo: Ticked a to-do in ${name}`)}]`;
+        await noToast();
+        await wait("Recent changes offers Undo for the tick", async () => {
+          const state = await execute((undo) => {
+            const button = document.querySelector(undo);
+            return !button ? "" : button.disabled ? "disabled" : "ready";
+          }, undo);
+          if (state === "ready") return true;
+          throw new Error(
+            state === "disabled"
+              ? "its Undo is disabled"
+              : `Recent changes lists ${await shownText(".s-project .s-change")}`,
+          );
+        });
+        await click(undo);
+        await wait("the to-do open again", async () => {
+          const found = await task();
+          if (found && !found.done) return true;
+          throw new Error(found ? "it is still ticked" : "it is gone");
+        });
+        await wait("the To-do card shows it open again", async () => {
+          const found = await todoShown();
+          if (found && !found.checked) return true;
+          throw new Error(
+            found
+              ? "its box is still ticked"
+              : `the card lists ${await shownText(".s-todo-card .s-todo-text")}`,
+          );
+        });
+      },
+    );
+
+    await check(
+      "Cancelling Delete's Countdown keeps the folder, and Activity gets nothing",
+      async () => {
+        const before = new Set(
+          (await api("log")).entries.map((entry) => entry.id),
+        );
+        const trash = '[data-ui="sheet"] .s-choices button[type="submit"]';
+        const state = () =>
+          execute(
+            (trash) => {
+              const button = document.querySelector(trash);
+              return {
+                name: Boolean(
+                  document.querySelector('[data-ui="sheet"] .s-field input'),
+                ),
+                ready: Boolean(button && !button.disabled),
+              };
+            },
+            trash,
+          );
+        await settled("scan and project Git checks settle before Delete");
+        await moreAction("Delete project");
+        // Only this computer has .laci.md, so Delete asks for the project's name before the Trash.
+        const checked = await wait(
+          "Delete checked what would be lost",
+          async () => {
+            const now = await state();
+            if (now.ready || now.name) return now;
+            throw new Error(`the sheet says “${await sheetText()}”`);
+          },
+        ).catch(async (error) => {
+          // The sheet keeps the engine's reason behind Show details: ask for the plan once.
+          const plan = await api("delete/plan", { id: source }).catch(
+            (problem) => ({ checks: String(problem) }),
+          );
+          throw new Error(
+            `${error.message}; the engine's plan says ${JSON.stringify(plan.checks)}`,
+          );
+        });
+        if (!checked.ready) {
+          await type('[data-ui="sheet"] .s-field input', name);
+          await wait("Move to Trash ready once the name is typed", async () => {
+            if ((await state()).ready) return true;
+            throw new Error(`the sheet says “${await sheetText()}”`);
+          });
+        }
+        await click(trash);
+        await element('[data-ui="countdown"]');
+        const started = Date.now();
+        await click('[data-ui="countdown"] button', "Cancel", true);
+        await wait("the Countdown stopped", async () => {
+          const now = await execute(
+            (trash) => ({
+              countdown: Boolean(
+                document.querySelector('[data-ui="countdown"]'),
+              ),
+              trash: Boolean(document.querySelector(trash)),
+            }),
+            trash,
+          );
+          if (!now.countdown && now.trash) return true;
+          throw new Error(`the sheet says “${await sheetText()}”`);
+        });
+        // Past the Countdown's 5 seconds: had Cancel not stopped it, the folder would be in the Trash by now.
+        await sleep(Math.max(0, started + 6_500 - Date.now()));
+        await access(source).catch(() =>
+          assert.fail(`${source} is gone after Cancel`),
+        );
+        assert.ok(
+          (await snapshot()).nodes[source],
+          `${name} left the scan after Cancel`,
+        );
+        await assert.rejects(
+          access(path.join(trashRoot, "files", name)),
+          `${name} went to the Trash after Cancel`,
+        );
+        const added = (await api("log")).entries.filter(
+          (entry) =>
+            !before.has(entry.id) &&
+            (entry.path === source || entry.title.includes(name)),
+        );
+        assert.deepEqual(
+          added.map((entry) => entry.title),
+          [],
+          "A cancelled Countdown adds nothing to Activity",
+        );
+        await shot("simple-countdown-cancelled");
+        await click('[data-ui="sheet"] .s-sheet-foot button', "Cancel", true);
+        await wait("Delete's sheet closed", async () => {
+          if (await execute(() => !document.querySelector('[data-ui="sheet"]')))
+            return true;
+          throw new Error(`the sheet says “${await sheetText()}”`);
+        });
+      },
+    );
+
+    await check(
+      "A project archived from its page comes back with Undo in Activity",
+      async () => {
+        const before = new Set(
+          (await api("log")).entries.map((entry) => entry.id),
+        );
+        const destination = (await snapshot()).nodes[source]?.archivePlan
+          ?.dest;
+        assert.ok(destination, `${name} has no archive plan`);
+        await settled("scan and project Git checks settle before Archive");
+        await moreAction("Archive");
+        // Archive for a project that is safe; Archive anyway, beside Back up first, for one that isn't.
+        const label = await wait("Archive checked where it goes", async () => {
+          const found = await execute(() => {
+            const button = [
+              ...document.querySelectorAll(
+                '[data-ui="sheet"] .s-choices button',
+              ),
+            ].find((button) =>
+              ["Archive", "Archive anyway"].includes(button.textContent.trim()),
+            );
+            return button && !button.disabled ? button.textContent.trim() : "";
+          });
+          if (found) return found;
+          throw new Error(`the sheet says “${await sheetText()}”`);
+        });
+        await click('[data-ui="sheet"] .s-choices button', label, true);
+        archived = destination;
+        await waitAccepted(`${name} archived`, async () => {
+          const current = await snapshot();
+          const moved = current.nodes[destination];
+          if (!current.historyPending && moved?.archived && !current.nodes[source])
+            return true;
+          throw new Error(
+            `historyPending ${current.historyPending}, destination ${moved ? (moved.archived ? "archived" : "not archived") : "missing"}, source ${current.nodes[source] ? "still listed" : "gone"}`,
+          );
+        });
+        const entry = await wait("the archive in the Log", async () => {
+          const found = (await api("log")).entries.find(
+            (entry) =>
+              !before.has(entry.id) &&
+              entry.journal &&
+              entry.title === `Archive ${name}`,
+          );
+          if (found) return found;
+          throw new Error("no new entry for it");
+        });
+        await nav("Activity", "Activity");
+        const row = `[data-ui="entry"][data-id=${JSON.stringify(entry.id)}]`;
+        await settled("the history settles before Undo");
+        await wait("Activity offers Undo for the archive", async () => {
+          const state = await execute((row) => {
+            const item = document.querySelector(row);
+            if (!item) return "";
+            const button = [...item.querySelectorAll("button")].find(
+              (button) => button.textContent.trim() === "Undo",
+            );
+            return !button
+              ? `no Undo beside “${item.textContent.trim().replace(/\s+/g, " ")}”`
+              : button.disabled
+                ? "its Undo is disabled"
+                : "ready";
+          }, row);
+          if (state === "ready") return true;
+          throw new Error(
+            state ||
+              `Activity lists ${await shownText('[data-ui="entry"]')}`,
+          );
+        });
+        await shot("simple-activity");
+        await click(`${row} button`, "Undo", true);
+        await wait(`${name} back where it was`, async () => {
+          const current = await snapshot();
+          if (
+            !current.historyPending &&
+            current.nodes[source] &&
+            !current.nodes[destination]
+          )
+            return true;
+          throw new Error(
+            `historyPending ${current.historyPending}, source ${current.nodes[source] ? "back" : "missing"}, destination ${current.nodes[destination] ? "still listed" : "gone"}`,
+          );
+        });
+        archived = undefined;
+        await access(path.join(source, "README.md"));
+        await wait("Activity marks the archive undone", async () => {
+          const tags = await execute(
+            (row) =>
+              [...(document.querySelector(row)?.querySelectorAll(".s-tag") ?? [])].map(
+                (tag) => tag.textContent.trim(),
+              ),
+            row,
+          );
+          if (tags.includes("Undone")) return true;
+          throw new Error(
+            `its row shows ${tags.length ? tags.join(", ") : "no tag"}`,
+          );
+        });
+      },
+    );
+
+    await check(
+      "Clean up sets one suggestion aside, and its Undo brings it back",
+      async () => {
+        await mkdir(store, { recursive: true });
+        await writeFile(
+          chat,
+          JSON.stringify({
+            type: "user",
+            cwd: gone,
+            sessionId: `simple-${stamp}`,
+            timestamp: new Date().toISOString(),
+          }) + "\n",
+        );
+        const bytes = await readFile(chat);
+        await api("rescan");
+        const proposal = await wait(
+          "a suggestion for the leftover chat",
+          async () => {
+            const current = await snapshot();
+            const found = current.proposals.find(
+              (item) =>
+                item.action?.type === "quarantine" &&
+                item.action.moves.some((move) => move.from === store),
+            );
+            if (found && !found.blocked && !current.historyPending)
+              return found;
+            throw new Error(
+              !found
+                ? "none moves it yet"
+                : found.blocked
+                  ? `it is blocked: ${found.reason}`
+                  : "the history is still being read",
+            );
+          },
+        );
+        setAside = path.join(
+          fixtureHome,
+          ".local/share/laci/orphans",
+          proposal.action.moves.find((move) => move.from === store).to,
+        );
+        const before = new Set(
+          (await api("log")).entries.map((entry) => entry.id),
+        );
+        await nav("Clean up", "Clean up");
+        await settled("the scan settles before Clean up");
+        // Clean up names the suggestion after the folder that is gone.
+        const leftover = path.basename(gone);
+        const opened = await wait("the suggestion in Clean up", async () => {
+          const state = await execute((leftover) => {
+            const item = [
+              ...document.querySelectorAll('[data-ui="suggestion"]'),
+            ].find((item) =>
+              item.querySelector(".s-sug-title")?.textContent.includes(leftover),
+            );
+            return !item ? "" : item.hasAttribute("data-open") ? "open" : "closed";
+          }, leftover);
+          if (state) return state;
+          throw new Error(
+            `Clean up lists ${await shownText('[data-ui="suggestion"] .s-sug-title')}`,
+          );
+        });
+        if (opened === "closed") {
+          const toggle = await execute(
+            (leftover) =>
+              [...document.querySelectorAll('[data-ui="suggestion"]')]
+                .find((item) =>
+                  item
+                    .querySelector(".s-sug-title")
+                    ?.textContent.includes(leftover),
+                )
+                ?.querySelector(".s-sug-toggle") ?? null,
+            leftover,
+          );
+          assert.ok(toggle, "The suggestion has no way to open it");
+          await command("POST", `/element/${toggle[elementKey]}/click`, {});
+        }
+        await noToast();
+        // A change Undo can take back is the suggestion's filled button: Set aside.
+        const apply = await wait("the suggestion's Set aside", async () => {
+          const found = await execute((leftover) => {
+            const item = [
+              ...document.querySelectorAll('[data-ui="suggestion"]'),
+            ].find((item) =>
+              item.querySelector(".s-sug-title")?.textContent.includes(leftover),
+            );
+            const button = item?.querySelector('[data-ui="primary"]');
+            return {
+              button: button && !button.disabled ? button : null,
+              text: item?.textContent.trim().replace(/\s+/g, " ").slice(0, 300) ?? "",
+            };
+          }, leftover);
+          if (found.button) return found.button;
+          throw new Error(`the suggestion says “${found.text}”`);
+        });
+        await command("POST", `/element/${apply[elementKey]}/click`, {});
+        journal = await wait("one change in the Log", async () => {
+          const found = (await api("log")).entries.find(
+            (entry) =>
+              !before.has(entry.id) &&
+              entry.journal &&
+              entry.title === proposal.title,
+          );
+          if (found) return found.journal;
+          throw new Error("no new entry for it");
+        });
+        await wait("the chat set aside", async () => {
+          try {
+            await access(path.join(setAside, `${stamp}.jsonl`));
+            return true;
+          } catch {
+            throw new Error(`nothing at ${setAside} yet`);
+          }
+        });
+        // While the history is read again, Clean up shows a spinner in place of its whole list, which lists
+        // nothing: the list has to be back, after that reading, before what it lacks counts.
+        await wait("the suggestion gone from Clean up", async () => {
+          if ((await api("status")).historyPending)
+            throw new Error("the history is still being read");
+          const shown = await execute((leftover) => {
+            const list = document.querySelector(
+              '.s-cleanup [aria-labelledby="cleanup-list"]',
+            );
+            if (!list) return "no list of suggestions";
+            if (list.querySelector(".s-working"))
+              return "its spinner, not its list";
+            return [
+              ...list.querySelectorAll('[data-ui="suggestion"] .s-sug-title'),
+            ].some((title) => title.textContent.includes(leftover))
+              ? "the suggestion still"
+              : "";
+          }, leftover);
+          if (!shown) return true;
+          throw new Error(`Clean up shows ${shown}`);
+        });
+        await shot("simple-cleanup-applied");
+        await wait("Undo ready on the toast", async () => {
+          const state = await execute(() => {
+            const button = document.querySelector(".toast button");
+            return !button
+              ? `the toast says “${document.querySelector(".toast")?.textContent.trim() ?? "nothing"}”`
+              : button.disabled
+                ? "its Undo is disabled"
+                : "";
+          });
+          if (!state) return true;
+          throw new Error(state);
+        });
+        await click(".toast button", "Undo", true);
+        await wait("the chat back where it was", async () => {
+          try {
+            await access(chat);
+            return true;
+          } catch {
+            throw new Error(`nothing at ${chat} yet`);
+          }
+        });
+        journal = undefined;
+        await settled("the history settles after Undo");
+        assert.deepEqual(await readFile(chat), bytes);
+      },
+    );
+
+    await check(
+      "At 720×560 nothing scrolls sideways and the main controls stay in reach, in both designs",
+      async () => {
+        const problems = [];
+        // Detailed's project details are a sheet over the view at this width, and Escape closes it.
+        const closeDetails = async () => {
+          await key("\uE00C");
+          await wait("Escape closes the project's details", async () => {
+            if (await execute(() => !document.querySelector(".insp")))
+              return true;
+            throw new Error(
+              `the details still show ${await shownText(".insp .ititle h2")}`,
+            );
+          });
+        };
+        try {
+          await windowSize(720, 560);
+          for (const next of ["simple", "detailed"]) {
+            if (design !== next) await switchDesign(next);
+            await noToast();
+            if (next === "detailed") await closeDetails();
+            for (const [label, heading] of SELECTORS[next].places) {
+              await nav(label, heading);
+              problems.push(
+                ...(await narrowLooks(label, SELECTORS[next].reach)),
+              );
+            }
+            await shot(`${next}-720x560`);
+            await showProject(project);
+            problems.push(
+              ...(await narrowLooks(name, SELECTORS[next].reachProject)),
+            );
+            await shot(`${next}-720x560-project`);
+            if (next === "detailed") await closeDetails();
+          }
+        } finally {
+          await command("POST", "/window/rect", {
+            width: 1440,
+            height: 900,
+          }).catch(() => {});
+        }
+        assert.deepEqual(problems, [], `At 720×560:\n${problems.join("\n")}`);
+      },
+    );
+  } finally {
+    // A Countdown left running still sends its request when it ends: Escape stops it, and closes a sheet.
+    await key("\uE00C").catch(() => {});
+    await command("POST", "/window/rect", { width: 1440, height: 900 }).catch(
+      () => {},
+    );
+    if (journal) {
+      await wait(
+        "history ready to put the chat back",
+        async () => !(await api("status")).historyPending,
+      ).catch(() => {});
+      await api("undo", { id: journal }).catch(() => {});
+    }
+    await rm(store, { recursive: true, force: true });
+    if (setAside) await rm(setAside, { recursive: true, force: true });
+    if (archived) await rm(archived, { recursive: true, force: true });
+    await rm(source, { recursive: true, force: true });
+    await rm(path.join(trashRoot, "files", name), {
+      recursive: true,
+      force: true,
+    });
+    await rm(path.join(trashRoot, "info", `${name}.trashinfo`), {
+      force: true,
+    });
+    await rm(external, { recursive: true, force: true });
+  }
+}
+
 try {
   if (agentOnly) await installFakeAgents();
   await access(binary);
@@ -3426,6 +4520,7 @@ try {
       !watcherOnly &&
       !keyboardOnly &&
       !modularOnly &&
+      !simpleOnly &&
       !patchOnly &&
       !agentOnly
     ) {
@@ -3518,6 +4613,24 @@ try {
       console.log(
         JSON.stringify(
           { passed: true, binary, fixtureHome, checks: results },
+          null,
+          2,
+        ),
+      );
+    } else if (simpleOnly) {
+      await simpleRegressions();
+      await check("No unhandled frontend errors", async () => {
+        assert.deepEqual(
+          [
+            ...frontendErrors,
+            ...(await execute(() => window.__LACI_SMOKE_ERRORS__ ?? [])),
+          ],
+          [],
+        );
+      });
+      console.log(
+        JSON.stringify(
+          { passed: true, binary, fixtureHome, mode: "simple", checks: results },
           null,
           2,
         ),

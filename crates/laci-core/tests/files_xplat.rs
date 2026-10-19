@@ -78,10 +78,11 @@ fn snapshot(env: &Env, path: &Path) -> Value {
 #[test]
 fn undo_puts_back_the_bytes_and_times_of_a_rewritten_log_even_a_read_only_one() {
     let (_temp, env) = home();
-    let from = env.home.join("project/demo");
-    let to = env.home.join("project/_archive/demo");
-    write(&from.join("docs/README.md"), "# demo\n");
-    age(&from.join("docs/README.md"));
+    // One name at a time: on Windows a `/` given to join stays in the text, and the log holds the path as Laci spells it.
+    let from = env.home.join("project").join("demo");
+    let to = env.home.join("project").join("_archive").join("demo");
+    write(&from.join("docs").join("README.md"), "# demo\n");
+    age(&from.join("docs").join("README.md"));
     age(&from.join("docs"));
     let store = env.home.join(".claude/projects").join(paths::enc(&from.to_string_lossy()));
     let log = store.join("session.jsonl");

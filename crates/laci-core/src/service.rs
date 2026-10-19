@@ -1217,6 +1217,11 @@ impl Service {
                 if !array(&node["stack"]["scripts"]).iter().any(|s| s["name"] == arg) {
                     return Err("Unknown script".into());
                 }
+                // The name comes from the project's package file and starts at once. One that begins with a dash
+                // would reach the package manager as an option rather than as the script's name.
+                if arg.starts_with('-') {
+                    return Err("This script's name begins with a dash; run it from a terminal".into());
+                }
                 let pm = node["stack"]["packageManager"]
                     .as_str()
                     .filter(|s| ["npm", "pnpm", "yarn", "bun"].contains(s))
@@ -1231,9 +1236,12 @@ impl Service {
                 if !array(&node["issues"]).iter().any(|i| i["code"] == arg) {
                     return Err("Nothing to fix".into());
                 }
+                // The names in these commands come from the project: its folder, its remote and its branch. Each is
+                // placed where the program can only read it as a name: after `--`, after `--end-of-options`, or
+                // as a full ref.
                 let command = match arg {
                     "no-remote" => {
-                        format!("gh repo create {} --private --source . --remote origin --push", shell_quote(&title))
+                        format!("gh repo create --private --source . --remote origin --push -- {}", shell_quote(&title))
                     }
                     "no-commits" => "git add -A && git commit -m 'chore: initial commit'".into(),
                     "dirty" => "git status --short".into(),
@@ -1244,7 +1252,11 @@ impl Service {
                         if branch.is_empty() {
                             return Err("Check out a branch before pushing".into());
                         }
-                        format!("git push -u {} {}", shell_quote(remote), shell_quote(branch))
+                        format!(
+                            "git push -u --end-of-options {} {}",
+                            shell_quote(remote),
+                            shell_quote(&format!("refs/heads/{branch}"))
+                        )
                     }
                     "unpushed" => "git push".into(),
                     "stash" => "git stash show -p stash@{0}".into(),

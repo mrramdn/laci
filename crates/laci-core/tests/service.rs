@@ -105,6 +105,102 @@ fn unknown_session_script_fix_and_connector_requests_do_not_change_history() {
     assert_eq!(shell_quote("a' && b"), "'a'\\'' && b'");
 }
 #[test]
+fn a_script_whose_name_begins_with_a_dash_is_not_started() {
+    let (_temp, env, project) = fixture();
+    write(
+        &project.join("package.json"),
+        r#"{"name":"demo","scripts":{"safe":"node -e 'console.log(1)'","-dash":"node -e 'console.log(2)'"}}"#,
+    );
+    let mut service = loaded(&env, &project);
+    let node = service.node(project.to_str().unwrap()).unwrap();
+    // The scan lists it like any other script; only starting it is refused.
+    assert!(node["stack"]["scripts"].as_array().unwrap().iter().any(|s| s["name"] == "-dash"));
+    assert!(service.action(&node, "script", "-dash").unwrap_err().contains("begins with a dash"));
+    let (cmd, run, _) = service.action(&node, "script", "safe").unwrap();
+    assert!(run);
+    assert!(cmd.unwrap().contains("'safe'"));
+}
+/// Runs `program` in `dir` with Git kept to the test's own settings and identity, and returns what it printed.
+#[cfg(unix)]
+fn run_in(dir: &Path, program: &str, args: &[&str]) -> String {
+    let out = std::process::Command::new(program)
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.test")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.test")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{program} {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+/// The command a fix suggests for `dir`, which waits in the terminal until the user runs it.
+#[cfg(unix)]
+fn suggested_fix(service: &mut Service, dir: &Path, code: &str) -> String {
+    let node = service.node(dir.to_str().unwrap()).unwrap();
+    let (cmd, run, _) = service.action(&node, "fix", code).unwrap();
+    assert!(!run, "a suggested fix waits for the user to run it");
+    cmd.unwrap()
+}
+/// A first push and a new GitHub repository are suggested as commands. The names in them come from the project:
+/// its folder, its remote and its branch. Each reaches the program as a name, also one that begins with a dash,
+/// and the suggested push still sets the upstream.
+#[cfg(unix)]
+#[test]
+fn suggested_fixes_pass_folder_remote_and_branch_names_as_names() {
+    let (temp, env, project) = fixture();
+    let bare = |name: &str| {
+        let dir = temp.path().join(name);
+        fs::create_dir(&dir).unwrap();
+        run_in(&dir, "git", &["init", "-q", "--bare", "--initial-branch=main"]);
+        dir
+    };
+    let first = |dir: &Path| {
+        run_in(dir, "git", &["init", "-q", "--initial-branch=main"]);
+        run_in(dir, "git", &["add", "-A"]);
+        run_in(dir, "git", &["commit", "-qm", "feat: first"]);
+    };
+    // An ordinary project: commits, a remote, and no upstream yet.
+    let backup = bare("backup.git");
+    first(&project);
+    run_in(&project, "git", &["remote", "add", "origin", backup.to_str().unwrap()]);
+    // A project whose folder and branch names begin with a dash, without a remote so far.
+    let dashed = env.home.join("project/-draft");
+    write(&dashed.join("notes.md"), "draft\n");
+    first(&dashed);
+    run_in(&dashed, "git", &["update-ref", "refs/heads/-topic", "HEAD"]);
+    run_in(&dashed, "git", &["symbolic-ref", "HEAD", "refs/heads/-topic"]);
+    run_in(&dashed, "git", &["update-ref", "-d", "refs/heads/main"]);
+
+    let mut service = loaded(&env, &project);
+    let push = suggested_fix(&mut service, &project, "unpushed");
+    assert_eq!(push, "git push -u --end-of-options 'origin' 'refs/heads/main'");
+    run_in(&project, "bash", &["--noprofile", "--norc", "-c", &push]);
+    assert_eq!(run_in(&project, "git", &["rev-parse", "--abbrev-ref", "@{upstream}"]), "origin/main");
+    assert_eq!(
+        suggested_fix(&mut service, &dashed, "no-remote"),
+        "gh repo create --private --source . --remote origin --push -- '-draft'"
+    );
+
+    // Its remote's name begins with a dash too.
+    let other = bare("other.git");
+    run_in(&dashed, "git", &["config", "remote.-backup.url", other.to_str().unwrap()]);
+    run_in(&dashed, "git", &["config", "remote.-backup.fetch", "+refs/heads/*:refs/remotes/-backup/*"]);
+    service.rescan().unwrap();
+    let push = suggested_fix(&mut service, &dashed, "unpushed");
+    assert_eq!(push, "git push -u --end-of-options '-backup' 'refs/heads/-topic'");
+    run_in(&dashed, "bash", &["--noprofile", "--norc", "-c", &push]);
+    assert_eq!(run_in(&dashed, "git", &["rev-parse", "--abbrev-ref", "@{upstream}"]), "-backup/-topic");
+    assert_eq!(run_in(&other, "git", &["for-each-ref", "--format=%(refname)"]), "refs/heads/-topic");
+}
+#[test]
 fn task_file_escape_is_rejected_even_if_a_cached_whitelist_mentions_it() {
     let (temp, env, project) = fixture();
     let mut service = loaded(&env, &project);

@@ -281,7 +281,6 @@ fn external_gitdir_exclude_cannot_be_written_by_service_or_activity_undo() {
     assert_eq!(fs::read(project.join(".laci.md")).unwrap(), sidecar_before);
 }
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn same_length_move_keeps_codex_history_attached_after_cached_rescan() {
     let (_temp, env, project) = fixture();
     let log = env.home.join(".codex/sessions/session.jsonl");
@@ -624,7 +623,6 @@ fn deleting_and_undoing_the_only_checkbox_preserves_file_boundaries() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn quarantine_execution_acknowledges_the_journal_before_refresh_and_keeps_undo_compatible() {
     let (_temp, env, project) = fixture();
     let history =
@@ -1046,7 +1044,6 @@ fn old_session(env: &Env, project: &Path, id: &str, prompt: &str) -> PathBuf {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn deleted_sessions_go_to_the_quarantine_with_their_backup_copy_and_undo_brings_them_back() {
     const ID: &str = "11111111-2222-3333-4444-555555555555";
     const OTHER: &str = "22222222-2222-3333-4444-555555555555";
@@ -1161,7 +1158,6 @@ fn a_muted_check_is_marked_and_named_in_the_log() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn build_output_is_deleted_for_good_and_a_linked_build_folder_is_left_alone() {
     let (_temp, env, project) = fixture();
     write(&project.join("node_modules/pkg/index.js"), &"x".repeat(1_500_000));
@@ -1179,4 +1175,71 @@ fn build_output_is_deleted_for_good_and_a_linked_build_folder_is_left_alone() {
     let entry = activity::read_log(&env, 5).into_iter().find(|e| e["journal"] == done["journal"]["id"]).unwrap();
     assert_eq!(entry["canUndo"], false);
     assert_eq!(entry["detail"], "Deleted build output comes back with the next install or build.");
+}
+
+/// Links in a project on Windows: the junctions pnpm fills node_modules with, and links to folders elsewhere.
+#[cfg(windows)]
+mod windows {
+    use super::*;
+    use std::io;
+
+    /// ERROR_PRIVILEGE_NOT_HELD: only Developer Mode or an administrator may make a symlink.
+    const PRIVILEGE_NOT_HELD: i32 = 1314;
+
+    /// Moves a project whose node_modules holds a link to a package inside it, as pnpm makes them, and which holds a
+    /// link to a folder elsewhere in home, both made by `link`, then moves it back with Undo. A link holds the full
+    /// path of where it leads, so each one keeps naming the folder it named, and nothing it leads to is changed.
+    /// `false` when this process may not make such a link; any other failure to make one fails the test.
+    fn links_travel_with_their_project(link: fn(&Path, &Path) -> io::Result<()>) -> bool {
+        let (_temp, env, project) = fixture();
+        let modules = project.join("node_modules");
+        let package = modules.join(".pnpm").join("left-pad@1.3.0").join("node_modules").join("left-pad");
+        write(&package.join("index.js"), "module.exports = 1\n");
+        let shared = env.home.join("shared");
+        write(&shared.join("notes.md"), "kept\n");
+        let links = [(package, modules.join("left-pad")), (shared.clone(), project.join("shared"))];
+        for (target, at) in &links {
+            match link(target, at) {
+                Ok(()) => {}
+                Err(error) if error.raw_os_error() == Some(PRIVILEGE_NOT_HELD) => return false,
+                Err(error) => panic!("No link at {} to {}: {error}", at.display(), target.display()),
+            }
+        }
+        let named: Vec<PathBuf> = links.iter().map(|(_, at)| fs::read_link(at).unwrap()).collect();
+        let mut service = loaded(&env, &project);
+        let dest = project.with_file_name("moved");
+        let moved = service.request("move", &json!({"id":project,"destination":dest})).unwrap();
+        assert!(!project.exists());
+        for ((_, at), named) in links.iter().zip(&named) {
+            let travelled = dest.join(at.strip_prefix(&project).unwrap());
+            assert_eq!(&fs::read_link(&travelled).unwrap(), named, "{} still names its folder", travelled.display());
+        }
+        assert_eq!(fs::read_to_string(shared.join("notes.md")).unwrap(), "kept\n");
+        service.request("undo", &json!({"id":moved["journal"]["id"]})).unwrap();
+        assert!(!dest.exists());
+        for ((_, at), named) in links.iter().zip(&named) {
+            assert_eq!(&fs::read_link(at).unwrap(), named, "{}", at.display());
+        }
+        assert_eq!(fs::read_to_string(modules.join("left-pad").join("index.js")).unwrap(), "module.exports = 1\n");
+        assert_eq!(fs::read_to_string(project.join("shared").join("notes.md")).unwrap(), "kept\n");
+        true
+    }
+
+    /// A junction needs no privilege, so every runner can make one.
+    #[test]
+    fn a_project_holding_junctions_moves_and_undo_brings_them_back_as_they_were() {
+        fn junction(target: &Path, at: &Path) -> io::Result<()> {
+            support::junction(target, at);
+            Ok(())
+        }
+        assert!(links_travel_with_their_project(junction));
+    }
+
+    /// A symlink needs Developer Mode or an administrator, which a runner may not have.
+    #[test]
+    fn a_project_holding_symlinks_moves_and_undo_brings_them_back_as_they_were() {
+        if !links_travel_with_their_project(|target, at| std::os::windows::fs::symlink_dir(target, at)) {
+            eprintln!("This runner can't make symlinks, so only junctions were tried.");
+        }
+    }
 }

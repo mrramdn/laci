@@ -121,7 +121,6 @@ fn open_history_writer_blocks_cleanup_even_when_its_cwd_is_elsewhere() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn quarantine_defaults_to_exact_restore_and_duplicate_submission_is_rejected() {
     let (_temp, env, history, mut service, proposal) = fixture();
     assert_eq!(proposal["availability"], "missing");
@@ -162,18 +161,18 @@ fn pure_trash_has_no_laci_undo_and_mixed_journals_explain_partial_recovery() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn invalid_default_archive_keeps_review_available_with_a_valid_alternative() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
-    let project = env.home.join("projects/demo");
+    // A name at a time, as the scan spells the paths it finds: on Windows a `/` given to `join` stays in the text.
+    let project = env.home.join("projects").join("demo");
     write(&project.join("package.json"), "{}");
     write(&env.home.join("projects/_archive/demo/occupied"), "existing");
     config::save(&env, &json!({"roots":["~/projects"],"presets":[]})).unwrap();
     let mut service = Service::new(env.clone());
     let snap = service.snapshot().unwrap();
     assert!(snap["nodes"][project.to_str().unwrap()]["archivePlan"]["error"].is_string());
-    let dest = env.home.join("other/demo");
+    let dest = env.home.join("other").join("demo");
     let plan = service.request("archive/plan", &json!({"id":project,"destination":dest})).unwrap();
     assert_eq!(plan["dest"], json!(dest));
     service.request("archive", &json!({"id":project,"destination":dest})).unwrap();

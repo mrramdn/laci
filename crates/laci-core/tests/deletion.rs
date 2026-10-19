@@ -47,7 +47,6 @@ fn blocked(env: &Env, node: &Value) -> String {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn live_remote_refs_allow_trash_but_ignored_files_remain_explicit() {
     let (_home, env, dir, node) = fixture();
     fs::write(dir.join(".git/info/exclude"), "secret.env\n").unwrap();
@@ -64,7 +63,6 @@ fn live_remote_refs_allow_trash_but_ignored_files_remain_explicit() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn stale_remote_tracking_refs_and_other_local_branches_cannot_authorize_removal() {
     let (_home, env, dir, node) = fixture();
     fs::write(dir.join("README.md"), "new work\n").unwrap();
@@ -82,7 +80,6 @@ fn stale_remote_tracking_refs_and_other_local_branches_cannot_authorize_removal(
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn dirty_untracked_stash_and_unreachable_remote_are_refused_again_at_execution() {
     let (_home, env, dir, node) = fixture();
     assert_eq!(deletion::plan(&env, &node).unwrap()["allowed"], true);
@@ -123,7 +120,6 @@ fn worktrees_in_use_paths_and_symlinks_are_refused() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn a_project_cannot_use_itself_as_a_remote_backup() {
     let (_home, env, dir, node) = fixture();
     for url in [
@@ -193,7 +189,6 @@ fn hidden_tracked_changes_cannot_pass_the_trash_guard() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn shared_local_backups_must_be_independent_before_trash() {
     let (_home, env, dir, node) = fixture();
     let backup = env.home.join("backup.git");

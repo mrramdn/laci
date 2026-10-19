@@ -156,7 +156,6 @@ fn open_items_close_and_reopen_in_laci_and_the_report_stays_as_written() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn a_moved_project_keeps_its_reports_through_their_session() {
     let f = fixture();
     let mut service = Service::new(f.env.clone());

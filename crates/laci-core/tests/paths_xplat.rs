@@ -24,7 +24,6 @@ fn a_history_path_inside_a_project_stays_inside_on_every_os() {
 /// A log names folders with the OS's own separator, and on macOS and Windows maybe in another case. What a moved
 /// folder held moves with it in the log; a folder whose name only begins the same stays.
 #[test]
-#[cfg_attr(windows, ignore = "port:P9b: Windows can't yet keep a rewritten file's times")]
 fn a_log_path_below_a_moved_folder_is_rewritten_with_its_own_separator() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(path::canonical(temp.path()).unwrap().join("home"));
@@ -358,6 +357,34 @@ mod folding {
         assert!(path::may_contain(&real, &link.join("x")), "a refusal follows it");
     }
 
+    /// A path through a link spelled in another case leads through that same link, a symlink or one of the junctions
+    /// pnpm makes on Windows: the file system tells which link it is. Names that differ by more than case are never
+    /// asked about, so whether a link is taken for the folder it leads to is tried with short names in `windows`.
+    #[test]
+    fn a_link_spelled_in_another_case_is_the_same_link() {
+        let (_temp, root) = folder();
+        if !folds(&root) {
+            return;
+        }
+        let real = root.join("Real");
+        fs::create_dir(&real).unwrap();
+        let linked = root.join("Linked");
+        support::link_dir(&real, &linked);
+        #[cfg(windows)]
+        let links = {
+            let junction = root.join("Junction");
+            support::junction(&real, &junction);
+            [linked, junction]
+        };
+        #[cfg(not(windows))]
+        let links = [linked];
+        for link in links {
+            let other = swapped(&link);
+            assert!(path::same_path(&link, &other), "{}", other.display());
+            assert!(path::contains(&link, &other.join("src")), "{}", other.display());
+        }
+    }
+
     /// Laci's own folders stay out of a move however they are spelled. These checks come before Laci asks which
     /// programs use the folder, so they run before port:P5 too.
     #[test]
@@ -390,7 +417,6 @@ mod folding {
     /// A tool's log kept inside the project, found through a folder spelled in another case, moves with the project
     /// and names its new place.
     #[test]
-    #[cfg_attr(windows, ignore = "port:P9b: Windows can't yet keep a rewritten file's times")]
     fn a_log_kept_inside_the_project_under_another_spelling_moves_with_it() {
         let (_temp, root) = folder();
         if !folds(&root) {
@@ -414,7 +440,6 @@ mod folding {
 
     /// A project renamed to another case of its name is a rename, not a clash with itself, and Undo renames it back.
     #[test]
-    #[cfg_attr(windows, ignore = "port:P9b: Windows can't yet keep a moved project's file times")]
     fn a_project_renamed_to_another_case_moves_and_undo_brings_the_old_name_back() {
         let (_temp, root) = folder();
         if !folds(&root) {
@@ -572,6 +597,28 @@ mod windows {
         let beside = root.join("A folder with a long name too");
         fs::create_dir(&beside).unwrap();
         assert!(!path::same_path(&beside, &short));
+    }
+
+    /// A name with `~` could be the short name of another, so there Laci asks the file system whether both lead to the
+    /// same file. A link is asked about itself, a symlink or a junction alike, so it is never the folder it leads to.
+    #[test]
+    fn a_link_named_like_a_short_name_is_not_the_folder_it_leads_to() {
+        let (_temp, root) = folder();
+        let real = root.join("A folder with a long name");
+        fs::create_dir(&real).unwrap();
+        let (link, junction) = (root.join("LINK~1"), root.join("JUNCTI~1"));
+        support::link_dir(&real, &link);
+        support::junction(&real, &junction);
+        // The folder by its long name, and by its short one where the volume makes them.
+        for real in [real.clone(), short(&real)] {
+            for link in [&link, &junction] {
+                let what = format!("{} / {}", real.display(), link.display());
+                assert!(!path::same_path(&real, link), "{what}");
+                assert!(!path::same_path(link, &real), "{what}");
+                assert!(!path::contains(&real, &link.join("src")), "{what}");
+                assert!(path::may_contain(&real, &link.join("src")), "a refusal follows it: {what}");
+            }
+        }
     }
 
     /// Per-folder case sensitivity needs the Windows Subsystem for Linux's support; without it there is nothing to try.

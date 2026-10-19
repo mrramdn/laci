@@ -69,7 +69,6 @@ fn shared_live_and_missing_owners_block_both_cleanup_modes() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn all_missing_owners_allow_quarantine_with_exact_undo() {
     let (_temp, env, log) = fixture("codex");
     let bytes = record(&env, "gone-a") + &record(&env, "gone-b");

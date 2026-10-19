@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
-import { devNull, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -104,7 +104,7 @@ function start() {
       DISPLAY: '', WAYLAND_DISPLAY: '',
       GIT_AUTHOR_NAME: 'Migration Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
       GIT_COMMITTER_NAME: 'Migration Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
-      GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
     },
   });
   child.stderr.setEncoding('utf8');

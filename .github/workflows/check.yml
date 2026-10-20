@@ -255,10 +255,13 @@ jobs:
         run: cargo test --workspace --features custom-protocol --no-fail-fast
         continue-on-error: true
         timeout-minutes: 15
-      - run: cargo build -p laci --features custom-protocol
-      # mcp-smoke checks that the file it is given exists, so the name ends in .exe.
+      # Both programs: the window's laci.exe and the console program laci-cli.exe, which the installer ships as
+      # bin\laci.exe.
+      - run: cargo build -p laci --features custom-protocol,console
+      # Agents start the console program as their MCP server on Windows. mcp-smoke checks that the file it is given
+      # exists, so the name ends in .exe.
       - name: MCP smoke (a report until port:P14)
-        run: node scripts/mcp-smoke.mjs target/debug/laci.exe
+        run: node scripts/mcp-smoke.mjs target/debug/laci-cli.exe
         continue-on-error: true
         timeout-minutes: 5
       # The checks that keep Laci off files other programs have open already pass here, and only Windows can run
@@ -307,7 +310,8 @@ jobs:
       - run: cargo test --workspace --features custom-protocol
         env:
           TMPDIR: ${{ runner.temp }}
-      - run: cargo build -p laci --features custom-protocol
+      # The console program builds on macOS too, though only Windows ships it; agents there start the app's laci.
+      - run: cargo build -p laci --features custom-protocol,console
       - name: MCP smoke (a report until port:P14)
         run: node scripts/mcp-smoke.mjs target/debug/laci
         continue-on-error: true

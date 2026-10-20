@@ -225,7 +225,7 @@ fn create_unlocked(env: &Env, r: &Value, cancel: &AtomicBool, progress: &dyn Fn(
                 dest.display()
             ));
         }
-        let _ = fs::remove_dir_all(&dest);
+        let _ = ops::remove(&dest);
         return Err(e);
     }
     if cancel.load(Ordering::Relaxed) {

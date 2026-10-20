@@ -140,6 +140,11 @@ pub fn preserve(meta: &Metadata, dest: &Path) -> Result<()> {
     file.set_times(times).map_err(|e| e.to_string())
 }
 
+/// A link isn't a folder here, so it is unlinked and nothing it leads to is touched.
+pub fn remove_all(path: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(path)?.is_dir() { fs::remove_dir_all(path) } else { fs::remove_file(path) }
+}
+
 pub fn copy_link(src: &Path, dest: &Path) -> Result<()> {
     std::os::unix::fs::symlink(fs::read_link(src).map_err(|e| e.to_string())?, dest).map_err(|e| e.to_string())
 }

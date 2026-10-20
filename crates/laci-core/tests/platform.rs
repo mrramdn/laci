@@ -165,10 +165,53 @@ mod unix {
         assert_eq!(fs::read_link(dest.join("src/link.js")).unwrap(), Path::new("main.js"), "links stay links");
         let names = |dir: &Path| fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name()).collect::<Vec<_>>();
         assert_eq!(names(&archive), ["demo"], "no staging folder is left");
+        assert!(names(project.parent().unwrap()).is_empty(), "nothing set aside is left");
         service.request("undo", &json!({"id":change["journal"]["id"]})).unwrap();
         assert!(!dest.exists());
         assert_eq!(fs::read_to_string(project.join("package.json")).unwrap(), "{\"name\":\"demo\"}");
         assert_eq!(fs::read_link(project.join("src/link.js")).unwrap(), Path::new("main.js"));
+        assert_eq!(names(project.parent().unwrap()), ["demo"]);
+    }
+
+    /// A project that can't leave its folder, as in a folder this user may only read, isn't copied to another
+    /// device at all. Before, the copy was published there, the project emptied, and the two blocked the rollback.
+    #[test]
+    fn a_project_that_cannot_leave_its_folder_is_not_copied_to_another_device() {
+        use laci_core::{config, env::Env, service::Service};
+        use serde_json::json;
+        use std::os::unix::fs::PermissionsExt;
+        let (_temp, root) = folder();
+        let Some(drive) = elsewhere(&root) else {
+            eprintln!("No second device here; the move across devices is not checked.");
+            return;
+        };
+        let env = Env::for_home(root.join("home"));
+        let shared = env.home.join("project/shared");
+        let project = shared.join("demo");
+        let archive = drive.path().canonicalize().unwrap().join("archive");
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::write(project.join("package.json"), "{\"name\":\"demo\"}").unwrap();
+        fs::write(project.join("src/main.js"), "console.log(1)\n").unwrap();
+        fs::create_dir_all(&archive).unwrap();
+        let archive_dir = config::validate_archive_dir(&env, &json!(archive)).unwrap();
+        config::save(&env, &json!({"roots":["~/project"],"presets":[],"archiveDir":archive_dir})).unwrap();
+        let mode = |mode: u32| fs::set_permissions(&shared, fs::Permissions::from_mode(mode)).unwrap();
+        mode(0o555);
+        if fs::write(shared.join("probe"), "").is_ok() {
+            eprintln!("Nothing is read-only to this user, as to root; nothing to check.");
+            mode(0o755);
+            return;
+        }
+        let mut service = Service::new(env.clone());
+        service.snapshot().unwrap();
+        let moved = service.request("archive", &json!({"id":project,"destination":archive.join("demo")}));
+        mode(0o755);
+        let error = moved.unwrap_err();
+        assert!(error.contains("ermission denied"), "{error}");
+        let names = |dir: &Path| fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name()).collect::<Vec<_>>();
+        assert!(names(&archive).is_empty(), "nothing was copied or published there");
+        assert_eq!(names(&shared), ["demo"]);
+        assert_eq!(fs::read_to_string(project.join("src/main.js")).unwrap(), "console.log(1)\n");
     }
 
     #[test]

@@ -13,7 +13,8 @@ mod user_path;
 pub use dirs::{home_dir, user_dirs};
 pub use ffi::start_detached;
 pub use fs::{
-    IDENTITY_FIELDS, Lock, change_stamp, copy_link, file_change_stamp, identity, lock, preserve, rename_noreplace,
+    IDENTITY_FIELDS, Lock, change_stamp, copy_link, file_change_stamp, identity, lock, preserve, remove_all,
+    rename_noreplace,
 };
 pub use fs::{explain, hidden_flag, move_notes, open_nofollow, placeholder, retry, system_folder};
 pub use process::{Group, ensure_idle, exited, pid_alive, processes_in, spawn_group};

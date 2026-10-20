@@ -13,7 +13,7 @@ use std::{
     ffi::OsStr,
     fs::{self, File, FileTimes, Metadata, OpenOptions, TryLockError},
     io,
-    os::windows::fs::{FileTimesExt, MetadataExt, OpenOptionsExt},
+    os::windows::fs::{FileTimesExt, FileTypeExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
@@ -169,6 +169,43 @@ pub fn preserve(meta: &Metadata, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// std deletes a read-only file or folder only by the delete that ignores the attribute, which NTFS takes and FAT32
+/// and exFAT refuse; Git makes its objects read-only. When that refusal stops the removal, the attribute comes off
+/// whatever is left and the removal runs again.
+pub fn remove_all(path: &Path) -> io::Result<()> {
+    remove_with(path, |path, meta| {
+        // Windows removes a link to a folder as a folder.
+        if meta.is_dir() || meta.file_type().is_symlink_dir() {
+            fs::remove_dir_all(path)
+        } else {
+            fs::remove_file(path)
+        }
+    })
+}
+
+/// [`remove_all`] by `remove`, the removal that FAT32 and exFAT stop at a read-only file. The walk passes links and
+/// junctions by: a link is removed itself, and nothing it leads to is changed.
+fn remove_with(path: &Path, remove: impl Fn(&Path, &Metadata) -> io::Result<()>) -> io::Result<()> {
+    let meta = fs::symlink_metadata(path)?;
+    match remove(path, &meta) {
+        Err(e) if e.raw_os_error() == Some(ACCESS_DENIED) && !meta.is_symlink() => {
+            for entry in walkdir::WalkDir::new(path).follow_links(false) {
+                let entry = entry?;
+                let found = entry.metadata()?;
+                if !found.is_symlink() && found.permissions().readonly() {
+                    let mut permissions = found.permissions();
+                    // Windows has no modes to widen: this takes off the read-only attribute alone.
+                    #[allow(clippy::permissions_set_readonly_false)]
+                    permissions.set_readonly(false);
+                    fs::set_permissions(entry.path(), permissions)?;
+                }
+            }
+            remove(path, &meta)
+        }
+        done => done,
+    }
+}
+
 /// ERROR_ACCESS_DENIED, which a file being deleted gives too until the last program lets go of it.
 const ACCESS_DENIED: i32 = 5;
 /// ERROR_SHARING_VIOLATION: another program has the file open.
@@ -290,4 +327,52 @@ pub fn open_nofollow(path: &Path) -> io::Result<File> {
         return Err(io::Error::other("The file changed while Laci opened it"));
     }
     Ok(again)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_read_only(path: &Path) {
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    /// FAT32 and exFAT, as on USB sticks, refuse to delete what is read-only, and std's delete then stops with
+    /// ERROR_ACCESS_DENIED. NTFS doesn't, so a stand-in removes as they do. Git's objects are read-only, and here a folder
+    /// too. A junction in the folder is removed itself: what it leads to keeps its attribute.
+    #[test]
+    fn what_is_read_only_goes_too_where_the_file_system_refuses_to_delete_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let (tree, outside) = (temp.path().join("demo"), temp.path().join("outside"));
+        let objects = tree.join(".git").join("objects").join("ab");
+        fs::create_dir_all(&objects).unwrap();
+        fs::create_dir(&outside).unwrap();
+        for file in [objects.join("cdef"), outside.join("kept")] {
+            fs::write(&file, "object").unwrap();
+            make_read_only(&file);
+        }
+        make_read_only(&objects);
+        let made = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(tree.join("linked"))
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+        let fat = |path: &Path, _: &Metadata| -> io::Result<()> {
+            for entry in walkdir::WalkDir::new(path) {
+                if entry?.metadata()?.permissions().readonly() {
+                    return Err(io::Error::from_raw_os_error(ACCESS_DENIED));
+                }
+            }
+            fs::remove_dir_all(path)
+        };
+        let refused = fat(&tree, &fs::metadata(&tree).unwrap()).unwrap_err();
+        assert_eq!(refused.raw_os_error(), Some(ACCESS_DENIED), "the stand-in refuses as FAT does");
+        remove_with(&tree, fat).unwrap();
+        assert!(!tree.exists());
+        assert!(fs::metadata(outside.join("kept")).unwrap().permissions().readonly());
+    }
 }

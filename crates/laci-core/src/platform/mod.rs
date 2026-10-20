@@ -173,6 +173,12 @@ pub fn preserve(meta: &Metadata, dest: &Path) -> Result<()> {
     os::preserve(meta, dest)
 }
 
+/// Removes `path`, and in a folder everything in it. A link is removed itself, never what it leads to. On Windows a
+/// read-only file goes too, also on FAT32 and exFAT, as on USB sticks, where std's delete refuses one.
+pub fn remove_all(path: &Path) -> io::Result<()> {
+    os::remove_all(path)
+}
+
 /// Runs `step`, a change to files such as a rename, a copy or a removal. On Windows it tries again for about two
 /// seconds while another program, such as an antivirus scan, Search or OneDrive, holds the file for a moment.
 /// Elsewhere it runs once.

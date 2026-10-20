@@ -119,27 +119,78 @@ fn copy_tree_inner(src: &Path, dest: &Path, skip_git: bool) -> Result<()> {
 fn patiently<T>(path: &Path, step: impl FnMut() -> std::io::Result<T>) -> Result<T> {
     platform::retry(step).map_err(|e| platform::explain(&e, path))
 }
-fn remove(path: &Path) -> Result<()> {
-    let dir = fs::symlink_metadata(path).is_ok_and(|m| m.is_dir());
-    patiently(path, || if dir { fs::remove_dir_all(path) } else { fs::remove_file(path) })
+/// Removes a file or a folder with everything in it ([`platform::remove_all`]), read-only files included.
+pub(crate) fn remove(path: &Path) -> Result<()> {
+    patiently(path, || platform::remove_all(path))
 }
 fn rename(src: &Path, dest: &Path) -> Result<()> {
     match platform::retry(|| platform::rename_noreplace(src, dest)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && renames_case(src, dest) => rename_case(src, dest),
-        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
-            // Copy into a private sibling first, then publish atomically. A failed copy leaves the source intact.
-            let staged = tempfile::Builder::new()
-                .prefix(".laci-move-")
-                .tempdir_in(dest.parent().ok_or("Missing destination parent")?)
-                .map_err(|e| e.to_string())?;
-            let payload = staged.path().join("payload");
-            copy_tree(src, &payload)?;
-            patiently(dest, || platform::rename_noreplace(&payload, dest))?;
-            remove(src)
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => rename_across(src, dest),
         Err(e) => Err(platform::explain(&e, src)),
     }
+}
+/// A move to another volume: a copy, made in a private sibling of `dest` and published there in one step, and then
+/// the source is deleted. Whether the source can leave its folder is asked first, by setting it aside under a free name
+/// beside it and back: on Windows that fails at once while a program has a file in it open, and elsewhere when its
+/// folder can't be changed, so nothing is copied for a move that couldn't finish. The source stays in its place while
+/// it is copied, so a copy that stops part-way, as when Laci is closed, leaves it there. It is set aside again just
+/// before the copy is published, put back if that fails, and deleted only once the copy is in place. On Linux, NFS, 9p
+/// (as WSL's /mnt/c), eCryptfs and FUSE file systems without RENAME2, such as sshfs, can't rename without replacing,
+/// so a source there is never set aside: its copy is published and then it is deleted where it is.
+fn rename_across(src: &Path, dest: &Path) -> Result<()> {
+    rename_across_with(src, dest, platform::rename_noreplace)
+}
+/// [`rename_across`] with `beside`, the rename in the source's own folder that sets it aside and puts it back.
+fn rename_across_with(src: &Path, dest: &Path, beside: impl Fn(&Path, &Path) -> std::io::Result<()>) -> Result<()> {
+    let name = src.file_name().unwrap_or_default().to_string_lossy();
+    let staged = tempfile::Builder::new()
+        .prefix(".laci-move-")
+        .tempdir_in(dest.parent().ok_or("Missing destination parent")?)
+        .map_err(|e| e.to_string())?;
+    let payload = staged.path().join("payload");
+    let aside = src.parent().ok_or("Missing parent")?.join(format!(
+        ".laci-move-{:x}-{:x}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let set_aside = || patiently(src, || beside(src, &aside));
+    let put_back = || {
+        platform::retry(|| beside(&aside, src)).map_err(|e| {
+            format!(
+                "Laci couldn't put {name} back, so it is at {} now: {}",
+                aside.display(),
+                platform::explain(&e, src)
+            )
+        })
+    };
+    let settable = match platform::retry(|| beside(src, &aside)) {
+        Ok(()) => put_back().map(|()| true)?,
+        // EINVAL: the file system can't rename without replacing, and nothing was renamed.
+        Err(e) if cfg!(unix) && e.kind() == std::io::ErrorKind::InvalidInput => false,
+        Err(e) => return Err(platform::explain(&e, src)),
+    };
+    // The copy keeps read-only files, which the staging folder has to lose too.
+    if let Err(error) = copy_tree(src, &payload).and_then(|()| if settable { set_aside() } else { Ok(()) }) {
+        let _ = remove(&payload);
+        return Err(error);
+    }
+    if let Err(error) = patiently(dest, || platform::rename_noreplace(&payload, dest)) {
+        let back = if settable { put_back() } else { Ok(()) };
+        let _ = remove(&payload);
+        return Err(match back {
+            Ok(()) => error,
+            Err(e) => format!("{error} · {e}"),
+        });
+    }
+    let left = if settable { aside.as_path() } else { src };
+    remove(left).map_err(|e| {
+        format!(
+            "Laci couldn't delete {}, what is left of {name} after the copy, so delete that folder by hand: {e}",
+            left.display()
+        )
+    })
 }
 /// A rename that only changes the case of a name, where the file system counts the new name as taken by the old one.
 /// It goes by a free name in the same folder, and back if the second step fails.
@@ -402,7 +453,7 @@ impl<'a> Tx<'a> {
         guard(&[path.to_owned()])?;
         let bytes = files::size(path);
         self.log(json!({"kind":"cleared","path":path,"bytes":bytes}))?;
-        fs::remove_dir_all(path).map_err(|e| e.to_string())
+        remove(path)
     }
     fn trash(&mut self, path: &Path) -> Result<()> {
         sidecar::plain_path(path)?;
@@ -1310,5 +1361,230 @@ mod tests {
         assert!(checked.elapsed() < GIT_WAIT / 3, "no wait while something besides Git is there");
         assert!(error.starts_with("In use by ") && error.ends_with(". Close it first."), "{error}");
         assert!(error.contains(&format!("{} (pid {})", name(&shell), terminal.0.id())), "{error}");
+    }
+
+    /// A home in a fresh temporary folder, spelled as the file system spells it, with the folders a move needs.
+    fn home() -> (tempfile::TempDir, Env, PathBuf, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let env = Env::for_home(platform::path::canonical(temp.path()).unwrap().join("home"));
+        let (src, dest) = (env.home.join("project").join("demo"), env.home.join("archive").join("demo"));
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        fs::write(src.join("README.md"), "# demo\n").unwrap();
+        (temp, env, src, dest)
+    }
+
+    /// A move to another volume as [`Tx::move_to`] journals it, made on the volume the test runs on.
+    fn move_across(env: &Env, src: &Path, dest: &Path) -> Result<Value> {
+        move_across_by(env, src, dest, platform::rename_noreplace)
+    }
+
+    /// [`move_across`], with `beside` setting the source aside.
+    fn move_across_by(
+        env: &Env,
+        src: &Path,
+        dest: &Path,
+        beside: impl Fn(&Path, &Path) -> std::io::Result<()>,
+    ) -> Result<Value> {
+        transact(env, "Move", |tx| {
+            tx.log(json!({"kind":"move","from":src,"to":dest}))?;
+            rename_across_with(src, dest, beside)
+        })
+    }
+
+    /// The names in `dir`, sorted.
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> =
+            fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    fn make_read_only(path: &Path) {
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    /// Git makes its objects read-only. A move to another volume takes them along as they are, deletes them where they
+    /// were, and leaves nothing set aside or staged on either side; Undo brings the project back.
+    #[test]
+    fn a_move_across_volumes_takes_read_only_files_along_and_leaves_nothing_behind() {
+        let (_temp, env, src, dest) = home();
+        let objects = src.join(".git").join("objects").join("ab");
+        fs::create_dir_all(&objects).unwrap();
+        fs::write(objects.join("cdef"), "object").unwrap();
+        make_read_only(&objects.join("cdef"));
+        // On Windows a read-only folder still takes and loses files; elsewhere nothing could be deleted from it.
+        if cfg!(windows) {
+            make_read_only(&objects);
+        }
+        let journal = move_across(&env, &src, &dest).unwrap();
+        assert!(!src.exists());
+        let object = dest.join(".git").join("objects").join("ab").join("cdef");
+        assert_eq!(fs::read_to_string(&object).unwrap(), "object");
+        assert!(fs::metadata(&object).unwrap().permissions().readonly());
+        assert_eq!(names(&env.home.join("project")), Vec::<String>::new(), "nothing set aside is left");
+        assert_eq!(names(&env.home.join("archive")), ["demo"], "no staging folder is left");
+        undo(&env, journal["id"].as_str().unwrap()).unwrap();
+        assert_eq!(fs::read_to_string(src.join("README.md")).unwrap(), "# demo\n");
+    }
+
+    /// A copy that fails partway, here at a socket no copy can take, removes what it copied. The source was copied
+    /// where it is, so a copy that stops there, as when Laci is closed, leaves it in its place too.
+    #[cfg(unix)]
+    #[test]
+    fn a_move_across_volumes_that_cannot_copy_everything_leaves_the_source_in_its_place() {
+        let (_temp, env, src, dest) = home();
+        fs::write(src.join("LICENSE"), "MIT\n").unwrap();
+        make_read_only(&src.join("LICENSE"));
+        let _socket = std::os::unix::net::UnixListener::bind(src.join("socket")).unwrap();
+        let error = move_across(&env, &src, &dest).unwrap_err();
+        assert_eq!(error, format!("Unsupported special file {}", src.join("socket").display()));
+        assert!(!dest.exists());
+        assert_eq!(names(&env.home.join("archive")), Vec::<String>::new(), "the staging folder is gone");
+        assert_eq!(names(&env.home.join("project")), ["demo"], "nothing is set aside");
+        assert_eq!(names(&src), ["LICENSE", "README.md", "socket"]);
+    }
+
+    /// A source that can't leave its folder, here as that folder is read-only, stops the move before anything is
+    /// copied. Before, the copy was published, the source emptied, and the two together blocked the rollback.
+    #[cfg(unix)]
+    #[test]
+    fn a_source_that_cannot_leave_its_folder_is_never_copied() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_temp, env, src, dest) = home();
+        let parent = env.home.join("project");
+        let mode = |mode: u32| fs::set_permissions(&parent, fs::Permissions::from_mode(mode)).unwrap();
+        mode(0o555);
+        if fs::write(parent.join("probe"), "").is_ok() {
+            eprintln!("Nothing is read-only to this user, as to root; nothing to check.");
+            mode(0o755);
+            return;
+        }
+        let moved = move_across(&env, &src, &dest);
+        mode(0o755);
+        let error = moved.unwrap_err();
+        assert!(error.contains("ermission denied"), "{error}");
+        assert_eq!(names(&env.home.join("archive")), Vec::<String>::new(), "nothing was copied or staged");
+        assert_eq!(names(&parent), ["demo"]);
+        assert_eq!(fs::read_to_string(src.join("README.md")).unwrap(), "# demo\n");
+    }
+
+    /// A source that can't be deleted once the copy is in place, here as a folder in it is read-only, is named in the
+    /// error, and the rollback brings the copy back. Before, the source stayed half deleted beside the copy, and the
+    /// two together blocked the rollback and every Undo.
+    #[cfg(unix)]
+    #[test]
+    fn a_source_left_after_a_move_across_volumes_is_named_and_the_move_rolls_back() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path, mode: u32| fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        let (_temp, env, src, dest) = home();
+        let locked = src.join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("kept"), "kept").unwrap();
+        mode(&locked, 0o555);
+        if fs::remove_file(locked.join("kept")).is_ok() {
+            eprintln!("Nothing is read-only to this user, as to root; nothing to check.");
+            mode(&locked, 0o755);
+            return;
+        }
+        let error = move_across(&env, &src, &dest).unwrap_err();
+        let parent = env.home.join("project");
+        let left: Vec<PathBuf> =
+            names(&parent).iter().filter(|n| n.starts_with(".laci-move-")).map(|n| parent.join(n)).collect();
+        // So the temporary folder can go.
+        for dir in left.iter().map(|aside| aside.join("locked")).chain([locked.clone(), dest.join("locked")]) {
+            if dir.exists() {
+                mode(&dir, 0o755);
+            }
+        }
+        let [aside] = left.as_slice() else { panic!("one folder set aside: {left:?}") };
+        assert!(error.contains(&format!("Laci couldn't delete {}", aside.display())), "{error}");
+        assert!(error.contains("delete that folder by hand"), "{error}");
+        assert!(!dest.exists());
+        assert_eq!(fs::read_to_string(locked.join("kept")).unwrap(), "kept", "the copy came back");
+        assert_eq!(fs::read_to_string(src.join("README.md")).unwrap(), "# demo\n");
+    }
+
+    /// How NFS, 9p (as WSL's /mnt/c), eCryptfs and FUSE file systems without RENAME2 answer a rename that mustn't
+    /// replace anything, on Linux: EINVAL, with nothing renamed.
+    #[cfg(unix)]
+    fn refused(_: &Path, _: &Path) -> std::io::Result<()> {
+        Err(rustix::io::Errno::INVAL.into())
+    }
+
+    /// A source on such a file system can't be set aside, and still moves to another volume: its copy is published, it
+    /// is deleted where it is, and nothing is left on either side. Before, the move stopped at "Invalid argument"
+    /// without copying anything, where it used to work.
+    #[cfg(unix)]
+    #[test]
+    fn a_source_that_cannot_be_set_aside_still_moves_across_volumes() {
+        let (_temp, env, src, dest) = home();
+        let journal = move_across_by(&env, &src, &dest, refused).unwrap();
+        assert!(!src.exists());
+        assert_eq!(fs::read_to_string(dest.join("README.md")).unwrap(), "# demo\n");
+        assert_eq!(names(&env.home.join("project")), Vec::<String>::new(), "nothing set aside is left");
+        assert_eq!(names(&env.home.join("archive")), ["demo"], "no staging folder is left");
+        undo(&env, journal["id"].as_str().unwrap()).unwrap();
+        assert_eq!(fs::read_to_string(src.join("README.md")).unwrap(), "# demo\n");
+    }
+
+    /// Such a source that can't be deleted once its copy is in place, here as a folder in it is read-only, is named in
+    /// the error, so what is left of it can be deleted by hand: the copy holds everything.
+    #[cfg(unix)]
+    #[test]
+    fn a_source_that_cannot_be_set_aside_or_deleted_is_named() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path, mode: u32| fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        let (_temp, env, src, dest) = home();
+        let locked = src.join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("kept"), "kept").unwrap();
+        mode(&locked, 0o555);
+        if fs::remove_file(locked.join("kept")).is_ok() {
+            eprintln!("Nothing is read-only to this user, as to root; nothing to check.");
+            mode(&locked, 0o755);
+            return;
+        }
+        let error = move_across_by(&env, &src, &dest, refused).unwrap_err();
+        // So the temporary folder can go.
+        for dir in [locked.clone(), dest.join("locked")] {
+            if dir.exists() {
+                mode(&dir, 0o755);
+            }
+        }
+        let named = format!(
+            "Laci couldn't delete {}, what is left of demo after the copy, so delete that folder",
+            src.display()
+        );
+        assert!(error.starts_with(&named) && error.contains("ermission denied"), "{error}");
+        assert_eq!(fs::read_to_string(dest.join("locked").join("kept")).unwrap(), "kept", "the copy holds everything");
+        assert_eq!(names(&env.home.join("archive")), ["demo"], "no staging folder is left");
+        assert_eq!(names(&env.home.join("project")), ["demo"], "nothing is set aside");
+    }
+
+    /// A file that a program holds open, and lets others only read, stops a move to another volume before anything is
+    /// copied: Windows won't rename a folder with such a file in it. Before, the copy was published and then the source
+    /// couldn't be deleted.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_held_open_stops_a_move_across_volumes() {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_SHARE_READ alone, as Word holds a document.
+        const SHARE_READ: u32 = 1;
+        let (_temp, env, src, dest) = home();
+        fs::write(src.join("notes.docx"), "draft").unwrap();
+        let held = fs::OpenOptions::new().read(true).share_mode(SHARE_READ).open(src.join("notes.docx")).unwrap();
+        let error = move_across(&env, &src, &dest).unwrap_err();
+        drop(held);
+        // The source is named, not a copy or a folder set aside.
+        assert!(error.contains("demo") && error.contains("open in another program"), "{error}");
+        assert!(!error.contains(".laci-move-"), "{error}");
+        assert!(!dest.exists());
+        assert_eq!(names(&env.home.join("archive")), Vec::<String>::new(), "nothing was copied or staged");
+        assert_eq!(names(&env.home.join("project")), ["demo"], "nothing is set aside");
+        assert_eq!(fs::read_to_string(src.join("notes.docx")).unwrap(), "draft");
+        assert_eq!(fs::read_to_string(src.join("README.md")).unwrap(), "# demo\n");
     }
 }

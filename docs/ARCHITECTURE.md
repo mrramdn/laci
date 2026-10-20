@@ -1,6 +1,6 @@
 # Architecture and compatibility
 
-laci is a Linux desktop application with three layers. `laci-core` reads projects and agent stores and implements filesystem changes. The `laci` binary exposes that engine through Tauri IPC, CLI subcommands and stdio MCP. React owns the interface and talks to typed IPC requests; terminal output uses Tauri channels.
+laci is a Linux desktop application with three layers. `laci-core` reads projects and agent stores and implements filesystem changes. The `laci` binary exposes that engine through Tauri IPC, CLI subcommands and stdio MCP. React owns the interface and talks to typed IPC requests; terminal output uses Tauri channels. The interface has two designs, Simple and Detailed, built on the same store, selectors and actions (`ui/src/simple/` and `ui/src/views/`); both send the same requests, so the engine and its contracts don't depend on the design.
 
 ## Snapshot and updates
 
@@ -18,7 +18,7 @@ PTY sessions belong to the Rust process. Each tab has its shell, input writer, r
 
 | Location | Contract |
 | --- | --- |
-| `~/.config/laci/config.json` | Existing roots, presets, custom connectors, apps and theme; optional archiveDir and reportsDir |
+| `~/.config/laci/config.json` | Existing roots, presets, custom connectors, apps and theme; optional archiveDir, reportsDir, design (`simple` or `detailed`) and updates (`daily` or `off`). Settings that exist but can't be read are never written over |
 | The `reportsDir` folder | Read only: plain `*.md` files directly in it, except `README.md` and dotfiles |
 | `<project>/.laci.md` | Existing frontmatter and Summary/Next/Notes sections |
 | `~/.local/share/laci/journal/` | v1 move/rewrite/metadata steps and completion state |
@@ -27,7 +27,7 @@ PTY sessions belong to the Rust process. Each tab has its shell, input writer, r
 | `~/.local/share/laci/report-items.json` | Report items closed in Laci: report file name → item key → state (done, dropped, moved), time, actor, note and text |
 | `~/.local/share/laci/mcp-backups/` | Copy of an agent's settings file, taken before Laci changes its MCP setup |
 | `~/.local/share/laci/lock` | Cross-process PID lock compatible with v1 |
-| `~/.cache/laci/` | Disposable parser/snapshot caches, including `reports-v2.json`; v2 cache names are separate |
+| `~/.cache/laci/` | Disposable parser/snapshot caches, including `reports-v2.json`, and `updates.json` (when Laci last looked for a new version); v2 cache names are separate |
 
 The environment honors `XDG_CONFIG_HOME` and `XDG_CACHE_HOME`. Data retains the v1 location under the home folder. `LACI_HOME` redirects all locations to an isolated home and ignores the caller's XDG overrides.
 
@@ -43,7 +43,7 @@ Every selected root containing an archive destination, including a nested or sta
 
 Project removal uses a separate Trash action and preserves external agent history. A live remote ref check is performed only when previewing/removing a selected project, never in background scans. Clean worktree, index flags, refs, stash, worktree topology and process guards are checked again after the remote answers. Only exact advertised branch/tag tips authorize removal, with conservative refusal for unmatched local branches, tags and other non-remote refs. Local backups must use independent object storage. Trash recovery belongs to the system file manager, so the activity entry does not advertise journal Undo. Moves and archives also refuse paths that would relocate Laci's config, cache or recovery data.
 
-Archive Undo restores the saved whole `.laci.md`, so edits made to that file while archived can be replaced. Dependency cleanup uses the system trash; those folders must be recovered there rather than through journal Undo.
+Archive Undo restores the saved whole `.laci.md`, so edits made to that file while archived can be replaced. Dependency cleanup deletes those folders for good, since the Trash would keep the space taken; the next install or build brings them back, and journal Undo does not.
 
 Metadata, task, notes and settings changes also share the lock and activity log. Task paths must belong to the selected project. Checkbox changes retain the displayed file, text and occurrence so unrelated line shifts do not target a duplicate. A changed duplicate count or ambiguous legacy record is refused. New task-delete records store the removed bytes, their original position and a fingerprint of the file after deletion. Undo restores them only while that file is unchanged. Activity keys prevent undoing an older edit over a later one. `.laci.md` is excluded through git's local `info/exclude`, preserving repository ignore files.
 
@@ -52,6 +52,10 @@ Metadata, task, notes and settings changes also share the lock and activity log.
 Core mutation execution returns the committed result and its refresh scope. Desktop acknowledgments include a revision and a history-pending flag, and return before expensive refresh work. History-changing actions clear old Tidy proposals and gate further history mutations until a suitable refresh succeeds: one shared history file can affect several projects. Cached startup data has the same guard until the initial scan succeeds, since a crash can leave the cache behind a committed change. Safe metadata edits and navigation remain usable. Scan errors after a commit are warnings, preserving the action's success and Undo. The UI orders busy notices separately from displayed data, so continuous scans do not starve useful snapshots. Mutation notices still fence stale proposals immediately. The UI applies snapshots in revision order, guards duplicate submissions synchronously, and closes dialogs only when their initiating dialog still owns the completion.
 
 The desktop creates one local window and uses Tauri IPC with a local-content policy. Markdown is sanitized. Local images are scoped to scanned project directories and the reports folder. Report reads, searches and opens run outside the engine lock. Commands selected by the interface are allowlisted; script/session arguments must exist in the snapshot and are shell quoted.
+
+The window opens in the design saved in config.json. Without one, a setup made before 3.0 (its config.json has a `roots` list) opens in Detailed and offers Simple until a design is saved; a fresh install opens in Simple. The start-up script marks the page with the design and theme before it paints.
+
+Only Rust talks to the update server (`src-tauri/src/app/update.rs`); the window has no updater permission and asks through `update/status`, `update/check`, `update/install` and `update/restart`. With `updates: "daily"` a thread asks for `latest.json` from the latest GitHub release at most once a day, starting 20 seconds after launch; `off` or no choice means it never looks by itself. A check finds a version only; downloading and installing need a click, and the download must carry the updater key's signature. Only a copy that runs from its AppImage installs; a deb, an rpm or a copy put in place by `install-desktop.sh` gets a link to the release page. The restart that finishes an update refuses while a change runs, and once it begins no change may start. `LACI_UPDATE_ENDPOINT` replaces the feed with another https address, for release candidates.
 
 `laci mcp` serves the 14 compatible v1 tool names plus `delete_project`, the read-only `list_reports` and `open_items`, the to-do edits `edit_task`, `delete_task` and `move_task`, and `close_report_item`, over stdio without starting GTK or a window. It also offers two prompts, `review` and `work_on`; the desktop gets the same text from `assistant/prompt` for its *Review with an agent* and *Work on it* buttons. Lists and answers to changes carry compact projects (status, meta, checks, to-dos) and never the snapshot a change returns to the desktop. The list tools answer a page at a time (`limit`, `offset`, `total`, `more`) and are shaped in `mcp.rs` after the core call, so the desktop's view of the same data, such as the Log with its undo data, is unchanged. Read calls reuse a recent snapshot. Move/archive/Trash/Tidy/create/undo calls return a preview until `confirm: true` is supplied. Arguments a tool does not list are rejected. Confirmed destructive operations refresh the scan and use the same engine as the desktop.
 

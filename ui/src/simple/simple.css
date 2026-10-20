@@ -112,6 +112,10 @@
     border-right: 1px solid var(--line);
     outline: none;
   }
+  /* The rail scrolls (SimpleShell's useScrolls): its column makes room for the scrollbar. */
+  .s-nav-scrolls {
+    scrollbar-gutter: stable;
+  }
   /* 72 px less the rail's padding and border. A browser that leaves the scrollbar's room out of the
      rail all the same squeezes the parts, and their words wrap rather than spill. */
   .s-nav > * {

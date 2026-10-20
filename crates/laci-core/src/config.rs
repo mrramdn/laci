@@ -8,7 +8,7 @@ use crate::{
     },
 };
 use serde_json::{Value, json};
-use std::{path::Path, sync::LazyLock};
+use std::{fs, path::Path, sync::LazyLock};
 
 static APP_NAME: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^[\w.+-]{1,40}$").expect("app name pattern"));
@@ -22,11 +22,9 @@ static CONNECTOR_ID: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^custom-[a-z0-9][a-z0-9-]*$").expect("connector ID pattern"));
 
 pub fn load(env: &Env) -> Value {
-    let fresh = !env.config_dir.join("config.json").is_file();
-    let mut c = files::text_even_online(&env.config_dir.join("config.json"))
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .filter(Value::is_object)
-        .unwrap_or_else(|| json!({}));
+    let file = env.config_dir.join("config.json");
+    let fresh = !file.is_file();
+    let mut c = read(&file).unwrap_or_else(|| json!({}));
     if fresh {
         c["presets"] = json!([]);
     }
@@ -59,10 +57,24 @@ pub fn load(env: &Env) -> Value {
     }
     c
 }
+/// The settings config.json holds, or `None` when it can't be read as settings.
+fn read(file: &Path) -> Option<Value> {
+    files::text_even_online(file).and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object)
+}
 pub fn save(env: &Env, c: &Value) -> Result<()> {
+    let file = env.config_dir.join("config.json");
+    // Settings that are there but can't be read, as when the app that syncs them can't download them, were loaded as
+    // defaults: written over, they would be gone. An empty file holds nothing, and a link is refused below.
+    if fs::symlink_metadata(&file).is_ok_and(|meta| !meta.is_symlink() && meta.len() > 0) && read(&file).is_none() {
+        return Err(format!(
+            "Laci couldn't read your settings in {}, so it won't write over them. Make sure the app that syncs that \
+             folder, such as OneDrive, is running, or fix the file, then try again.",
+            paths::tilde(&file, &env.home)
+        ));
+    }
     let mut text = serde_json::to_string_pretty(c).map_err(|e| e.to_string())?;
     text.push('\n');
-    files::replace(&env.config_dir.join("config.json"), text.as_bytes())
+    files::replace(&file, text.as_bytes())
 }
 pub fn validate_roots(env: &Env, roots: &Value) -> Result<Value> {
     let array = roots.as_array().ok_or("Pick folders to scan")?;

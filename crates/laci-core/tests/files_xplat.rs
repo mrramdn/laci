@@ -219,6 +219,47 @@ fn settings_kept_only_online_are_still_read() {
     assert_eq!(config["roots"][0], "~/projects");
 }
 
+/// Settings that are there but can't be read as settings were loaded as defaults, as when the app that syncs
+/// config.json can't download it, or an edit left it broken. A save would put those defaults in their place, so it is
+/// refused until the file reads again.
+#[test]
+fn settings_that_cannot_be_read_are_never_written_over() {
+    let (_temp, env) = home();
+    let file = env.config_dir.join("config.json");
+    let template = env.home.join("starter");
+    fs::create_dir(&template).unwrap();
+    let broken = r#"{"roots":["~/projects"],"theme":"dark""#;
+    write(&file, broken);
+    assert!(laci_core::config::load(&env)["roots"].is_null(), "read as defaults");
+    let error = create::add_template(&env, template.to_str().unwrap()).unwrap_err();
+    assert!(error.starts_with("Laci couldn't read your settings in ~/.config/laci/config.json"), "{error}");
+    assert_eq!(fs::read_to_string(&file).unwrap(), broken);
+    // A file this user may not read, which is what an unreachable cloud file is to Laci. Not to root, though.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let whole = r#"{"roots":["~/projects"],"theme":"dark"}"#;
+        write(&file, whole);
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(&file).is_err() {
+            assert!(create::add_template(&env, template.to_str().unwrap()).is_err());
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+            assert_eq!(fs::read_to_string(&file).unwrap(), whole);
+        } else {
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
+    write(&file, r#"{"roots":["~/projects"],"theme":"dark"}"#);
+    create::add_template(&env, template.to_str().unwrap()).unwrap();
+    let config = laci_core::config::load(&env);
+    assert_eq!((config["theme"].as_str(), config["roots"][0].as_str()), (Some("dark"), Some("~/projects")));
+    assert_eq!(config["templatePaths"][0], json!(template));
+    // An empty file holds nothing to lose.
+    write(&file, "");
+    create::add_template(&env, template.to_str().unwrap()).unwrap();
+    assert_eq!(laci_core::config::load(&env)["templatePaths"][0], json!(template));
+}
+
 /// A report is read without following a link put in its place, on Windows too.
 #[test]
 fn a_link_in_place_of_a_report_is_not_read() {

@@ -141,11 +141,18 @@ fn detect(env: &Env, path: &Path, agent_paths: &BTreeSet<PathBuf>, depth: usize)
     }
     let mut children = Vec::new();
     if depth < 6 {
+        // The system's and apps' own folders are known by name only in home: deeper down, a folder named Library or
+        // shop.app is the user's own.
+        let home = platform::path::same_path(path, &env.home);
         for entry in entries {
             let name = entry.file_name().to_string_lossy().into_owned();
+            // What a file manager hides holds no projects, nor do the system's and apps' own folders, such as
+            // ~/Library and AppData when home is scanned: on macOS, looking inside would also ask for access to
+            // other apps' data. On Linux what is hidden is a dotted name.
             if !entry.file_type().is_ok_and(|t| t.is_dir())
-                || name.starts_with('.')
                 || files::HEAVY.contains(&name.as_str())
+                || (home && platform::system_folder(&entry.file_name()))
+                || platform::hidden(&entry.file_name(), entry.metadata().ok().as_ref())
             {
                 continue;
             }

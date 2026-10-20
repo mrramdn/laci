@@ -211,8 +211,8 @@ pub fn placeholder(meta: &Metadata) -> bool {
 }
 
 /// Whether a folder in the home folder named `name` holds the system's or apps' own files rather than projects, such
-/// as ~/Library and apps on macOS or AppData on Windows. Folder suggestions don't look inside, which on macOS would
-/// also ask for access to other apps' data.
+/// as ~/Library and apps on macOS or AppData on Windows. Folder suggestions and a scan of home don't look inside,
+/// which on macOS would also ask for access to other apps' data.
 pub fn system_folder(name: &OsStr) -> bool {
     os::system_folder(name)
 }

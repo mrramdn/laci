@@ -1,5 +1,5 @@
-//! Files on each OS: what a move, a copy and Undo keep, names Windows keeps for itself, what the listing hides, files
-//! that are only online, links Laci doesn't read through, and what the move's preview warns about.
+//! Files on each OS: what a move, a copy and Undo keep, names Windows keeps for itself, what the listing hides and a
+//! scan skips, files that are only online, links Laci doesn't read through, and what the move's preview warns about.
 use laci_core::{create, env::Env, files, ops, paths, platform, scan, service::Service};
 use serde_json::{Value, json};
 use std::{
@@ -309,6 +309,41 @@ fn folder_suggestions_skip_the_system_folders() {
     for name in names {
         let shown = suggested.iter().any(|path| path.file_name().is_some_and(|n| n == name));
         assert_eq!(shown, !skipped.contains(&name), "{name}: {suggested:?}");
+    }
+}
+
+/// A scan of home looks for projects in what a file manager shows, not in what the system and apps keep there, such
+/// as ~/Library and apps on macOS and AppData on Windows: on macOS, looking inside would also ask for access to other
+/// apps' data. Deeper down those names are the user's own, as a course's library exercise or a site named after its
+/// domain. On Linux only a dotted name is hidden, and every other folder is looked in as before.
+#[test]
+fn a_scan_of_home_skips_hidden_and_system_folders() {
+    let (_temp, env) = home();
+    let names = ["Projects", "Library", "AppData", "Tools.app", "$Recycle.Bin", "Marked", ".hidden"];
+    for name in names {
+        fs::create_dir_all(env.home.join(name).join("demo").join(".git")).unwrap();
+    }
+    mark_hidden(&env.home.join("Marked"));
+    let deeper = ["library", "shop.app", "Photos.photoslibrary", "AppData", "$Recycle.Bin"];
+    for name in deeper {
+        fs::create_dir_all(env.home.join("Projects").join(name).join(".git")).unwrap();
+    }
+    laci_core::config::save(&env, &json!({"roots":["~"],"presets":[],"custom":[],"apps":{}})).unwrap();
+    let snapshot = Service::new(env.clone()).snapshot().unwrap();
+    let skipped: &[&str] = if cfg!(target_os = "macos") {
+        &["Library", "Tools.app", "Marked", ".hidden"]
+    } else if cfg!(windows) {
+        &["AppData", "$Recycle.Bin", "Marked", ".hidden"]
+    } else {
+        &[".hidden"]
+    };
+    for name in names {
+        let found = snapshot["nodes"].get(env.home.join(name).join("demo").to_str().unwrap()).is_some();
+        assert_eq!(found, !skipped.contains(&name), "{name}");
+    }
+    for name in deeper {
+        let found = snapshot["nodes"].get(env.home.join("Projects").join(name).to_str().unwrap()).is_some();
+        assert!(found, "Projects/{name}");
     }
 }
 

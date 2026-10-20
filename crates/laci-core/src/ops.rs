@@ -5,7 +5,9 @@ use crate::{
     files, paths,
     platform::{
         self,
-        path::{below, contains, may_contain, relocate, renames_case, rewrite_prefix, same_path, stays_below},
+        path::{
+            below, contains, git_dir_name, may_contain, relocate, renames_case, rewrite_prefix, same_path, stays_below,
+        },
         preserve,
     },
     process, sidecar,
@@ -96,7 +98,7 @@ fn copy_tree_inner(src: &Path, dest: &Path, skip_git: bool) -> Result<()> {
         patiently(dest, || fs::create_dir(dest))?;
         for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
             let e = entry.map_err(|e| e.to_string())?;
-            if skip_git && e.file_name() == ".git" {
+            if skip_git && git_dir_name(&e.file_name()) {
                 continue;
             }
             copy_tree_inner(&e.path(), &dest.join(e.file_name()), skip_git)?;

@@ -152,6 +152,51 @@ fn a_template_named_in_another_case_is_never_copied_into_itself() {
     assert!(!template.join("recursive").exists());
 }
 
+/// Where names that differ only in case lead to the same folder, a template's `.GIT` is its repository as much as
+/// `.git`: it stays behind, so its settings and hooks never become the new project's.
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn a_template_repository_named_in_another_case_stays_behind() {
+    let (_temp, env) = setup();
+    let template = env.home.join("starter");
+    let repository = template.join(".GIT");
+    fs::create_dir_all(repository.join("hooks")).unwrap();
+    if !template.join(".git").is_dir() {
+        eprintln!("This volume tells case apart; nothing to check.");
+        return;
+    }
+    for dir in ["objects", "refs/heads"] {
+        fs::create_dir_all(repository.join(dir)).unwrap();
+    }
+    fs::write(repository.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    fs::write(
+        repository.join("config"),
+        "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tfsmonitor = echo ran > fsmonitor-ran #\n",
+    )
+    .unwrap();
+    let hook = repository.join("hooks/pre-commit");
+    fs::write(&hook, "#!/bin/sh\necho ran > hook-ran\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::write(template.join("README.md"), "# Starter").unwrap();
+    create::add_template(&env, template.to_str().unwrap()).unwrap();
+    let made = create::create_project(
+        &env,
+        &json!({"parent":"~/projects with spaces","name":"from-template","from":"template","template":template,"remote":"none"}),
+    )
+    .unwrap();
+    let path = std::path::Path::new(made["path"].as_str().unwrap());
+    assert_eq!(fs::read_to_string(path.join("README.md")).unwrap(), "# Starter");
+    assert!(!path.join(".git/hooks/pre-commit").exists(), "the template's hook came along");
+    assert!(!fs::read_to_string(path.join(".git/config")).unwrap().contains("fsmonitor"));
+    for mark in ["hook-ran", "fsmonitor-ran"] {
+        assert!(!path.join(mark).exists(), "{mark}");
+    }
+}
+
 #[test]
 fn successful_generator_cannot_leave_descendants_writing_after_finalization() {
     let (_temp, env) = setup();

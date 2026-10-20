@@ -3,7 +3,7 @@ use crate::{
     Result, config,
     env::Env,
     files, ops, paths,
-    platform::path::{may_contain, same_path},
+    platform::path::{git_dir_name, may_contain, same_path},
     process, sidecar,
 };
 use serde_json::{Value, json};
@@ -179,9 +179,16 @@ fn create_unlocked(env: &Env, r: &Value, cancel: &AtomicBool, progress: &dyn Fn(
             if let Some(src) = &template_source {
                 sidecar::plain_path(src)?;
                 for e in files::entries(src) {
-                    if e.file_name() != ".git" {
+                    if !git_dir_name(&e.file_name()) {
                         ops::copy_template(&e.path(), &dest.join(e.file_name()))?;
                     }
+                }
+                // Whatever else the file system reads as `.git` would be taken up by `git init` below, with its
+                // settings and hooks.
+                if fs::symlink_metadata(dest.join(".git")).is_ok() {
+                    return Err("The template holds Git metadata under another name. Remove it from the template \
+                                and try again."
+                        .into());
                 }
             }
             if cancel.load(Ordering::Relaxed) {

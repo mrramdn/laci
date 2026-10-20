@@ -114,6 +114,22 @@ pub fn stays_below(relative: &Path) -> bool {
     !relative.components().any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
 }
 
+/// Whether a folder named `name` is where Git looks for a repository, `.git`: on macOS and Windows in another case too,
+/// and on Windows also with the dots and spaces at its end that Windows drops.
+pub fn git_dir_name(name: &OsStr) -> bool {
+    git_dir_with(RULES, name)
+}
+
+fn git_dir_with(rules: Rules, name: &OsStr) -> bool {
+    let mut name = name.as_encoded_bytes();
+    while rules.windows
+        && let [rest @ .., b'.' | b' '] = name
+    {
+        name = rest;
+    }
+    if rules.fold { name.eq_ignore_ascii_case(b".git") } else { name == b".git" }
+}
+
 /// Whether renaming `src` to `dest` only changes the case of its name: both spell the same entry, in the same folder.
 /// Linux never has such a rename, since there `Foo` and `foo` are two names.
 pub fn renames_case(src: &Path, dest: &Path) -> bool {
@@ -399,6 +415,27 @@ mod tests {
         for rules in [MACOS, WINDOWS] {
             assert!(same_parts(rules, &parts(&dir.join("Notes")), &parts(&dir.join("notes"))), "one file");
             assert!(!renamed_case(rules, &dir.join("Notes"), &dir.join("notes")), "{rules:?}: but two entries");
+        }
+    }
+
+    #[test]
+    fn git_finds_its_folder_under_each_name_the_os_reads_as_git() {
+        // On Linux, macOS and Windows.
+        for (name, read_as_git) in [
+            (".git", [true, true, true]),
+            (".GIT", [false, true, true]),
+            (".Git", [false, true, true]),
+            (".git.", [false, false, true]),
+            (".GIT . .", [false, false, true]),
+            (".git ", [false, false, true]),
+            ("git", [false; 3]),
+            (".gitignore", [false; 3]),
+            ("..git", [false; 3]),
+            (". git", [false; 3]),
+            (".", [false; 3]),
+        ] {
+            let found = [LINUX, MACOS, WINDOWS].map(|rules| git_dir_with(rules, OsStr::new(name)));
+            assert_eq!(found, read_as_git, "{name:?}");
         }
     }
 

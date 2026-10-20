@@ -845,6 +845,12 @@ fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
                     out.push(issue(code, sev, count(u(g, key), one, many), detail));
                 }
             }
+        } else if n["onlineOnly"] == true {
+            // Git is there, but reading it would download the repository: what isn't committed or pushed isn't known,
+            // and isn't counted as done.
+            let detail = "Laci didn't read its Git state, which would download it, so changes not committed or \
+                          pushed aren't known";
+            out.push(issue("online-only", "low", "Kept only online".into(), Some(detail.into())));
         } else if n["type"] == "code" {
             out.push(issue("no-git", "med", "Not under version control".into(), None));
         }
@@ -1074,7 +1080,9 @@ pub fn archive_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
     ops.push(json!({"kind":"write","label":"Write undo journal","to":format!("{}/",paths::tilde(&env.data_dir.join("journal"),&env.home))}));
     let checks: Vec<_> = array(&n["issues"])
         .iter()
-        .filter(|i| ["no-commits", "no-remote", "dirty", "unpushed", "stash"].contains(&string(i, "code")))
+        .filter(|i| {
+            ["no-commits", "no-remote", "dirty", "unpushed", "stash", "online-only"].contains(&string(i, "code"))
+        })
         .cloned()
         .collect();
     Ok(json!({"dest":dest,"checks":checks,"ops":ops}))
@@ -1210,10 +1218,12 @@ fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
         out.push(json!({"id":format!("orphan:{id}:{}",cwd.unwrap_or(string(first,"file"))),"category":"orphan","title":format!("{} {} {} for deleted {name}",list.len(),string(c,"name"),if list.len()==1{unit.to_owned()}else{format!("{unit}s")}),"why":format!("{} no longer exists. Last used {}.",cwd.map(|p|paths::tilde(Path::new(p),&env.home)).unwrap_or_else(||"Its folder".into()),string(first,"at").get(..10).unwrap_or("unknown")),"confidence":"med","ops":list.iter().map(|x|json!({"kind":"move","label":"Quarantine (restorable)","from":paths::tilde(Path::new(string(x,"file")),&env.home),"to":paths::tilde(&quarantine.join(id),&env.home)})).collect::<Vec<_>>(),"action":{"type":"quarantine","moves":list.iter().map(|x|json!({"from":x["file"],"to":Path::new(id).join(Path::new(string(x,"file")).strip_prefix(store).unwrap_or_else(|_|Path::new(string(x,"file")).file_name().map(Path::new).unwrap_or(Path::new("history"))))})).collect::<Vec<_>>()}}));
     }
     for n in &nodes {
-        // Work that is not committed or not pushed is dealt with first; Today lists it as at risk.
-        let unfinished = array(&n["issues"]).iter().any(|i| {
-            i["muted"] != true && matches!(i["code"].as_str(), Some("dirty" | "unpushed" | "diverged" | "stash"))
-        });
+        // Work that is not committed or not pushed is dealt with first; Today lists it as at risk. A repository kept
+        // only online may hold such work too: Laci didn't read it.
+        let unfinished = n["onlineOnly"] == true
+            || array(&n["issues"]).iter().any(|i| {
+                i["muted"] != true && matches!(i["code"].as_str(), Some("dirty" | "unpushed" | "diverged" | "stash"))
+            });
         if n["kind"] == "project"
             && n["archived"] != true
             && n["status"]["value"] == "dormant"
@@ -1306,6 +1316,31 @@ mod tests {
             "claude":{},"items":{},"orphans":{"claude":[],"items":[]},"connectors":[]});
         let offered: Vec<_> = proposals(&env, &snapshot).iter().map(|p| string(p, "id").to_owned()).collect();
         assert_eq!(offered, ["archive:a"], "unfinished work is dealt with before archiving");
+    }
+    /// A repository a sync app keeps only online is listed without its Git state, which reading would download. What
+    /// wasn't read isn't counted as finished: a check says so, and old files don't make it one to archive, even with
+    /// that check muted, as commits not pushed may be there.
+    #[test]
+    fn a_repository_kept_only_online_is_never_taken_for_finished_work() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        for typ in ["code", "docs"] {
+            let node = json!({"kind":"project","type":typ,"onlineOnly":true,"meta":{},"readme":{},"agents":{"claude":[]},
+                "taskFiles":[]});
+            let found = issues(&env, &node, &json!({}));
+            assert_eq!(found.iter().map(|i| string(i, "code")).collect::<Vec<_>>(), ["online-only"], "{typ}");
+            assert_eq!(found[0]["severity"], "low");
+        }
+        let dormant = |id: &str, online: bool, issues: Value| {
+            json!({"id":id,"label":id,"kind":"project","onlineOnly":online,"status":{"value":"dormant"},
+                "archivePlan":{"dest":"/archive","ops":[]},"issues":issues,"size":{}})
+        };
+        let nodes = json!({"read":dormant("read",false,json!([])),
+            "online":dormant("online",true,json!([{"code":"online-only"}])),
+            "muted":dormant("muted",true,json!([{"code":"online-only","muted":true}]))});
+        let snapshot = json!({"nodes":nodes,"claude":{},"items":{},"orphans":{"claude":[],"items":[]},"connectors":[]});
+        let offered: Vec<_> = proposals(&env, &snapshot).iter().map(|p| string(p, "id").to_owned()).collect();
+        assert_eq!(offered, ["archive:read"], "Git state that wasn't read is no sign of finished work");
     }
     #[test]
     fn agent_refresh_reuses_metadata_and_discovers_new_agent_only_projects() {

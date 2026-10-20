@@ -204,6 +204,76 @@ fn a_file_that_is_only_online_is_not_read() {
     }
 }
 
+/// A repository a sync app keeps only online is listed, but Git isn't run in it: Git would download its history, and
+/// its work tree with it. Here one repository's index is only online, and in another the pack that holds its history.
+/// What wasn't read isn't taken for finished work: a check says so, and old files don't get it offered for archiving.
+/// Nor does a scan read a report kept only online. Windows' offline attribute stands in for such files; elsewhere all
+/// are read as before.
+#[test]
+fn a_scan_reads_no_repository_or_report_kept_only_online() {
+    fn codes(list: &Value) -> Vec<&str> {
+        list.as_array().into_iter().flatten().filter_map(|item| item["code"].as_str()).collect()
+    }
+    let (_temp, env) = home();
+    let (indexed, packed) = (env.home.join("project").join("demo"), env.home.join("project").join("packed"));
+    let commit = ["-c", "user.name=T", "-c", "user.email=t@example.test", "commit", "-q", "-m", "first"];
+    // Committed long ago, as the files were last changed: a project left alone.
+    let then = format!("@{} +0000", THEN.as_secs());
+    for repo in [&indexed, &packed] {
+        write(&repo.join("package.json"), "{}\n");
+        for args in [&["init", "-q"][..], &["add", "."], &commit, &["repack", "-a", "-d", "-q"]] {
+            run(Command::new("git")
+                .args(args)
+                .current_dir(repo)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_AUTHOR_DATE", &then)
+                .env("GIT_COMMITTER_DATE", &then));
+        }
+        age(&repo.join("package.json"));
+    }
+    let reports = env.home.join("reports");
+    write(&reports.join("2026-10-19-demo.md"), "# Demo work\n\n## Open\n- Ship it\n");
+    let settings = json!({"roots":["~/project"],"reportsDir":reports,"presets":[],"custom":[],"apps":{}});
+    laci_core::config::save(&env, &settings).unwrap();
+    let online = cfg!(windows);
+    #[cfg(windows)]
+    {
+        let packs: Vec<PathBuf> = fs::read_dir(packed.join(".git").join("objects").join("pack"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "pack"))
+            .collect();
+        assert!(!packs.is_empty());
+        for file in [indexed.join(".git").join("index"), reports.join("2026-10-19-demo.md")].into_iter().chain(packs) {
+            run(Command::new("attrib").arg("+O").arg(file));
+        }
+    }
+    let snapshot = Service::new(env.clone()).snapshot().unwrap();
+    let offered: Vec<&str> =
+        snapshot["proposals"].as_array().into_iter().flatten().filter_map(|p| p["id"].as_str()).collect();
+    for repo in [&indexed, &packed] {
+        let node = &snapshot["nodes"][repo.to_str().unwrap()];
+        assert_eq!(node["kind"], "project", "{node}");
+        assert_eq!(node["git"].is_object(), !online, "{node}");
+        assert_eq!(node["onlineOnly"] == true, online, "{node}");
+        let issues = codes(&node["issues"]);
+        assert!(!issues.contains(&"no-git"), "{issues:?}");
+        assert_eq!(issues.contains(&"online-only"), online, "{issues:?}");
+        assert_eq!(node["status"]["value"], "dormant", "{node}");
+        let plan = &node["archivePlan"];
+        assert!(plan["dest"].is_string(), "{plan}");
+        let checks = codes(&plan["checks"]);
+        assert_eq!(checks.contains(&"online-only"), online, "{checks:?}");
+        let archive = format!("archive:{}", repo.to_str().unwrap());
+        assert_eq!(offered.contains(&archive.as_str()), !online, "{offered:?}");
+    }
+    let report = &snapshot["reports"][0];
+    assert_eq!(report["title"], if online { "Demo" } else { "Demo work" }, "{report}");
+    assert_eq!(report["open"], if online { json!([]) } else { json!(["Ship it"]) }, "{report}");
+    assert_eq!(report["onlineOnly"] == true, online, "{report}");
+}
+
 /// Laci's own settings are read even when a sync app keeps config.json only online: read as empty, they would be
 /// replaced by the next save.
 #[test]

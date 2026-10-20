@@ -224,6 +224,7 @@ fn issue_name(code: &str) -> &str {
         "behind" => "Behind remote",
         "stash" => "Forgotten stash",
         "no-git" => "Not under version control",
+        "online-only" => "Kept only online",
         "no-readme" => "No README",
         "template-readme" => "Template README",
         "stale-cwd" => "Old path in agent logs",

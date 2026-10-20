@@ -4,7 +4,10 @@ use crate::{
     Result, activity, agents, config,
     env::Env,
     files, ops, paths,
-    platform::path::{canonical, same_path},
+    platform::{
+        self,
+        path::{canonical, same_path},
+    },
     readers,
 };
 use chrono::{DateTime, Local, NaiveDate, SecondsFormat, Utc};
@@ -91,6 +94,9 @@ struct Candidate {
     path: PathBuf,
     modified: String,
     bytes: u64,
+    /// Kept only online by a sync app, as OneDrive and iCloud keep what they have freed up: reading it would
+    /// download it.
+    online: bool,
 }
 
 /// Report files directly in the folder, newest first by name date and mtime, before any is read.
@@ -110,7 +116,13 @@ fn candidates(dir: &Path) -> (Vec<Candidate>, usize) {
             .modified()
             .map(|t| DateTime::<Utc>::from(t).to_rfc3339_opts(SecondsFormat::Millis, true))
             .unwrap_or_default();
-        out.push(Candidate { path: entry.path(), name, modified, bytes: meta.len() });
+        out.push(Candidate {
+            path: entry.path(),
+            name,
+            modified,
+            bytes: meta.len(),
+            online: platform::placeholder(&meta),
+        });
     }
     let total = out.len();
     let day = |c: &Candidate| name_date(&c.name).unwrap_or_else(|| local_day(&c.modified));
@@ -630,9 +642,15 @@ pub fn attach(env: &Env, snapshot: &mut Value) {
     let mut reports: Vec<Value> = found
         .iter()
         .filter_map(|c| {
-            let facts = cache.facts("report", &c.path, || {
-                files::text_nofollow(&c.path, MAX_BYTES).map_or(Value::Null, |text| parse(&c.name, &text, &c.modified))
-            });
+            // A scan never downloads a report: one kept only online is listed by its name until it is opened.
+            let facts = if c.online {
+                parse(&c.name, "", &c.modified)
+            } else {
+                cache.facts("report", &c.path, || {
+                    files::text_nofollow(&c.path, MAX_BYTES)
+                        .map_or(Value::Null, |text| parse(&c.name, &text, &c.modified))
+                })
+            };
             if facts.is_null() {
                 return None;
             }
@@ -652,6 +670,9 @@ pub fn attach(env: &Env, snapshot: &mut Value) {
                 "open": open.into_iter().take(OPEN_ITEMS).collect::<Vec<_>>(),
                 "openCount": (facts["openCount"].as_u64().unwrap_or(0) as usize).saturating_sub(done),
             });
+            if c.online {
+                report["onlineOnly"] = json!(true);
+            }
             if done > 0 {
                 report["closedCount"] = json!(done);
                 // In the report's order, so a closed item can be opened again by its number.
@@ -858,9 +879,19 @@ pub fn list(
         .take(limit)
         .map(|r| {
             let mut out = json!({});
-            for key in
-                ["id", "title", "date", "file", "projects", "sessions", "summary", "open", "openCount", "closedCount"]
-            {
+            for key in [
+                "id",
+                "title",
+                "date",
+                "file",
+                "projects",
+                "sessions",
+                "summary",
+                "open",
+                "openCount",
+                "closedCount",
+                "onlineOnly",
+            ] {
                 if !r[key].is_null() {
                     out[key] = r[key].clone();
                 }

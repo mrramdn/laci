@@ -1,9 +1,10 @@
-use crate::{Result, env::Env, files, git, paths};
+use crate::{Result, env::Env, files, git, paths, platform};
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fs,
     path::Path,
     sync::LazyLock,
     time::Duration,
@@ -187,6 +188,38 @@ fn utc(text: &str) -> String {
 /// Laci's own notes file. It is hidden through the repository's exclude list once Laci writes it; one made by
 /// hand is not a change to the project either.
 const SIDECAR_UNTRACKED: &str = "?? .laci.md";
+/// Whether Git would download `dir`'s history to read it: its Git folder, HEAD, index or a pack of its objects is kept
+/// only online, as OneDrive and iCloud keep what they have freed up, and Git's status would then read the work tree
+/// too. Only what the file system lists is read here, which downloads nothing.
+fn git_online_only(dir: &Path) -> bool {
+    let online = |path: &Path| fs::symlink_metadata(path).is_ok_and(|meta| platform::placeholder(&meta));
+    let dot = dir.join(".git");
+    let Ok(meta) = fs::symlink_metadata(&dot) else { return false };
+    if platform::placeholder(&meta) {
+        return true;
+    }
+    // A worktree or a submodule names its Git folder in a .git file, and a worktree the folder it shares objects with.
+    let git = match files::text(&dot) {
+        Some(text) => match text.trim().strip_prefix("gitdir:") {
+            Some(path) => dir.join(path.trim()),
+            None => return false,
+        },
+        None => dot,
+    };
+    // A folder before what is in it: on macOS, looking inside a folder kept only online downloads its listing.
+    if online(&git) || online(&git.join("commondir")) {
+        return true;
+    }
+    let common = files::text(&git.join("commondir")).map_or_else(|| git.clone(), |common| git.join(common.trim()));
+    let pack = common.join("objects").join("pack");
+    let parts = [&git.join("HEAD"), &git.join("index"), &common, &common.join("objects"), &pack];
+    parts.iter().any(|path| online(path))
+        || fs::read_dir(&pack)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| entry.metadata().is_ok_and(|meta| platform::placeholder(&meta)))
+}
 pub fn git_info(dir: &Path) -> Option<Value> {
     let inside = git::plain(dir, &["rev-parse", "--is-inside-work-tree"], Duration::from_secs(20));
     if inside.as_deref() != Ok("true") {
@@ -340,6 +373,11 @@ pub fn health(dir: &Path) -> Value {
     let mut out = json!({"changes":[],"unpushed":[],"recent":[],"stashes":[]});
     if let Some((version, source)) = manifest_version(dir) {
         out["release"] = json!({"version":version,"source":source});
+    }
+    // As in a scan, Git isn't run where it would download the repository.
+    if git_online_only(dir) {
+        out["onlineOnly"] = json!(true);
+        return out;
     }
     if git::plain(dir, &["rev-parse", "--is-inside-work-tree"], Duration::from_secs(20)).as_deref() != Ok("true") {
         return out;
@@ -706,7 +744,9 @@ pub fn project(env: &Env, dir: &Path) -> Result<Value> {
     let name = dir.file_name().unwrap_or_default().to_string_lossy().into_owned();
     let tasks = tasks(dir);
     let stack = stack(dir);
-    let git = git_info(dir);
+    // A repository a sync app keeps only online is listed without its Git state: reading that would download it.
+    let online = git_online_only(dir);
+    let git = if online { None } else { git_info(dir) };
     let readme = readme(dir);
     let code = git.is_some()
         || [
@@ -748,6 +788,9 @@ pub fn project(env: &Env, dir: &Path) -> Result<Value> {
         "ownActivity":{"at":newest,"source":activity_source},"lastActivity":{"at":newest,"source":activity_source}});
     if let Ok(created) = std::fs::metadata(dir).and_then(|m| m.created()) {
         node["createdAt"] = json!({"at":DateTime::<Utc>::from(created).to_rfc3339_opts(chrono::SecondsFormat::Millis,true),"source":"folder"});
+    }
+    if online {
+        node["onlineOnly"] = json!(true);
     }
     if let Some(g) = git {
         if let Some(first) = g["firstCommitAt"].as_str().filter(|s| !s.is_empty()) {

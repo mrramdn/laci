@@ -534,7 +534,8 @@ enum Tasks {
 /// stack and session lists that project_details gives.
 fn compact(n: &Value, tasks: Tasks) -> Value {
     let mut out = json!({});
-    for key in ["path", "name", "kind", "type", "archived", "status", "meta", "issues", "lastActivity"] {
+    // `onlineOnly`: a repository a sync app keeps only online, whose Git state Laci doesn't read.
+    for key in ["path", "name", "kind", "type", "archived", "status", "meta", "issues", "lastActivity", "onlineOnly"] {
         if !n[key].is_null() {
             out[key] = n[key].clone();
         }

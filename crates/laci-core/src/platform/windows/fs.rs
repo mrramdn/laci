@@ -1,5 +1,6 @@
 //! Files on Windows: which file a path names and when it changed, the change lock, renames and copies that keep a
-//! file's times, a moment's wait for programs that hold a file, and what Explorer hides or keeps only online.
+//! file's times and attributes, a moment's wait for programs that hold a file, and what Explorer hides or keeps only
+//! online.
 use super::{ffi, not_yet, recycle::known_folder};
 use crate::{
     Result,
@@ -11,9 +12,9 @@ use crate::{
 use file_id::FileId;
 use std::{
     ffi::{OsStr, OsString},
-    fs::{self, File, FileTimes, Metadata, OpenOptions, TryLockError},
+    fs::{self, File, Metadata, OpenOptions, TryLockError},
     io,
-    os::windows::fs::{FileTimesExt, FileTypeExt, MetadataExt, OpenOptionsExt},
+    os::windows::fs::{FileTypeExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
@@ -24,9 +25,10 @@ use windows::Win32::UI::Shell::{
     FOLDERID_PublicVideos, FOLDERID_Videos,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, FILE_ATTRIBUTE_RECALL_ON_OPEN,
-    FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
-    FILE_WRITE_ATTRIBUTES,
+    FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
+    FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS,
+    FILE_ATTRIBUTE_RECALL_ON_OPEN, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM, FILE_BASIC_INFO,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES,
 };
 
 /// The names config.json keeps an identity under: the volume's serial number and the file's ID.
@@ -146,32 +148,53 @@ pub fn copy_link(src: &Path, _dest: &Path) -> Result<()> {
     Err(not_yet(&format!("copy the link {}", src.display())))
 }
 
-/// Times and attributes are written with FILE_WRITE_ATTRIBUTES alone, which a read-only file allows too, and a folder
-/// opens only with FILE_FLAG_BACKUP_SEMANTICS. Permissions are the read-only attribute: set by path, Windows keeps the
-/// file's other attributes as they are, even when none is left.
+/// The attributes a copy keeps: read-only, which stands for the permissions, hidden and system, as Git for Windows
+/// hides .git and a folder's desktop.ini is marked, archive, and whether Search indexes the file.
+const KEPT: u32 = FILE_ATTRIBUTE_READONLY
+    | FILE_ATTRIBUTE_HIDDEN
+    | FILE_ATTRIBUTE_SYSTEM
+    | FILE_ATTRIBUTE_ARCHIVE
+    | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
+
+/// The times and the [`KEPT`] attributes are written in one call.
 pub fn preserve(meta: &Metadata, dest: &Path) -> Result<()> {
+    let times = FILE_BASIC_INFO {
+        CreationTime: meta.creation_time() as i64,
+        LastAccessTime: meta.last_access_time() as i64,
+        LastWriteTime: meta.last_write_time() as i64,
+        ..Default::default()
+    };
+    set_basic_info(dest, times, meta.file_attributes() & KEPT)
+}
+
+/// tempfile clears every attribute of the file it puts in place. That file is new content, so archive is set, as any
+/// write sets it.
+pub fn keep_attributes(meta: &Metadata, dest: &Path) -> Result<()> {
+    set_basic_info(dest, FILE_BASIC_INFO::default(), meta.file_attributes() & KEPT | FILE_ATTRIBUTE_ARCHIVE)
+}
+
+/// Gives `dest` the times in `info` that aren't 0, and `kept` in place of its own [`KEPT`] attributes, while its other
+/// attributes stay as they are. FILE_WRITE_ATTRIBUTES alone is asked for, which a read-only file allows too, and a
+/// folder opens only with FILE_FLAG_BACKUP_SEMANTICS.
+fn set_basic_info(dest: &Path, mut info: FILE_BASIC_INFO, kept: u32) -> Result<()> {
     let file = OpenOptions::new()
         .access_mode(FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(dest)
-        .map_err(|e| e.to_string())?;
-    let mut times = FileTimes::new();
-    if let Ok(at) = meta.accessed() {
-        times = times.set_accessed(at);
-    }
-    if let Ok(at) = meta.modified() {
-        times = times.set_modified(at);
-    }
-    if let Ok(at) = meta.created() {
-        times = times.set_created(at);
-    }
-    file.set_times(times).map_err(|e| e.to_string())?;
-    let mut permissions = file.metadata().map_err(|e| e.to_string())?.permissions();
-    if permissions.readonly() != meta.permissions().readonly() {
-        permissions.set_readonly(meta.permissions().readonly());
-        fs::set_permissions(dest, permissions).map_err(|e| e.to_string())?;
-    }
-    Ok(())
+        .map_err(|e| explain(&e, &[dest]))?;
+    // FILE_ATTRIBUTE_NORMAL stands for no attribute at all.
+    let now = file.metadata().map_err(|e| explain(&e, &[dest]))?.file_attributes() & !FILE_ATTRIBUTE_NORMAL;
+    let wanted = now & !KEPT | kept;
+    // FILE_BASIC_INFO leaves the attributes as they are when given 0, so no attribute at all is
+    // FILE_ATTRIBUTE_NORMAL there.
+    info.FileAttributes = if wanted == now {
+        0
+    } else if wanted == 0 {
+        FILE_ATTRIBUTE_NORMAL
+    } else {
+        wanted
+    };
+    ffi::set_basic_info(&file, &info).map_err(|e| explain(&e, &[dest]))
 }
 
 /// std deletes a read-only file or folder only by the delete that ignores the attribute, which NTFS takes and FAT32

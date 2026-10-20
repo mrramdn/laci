@@ -118,6 +118,26 @@ pub fn protected_folders() -> Vec<std::path::PathBuf> {
     folders
 }
 
+/// Gives the open `file` the times and attributes in `info`. A time of 0 is left as it is, and so are the attributes
+/// when they are 0. `file` must be open with FILE_WRITE_ATTRIBUTES.
+pub fn set_basic_info(file: &File, info: &FILE_BASIC_INFO) -> io::Result<()> {
+    use windows_sys::Win32::Storage::FileSystem::SetFileInformationByHandle;
+    // SAFETY: the handle stays open while `file` is borrowed, past the call. `info` is the FILE_BASIC_INFO that
+    // FileBasicInfo asks for, it lives until the call returns, which only reads it, and its exact size is passed.
+    let set = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileBasicInfo,
+            ptr::from_ref(info).cast(),
+            size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    };
+    if set == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// What Windows records about an open file: when it was last written and last changed, in 100-nanosecond steps since
 /// 1601, and which file it is, as the volume serial number and file ID that the file-id crate reads.
 pub struct FileInfo {

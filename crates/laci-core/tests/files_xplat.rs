@@ -135,6 +135,47 @@ fn a_copy_keeps_the_times_of_folders_and_files_and_read_only_files() {
     assert!(!read_only(&dir.join("notes/plan.md")));
 }
 
+/// A copy keeps what Windows marks a file or folder with besides read-only: hidden, as Git for Windows hides .git,
+/// system, as on a folder's desktop.ini, archive, which backup tools clear, and whether Search indexes it. A file Laci
+/// writes in place of another keeps them too, with archive set, as any write sets it.
+#[cfg(windows)]
+#[test]
+fn a_copy_and_a_rewrite_keep_the_marks_windows_gives_files() {
+    use std::os::windows::fs::MetadataExt;
+    // FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_ARCHIVE and FILE_ATTRIBUTE_NOT_CONTENT_INDEXED.
+    const HIDDEN: u32 = 0x2;
+    const SYSTEM: u32 = 0x4;
+    const ARCHIVE: u32 = 0x20;
+    const NOT_INDEXED: u32 = 0x2000;
+    let marks = |path: &Path| fs::metadata(path).unwrap().file_attributes() & (HIDDEN | SYSTEM | ARCHIVE | NOT_INDEXED);
+    let (_temp, env) = home();
+    let template = env.config_dir.join("templates").join("docs");
+    let (meta, ini, notes) = (Path::new("meta"), Path::new("desktop.ini"), Path::new("meta").join("notes.md"));
+    write(&template.join(&notes), "# Notes\n");
+    write(&template.join(ini), "[.ShellClassInfo]\n");
+    run(Command::new("attrib").arg("+H").arg(template.join(meta)));
+    // Each mark set or cleared, whatever the temporary folder passes on.
+    run(Command::new("attrib").args(["+H", "+S", "+A", "-I"]).arg(template.join(ini)));
+    // Backed up already, and left out of Search: a file written anew would have archive set.
+    run(Command::new("attrib").args(["-A", "+I"]).arg(template.join(&notes)));
+    let parent = env.home.join("project");
+    fs::create_dir(&parent).unwrap();
+    let made = create::create_project(
+        &env,
+        &json!({"name":"docs","parent":parent,"from":"template","template":"docs","remote":"none"}),
+    )
+    .unwrap();
+    let dir = Path::new(made["path"].as_str().unwrap());
+    assert_eq!(marks(&dir.join(meta)), marks(&template.join(meta)));
+    assert_eq!(marks(&dir.join(meta)) & HIDDEN, HIDDEN);
+    assert_eq!(marks(&dir.join(ini)), HIDDEN | SYSTEM | ARCHIVE);
+    assert_eq!(marks(&dir.join(&notes)), NOT_INDEXED);
+    files::replace(&dir.join(ini), b"[.ShellClassInfo]\r\nIconResource=docs.ico\r\n").unwrap();
+    assert_eq!(marks(&dir.join(ini)), HIDDEN | SYSTEM | ARCHIVE);
+    files::replace(&dir.join(&notes), b"# Notes\r\n\r\nMore.\r\n").unwrap();
+    assert_eq!(marks(&dir.join(&notes)), NOT_INDEXED | ARCHIVE);
+}
+
 /// Windows keeps CON, PRN, AUX, NUL, COM1–9 and LPT1–9 for devices, also with an extension, and drops a dot at the
 /// end of a name, so a project can't be called that there. Elsewhere these are names like any other.
 #[test]

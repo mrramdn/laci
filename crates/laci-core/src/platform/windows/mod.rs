@@ -16,7 +16,7 @@ pub use fs::{
     IDENTITY_FIELDS, Lock, change_stamp, copy_link, file_change_stamp, identity, lock, preserve, remove_all,
     rename_noreplace,
 };
-pub use fs::{explain, hidden_flag, move_notes, open_nofollow, placeholder, retry, system_folder};
+pub use fs::{explain, hidden_flag, keep_attributes, move_notes, open_nofollow, placeholder, retry, system_folder};
 pub use process::{Group, ensure_idle, exited, pid_alive, processes_in, spawn_group};
 pub use recycle::trash;
 pub use spawn::{open, program, which};

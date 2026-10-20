@@ -160,7 +160,7 @@ pub fn rotate_private(path: &Path, to: &Path, limit: u64) {
 }
 
 /// A private temporary inode prevents following a pre-created temporary-file symlink. The file keeps its
-/// permissions, on Windows its read-only attribute.
+/// permissions, on Windows its read-only, hidden and system attributes and whether Search indexes it.
 pub fn replace(path: &Path, contents: &[u8]) -> crate::Result<()> {
     let parent = path.parent().ok_or("File has no parent")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -168,15 +168,15 @@ pub fn replace(path: &Path, contents: &[u8]) -> crate::Result<()> {
         return Err(format!("Refusing to edit linked file {}", path.display()));
     }
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    let permissions = fs::metadata(path).ok().map(|meta| meta.permissions());
+    let old = fs::metadata(path).ok();
     #[cfg(unix)]
-    if let Some(permissions) = &permissions {
-        temp.as_file().set_permissions(permissions.clone()).map_err(|e| e.to_string())?;
+    if let Some(old) = &old {
+        temp.as_file().set_permissions(old.permissions()).map_err(|e| e.to_string())?;
     }
     temp.write_all(contents).and_then(|()| temp.as_file().sync_all()).map_err(|e| e.to_string())?;
     // Windows puts no file in place of a read-only one, and tempfile clears every attribute of the file it puts in
-    // place, so the attribute comes off the old file first and goes onto whichever file is there after.
-    let readonly = cfg!(windows) && permissions.is_some_and(|p| p.readonly());
+    // place, so read-only comes off the old file first, and whichever file is there after gets the old attributes.
+    let readonly = cfg!(windows) && old.as_ref().is_some_and(|old| old.permissions().readonly());
     if readonly {
         set_readonly(path, false)?;
     }
@@ -188,7 +188,7 @@ pub fn replace(path: &Path, contents: &[u8]) -> crate::Result<()> {
             e.error
         })
     });
-    let restored = if readonly { set_readonly(path, true) } else { Ok(()) };
+    let restored = old.as_ref().map_or(Ok(()), |old| platform::keep_attributes(old, path));
     persisted.map_err(|e| platform::explain(&e, &[path]))?;
     restored
 }

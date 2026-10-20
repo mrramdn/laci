@@ -158,6 +158,11 @@ pub fn explain(error: &io::Error, _paths: &[&Path]) -> String {
     error.to_string()
 }
 
+/// A file's mode is set before it is put in place, and no other attribute is kept.
+pub fn keep_attributes(_meta: &Metadata, _dest: &Path) -> Result<()> {
+    Ok(())
+}
+
 /// Links that pnpm makes lead to their target by a relative path, so they move along with the folder.
 pub fn move_notes(_from: &Path, _to: &Path) -> Vec<(&'static str, &'static str)> {
     Vec::new()

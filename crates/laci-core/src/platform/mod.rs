@@ -168,7 +168,8 @@ pub fn rename_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
 }
 
 /// Gives `dest` the permissions and the access and modification times in `meta`. On Windows the permissions are the
-/// read-only attribute, and the creation time comes along too.
+/// read-only attribute, and the creation time comes along too, with the hidden, system and archive attributes and
+/// whether Search indexes the file.
 pub fn preserve(meta: &Metadata, dest: &Path) -> Result<()> {
     os::preserve(meta, dest)
 }
@@ -177,6 +178,13 @@ pub fn preserve(meta: &Metadata, dest: &Path) -> Result<()> {
 /// read-only file goes too, also on FAT32 and exFAT, as on USB sticks, where std's delete refuses one.
 pub fn remove_all(path: &Path) -> io::Result<()> {
     os::remove_all(path)
+}
+
+/// Gives `dest`, a file just put in place of the one `meta` was read from, what Windows keeps beside a file's content:
+/// the read-only, hidden and system attributes and whether Search indexes it, with archive set, as any write sets it.
+/// Elsewhere nothing is done: a file gets its permissions before it is put in place.
+pub fn keep_attributes(meta: &Metadata, dest: &Path) -> Result<()> {
+    os::keep_attributes(meta, dest)
 }
 
 /// Runs `step`, a change to files such as a rename, a copy or a removal. On Windows it tries again for about two

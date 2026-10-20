@@ -10,7 +10,7 @@ pub use super::unix::{
     Group, IDENTITY_FIELDS, Lock, change_stamp, copy_link, exited, file_change_stamp, home_dir, identity, lock,
     preserve, remove_all, rename_noreplace, spawn_group, which,
 };
-pub use super::unix::{explain, move_notes, open_nofollow, retry};
+pub use super::unix::{explain, keep_attributes, move_notes, open_nofollow, retry};
 pub use dirs::user_dirs;
 pub use files::{hidden_flag, placeholder, system_folder};
 pub use process::{ensure_idle, pid_alive, processes_in};

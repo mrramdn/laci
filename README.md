@@ -7,17 +7,19 @@
 laci shows every folder like a file manager, and for each project it adds its git state, README summary, stack, open to-dos, and the Claude Code, Codex or other agent sessions that worked in it. It warns you about work that exists only on this disk. When you move or archive a project, its agent history and memory move with it. laci logs its changes, offers Undo for most actions, and keeps itself up to date as you work.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/today-dark.png">
-  <img alt="The Today view: work that could be lost, projects to pick up again, and open to-dos" src="docs/screenshots/today-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/simple-dark.png">
+  <img alt="Simple's Home: the one project that needs you most, the others that need you, what's next and where you left off" src="docs/screenshots/simple-light.png">
 </picture>
 
-> Status: 2.5.2, Linux x86-64. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
+> Status: 3.0, for Linux on x86-64. Rust + Tauri 2, with a React interface. See the [changelog](CHANGELOG.md).
 
 ## Contents
 
+- [Two designs: Simple and Detailed](#two-designs-simple-and-detailed)
+- [Install on Linux](#install-on-linux)
+- [Updates and privacy](#updates-and-privacy)
 - [Why](#why)
 - [What it does](#what-it-does)
-- [Getting started](#getting-started)
 - [Using it](#using-it)
 - [How it works](#how-it-works)
 - [The `.laci.md` file](#the-lacimd-file)
@@ -28,6 +30,144 @@ laci shows every folder like a file manager, and for each project it adds its gi
 - [Roadmap](#roadmap)
 - [FAQ](#faq)
 - [License](#license)
+
+## Two designs: Simple and Detailed
+
+Laci has two designs. Both show the same projects, AI chats, to-dos and Log, and both can undo the same changes. Only how they look and how much they show at once differ.
+
+**Simple** is new in 3.0, made for people who are new to Git and coding agents, and it is what a new install opens in. It says things in plain words ("saved version" for a commit, "upload" for a push) and names the Git word in Help. It shows one suggestion at a time, offers Archive before Delete, and waits 5 seconds, with Cancel, before anything that can't be undone. The picture at the top is Simple's Home, light or dark as your system is.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/today-dark.png">
+  <img alt="Detailed's Today: deadlines, work that could be lost, and projects to pick up again, in dense lists" src="docs/screenshots/today-light.png">
+</picture>
+
+**Detailed** is the classic view: paths, Git details and long lists, all at once. If you used Laci 2, it stays your design after the update, and a card on Today offers Simple once. The picture above is Detailed's Today.
+
+Switch any time, and the change shows at once:
+
+- **Settings › Appearance**: pick Simple or Detailed.
+- **The toggle at the foot of the sidebar**: *Simple | Detailed*, in both designs.
+- **<kbd>Ctrl</kbd> <kbd>K</kbd>**: *Switch to Simple view* or *Switch to Detailed view*.
+
+The choice is saved as `design` in [`config.json`](#configuration). The two designs name their places differently:
+
+| Simple | Detailed |
+| --- | --- |
+| Home | Today |
+| Projects | The folders under *Places*, and Browse |
+| AI helpers: Chats, Summaries, Tools | Agents, and Reports |
+| Clean up | Tidy up |
+| Activity | Log |
+| Settings, Help | Settings, Help |
+
+[What it does](#what-it-does) uses Detailed's names; everything there works in Simple too.
+
+## Install on Linux
+
+Laci runs on Linux. Windows and macOS versions won't be made: porting is complex, and more than its maintainer can take on for now.
+
+### Requirements
+
+- Linux on x86-64, with WebKitGTK 4.1.
+- `git`.
+- `gio` (from GLib), for moving things to the Trash.
+- `xdg-open` (from xdg-utils), for opening files and links.
+- The AppImage may need FUSE 2: the package `libfuse2t64` on Ubuntu 24.04 (`libfuse2` on older ones) or `fuse-libs` on Fedora. Without it, start the AppImage with `--appimage-extract-and-run`.
+- Optional: `gh` or `glab`, to create an online copy of a new project from *New project*.
+
+The deb and rpm install what they need themselves.
+
+### Download
+
+Every release is on the [releases page](https://github.com/mrramdn/laci/releases/latest). Pick one file:
+
+| File | For | Updates |
+| --- | --- | --- |
+| `laci_<version>_amd64.AppImage` | Any Linux; nothing to install | Laci updates it itself, after asking you |
+| `laci_<version>_amd64.deb` | Ubuntu, Debian, Linux Mint, Pop!_OS | Download the new deb from the releases page |
+| `laci-<version>-1.x86_64.rpm` | Fedora and others that use dnf | Download the new rpm from the releases page |
+
+To check that a download is the one GitHub built, follow [Verify a download](RELEASING.md#verify-a-download).
+
+### The AppImage
+
+1. Download the AppImage and put it where it can stay, for example in `~/Applications`.
+2. Make it executable: in your file manager, open its *Properties* and allow running it as a program, or in a terminal:
+
+   ```sh
+   chmod +x ~/Applications/laci_*_amd64.AppImage
+   ```
+
+3. Double-click it, or run `~/Applications/laci_*_amd64.AppImage`.
+
+When a new version is out, Laci can download and install it for you, after you click (see [Updates and privacy](#updates-and-privacy)). Keep the AppImage where it is once your agents use Laci through [MCP](#agents-mcp): they start that file.
+
+### The deb or the rpm
+
+In a terminal, in the folder you downloaded it to:
+
+```sh
+sudo apt install ./laci_*_amd64.deb      # Ubuntu, Debian and the like
+sudo dnf install ./laci-*.x86_64.rpm     # Fedora
+```
+
+Laci then appears with your other apps, and the `laci` command is installed for the [CLI](#cli) and [MCP](#agents-mcp). For a new version, download the new file and install it the same way: apt and dnf replace the old one. Laci tells you when one is out, with a link to its page, if you let it look.
+
+To remove Laci, run `sudo apt remove laci` or `sudo dnf remove laci`, or delete the AppImage. Your settings and Laci's own data stay in `~/.config/laci` and `~/.local/share/laci` (see [Configuration](#configuration)).
+
+### The first launch
+
+A fresh install starts with no folders or connectors, and does not look for repositories under Home by itself. The first launch asks:
+
+1. Which folders hold your projects. *Suggest folders* finds some on request, and mounted drives work too.
+2. Which AI tools you use: Claude Code, Codex, Antigravity, or none.
+3. Which editor, file manager and terminal to open things with.
+4. Whether Laci may look for new versions once a day (see below).
+5. How Laci should look: Simple or Detailed.
+
+You can change all of these in Settings. If you used Laci 1 or 2, your config is read as it is; nothing to import. Journals, backups, the Log and `.laci.md` keep their formats.
+
+The app opens with its last scan while it checks for changes. Fonts are bundled. The desktop app, the CLI and the MCP server share one Rust engine; nothing needs Node or Electron.
+
+### Build from source
+
+Install Rust (the pinned version is in `rust-toolchain.toml`), Node 24+ and pnpm, and the platform dependencies in [Tauri's prerequisites](https://v2.tauri.app/start/prerequisites/). On Debian/Ubuntu:
+
+```sh
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev librsvg2-dev patchelf git libglib2.0-bin xdg-utils
+pnpm install
+pnpm build
+```
+
+The packages appear in `target/release/bundle/`. Run `target/release/laci`, or install that binary and its launcher with `sh scripts/install-desktop.sh`. A copy you built or installed that way doesn't update itself; Laci links to the release page instead.
+
+## Updates and privacy
+
+Laci asks before it looks for new versions, and never installs one without a click.
+
+**What a check does.** Once a day, if you said yes, Laci asks GitHub for one small file, `latest.json`, from the newest release of this repository. That is one HTTPS request (GitHub may redirect it to its download server). Like any visit to a website, it shows GitHub your IP address, and the request carries the user agent of the updater library Laci uses (`tauri-plugin-updater` and its version). It sends nothing about your projects, needs no account, and Laci has no telemetry. If you said no, Laci makes no request at all unless you press *Check now* in Settings.
+
+<img alt="The card that asks once: New versions of Laci, with Check daily and Don't check" src="docs/screenshots/updates-card.png" width="364">
+
+**Who is asked.** A new install asks on its first-run screen. If you used Laci 2, or skipped that screen, a card on Home (Simple) or Today (Detailed) asks once, with *Check daily* and *Don't check*, and stays until you answer.
+
+**What happens when there is a new version.**
+
+- **AppImage:** Laci tells you (Home's card in Simple; a badge at the foot of the sidebar in Detailed) and shows what's new. *Install* downloads it, checks that it carries Laci's signature, and replaces your AppImage; *Restart* finishes it, and closes Laci's terminals and the AI chats running in them. Nothing is downloaded before you click, and a download without the signature is refused.
+- **deb, rpm, or a copy you built:** Laci only tells you, with a link to the release page. Your package manager installs the new version.
+
+**Turn it off or on** in Settings: *Updates* in Simple, *About & updates* in Detailed. Or set the `updates` key in `~/.config/laci/config.json`, beside the keys already there:
+
+```json
+{
+  "roots": ["~/project"],
+  "updates": "off"
+}
+```
+
+`"off"` stops the daily check and `"daily"` turns it on. Without the key, Laci doesn't look, and asks you once.
 
 ## Why
 
@@ -42,6 +182,8 @@ laci puts all of this in one place and makes moving projects safe.
 
 ## What it does
 
+The sections below use Detailed's names. Simple has the same features under its own names (see [the table](#two-designs-simple-and-detailed)) and in plainer words.
+
 ### Today: what needs you
 
 The home screen answers "what should I look at?". Each list says how it's ordered.
@@ -53,6 +195,8 @@ The home screen answers "what should I look at?". Each list says how it's ordere
 - **Handoffs**: `HANDOFF.md` or `TODO.md` files that still have open items under a TODO heading.
 
 Each list opens the tab that fits it: a risk opens Health, a recent project opens Agents, a deadline opens To-do.
+
+Simple's Home puts the one project that needs you most on top, with its fix and *Ask Claude Code to do it* (or your AI) beside it, then the others that need you, what's next and where you left off.
 
 ### Review with an agent
 
@@ -83,7 +227,13 @@ Select a project to see its summary, status, priority, deadline, remotes, branch
 - **Agents**: sessions, memory and plans from every connected tool.
 - **README**: the rendered README.
 
-![A project's details: status, priority, deadline, remote, stack, checks and commit activity](docs/screenshots/project.png)
+![A project's details beside Today: status, priority, deadline, remote, stack and its checks](docs/screenshots/project.png)
+
+**Secrets stay off the internet.** Before a first commit, a new remote or a push, Laci looks for files that look like passwords or keys, such as `.env`, by their names only. If it finds any, it lists them: **Keep these out** adds them to `.gitignore`, with Undo, and *Continue* goes on without.
+
+In Simple, a project's page starts with *Is it safe?*: each problem in plain words, the button that fixes it, and *Ask Claude Code to do it*, which asks your AI to show each command first and never to force a push, rewrite history or delete a branch.
+
+![Simple's project page: Is it safe?, About, Recent changes and To-do](docs/screenshots/simple-project.png)
 
 ### Tidy up
 
@@ -114,13 +264,17 @@ If a selected destination folder or drive has been replaced, archiving stops. Ch
 
 The whole folder, including ignored files, moves to system Trash. Ignored files are not backed up by Git. Restore the project through your file manager; there is no Log Undo for this action. Agent history stored outside the project stays intact and can appear detached until the folder is restored. If the filesystem does not support system Trash, removal fails and the folder remains in place; choose Archive instead.
 
+Simple has its own sheets for these: *Archive* is offered first, *Delete* lists the ignored files that only this computer has and asks you to type the project's name before they go, and *Free up space* says what it deletes for good. Whatever can't be undone waits 5 seconds, with Cancel, before it runs.
+
 ### Log
 
 Every change laci makes, from the app or from an agent through MCP: moves, archives, Tidy fixes, deleted sessions, status, priority and deadline, to-dos, notes, connectors, settings and new projects. Moves expand to show what went where. Search it, or show only what can still be undone. Most changes have an *Undo*; simple edits that were changed again later say so instead of overwriting the newer change.
 
 Undoing a deleted to-do requires its `.laci.md` to remain unchanged after deletion. If you edited it afterward, undo the newer edit first or restore the to-do manually.
 
-![The Log: an archive expanded to show its steps, and edits made by an agent](docs/screenshots/log.png)
+Simple calls it Activity and says each change in plain words, such as "Reconnected the AI chats of shop" or "Set the priority of shop to high", with *What changed* for the details, *By me* and *By AI* filters, and Undo on each row.
+
+![The Log after a Tidy fix, a priority change and an archive, each with Undo](docs/screenshots/log.png)
 
 ### Agents
 
@@ -208,33 +362,6 @@ laci ships an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Cod
 
 `laci doctor` prints what could be lost, open checkboxes and tidy-up suggestions without opening the app, and says when the reports folder can't be read.
 
-## Getting started
-
-### Requirements
-
-Laci runs on Linux. Windows and macOS versions won't be made: porting is complex, and more than its maintainer can take on for now.
-
-Installed builds require Linux, WebKitGTK 4.1, git, `gio` (GLib) for trash operations, and `xdg-open` (xdg-utils) for opening files and URLs. To build from source, install Node and Rust too. `gh` and `glab` are optional, for creating remote repositories from *New project*.
-
-### Install
-
-Install the `.deb` or `.rpm` from a local build, or run its AppImage. AppImages may need FUSE 2; `./laci.AppImage --appimage-extract-and-run` works without mounting it. Packages install a launcher and the `laci` binary.
-
-To build from source, install Rust (the pinned version is in `rust-toolchain.toml`), Node 24+ and pnpm. Install the platform dependencies in [Tauri's prerequisites](https://v2.tauri.app/start/prerequisites/). On Debian/Ubuntu:
-
-```sh
-sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
-  libxdo-dev libssl-dev librsvg2-dev patchelf git libglib2.0-bin xdg-utils
-pnpm install
-pnpm build
-```
-
-The packages appear in `target/release/bundle/`. Run `target/release/laci`, or install that binary and its launcher with `sh scripts/install-desktop.sh`.
-
-A fresh install starts with no selected folders or connectors, and does not discover repositories under Home automatically. An empty scan selection is valid. Settings can suggest folders on request; unavailable drives remain listed. The first launch asks which folders hold your projects, which AI tools you use, and which editor, file manager and terminal to open things with. You can change these in Settings. Your existing v1 config is read directly; no import is needed. Journals, backups, activity and `.laci.md` keep their v1 formats.
-
-The app opens with its cached scan while checking for changes. Fonts are bundled locally. The desktop, CLI and MCP server share the Rust engine; installed builds run without Node or Electron.
-
 ## Using it
 
 ### Desktop app
@@ -242,19 +369,27 @@ The app opens with its cached scan while checking for changes. Fonts are bundled
 | Key | Action |
 | --- | --- |
 | <kbd>Ctrl</kbd> <kbd>K</kbd> | Jump to any project, folder or action |
+| <kbd>?</kbd> or <kbd>Ctrl</kbd> <kbd>/</kbd> | Help in Simple, Keyboard shortcuts in Detailed |
 | <kbd>F4</kbd> or <kbd>Ctrl</kbd> <kbd>`</kbd> | Show or hide the terminal |
-| <kbd>F6</kbd> / <kbd>Shift</kbd> <kbd>F6</kbd> | Move between the sidebar, the list, the details panel and the terminal |
+| <kbd>F6</kbd> / <kbd>Shift</kbd> <kbd>F6</kbd> | Move between the parts of the window: the sidebar, the page, the details panel and the terminal |
+| <kbd>Esc</kbd> | Close a menu, a sheet or a dialog, or Detailed's details panel |
+
+In Detailed's lists and folders:
+
+| Key | Action |
+| --- | --- |
 | <kbd>Ctrl</kbd> <kbd>H</kbd> | Show or hide hidden files |
 | <kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd> | Move through lists and open |
 | <kbd>←</kbd> <kbd>→</kbd> | Collapse or expand a folder in the sidebar tree |
 | <kbd>Backspace</kbd> | Go up one folder |
-| <kbd>Esc</kbd> | Close the details panel, a menu or a dialog |
+
+Every button also works with Tab and Enter.
 
 Escape closes one active layer at a time. A dropdown closes first; a form asks whether to keep editing or discard its draft. While a dialog is open, Tab stays inside it, and the palette and terminal shortcuts are inactive. F4 also works while typing in the terminal; it stays blocked while the command palette is open.
 
-In the details panel, click **Status**, **Priority** or **Deadline** to change them. They are saved to the project's [`.laci.md`](#the-lacimd-file). **Editor** and the file manager button open the apps you picked in Settings. The theme switch (system, light, dark) is at the bottom of the sidebar.
+In the details panel, click **Status**, **Priority** or **Deadline** to change them. They are saved to the project's [`.laci.md`](#the-lacimd-file). **Editor** and the file manager button open the apps you picked in Settings. The theme (like the system, light or dark) is at the foot of the sidebar in both designs.
 
-The interface runs inside Tauri’s native WebKit webview. Use `pnpm dev` when developing it.
+The window can be as small as 720 × 560. The interface runs inside Tauri’s native WebKit webview. Use `pnpm dev` when developing it.
 
 ### CLI
 
@@ -266,23 +401,29 @@ laci json      # the complete scan as JSON
 
 ### Agents (MCP)
 
-The Agents page can set this up for you. Each agent card shows whether Laci's MCP server is set up: "Set up", "Not set up", "Points elsewhere" or "Switched off". **Set up…** shows the exact command or JSON first, then applies it. The steps below are the manual fallback.
+Laci can set this up for you. In Detailed, each card on the Agents page says whether Laci's MCP server is set up for that agent: "Set up", "Not set up", "Points elsewhere" or "Switched off", with **Set up…** or **Fix…**. In Simple, the same is under **AI helpers › Tools**, as *Let it use Laci*. Either way Laci shows the exact command or JSON first, then runs the agent's own command (or edits its JSON settings, after keeping a copy in `~/.local/share/laci/mcp-backups/`). The steps below do the same by hand.
 
-Register the installed binary as a stdio server. The MCP path runs without creating a window.
+The server is `laci mcp`, over stdio; it starts no window. Use the full path of your Laci:
+
+- the deb or rpm: `/usr/bin/laci`;
+- the AppImage: the AppImage file itself, such as `/home/you/Applications/laci_3.0.0_amd64.AppImage` (set it up again if you move or rename the file);
+- a build installed with `scripts/install-desktop.sh`: `/home/you/.local/bin/laci`.
 
 ```sh
-claude mcp add laci --scope user -- /home/you/.local/bin/laci mcp
-agy mcp add laci /home/you/.local/bin/laci mcp
+claude mcp add laci --scope user -- /usr/bin/laci mcp     # Claude Code
+codex mcp add laci -- /usr/bin/laci mcp                   # Codex
+agy mcp add laci /usr/bin/laci mcp                        # Antigravity
 ```
 
+Codex keeps it in `~/.codex/config.toml`, which you can also edit yourself:
+
 ```toml
-# Codex: ~/.codex/config.toml
 [mcp_servers.laci]
-command = "/home/you/.local/bin/laci"
+command = "/usr/bin/laci"
 args = ["mcp"]
 ```
 
-Codex can also add it with a command: `codex mcp add laci -- /home/you/.local/bin/laci mcp`.
+Any other agent that speaks MCP over stdio can start the same command with the argument `mcp`. To have Laci set it up from its Agents page, describe the agent with **Add another AI tool** and name its MCP settings file (JSON); in `config.json` its `mcp` entry can also give the agent's own add and remove commands.
 
 Then ask your agent things like *"which projects could lose work?"*, *"archive dummy2"*, *"move ~/Downloads/foo into ~/project/clients"* or *"start a new project called shop-api in ~/project/clients"*.
 
@@ -430,14 +571,18 @@ One line per thing still to do, most important first, or `Nothing open.`
 | Free space | Deletes `node_modules`, `.next` and similar folders for good; an install or build brings them back |
 | Back up logs | Copies agent logs to `~/.local/share/laci/history` |
 | Reports folder | Read-only: lists, reads and searches the reports, never writes there |
-| New project | Makes the folder; creates a remote repo only if you pick one |
+| New project | Makes the folder; creates a remote repo only if you pick one. A template's own Git repository stays behind |
+| First commit, new remote, push | Looks for files that look like secrets first, by name only, and offers to keep them out |
+| Update check | Only if you allowed it, or when you press *Check now*: asks GitHub for `latest.json`. Only the AppImage installs an update, after a click, and only one signed with Laci's key |
 
 - **Undo.** Every move and rewrite is written to `~/.local/share/laci/journal/` *before* it happens. Rewritten files are kept in `~/.local/share/laci/backup/`. Undo restores them byte for byte. If a step fails midway, laci rolls back what it already did.
 - **Archive and trash recovery.** Undoing an archive restores the saved `.laci.md` in full and can replace edits made while archived. Recover trashed orphan history from system Trash; journal Undo does not restore it. Deleted dependencies and build output come back with the next install or build. Pure Trash actions have no Laci Undo. Mixed actions explain which moves or edits Undo can restore.
 - **Log.** Every change is also listed in `~/.local/share/laci/activity.jsonl`, which the Log page reads. Undo from the Log goes through the same checks as the app, and stays inside home or explicitly selected workspace folders.
-- **Busy folders are refused.** If a running process (a `claude` session, a dev server) has its working directory inside a folder, laci won't move it.
+- **Busy folders are refused.** If a running process (a `claude` session, a dev server) has its working directory inside a folder, laci won't move it. If Laci can't tell, for example because `/proc` can't be read, it refuses too.
+- **Names are names.** Names Laci reads from a project, such as Git tags, remotes and branches, are passed to the programs it runs as names, never as options, and so are the ones in the prompts it gives your AI.
 - **One change at a time.** A lock file keeps the app and agents from changing files at once.
-- **Local only.** The React interface uses Tauri IPC, with no local HTTP server. Fonts are bundled. Rendered Markdown is sanitized, and only scanned project folders and the reports folder can serve local images. There is no telemetry.
+- **Your settings are kept.** If `config.json` is there but can't be read, Laci won't write over it, and says so.
+- **Local only.** The React interface uses Tauri IPC, with no local HTTP server. Fonts are bundled. Rendered Markdown is sanitized, and only scanned project folders and the reports folder can serve local images. There is no telemetry. The only request Laci makes by itself is the update check, and only if you allowed it (see [Updates and privacy](#updates-and-privacy)).
 
 ## Configuration
 
@@ -455,6 +600,8 @@ Settings are saved in `~/.config/laci/config.json` (or under `$XDG_CONFIG_HOME`)
 | `custom` | Connectors you described yourself |
 | `apps` | `terminal`, `editor` and `files`: the programs laci opens things with |
 | `theme` | `light` or `dark`; missing means follow the system |
+| `design` | `simple` or `detailed`; missing means Detailed for a setup from Laci 2 and Simple for a new one |
+| `updates` | `daily` to look for new versions once a day, `off` never to look by itself; missing means Laci asks once |
 
 Environment variables win over the file, for one-off runs:
 
@@ -464,7 +611,7 @@ Environment variables win over the file, for one-off runs:
 | `LACI_TERMINAL` | from Settings, else `kitty` | External terminal |
 | `LACI_EDITOR` | from Settings, else `code` | Editor opened by **Editor** |
 | `LACI_FILES` | from Settings, else `dolphin` | File manager |
-| `LACI_DEBUG` | off | Also log file watcher events to the debug log |
+| `LACI_UPDATE_ENDPOINT` | the newest release's `latest.json` | Another `https://` address for the update check, to try a release candidate |
 
 Other files laci keeps:
 
@@ -472,16 +619,18 @@ Other files laci keeps:
 | --- | --- |
 | `~/.config/laci/templates/` | Starting points for *New project*: each folder is one template |
 | `~/.local/share/laci/` | Undo journals, backups, the Log (`activity.jsonl`) and the debug log (`laci.log`) |
-| `~/.cache/laci/` | What laci learned from agent logs and reports, and the last scan. Safe to delete |
+| `~/.cache/laci/` | What laci learned from agent logs and reports, the last scan, and when Laci last looked for a new version. Safe to delete |
 
 ## Development
 
 ```text
 crates/laci-core/  scanner, readers, connectors, moves, journal, activity, config
 src-tauri/        desktop IPC, watchers, PTY sessions, CLI and stdio MCP
-ui/               React/TypeScript components, styles and local assets
+ui/               React/TypeScript: the shared store and actions, Detailed (ui/src/views)
+                  and Simple (ui/src/simple), styles and local assets
 prototype/        preserved interface reference
 scripts/          desktop install, isolated demo and validation
+docs/             architecture, screenshots and the brand (the open-drawer mark)
 ```
 
 ```sh
@@ -490,6 +639,8 @@ pnpm typecheck
 pnpm lint
 pnpm test
 pnpm build               # AppImage, deb and rpm
+pnpm ui:preview          # the interface in a browser, with the desktop mocked: /preview.html
+pnpm test:preview        # draws every screen of both designs in both themes
 ```
 
 Use an isolated demo to try write actions:
@@ -502,6 +653,12 @@ LACI_HOME=/tmp/laci-demo pnpm dev
 `LACI_HOME` changes only the locations laci reads and writes. It leaves your shell's `HOME` and XDG variables alone. See [CONTRIBUTING.md](CONTRIBUTING.md) for native window checks and demo scan benchmarks, and [architecture](docs/ARCHITECTURE.md) for the engine and disk contracts.
 
 ## Roadmap
+
+Next:
+
+- **3.0.0.** Release candidates come first: 3.0.0-rc.1, then rc.2, which also tries the in-app update from rc.1. Then 3.0.0.
+
+Later:
 
 - Broader live agent orchestration
 - File operations in the browser: copy, rename, individual-file delete, preview
@@ -522,7 +679,10 @@ laci reads every agent log once to see which folder each belongs to. After that 
 Normally no. laci watches for changes and updates by itself. A full scan is there in case something looks off.
 
 **Does it send my code anywhere?**
-Scanning stays local. If you launch an agent, clone a repository, create a remote or run a generator that downloads packages, that tool uses its own network connection and settings.
+No. Scanning stays local, and Laci has no telemetry. Laci itself only asks GitHub which version is newest, once a day, if you allowed it ([Updates and privacy](#updates-and-privacy)). If you launch an agent, clone a repository, create a remote or run a generator that downloads packages, that tool uses its own network connection and settings.
+
+**Which design should I use?**
+Simple if Git or coding agents are new to you, or if you want Laci to tell you what to do next. Detailed if you want every path, Git detail and list at once. Both do the same things, and you can switch at any time.
 
 ## License
 

@@ -633,6 +633,4 @@ export interface Prefs {
   configured: boolean;
   /** Where config.json is, with the home folder as `~`. */
   configPath: string;
-  /** linux, macos or windows. */
-  os: string;
 }

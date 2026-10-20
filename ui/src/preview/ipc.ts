@@ -27,7 +27,6 @@ import raw from "./fixtures.json";
 
 type Body = Record<string, unknown>;
 type Handler = (body: Body) => unknown;
-export type Os = "linux" | "macos" | "windows";
 export type Design = "detailed" | "simple";
 export type Theme = "light" | "dark" | "system";
 
@@ -94,7 +93,6 @@ let mcp: McpStatus[];
 let settings: {
   theme: Theme;
   design: Design;
-  os: Os;
   updates: "daily" | "off" | null;
 };
 /** Where the preview's make-believe update stands. Nothing is ever downloaded. */
@@ -734,7 +732,6 @@ const desktop: Record<string, Handler> = {
     updates: settings.updates,
     configured: true,
     configPath: "~/.config/laci/config.json",
-    os: settings.os,
   }),
   design: (body) => {
     settings.design = text(body, "design") as Design;
@@ -941,7 +938,7 @@ const terminals: Record<string, (args: Body) => unknown> = {
 terminals["plugin:app|version"] = () => PREVIEW_VERSION;
 
 /** Stands in for the desktop. Call before the window's own code is loaded. */
-export function installIpc(options: { os: Os; design: Design; theme: Theme }) {
+export function installIpc(options: { design: Design; theme: Theme }) {
   snapshot = clone(fixtures.snapshot);
   log = clone(fixtures.log.entries);
   storage = clone(fixtures.storage);
@@ -954,7 +951,7 @@ export function installIpc(options: { os: Os; design: Design; theme: Theme }) {
     current: PREVIEW_VERSION,
     install: "click",
   };
-  mockConvertFileSrc(options.os === "windows" ? "windows" : "linux");
+  mockConvertFileSrc("linux");
   mockIPC(
     (command, payload) => {
       if (command === "request") {

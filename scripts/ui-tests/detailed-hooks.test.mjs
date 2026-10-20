@@ -145,7 +145,7 @@ function page() {
     removeEventListener: noop,
   };
   document.documentElement = new PageElement(document, "html");
-  document.documentElement.dataset = { os: "linux", design: "detailed" };
+  document.documentElement.dataset = { design: "detailed" };
   document.body = document.documentElement.appendChild(new PageElement(document, "body"));
   const window = {
     document,
@@ -214,7 +214,6 @@ async function detailed({ holdMarkdown = false, edit = noop } = {}) {
       design: "detailed",
       configured: true,
       configPath: "~/.config/laci/config.json",
-      os: "linux",
     }),
     snapshot: () => scan,
     status: () => ({ type: "status", busy: false, revision, historyPending: false }),

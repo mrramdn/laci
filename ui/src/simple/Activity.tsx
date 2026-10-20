@@ -152,7 +152,7 @@ const FORMS: Record<string, [RegExp, Saying][]> = {
     [/^Deleted (\d+) sessions$/, ([chats]) => say.deletedChats(Number(chats))],
   ],
   other: [
-    [/^Moved (.+) to (?:system Trash|the Recycle Bin)$/, ([name]) => say.trashed(name)],
+    [/^Moved (.+) to system Trash$/, ([name]) => say.trashed(name)],
     [/^Dismissed: /, () => say.hidSuggestion],
     [/^Suggested again: /, () => say.suggestedAgain],
     [/^Backed up (\d+) agent history files?$/, ([files]) => say.copied(Number(files))],

@@ -16,10 +16,8 @@ import {
   joinPath,
   parentOf,
   tilde,
-  windowsNameProblem,
   within,
 } from "./helpers";
-import { OS } from "./platform";
 import type { Change, NewInfo, TerminalInfo } from "./types";
 import { useTerms } from "./terminal-api";
 import { detailedSettings as said } from "./words";
@@ -69,10 +67,7 @@ export interface CreationJob {
   error?: string;
 }
 /** A folder to start from, as the box for one shows it. */
-const STARTER =
-  OS === "windows"
-    ? "C:\\absolute\\path\\to\\starter"
-    : "/absolute/path/to/starter";
+const STARTER = "/absolute/path/to/starter";
 function openCreated(draft: CreationDraft, result: Change) {
   useApp
     .getState()
@@ -125,8 +120,6 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
   const [created, setCreated] = useState<Change | null>(null);
   const pending = useRef(false);
   const handledJob = useRef<string | null>(null);
-  // Only Windows has names that cannot be a folder: elsewhere they are fine.
-  const nameProblem = OS === "windows" ? windowsNameProblem(draft.name) : "";
   useEffect(() => {
     let live = true;
     void api<Info>("new/info").then(
@@ -263,10 +256,6 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending.current || saving || created) return;
-    if (nameProblem) {
-      setError(nameProblem);
-      return;
-    }
     if (draft.from === "template" && !draft.template) {
       setError("Choose a local template or add a template folder first.");
       document
@@ -331,11 +320,10 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
       footer={
         <>
           <p
-            className={error || nameProblem ? "err" : "mono"}
+            className={error ? "err" : "mono"}
             role={error ? "alert" : "status"}
           >
             {error ||
-              nameProblem ||
               (created
                 ? `Created ${created.path}`
                 : tilde(
@@ -390,7 +378,7 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
               )}
               <button
                 className="btn primary"
-                disabled={saving || s.historyPending || !!nameProblem}
+                disabled={saving || s.historyPending}
               >
                 {saving ? "Creating…" : "Create project"}
               </button>
@@ -412,7 +400,6 @@ export function NewProject({ restored }: { restored?: CreationJob }) {
               maxLength={100}
               autoComplete="off"
               placeholder="my-app"
-              aria-invalid={nameProblem ? true : undefined}
             />
           </label>
           <label className="fld">

@@ -17,7 +17,6 @@ async function onPreview(body) {
   globalThis.window = { crypto: globalThis.crypto };
   try {
     load("preview/ipc.ts").installIpc({
-      os: "linux",
       design: "detailed",
       theme: "light",
     });

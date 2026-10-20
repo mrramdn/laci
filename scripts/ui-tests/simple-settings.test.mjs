@@ -22,7 +22,6 @@ const PREFS = {
   updates: null,
   configured: true,
   configPath: "~/.config/laci/config.json",
-  os: "linux",
 };
 
 // ── The draft ──────────────────────────────────────────────────────────────────────────────────────
@@ -55,10 +54,8 @@ export async function aProjectFolderIsAddedOnceAndRemovedByItsPath() {
   assert.deepEqual(added.roots, ["/home/demo/project", "/home/demo/work"]);
   assert.equal(model.withRoot(added, "/home/demo/work"), added, "already there");
   assert.deepEqual(model.withoutRoot(added, "/home/demo/project").roots, ["/home/demo/work"]);
-  // A Windows path is the same folder in any case and with either separator.
-  const windows = { ...saved, roots: ["C:\\Users\\Demo\\Projects"] };
-  assert.equal(model.withRoot(windows, "c:/users/demo/projects"), windows);
-  assert.deepEqual(model.withoutRoot(windows, "c:\\USERS\\demo\\projects").roots, []);
+  // Another case is another folder.
+  assert.notEqual(model.withRoot(added, "/home/demo/Work"), added);
   assert.deepEqual(model.withTool(saved, "claude", false).presets, ["codex"]);
   assert.deepEqual(model.withTool(saved, "antigravity", true).presets, ["claude", "codex", "antigravity"]);
   assert.deepEqual(
@@ -393,24 +390,21 @@ export async function aFolderFromThePickerJoinsTheProjectFoldersOnce() {
 
 export async function aWholeDiskIsNoProjectFolder() {
   const page = await settingsPage();
-  // "/", or a drive in either case and with either separator: a toast says why, and nothing changes.
-  for (const disk of ["/", "C:\\", "d:/"]) {
+  // "/": a toast says why, and nothing changes.
+  for (const disk of ["/", "//"]) {
     settingsKit.box.current.picked = disk;
     page.act(() => page.button(said.addFolder).props.onClick());
     assert.deepEqual(page.toasts.at(-1), [said.wholeDisk, said.wholeDiskNote], disk);
   }
   assert.equal(page.button(said.save), undefined, "nothing waits to be saved");
-  // A share, and a folder on a drive, are folders.
-  for (const folder of ["\\\\nas\\projects", "C:\\Users\\Demo\\Projects"]) {
-    settingsKit.box.current.picked = folder;
-    page.act(() => page.button(said.addFolder).props.onClick());
-  }
+  // A folder on another disk is a folder.
+  settingsKit.box.current.picked = "/mnt/projects";
+  page.act(() => page.button(said.addFolder).props.onClick());
   page.act(() => page.button(said.save).props.onClick());
   await page.settle();
   assert.deepEqual(page.asked("setup/save")[0][1].roots, [
     "/home/demo/project",
-    "\\\\nas\\projects",
-    "C:\\Users\\Demo\\Projects",
+    "/mnt/projects",
   ]);
 }
 
@@ -434,11 +428,11 @@ export async function homeAddsNoWholeDiskEither() {
       useApp: { setState: noop },
     },
   });
-  for (const disk of ["/", "C:\\", "d:/"]) await act.addProjectFolder(disk);
+  for (const disk of ["/", "//"]) await act.addProjectFolder(disk);
   assert.deepEqual(asked, [], "nothing is read or saved");
   assert.deepEqual(
     toasts,
-    ["/", "C:\\", "d:/"].map(() => [said.wholeDisk, said.wholeDiskNote, { error: true }]),
+    ["/", "//"].map(() => [said.wholeDisk, said.wholeDiskNote, { error: true }]),
   );
   // A folder is added as it always was, with every other setting as it is saved.
   await act.addProjectFolder("/home/demo/work");
@@ -539,7 +533,7 @@ export async function aboutSaysTheVersionAndWhereToReportAProblem() {
 async function onPreview(body) {
   globalThis.window = { crypto: globalThis.crypto };
   try {
-    load("preview/ipc.ts").installIpc({ os: "linux", design: "simple", theme: "light" });
+    load("preview/ipc.ts").installIpc({ design: "simple", theme: "light" });
     const invoke = (command, args) => window.__TAURI_INTERNALS__.invoke(command, args);
     await body((name, args = {}) => invoke("request", { name, body: args }), invoke);
   } finally {

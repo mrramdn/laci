@@ -635,7 +635,7 @@ export async function visitPage({ browser, side, shot, want, axePath, stepMs = S
     for (const font of await page.evaluate(untilFonts)) problem(`font failed to load: ${font}`);
     // The page is what the address asked for, and its clock stands where it was set.
     const state = await page.evaluate(() => ({ ...document.documentElement.dataset, now: Date.now() }));
-    for (const [key, wanted] of Object.entries({ design: shot.design, theme: shot.theme, os: "linux" }))
+    for (const [key, wanted] of Object.entries({ design: shot.design, theme: shot.theme }))
       if (state[key] !== wanted) problem(`<html> has data-${key}=${state[key]}, wanted ${wanted}`);
     if (state.now !== side.now.getTime()) problem("the clock is not held at the time of the fixtures");
     await page.evaluate(untilQuiet, [250, 5_000]);
@@ -760,7 +760,6 @@ async function prepare(options, onExit) {
     const install = spawnSync("pnpm", ["install", "--frozen-lockfile", "--prefer-offline"], {
       cwd: checkout,
       encoding: "utf8",
-      shell: process.platform === "win32",
     });
     if (install.status !== 0)
       throw new Error(

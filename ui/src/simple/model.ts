@@ -7,10 +7,7 @@ import {
   cap,
   deadlineInfo,
   deletable,
-  isWindowsPath,
   liveIssues,
-  parentOf,
-  pathKey,
   recency,
   RISK,
   sessionKey,
@@ -771,13 +768,7 @@ export function summaryLink(href: string, reports: Report[], folder: string) {
   } catch {
     // Not encoded: taken as written.
   }
-  if (isWindowsPath(folder)) {
-    if (isWindowsPath(name) && pathKey(parentOf(name)) === pathKey(folder))
-      name = base(name);
-    name = name.replace(/\\/g, "/");
-  } else if (name.startsWith(folder + "/")) {
-    name = name.slice(folder.length + 1);
-  }
+  if (name.startsWith(folder + "/")) name = name.slice(folder.length + 1);
   name = name.replace(/^\.\//, "");
   return name.includes("/") ? undefined : reports.find((r) => r.id === name);
 }
@@ -825,7 +816,7 @@ export function draftOf(info: SetupInfo): SettingsDraft {
 
 const sameFolders = (a: string[], b: string[]) =>
   a.length === b.length &&
-  a.every((path) => b.some((other) => pathKey(other) === pathKey(path)));
+  a.every((path) => b.includes(path));
 const sameIds = (a: string[], b: string[]) =>
   a.length === b.length && a.every((id) => b.includes(id));
 
@@ -843,9 +834,9 @@ export function draftChanged(draft: SettingsDraft, saved: SettingsDraft) {
   );
 }
 
-/** The draft with `path` among the project folders, once: on Windows, case doesn't make another. */
+/** The draft with `path` among the project folders, once. */
 export function withRoot(draft: SettingsDraft, path: string): SettingsDraft {
-  return draft.roots.some((root) => pathKey(root) === pathKey(path))
+  return draft.roots.includes(path)
     ? draft
     : { ...draft, roots: [...draft.roots, path] };
 }
@@ -854,7 +845,7 @@ export function withRoot(draft: SettingsDraft, path: string): SettingsDraft {
 export function withoutRoot(draft: SettingsDraft, path: string): SettingsDraft {
   return {
     ...draft,
-    roots: draft.roots.filter((root) => pathKey(root) !== pathKey(path)),
+    roots: draft.roots.filter((root) => root !== path),
   };
 }
 
@@ -870,7 +861,7 @@ export function suggestedFolders(
   roots: string[],
 ) {
   return candidates
-    .filter((c) => !roots.some((root) => pathKey(root) === pathKey(c.path)))
+    .filter((c) => !roots.includes(c.path))
     .sort((a, b) => b.repos - a.repos);
 }
 

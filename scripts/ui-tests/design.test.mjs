@@ -70,7 +70,6 @@ const prefs = (choices) => ({
   updates: null,
   configured: true,
   configPath: "~/.config/laci/config.json",
-  os: "linux",
   ...choices,
 });
 const pick = (state, ...keys) =>

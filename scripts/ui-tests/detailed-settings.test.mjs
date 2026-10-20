@@ -32,7 +32,6 @@ const PREFS = {
   updates: null,
   configured: true,
   configPath: "~/.config/laci/config.json",
-  os: "linux",
 };
 const errorText = (error) => (error instanceof Error ? error.message : String(error));
 const BUSY = "Laci is busy with a change. Update when it's done.";
@@ -94,17 +93,16 @@ const type = (page, host, value) => page.act(() => host.props.onChange({ target:
 /**
  * Settings.tsx drawn with `first` or not, on a desktop that answers from `desk`: change `desk.status`,
  * `desk.found` (what a check finds) and `desk.refuse` (a request's name to why it is refused) as a test
- * needs. `os` is the system the window says it runs on.
+ * needs.
  */
 async function settingsPage({
   first = false,
-  os = "linux",
   info = INFO,
   prefs = PREFS,
   status: stands = status("idle", { enabled: false }),
 } = {}) {
   const page = standIn();
-  page.document.documentElement = { dataset: { os } };
+  page.document.documentElement = { dataset: {} };
   const box = { picked: `${HOME}/work` };
   const asked = [];
   const toasts = [];
@@ -321,17 +319,6 @@ export async function aFolderChosenIsAddedAtOnceAndATypedOneStillWorks() {
   assert.equal(folders(p).length, 3);
 }
 
-export async function aWindowsFolderChosenInAnotherSpellingIsTheOneListed() {
-  const p = await settingsPage({
-    info: { ...INFO, roots: [], candidates: [{ path: "C:\\Users\\Demo\\Projects", repos: 3 }] },
-  });
-  assert.deepEqual(folders(p), [["C:\\Users\\Demo\\Projects", false]]);
-  // The picker may spell the drive in lower case, with / and a slash at the end.
-  p.box.picked = "c:/users/demo/projects/";
-  p.act(() => picker(p, said.addFolderTitle).props.onClick());
-  assert.deepEqual(folders(p), [["C:\\Users\\Demo\\Projects", true]], "the folder in the list is ticked, not listed twice");
-}
-
 export async function theWholeDiskIsNotAFolderToKeepProjectsIn() {
   const p = await settingsPage();
   p.box.picked = "/";
@@ -344,35 +331,6 @@ export async function theWholeDiskIsNotAFolderToKeepProjectsIn() {
   q.act(() => q.find((n) => n.type === "form").props.onSubmit({ preventDefault: noop }));
   assert.deepEqual(folders(q), [["~/project", true]]);
   assert.equal(alert(q), undefined);
-}
-
-export async function aWindowsDriveIsAWholeDiskTooButAShareIsAFolder() {
-  // The picker gives a drive as C:\, in either case and with either separator: the whole disk, as "/" is.
-  for (const drive of ["C:\\", "c:/", "D:\\\\"]) {
-    const p = await settingsPage();
-    p.box.picked = drive;
-    p.act(() => picker(p, said.addFolderTitle).props.onClick());
-    assert.deepEqual(folders(p), [["~/project", true]], `${drive}: nothing added`);
-    assert.equal(alert(p), said.wholeDisk, drive);
-  }
-  // A drive typed is passed over without a word, as "/" is.
-  const typed = await settingsPage();
-  type(typed, field(typed, "Another folder"), "C:\\");
-  typed.act(() => typed.find((n) => n.type === "form").props.onSubmit({ preventDefault: noop }));
-  assert.deepEqual(folders(typed), [["~/project", true]]);
-  assert.equal(alert(typed), undefined);
-  // A share is a folder a server shares, and a folder on a drive is a folder: both are added.
-  const p = await settingsPage();
-  for (const folder of ["\\\\nas\\projects", "C:\\Users\\Demo\\Projects"]) {
-    p.box.picked = folder;
-    p.act(() => picker(p, said.addFolderTitle).props.onClick());
-  }
-  assert.deepEqual(folders(p), [
-    ["~/project", true],
-    ["\\\\nas\\projects", true],
-    ["C:\\Users\\Demo\\Projects", true],
-  ]);
-  assert.equal(alert(p), undefined);
 }
 
 export async function theFoldersChosenForArchiveAndReportsAreWhatSaveSends() {
@@ -544,29 +502,11 @@ export async function aCheckThatFailedWithAVersionOnOfferLooksAgainAndInstallsNo
   assert.equal(action(p).textContent, said.install);
 }
 
-export async function macOSSaysItsFoldersAreAskedAgainBeforeAnInstall() {
-  const mac = await settingsPage({ os: "macos" });
-  // Nothing to install yet: nothing to say.
-  assert.equal(mac.all((n) => n.props["data-ui"] === "status").length, 0);
-  await mac.emit(status("available", { ...FOUND }));
-  const notes = mac.all((n) => n.props["data-ui"] === "status");
-  assert.equal(notes.length, 1);
-  assert.ok(notes[0].textContent.startsWith(said.macTitle));
-  assert.ok(notes[0].textContent.includes("signed ad hoc"));
-  assert.ok(notes[0].textContent.includes("asks again whether Laci may open Documents, Desktop, Downloads or a drive"));
-  // It comes before the button, and the button points at it.
-  const order = section(mac).descendants();
-  assert.ok(order.indexOf(notes[0]) < order.indexOf(action(mac)));
-  const id = notes[0].descendants().find((n) => n.type === "p").props.id;
-  assert.ok(id);
-  assert.equal(action(mac).props["aria-describedby"], id);
-  // Linux and Windows have no such note.
-  for (const os of ["linux", "windows"]) {
-    const other = await settingsPage({ os });
-    await other.emit(status("available", { ...FOUND }));
-    assert.equal(other.all((n) => n.props["data-ui"] === "status").length, 0, os);
-    assert.equal(action(other).props["aria-describedby"], undefined, os);
-  }
+export async function nothingIsSaidAboutFolderAccessBeforeAnInstall() {
+  const p = await settingsPage();
+  await p.emit(status("available", { ...FOUND }));
+  assert.equal(p.all((n) => n.props["data-ui"] === "status").length, 0);
+  assert.equal(action(p).props["aria-describedby"], undefined);
 }
 
 export async function aRefusalIsShownBesideTheButtonUntilTheNextRequest() {
@@ -853,10 +793,6 @@ export async function theArchiveDestinationTakesAChosenFolderAndTheProjectInside
   assert.deepEqual(p.asked("archive/plan").at(-1)[1], { id: ACME, destination: `${HOME}/cold/acme-store` });
   type(p, input(), "cold/acme-store");
   assert.equal(button().props["data-from"], "~");
-  // A Windows folder takes the project in with its own separator.
-  p.box.picked = "D:\\Backups\\";
-  p.act(() => button().props.onClick());
-  assert.equal(input().props.value, "D:\\Backups\\acme-store");
 }
 
 /** Detailed's New project dialog (new-project.tsx), in the first folder Laci looks in. */

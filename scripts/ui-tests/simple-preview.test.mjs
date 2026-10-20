@@ -11,7 +11,7 @@ const DOTFILES = "/home/demo/project/side/dotfiles";
 async function onPreview(body) {
   globalThis.window = { crypto: globalThis.crypto };
   try {
-    load("preview/ipc.ts").installIpc({ os: "linux", design: "simple", theme: "light" });
+    load("preview/ipc.ts").installIpc({ design: "simple", theme: "light" });
     const invoke = (command, args) => window.__TAURI_INTERNALS__.invoke(command, args);
     await body((name, args = {}) => invoke("request", { name, body: args }));
   } finally {

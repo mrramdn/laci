@@ -1,6 +1,5 @@
-// The words that depend on the system: a Trash or a Recycle Bin in the dialogs, the keys in the list of
-// shortcuts, and where config.json is. The dialogs are drawn to text for each system; on Linux
-// and macOS they say what they said before.
+// The words in Detailed's dialogs that name a place on this computer: the Trash, the keys in the list
+// of shortcuts, and where config.json is. The dialogs are drawn to text.
 import assert from "node:assert/strict";
 import { load, requireUi } from "../ui-module.mjs";
 
@@ -8,7 +7,6 @@ const React = requireUi("react");
 const { renderToStaticMarkup } = requireUi("react-dom/server");
 const noop = () => {};
 const none = () => null;
-const SYSTEMS = ["linux", "windows", "macos"];
 
 /** What a person reads in drawn HTML: no tags, and the characters React wrote as entities. */
 const plain = (html) =>
@@ -34,12 +32,9 @@ function storeOf(read) {
 }
 
 /** What a snapshot needs for the dialogs, with a project and a piece of orphan history. */
-function snapshotOf(system) {
-  const windows = system === "windows";
-  const home = windows ? "C:\\Users\\me" : "/home/me";
-  const project = windows
-    ? "C:\\Users\\me\\project\\acme"
-    : "/home/me/project/acme";
+function snapshotOf() {
+  const home = "/home/me";
+  const project = "/home/me/project/acme";
   return {
     home,
     nodes: {
@@ -69,14 +64,11 @@ function snapshotOf(system) {
 }
 const projectOf = (snapshot) => Object.keys(snapshot.nodes)[0];
 
-/** The state of the page being drawn. The modules read it, so each loads once for each system. */
+/** The state of the page being drawn. The module reads it, so it loads once. */
 let current;
-const modules = new Map();
-function dialogsOf(system) {
-  if (!modules.has(system))
-    modules.set(
-      system,
-      load(
+let module;
+function dialogsOf() {
+  module ??= load(
         "dialogs.tsx",
         {
           "./api": { api: async () => ({}), errorText: String },
@@ -115,113 +107,60 @@ function dialogsOf(system) {
           "./brand": { LaciMark: none },
         },
         {
-          document: {
-            documentElement: { dataset: { os: system } },
-            activeElement: null,
-          },
+          document: { documentElement: { dataset: {} }, activeElement: null },
           HTMLElement: class {},
         },
-      ),
-    );
-  return modules.get(system);
+      );
+  return module;
 }
 
-/** The dialog `modal` opens on a system, as HTML. */
-function render(system, modal) {
+/** The dialog `modal` opens, as HTML. */
+function render(modal) {
   current = {
     modal,
-    snapshot: snapshotOf(system),
+    snapshot: snapshotOf(),
     historyPending: false,
     working: "",
     palette: false,
   };
-  return renderToStaticMarkup(React.createElement(dialogsOf(system).Dialogs));
+  return renderToStaticMarkup(React.createElement(dialogsOf().Dialogs));
 }
-const drawn = (system, modal) => plain(render(system, modal));
-const deleting = (system) =>
-  drawn(system, { kind: "delete", id: projectOf(snapshotOf(system)) });
+const drawn = (modal) => plain(render(modal));
 
-export async function deletingAProjectNamesTheTrashOnLinuxAndMac() {
-  for (const system of ["linux", "macos"]) {
-    const text = deleting(system);
-    assert.match(text, /Move acme to Trash\?/, system);
-    assert.match(
-      text,
-      /Moves ~\/project\/acme to the system Trash after checking its Git backup\. Agent history stored outside this project stays where it is\./,
-      system,
-    );
-    assert.match(
-      text,
-      /Restore the folder from your system Trash if you need it back\./,
-      system,
-    );
-    assert.match(text, /Cancel Move to Trash$/, system);
-    assert.doesNotMatch(text, /Recycle/, system);
-  }
-}
-
-export async function deletingAProjectNamesTheRecycleBinOnWindows() {
-  const text = deleting("windows");
-  assert.match(text, /Move acme to Recycle Bin\?/);
+export async function deletingAProjectNamesTheTrash() {
+  const text = drawn({ kind: "delete", id: projectOf(snapshotOf()) });
+  assert.match(text, /Move acme to Trash\?/);
   assert.match(
     text,
-    /Moves ~\\project\\acme to the Recycle Bin after checking its Git backup\. Agent history stored outside this project stays where it is\./,
+    /Moves ~\/project\/acme to the system Trash after checking its Git backup\. Agent history stored outside this project stays where it is\./,
   );
-  assert.match(
-    text,
-    /Restore the folder from the Recycle Bin if you need it back\./,
-  );
-  assert.match(text, /Cancel Move to Recycle Bin$/);
-  assert.doesNotMatch(text, /Trash/);
+  assert.match(text, /Restore the folder from your system Trash if you need it back\./);
+  assert.match(text, /Cancel Move to Trash$/);
 }
 
 export async function cleaningBuildOutputSaysWhereItDoesNotGo() {
-  for (const system of SYSTEMS) {
-    const text = drawn(system, {
-      kind: "clean",
-      id: projectOf(snapshotOf(system)),
-    });
-    const bin = system === "windows" ? "Recycle Bin" : "Trash";
-    assert.match(
-      text,
-      new RegExp(
-        `They don't go to the ${bin}, which would keep the space taken\\.`,
-      ),
-      system,
-    );
-    assert.match(text, /Delete the build output of acme\?/, system);
-  }
+  const text = drawn({ kind: "clean", id: projectOf(snapshotOf()) });
+  assert.match(text, /They don't go to the Trash, which would keep the space taken\./);
+  assert.match(text, /Delete the build output of acme\?/);
 }
 
-export async function orphanHistoryOffersTheSystemsBinForRestoringByHand() {
-  const orphan = { kind: "orphan", id: "orphan-1" };
-  for (const system of ["linux", "macos"]) {
-    const text = drawn(system, orphan);
-    assert.match(
-      text,
-      /System Trash Restore manually through your system Trash\./,
-      system,
-    );
-    assert.match(text, /Quarantine history$/, system);
-  }
-  const text = drawn("windows", orphan);
-  assert.match(text, /Recycle Bin Restore manually through the Recycle Bin\./);
-  assert.doesNotMatch(text, /Trash/);
+export async function orphanHistoryOffersTheTrashForRestoringByHand() {
+  const text = drawn({ kind: "orphan", id: "orphan-1" });
+  assert.match(text, /System Trash Restore manually through your system Trash\./);
+  assert.match(text, /Quarantine history$/);
 }
 
-export async function theShortcutsDialogListsTheKeysOfTheSystem() {
-  const rows = (system) =>
+export async function theShortcutsDialogListsTheKeys() {
+  const rows = () =>
     [
-      ...render(system, { kind: "shortcuts" }).matchAll(
+      ...render({ kind: "shortcuts" }).matchAll(
         /<div class="short-row"><span>([^<]*)<\/span><div class="short-keys">(.*?)<\/div><\/div>/g,
       ),
     ].map(([, label, keys]) => [
       label,
       [...keys.matchAll(/<kbd>([^<]*)<\/kbd>/g)].map((key) => key[1]),
     ]);
-  const linux = rows("linux");
-  assert.deepEqual(rows("windows"), linux);
-  assert.deepEqual(linux, [
+  assert.deepEqual(rows(), [
     ["Command palette", ["Ctrl", "K"]],
     ["Next / Prev row", ["↓", "↑"]],
     ["Open / Select", ["↵"]],
@@ -232,31 +171,16 @@ export async function theShortcutsDialogListsTheKeysOfTheSystem() {
     ["Toggle hidden files", ["Ctrl", "H"]],
     ["Shortcuts help", ["?", "Ctrl /"]],
   ]);
-  const mac = Object.fromEntries(rows("macos"));
-  assert.deepEqual(mac["Command palette"], ["⌘", "K"]);
-  assert.deepEqual(mac["Parent folder"], ["⌘", "↑"]);
-  assert.deepEqual(mac["Toggle hidden files"], ["⌘", "⇧", "."]);
-  assert.deepEqual(mac["Settings"], ["⌘", ","]);
 }
 
 // ── Where config.json is ───────────────────────────────────────────────────────────────────────────
 
-export async function theConnectorDialogSaysWhereItSavesOnEachSystem() {
-  const usual = {
-    linux: "~/.config/laci/config.json",
-    macos: "~/.config/laci/config.json",
-    windows: "~\\AppData\\Local\\io.github.mrramdn.laci\\config.json",
-  };
-  for (const system of SYSTEMS)
-    assert.match(
-      drawn(system, { kind: "connector" }),
-      new RegExp(`Saved in ${usual[system].replace(/[\\.]/g, "\\$&")} `),
-      system,
-    );
+export async function theConnectorDialogSaysWhereItSaves() {
+  assert.match(drawn({ kind: "connector" }), /Saved in ~\/\.config\/laci\/config\.json /);
 }
 
 /** settings.tsx whose React is a stand-in that runs one component's hooks: a state cell, and effects that run when declared. */
-function configPathHook(system, reply) {
+function configPathHook(reply) {
   let cells = [];
   let at = 0;
   const requests = [];
@@ -291,7 +215,7 @@ function configPathHook(system, reply) {
       "./common": { Icon: none },
       "./clock": { useNow: noop },
     },
-    { document: { documentElement: { dataset: { os: system } } } },
+    { document: { documentElement: { dataset: {} } } },
   );
   return {
     requests,
@@ -309,30 +233,21 @@ function configPathHook(system, reply) {
 const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 export async function theConfigPathIsTheUsualOneUntilTheDesktopSays() {
-  for (const system of SYSTEMS) {
-    const hook = configPathHook(system, async () => ({
-      configPath: "~/work/laci-home/config.json",
-    }));
-    const usual = hook.render();
-    assert.match(
-      usual,
-      system === "windows"
-        ? /^~\\AppData\\Local\\/
-        : /^~\/\.config\/laci\/config\.json$/,
-      system,
-    );
-    await settled();
-    assert.equal(hook.render(), "~/work/laci-home/config.json", system);
-    // It asked once, and a later screen of the same page asks nothing.
-    hook.remount();
-    assert.equal(hook.render(), "~/work/laci-home/config.json", system);
-    await settled();
-    assert.deepEqual(hook.requests, ["prefs"], system);
-  }
+  const hook = configPathHook(async () => ({
+    configPath: "~/work/laci-home/config.json",
+  }));
+  assert.equal(hook.render(), "~/.config/laci/config.json");
+  await settled();
+  assert.equal(hook.render(), "~/work/laci-home/config.json");
+  // It asked once, and a later screen of the same page asks nothing.
+  hook.remount();
+  assert.equal(hook.render(), "~/work/laci-home/config.json");
+  await settled();
+  assert.deepEqual(hook.requests, ["prefs"]);
 }
 
 export async function aRefusedAnswerLeavesTheUsualPath() {
-  const hook = configPathHook("linux", async () => {
+  const hook = configPathHook(async () => {
     throw new Error("config.json can't be read");
   });
   assert.equal(hook.render(), "~/.config/laci/config.json");

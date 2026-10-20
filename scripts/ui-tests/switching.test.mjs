@@ -239,15 +239,15 @@ function standIn(document) {
 // ── The app's store, with the window on it ─────────────────────────────────────────────────────────
 
 /**
- * The app: its store (store.ts as it is, with requests answered by `answers`), on a document of
- * `os` that the components share, and a page to draw them on. `requests` lists what was asked for.
- * `globals` gives the components more of a browser, such as a MutationObserver.
+ * The app: its store (store.ts as it is, with requests answered by `answers`), on a document that the
+ * components share, and a page to draw them on. `requests` lists what was asked for. `globals` gives
+ * the components more of a browser, such as a MutationObserver.
  */
-function app({ os = "linux", design = "detailed", answers = {}, globals = {} } = {}) {
+function app({ design = "detailed", answers = {}, globals = {} } = {}) {
   const requests = [];
   const main = { id: "main", focused: 0, focus: () => main.focused++ };
   const document = {
-    documentElement: { dataset: { os, design } },
+    documentElement: { dataset: { design } },
     body: {},
     activeElement: null,
     getElementById: (id) => (id === "main" ? main : null),
@@ -323,7 +323,6 @@ const prefs = (choices = {}) => ({
   updates: null,
   configured: false,
   configPath: "~/.config/laci/config.json",
-  os: "linux",
   ...choices,
 });
 const setupInfo = (more = {}) => ({
@@ -338,9 +337,8 @@ const words = load("words.ts");
 // ── First run ──────────────────────────────────────────────────────────────────────────────────────
 
 /** A new install on its first-run screen, as the window shows it once the saved choices are in. */
-async function firstRun({ os, answers = {}, saved = {}, globals } = {}) {
+async function firstRun({ answers = {}, saved = {}, globals } = {}) {
   const world = app({
-    os,
     design: "simple",
     globals,
     answers: {
@@ -608,22 +606,14 @@ export async function anUpdateChoiceThatCantBeSavedSaysSoAndTheSetupStands() {
 }
 
 export async function firstRunSaysWhatThisComputerNeeds() {
-  const notes = [
-    words.firstRun.moveTitle,
-    words.firstRun.installTitle("Git"),
-    words.firstRun.folderAccessTitle,
-  ];
-  const shown = async (os, info) => {
-    const run = await firstRun({ os, answers: { "setup/info": setupInfo(info) } });
-    return notes.filter((note) => run.page.text().includes(note));
+  const shown = async (info) => {
+    const run = await firstRun({ answers: { "setup/info": setupInfo(info) } });
+    return run.page.text().includes(words.firstRun.installTitle("Git"));
   };
-  // macOS run from the disk image, without Apple's command line tools.
-  assert.deepEqual(await shown("macos", { git: false, translocated: true }), notes);
-  // Installed, with Git: only how macOS asks for folders.
-  assert.deepEqual(await shown("macos", { git: true }), [words.firstRun.folderAccessTitle]);
-  // Elsewhere Git is the only one that can be missing, and nothing shows until the desktop says.
-  assert.deepEqual(await shown("linux", { git: false, translocated: true }), [notes[1]]);
-  assert.deepEqual(await shown("windows", {}), []);
+  // Git is the only one that can be missing, and nothing shows until the desktop says.
+  assert.equal(await shown({ git: false }), true);
+  assert.equal(await shown({ git: true }), false);
+  assert.equal(await shown({}), false);
 }
 
 export async function theInstallNoteLinksToGitsDownloads() {
@@ -633,12 +623,8 @@ export async function theInstallNoteLinksToGitsDownloads() {
   assert.deepEqual(run.asked("open/url"), [
     ["open/url", { url: "https://git-scm.com/downloads" }],
   ]);
-  // Only a Mac gets the line to type, as code.
-  const line = (world) => world.page.find((n) => n.type === "code")?.textContent;
-  assert.equal(line(run), undefined);
-  const mac = await firstRun({ os: "macos", answers: { "setup/info": setupInfo({ git: false }) } });
-  assert.equal(line(mac), "xcode-select --install");
-  assert.match(mac.page.text(), new RegExp(words.firstRun.installMac.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  // No line to type: the link is the way.
+  assert.equal(run.page.find((n) => n.type === "code"), undefined);
 }
 
 // ── Settings › Appearance ──────────────────────────────────────────────────────────────────────────

@@ -19,7 +19,6 @@ import {
   plural,
   tilde,
 } from "./helpers";
-import { OS, TRASH } from "./platform";
 import { ChooseFolder } from "./pick";
 import { detailedList } from "./shortcuts";
 import { Icon, Ops, restoreFocus, SeverityGlyph } from "./common";
@@ -39,21 +38,14 @@ const HelpDialog = lazy(() =>
 function close() {
   useApp.setState({ modal: null });
 }
-/** The system's bin written for the sentences around it: a Trash, and on Windows a Recycle Bin. */
-const BIN =
-  OS === "windows"
-    ? {
-        name: "Recycle Bin",
-        bare: "the Recycle Bin",
-        your: "the Recycle Bin",
-        the: "the Recycle Bin",
-      }
-    : {
-        name: "System Trash",
-        bare: "system Trash",
-        your: "your system Trash",
-        the: "the system Trash",
-      };
+/** The system's bin written for the sentences around it. */
+const BIN = {
+  name: "System Trash",
+  bare: "system Trash",
+  your: "your system Trash",
+  the: "the system Trash",
+  short: "Trash",
+};
 function dialogControls(host: HTMLElement | null) {
   return Array.from(
     host?.querySelectorAll<HTMLElement>(
@@ -328,7 +320,7 @@ function OrphanHistory({ id }: { id: string }) {
           changed(
             result,
             recovery === "trash"
-              ? `Moved history to ${TRASH}`
+              ? "Moved history to Trash"
               : "History quarantined",
           );
           close();
@@ -337,7 +329,7 @@ function OrphanHistory({ id }: { id: string }) {
         }
       },
       recovery === "trash"
-        ? `Moving history to ${TRASH}…`
+        ? "Moving history to Trash…"
         : "Quarantining history…",
       {
         history: true,
@@ -368,7 +360,7 @@ function OrphanHistory({ id }: { id: string }) {
             {saving
               ? "Moving…"
               : recovery === "trash"
-                ? `Move history to ${TRASH}`
+                ? "Move history to Trash"
                 : "Quarantine history"}
           </button>
         </>
@@ -470,7 +462,7 @@ function Shortcuts() {
     </DialogFrame>
   );
 }
-const SHORTCUTS = detailedList(OS);
+const SHORTCUTS = detailedList();
 /** Detailed's keys in its two sections, for its Keyboard shortcuts dialog and its Help. */
 export function ShortcutGrid() {
   return (
@@ -702,7 +694,7 @@ function CleanProject({ id }: { id: string }) {
         <>
           Deletes {parts.map((p) => p.path).join(", ")} for good, freeing{" "}
           {bytes(n.size!.reclaimable)}. The next install or build brings them
-          back. They don't go to the {TRASH}, which would keep the space taken.
+          back. They don't go to the {BIN.short}, which would keep the space taken.
         </>
       }
       footer={
@@ -764,14 +756,14 @@ function DeleteProject({ id }: { id: string }) {
         try {
           const change = await api<Change>("delete", { id, confirm: true });
           if (useApp.getState().modal === modal) close();
-          changed(change, `Moved ${n.name} to ${TRASH}`);
+          changed(change, `Moved ${n.name} to Trash`);
           if (useApp.getState().selected === id)
             useApp.setState({ selected: null, pendingSelection: null });
         } finally {
           setSaving(false);
         }
       },
-      `Moving ${n.name} to ${TRASH}…`,
+      `Moving ${n.name} to Trash…`,
       {
         history: true,
         onError: (error) => {
@@ -783,7 +775,7 @@ function DeleteProject({ id }: { id: string }) {
   }
   return (
     <DialogFrame
-      title={`Move ${n.name} to ${TRASH}?`}
+      title={`Move ${n.name} to Trash?`}
       description={
         <>
           Moves <span className="mono">{tilde(n.path, s.snapshot!.home)}</span>{" "}
@@ -810,7 +802,7 @@ function DeleteProject({ id }: { id: string }) {
             }
             onClick={() => void remove()}
           >
-            {saving ? "Moving…" : `Move to ${TRASH}`}
+            {saving ? "Moving…" : "Move to Trash"}
           </button>
         </>
       }

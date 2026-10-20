@@ -11,11 +11,8 @@ import {
   base,
   bytes,
   dayLabel,
-  isWindowsPath,
   localDay,
   LOCALE,
-  parentOf,
-  pathKey,
   plural,
   providerName,
   reportById,
@@ -434,15 +431,7 @@ export function reportLink(href: string, reports: Report[], folder: string) {
   } catch {
     // Not encoded: taken as written.
   }
-  if (isWindowsPath(folder)) {
-    // Next to a Windows folder, a link may write `\` between names too, and name the folder in full
-    // with either separator and in any case.
-    if (isWindowsPath(name) && pathKey(parentOf(name)) === pathKey(folder))
-      name = base(name);
-    name = name.replace(/\\/g, "/");
-  } else if (name.startsWith(folder + "/")) {
-    name = name.slice(folder.length + 1);
-  }
+  if (name.startsWith(folder + "/")) name = name.slice(folder.length + 1);
   name = name.replace(/^\.\//, "");
   return name.includes("/") ? undefined : reports.find((r) => r.id === name);
 }

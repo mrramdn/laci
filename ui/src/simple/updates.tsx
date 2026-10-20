@@ -1,12 +1,10 @@
 // Simple's update parts: the panel in Settings › Updates and the card on Home. Both read what the
 // update store (ui/src/update.ts) holds, say where the update stands in plain words and offer the one
 // action that fits there: Check now, Install, Restart, or a link to the release page for a copy that a
-// package manager or a folder owns. Nothing is installed before a click, and before an install on
-// macOS the page says that macOS will ask for folder access again.
+// package manager owns. Nothing is installed before a click.
 import { useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, ReactNode } from "react";
 import { Icon, restoreFocus } from "../common";
-import { OS } from "../platform";
 import { pref, savePref, toast, urlOpen } from "../store";
 import { useUpdate } from "../update";
 import type { UpdateStatus } from "../update";
@@ -255,14 +253,6 @@ function Line({ step, status }: { step: UpdateStep; status: UpdateStatus | null 
   }
 }
 
-/**
- * Whether to say, before a new version goes in, that macOS asks for folder access again: Laci is
- * signed ad hoc, so each version is another program to macOS and starts without what the last one
- * was allowed. It holds as much for a copy that is replaced by hand as for one Laci installs.
- */
-const macNote = (step: UpdateStep) =>
-  OS === "macos" && (step === "found" || step === "link");
-
 /** The sentence under the status line, when there is one. */
 function detailOf(step: UpdateStep, status: UpdateStatus | null, refusal: string | null) {
   const released = ago(status?.date);
@@ -322,7 +312,6 @@ export function UpdatePanel() {
             <Notes notes={notes} />
           </Disclosure>
         ) : null}
-        {macNote(step) ? <Callout tone="fyi">{say.macNote}</Callout> : null}
         {action ? (
           <div className="s-actions">
             <Button
@@ -407,7 +396,6 @@ export function UpdateCard() {
         {refusal && refusal !== status.error ? <Callout tone="soon">{refusal}</Callout> : null}
       </div>
       {step === "downloading" ? <Progress percent={status.progress} /> : null}
-      {macNote(step) ? <Callout tone="fyi">{say.macNote}</Callout> : null}
       {action ? (
         <div className="s-actions">
           <Button

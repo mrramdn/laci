@@ -19,124 +19,61 @@ export function taskIdentity(node: Node, task: Task) {
   };
 }
 export const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-// Paths come from the system the window runs on. A POSIX path starts with "/" and is read as it always
-// was. A Windows path starts with a drive (`C:\` or `c:/`) or a share (`\\server\share`): it takes both
-// `\` and `/` as separators, keeps the ones it was written with, and is compared without case.
-// store.ts keeps a copy of what `cd` needs, since it may import nothing but ./api; a test checks that
-// the copy agrees.
-const WINDOWS_ROOT = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/]+[^\\/]+(?:[\\/]|$))/;
-const winRoot = (path: string) => WINDOWS_ROOT.exec(path)?.[0];
-/** Whether the path starts at a drive or a share. */
-export const isWindowsPath = (path: string) => winRoot(path) !== undefined;
-/** The drive, share or "/" a path starts at, as it is written; "" for a path that isn't absolute. */
-export const rootOf = (path: string) =>
-  winRoot(path) ?? (path.startsWith("/") ? "/" : "");
+// Paths are POSIX paths: an absolute one starts with "/", and "/" is the only separator (a backslash
+// is an ordinary character in a name). store.ts keeps a copy of what `cd` needs, since it may import
+// nothing but ./api; a test checks that the copy agrees.
+/** "/" for an absolute path; "" for a path that isn't absolute. */
+export const rootOf = (path: string) => (path.startsWith("/") ? "/" : "");
 /** Whether the path names one place by itself, not one relative to where you are. */
-export const isAbsolutePath = (path: string) =>
-  path.startsWith("/") || isWindowsPath(path);
-/**
- * Whether the path is a whole disk: "/", or a drive such as `C:\`, with any separators at its end. A
- * share (`\\server\share`) is a folder that a server shares, not a disk.
- */
-export const isWholeDisk = (path: string) =>
-  /^(?:\/+|[A-Za-z]:[\\/]+)$/.test(path);
+export const isAbsolutePath = (path: string) => path.startsWith("/");
+/** Whether the path is a whole disk: "/", with any separators at its end. */
+export const isWholeDisk = (path: string) => /^\/+$/.test(path);
 /** The folder names in a path, after its root. */
 export function segments(path: string) {
-  const root = winRoot(path);
-  return (
-    root === undefined
-      ? path.split("/")
-      : path.slice(root.length).split(/[\\/]+/)
-  ).filter(Boolean);
-}
-/**
- * What two spellings of one place have in common, to compare paths with or to look them up by. A POSIX
- * path is its own key. A Windows path loses its case and writes every separator as "/".
- */
-export function pathKey(path: string) {
-  const root = winRoot(path);
-  if (root === undefined) return path;
-  const head = root.startsWith("\\\\")
-    ? "//" +
-      root
-        .slice(2)
-        .replace(/[\\/]+$/, "")
-        .replace(/[\\/]+/g, "/")
-    : root.slice(0, 2);
-  const names = segments(path);
-  return (names.length ? [head, ...names].join("/") : head + "/").toLowerCase();
+  return path.split("/").filter(Boolean);
 }
 /** The last name in a path; a root is its own name. */
 export function base(path: string) {
-  if (!isWindowsPath(path)) return path.slice(path.lastIndexOf("/") + 1) || "/";
-  return segments(path).at(-1) ?? path;
+  return path.slice(path.lastIndexOf("/") + 1) || "/";
 }
 /** The folder a path is in; a root is its own parent. */
 export function parentOf(path: string) {
-  const root = winRoot(path);
-  if (root === undefined) return path.slice(0, path.lastIndexOf("/")) || "/";
-  const trimmed = path.replace(/[\\/]+$/, "");
-  const above = trimmed
-    .slice(0, Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/")))
-    .replace(/[\\/]+$/, "");
-  return above.length < root.length ? root : above;
+  return path.slice(0, path.lastIndexOf("/")) || "/";
 }
-/** Whether `path` is `root` or inside it. A Windows path is never inside a POSIX one, or the other way round. */
+/** Whether `path` is `root` or inside it. */
 export function within(path: string, root: string) {
-  const windows = isWindowsPath(path);
-  if (windows !== isWindowsPath(root)) return false;
-  if (!windows)
-    return (
-      path === root || path.startsWith(root.endsWith("/") ? root : root + "/")
-    );
-  const [a, b] = [pathKey(path), pathKey(root)];
-  return a === b || a.startsWith(b.endsWith("/") ? b : b + "/");
+  return (
+    path === root || path.startsWith(root.endsWith("/") ? root : root + "/")
+  );
 }
 /** The path with the home folder written as "~". */
 export function tilde(path: string | undefined, home: string) {
-  if (path !== undefined && isWindowsPath(path) && isWindowsPath(home)) {
-    if (pathKey(path) === pathKey(home)) return "~";
-    const cut = home.replace(/[\\/]+$/, "").length;
-    return within(path, home) && /[\\/]/.test(path[cut] ?? "")
-      ? "~" + path.slice(cut)
-      : path;
-  }
   return path === home
     ? "~"
     : path?.startsWith(home + "/")
       ? "~" + path.slice(home.length)
       : (path ?? "");
 }
-/** `names` inside `dir`, with the separator `dir` is written with. */
+/** `names` inside `dir`. */
 export function joinPath(dir: string, ...names: string[]) {
-  const windows = isWindowsPath(dir);
-  const sep = windows ? (/[\\/](?=[^\\/]*$)/.exec(dir)?.[0] ?? "\\") : "/";
-  const closed = windows ? /[\\/]$/ : /\/$/;
   return names.reduce(
-    (path, name) => (closed.test(path) ? path : path + sep) + name,
+    (path, name) => (path.endsWith("/") ? path : path + "/") + name,
     dir,
   );
 }
-/** The path without separators at its end, except those of its root. */
+/** The path without separators at its end, except a root's. */
 export function trimSep(path: string) {
-  const root = winRoot(path);
-  return root === undefined
-    ? path.replace(/(.)\/+$/, "$1")
-    : root + path.slice(root.length).replace(/[\\/]+$/, "");
+  return path.replace(/(.)\/+$/, "$1");
 }
 /** A typed path with "~" spelled out as the home folder; any other path as it was typed. */
 export function expandHome(path: string, home: string) {
   if (path === "~") return home;
-  const windows = isWindowsPath(home);
-  if (!path.startsWith("~/") && !(windows && path.startsWith("~\\")))
-    return path;
-  if (!windows) return home + path.slice(1);
-  const names = path.slice(2).split(/[\\/]+/);
-  return joinPath(home, ...names.filter(Boolean));
+  if (!path.startsWith("~/")) return path;
+  return home + path.slice(1);
 }
 /**
  * The places a breadcrumb trail passes from where it starts to `cwd`. It starts at Home when `cwd` is
- * inside it, else at the nearest scanned folder that holds it, else at the drive, share or "/" it is on.
+ * inside it, else at the nearest scanned folder that holds it, else at "/".
  */
 export function breadcrumbs(cwd: string, home: string, roots: string[]) {
   const holder = roots
@@ -148,18 +85,6 @@ export function breadcrumbs(cwd: string, home: string, roots: string[]) {
     start,
     ...names.map((_, i) => joinPath(start, ...names.slice(0, i + 1))),
   ];
-}
-/**
- * Why a new folder cannot have this name on Windows, in words, or "" when it can. CON, PRN, AUX, NUL and
- * COM or LPT with a digit are devices, with or without an extension, and Windows drops a dot or a space
- * at the end of a name.
- */
-export function windowsNameProblem(name: string) {
-  if (/[. ]$/.test(name))
-    return "A folder name can't end with a dot or a space on Windows.";
-  return /^(?:con|prn|aux|nul|(?:com|lpt)[0-9])(?:\..*)?$/i.test(name)
-    ? `Windows doesn't allow “${name}” as a folder name. Choose another name.`
-    : "";
 }
 export const days = (at?: string) =>
   at ? (Date.now() - Date.parse(at)) / 864e5 : Infinity;
@@ -320,7 +245,7 @@ function indexSessions(snapshot: Snapshot): SessionIndex {
     .slice()
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const byPath = new Map(
-    Object.values(snapshot.nodes).map((node) => [pathKey(node.path), node]),
+    Object.values(snapshot.nodes).map((node) => [node.path, node]),
   );
   const index: SessionIndex = {
     all,
@@ -328,16 +253,16 @@ function indexSessions(snapshot: Snapshot): SessionIndex {
     global: [],
     files: new Set(all.map((session) => session.file)),
   };
-  const home = pathKey(snapshot.home);
+  const home = snapshot.home;
   for (const session of all) {
-    if (session.cwd && pathKey(session.cwd) === home) {
+    if (session.cwd && session.cwd === home) {
       index.global.push(session);
       continue;
     }
     let cwd = session.cwd;
     let node: Node | undefined;
     while (cwd) {
-      node = byPath.get(pathKey(cwd));
+      node = byPath.get(cwd);
       const above = parentOf(cwd);
       // A root is its own parent.
       if (node || above === cwd) break;
@@ -711,7 +636,7 @@ function indexReports(snapshot: Snapshot | null | undefined): ReportIndex {
     for (const id of report.sessions)
       add(index.bySession, id.toLowerCase(), report);
     for (const path of report.projects)
-      add(index.byProject, pathKey(path), report);
+      add(index.byProject, path, report);
   }
   reportIndexes.set(reports, index);
   return index;
@@ -737,7 +662,7 @@ export function reportsOfSessions(
 export const reportsOfProject = (
   snapshot: Snapshot | null | undefined,
   path: string,
-) => indexReports(snapshot).byProject.get(pathKey(path)) ?? NO_REPORTS;
+) => indexReports(snapshot).byProject.get(path) ?? NO_REPORTS;
 export const latestReport = (
   snapshot: Snapshot | null | undefined,
   path: string,

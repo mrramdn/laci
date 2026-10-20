@@ -4,7 +4,6 @@
 import { api } from "../api";
 import { agentProviders } from "../agent-launch";
 import { APP_NAMES, base, cap, isWholeDisk, sessionsOf } from "../helpers";
-import { OS, FILE_MANAGER } from "../platform";
 import { requestResume } from "../session-ui";
 import { changed, run, toast, useApp } from "../store";
 import type { Apps, Change, Node, SetupInfo, Snapshot } from "../types";
@@ -58,14 +57,14 @@ export function newChat(n: Node, provider?: string, prompt?: string) {
 export const editorName = (apps: Apps) =>
   APP_NAMES[apps.editor] ?? cap(apps.editor);
 
-/** The file manager's name: the system's own on macOS and Windows, the one chosen on Linux. */
+/** The file manager's name: the one chosen in Settings. */
 export const fileManagerName = (apps: Apps) =>
-  OS === "linux" ? (APP_NAMES[apps.files] ?? cap(apps.files)) : FILE_MANAGER;
+  APP_NAMES[apps.files] ?? cap(apps.files);
 
 /**
  * Adds a project folder, keeping every other setting as it is saved: what Settings does when a
- * folder is added there. A whole disk ("/", or a drive such as C:\) is no project folder: a toast
- * says so, and nothing changes.
+ * folder is added there. A whole disk ("/") is no project folder: a toast says so, and nothing
+ * changes.
  */
 export async function addProjectFolder(path: string) {
   if (isWholeDisk(path)) {

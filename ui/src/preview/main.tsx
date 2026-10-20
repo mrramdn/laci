@@ -1,6 +1,5 @@
 // The window in a browser, without the desktop: `pnpm -C ui dev`, then open /preview.html. It is not
-// part of the build. ?design=detailed|simple, ?theme=light|dark|system and ?os=linux|macos|windows
-// say how it looks.
+// part of the build. ?design=detailed|simple and ?theme=light|dark|system say how it looks.
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "../styles/index.css";
@@ -15,7 +14,6 @@ import {
   fixtureNow,
   installIpc,
   type Design,
-  type Os,
   type Theme,
 } from "./ipc";
 
@@ -36,15 +34,13 @@ const choose = <T extends string>(key: string, allowed: readonly T[]): T => {
 };
 const design = choose<Design>("design", ["detailed", "simple"]);
 const theme = choose<Theme>("theme", ["system", "light", "dark"]);
-const os = choose<Os>("os", ["linux", "macos", "windows"]);
 
 const root = document.documentElement;
 root.dataset.design = design;
-root.dataset.os = os;
 if (theme === "system") delete root.dataset.theme;
 else root.dataset.theme = theme;
 const clock = freezeClock(fixtureNow);
-installIpc({ design, theme, os });
+installIpc({ design, theme });
 window.__preview = { emit: emitEvent, advance: clock.advance };
 
 // The window reads the theme when it loads, so it comes after the settings above.

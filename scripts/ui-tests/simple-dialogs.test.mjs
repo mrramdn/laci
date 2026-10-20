@@ -661,7 +661,7 @@ export async function theEndOfTheCountdownMovesTheProjectToTheBin() {
   await sheet.settle();
   assert.equal(sheet.app.getState().modal, null);
   assert.deepEqual(sheet.changes, [
-    [{}, "Moved kopi-landing to the Trash", said.restoreSteps("linux")],
+    [{}, "Moved kopi-landing to the Trash", said.restoreSteps],
   ]);
   // Its page is gone with it: Projects shows instead.
   assert.equal(sheet.app.getState().selected, null);
@@ -1096,7 +1096,7 @@ function detailedDialogs(read) {
       "./settings": { useConfigPath: () => "~/.config/laci/config.json" },
     },
     {
-      document: { documentElement: { dataset: { os: "linux" } }, activeElement: null },
+      document: { documentElement: { dataset: {} }, activeElement: null },
       HTMLElement: class {},
     },
   ).Dialogs;

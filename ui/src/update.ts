@@ -28,8 +28,8 @@ export interface UpdateStatus {
   /** When it was published (RFC 3339). */
   date?: string;
   /**
-   * "click": Laci downloads and installs it after a click. "notice": a package manager, a script
-   * or a portable folder put this copy in place, so the window links to `url` instead.
+   * "click": Laci downloads and installs it after a click (the AppImage). "notice": a package
+   * manager or a script put this copy in place, so the window links to `url` instead.
    */
   install: "click" | "notice";
   /** The release page of `version`. */

@@ -1,11 +1,9 @@
 // Every word Simple shows, by area, so the wording can be read, changed and later translated in one
-// place. Detailed keeps its own words; Help, shared by both, takes its words from here too. The
-// system's own names (Trash or Recycle Bin, ⌘ or Ctrl) come from platform.ts.
+// place. Detailed keeps its own words; Help, shared by both, takes its words from here too.
 //
 // Writing rules (design-research §3.4): plain words with the Git term one ⓘ away, sentence case,
 // times in words ("23 minutes ago", never "23 min"), and no idioms, so the text translates well.
-// Pure: it imports only platform.ts, so the tests read it as it is.
-import { TRASH, withMod } from "./platform";
+// Pure: it imports nothing, so the tests read it as it is.
 
 /** "1 project", "2 projects"; `many` for words that don't just take an s. */
 export const count = (n: number, one: string, many = `${one}s`) =>
@@ -96,7 +94,7 @@ export const shell = {
     `Laci checked your project folders ${when}. It watches them and updates by itself.`,
   search: "Search",
   searchLabel: (keys: string) => `Search and actions (${keys})`,
-  searchKey: withMod("K"),
+  searchKey: "Ctrl K",
 };
 
 /** The parts every screen is built from. */
@@ -667,8 +665,8 @@ export const glossary: Term[] = [
   },
   {
     id: "trash",
-    term: `Move to ${TRASH}`,
-    info: `Laci can’t undo this. Restore it from the ${TRASH}.`,
+    term: "Move to Trash",
+    info: "Laci can’t undo this. Restore it from the Trash.",
     was: "Move to Trash",
   },
   {
@@ -817,7 +815,7 @@ export const glossary: Term[] = [
   {
     id: "search",
     term: "Search and actions",
-    info: `One search box for every project, chat and action. Open it with ${withMod("K")}.`,
+    info: `One search box for every project, chat and action. Open it with Ctrl K.`,
     was: "Command palette",
   },
   {
@@ -851,7 +849,7 @@ export const help = {
     "Laci only reads your project folders. It changes nothing until you ask.",
     "Every change, by you or by your AI, is listed in Activity. Most can be undone there.",
     "Archive comes before deleting. An archived project keeps its AI chats and can come back.",
-    `What can’t be undone, like moving a project to the ${TRASH}, waits 5 seconds first, so you can cancel.`,
+    "What can’t be undone, like moving a project to the Trash, waits 5 seconds first, so you can cancel.",
     "Before a first saved version or an upload, Laci looks for files that look like passwords or keys, so they stay off the internet.",
     "When you ask your AI to fix something, Laci asks it to show each command first, and never to force an upload, rewrite the history or delete a line of work.",
     "What Laci learns about your projects stays on this computer.",
@@ -928,22 +926,13 @@ export const firstRun = {
     off: "Laci won’t look by itself.",
   },
   updatesFailed: "Laci couldn’t save your choice about new versions",
-  folderAccessTitle: "macOS asks first",
-  folderAccess:
-    "The first time Laci looks in Documents, Desktop, Downloads or a drive, macOS asks whether it may. Choose Allow, so Laci can find your projects there. You can change it later in System Settings, under Privacy & Security, then Files and Folders.",
-  moveTitle: "Move Laci to Applications",
-  moveBody:
-    "Laci is running from where it was downloaded. Move it to the Applications folder and open it from there, so your AI tools can always find it.",
   installTitle: (program: string) => `Install ${program}`,
   installBody: (program: string) =>
     `Laci reads the saved versions of your projects with ${program}, a free program that isn’t on this computer yet.`,
-  /** Followed by the line to type. */
-  installMac:
-    "macOS installs it with Apple’s command line tools. Open Terminal, type this line and press Enter:",
   installLink: "How to install it",
 };
 
-/** Search and actions (Ctrl K, ⌘K on a Mac) in Simple: its groups, its actions and its hints. */
+/** Search and actions (Ctrl K) in Simple: its groups, its actions and its hints. */
 export const search = {
   label: "Search and actions",
   placeholder: (summaries: boolean) =>
@@ -1074,10 +1063,10 @@ export const cleanup = {
     button: "Set aside",
     doing: "Setting the AI chats aside…",
     done: "AI chats set aside",
-    trash: `Move to the ${TRASH} instead…`,
-    trashCounting: `Moving these AI chats to the ${TRASH}`,
-    trashDoing: `Moving the AI chats to the ${TRASH}…`,
-    trashDone: `AI chats moved to the ${TRASH}`,
+    trash: "Move to the Trash instead…",
+    trashCounting: "Moving these AI chats to the Trash",
+    trashDoing: "Moving the AI chats to the Trash…",
+    trashDone: "AI chats moved to the Trash",
     blockedTitle: "AI chats Laci can’t check",
     blocked:
       "Laci can’t confirm that their project folder is gone, so it leaves them alone.",
@@ -1249,11 +1238,11 @@ export const activity = {
     setAside: (name: string) => `Set aside the AI chats left from ${name}`,
     setAsideAny: "Set aside leftover AI chats",
     trashedChats: (name: string) =>
-      `Moved the AI chats left from ${name} to the ${TRASH}`,
-    trashedChatsAny: `Moved leftover AI chats to the ${TRASH}`,
+      `Moved the AI chats left from ${name} to the Trash`,
+    trashedChatsAny: "Moved leftover AI chats to the Trash",
     deletedChat: (title: string) => `Deleted the chat “${title}”`,
     deletedChats: (n: number) => `Deleted ${count(n, "chat")}`,
-    trashed: (name: string) => `Moved ${name} to the ${TRASH}`,
+    trashed: (name: string) => `Moved ${name} to the Trash`,
     hidSuggestion: "Hid a suggestion for 90 days",
     suggestedAgain: "Brought back a hidden suggestion",
     copied: (n: number) => `Copied ${count(n, "chat file")}`,
@@ -1698,13 +1687,8 @@ export const settings = {
  * before the system's bin, and what can't be undone says so before its Countdown.
  */
 export const dialogs = {
-  /** How to get a folder back from the system's bin, on `os` (linux, macos or windows). */
-  restoreSteps: (os: string) =>
-    os === "macos"
-      ? "To get it back, open the Trash in the Dock and choose Put Back."
-      : os === "windows"
-        ? "To get it back, open the Recycle Bin on the desktop and choose Restore."
-        : "To get it back, open the Trash in your file manager and choose Restore.",
+  /** How to get a folder back from the Trash. */
+  restoreSteps: "To get it back, open the Trash in your file manager and choose Restore.",
   busy: "Laci is finishing another change. Try again in a moment.",
   checkAgain: "Check again",
   /** What "Show details" holds. */
@@ -1718,15 +1702,15 @@ export const dialogs = {
   },
   delete: {
     title: (name: string) => `Delete ${name}?`,
-    intro: `Archiving is the safer choice: you can undo it. Laci can’t undo a move to the ${TRASH}.`,
-    introArchived: `It is in your archive folder already. Laci can’t undo a move to the ${TRASH}.`,
+    intro: "Archiving is the safer choice: you can undo it. Laci can’t undo a move to the Trash.",
+    introArchived: "It is in your archive folder already. Laci can’t undo a move to the Trash.",
     lost: "What could be lost",
     checking: "Checking that nothing would be lost…",
     allSaved: "Everything in it is saved and online.",
     onlyHere:
       "Only this computer has these files. Your online copy can’t give them back:",
     more: (n: number) => `and ${count(n, "more file")}`,
-    blocked: (name: string) => `Laci can’t move ${name} to the ${TRASH} yet.`,
+    blocked: (name: string) => `Laci can’t move ${name} to the Trash yet.`,
     blockedWhy:
       "Laci does it only once every saved version is online, every change is saved as a version, nothing is set aside, and no program is using the folder. Show details says what stopped it.",
     noHistory:
@@ -1736,15 +1720,15 @@ export const dialogs = {
     archiveNote: (name: string) =>
       `Laci moves ${name}, with its AI chats, to your archive folder. You can undo it in Activity.`,
     typeName: (name: string) =>
-      `Type ${name} to move it to the ${TRASH} with these files`,
-    trash: `Move to ${TRASH}`,
+      `Type ${name} to move it to the Trash with these files`,
+    trash: "Move to Trash",
     trashNote: "Laci can’t undo this.",
     notYet: "Not possible yet. The reason is above.",
     typeFirst: "Type the name above first.",
-    counting: (name: string) => `Moving ${name} to the ${TRASH}`,
-    moving: (name: string) => `Moving ${name} to the ${TRASH}…`,
-    moved: (name: string) => `Moved ${name} to the ${TRASH}`,
-    moveFailed: (name: string) => `Laci couldn’t move ${name} to the ${TRASH}.`,
+    counting: (name: string) => `Moving ${name} to the Trash`,
+    moving: (name: string) => `Moving ${name} to the Trash…`,
+    moved: (name: string) => `Moved ${name} to the Trash`,
+    moveFailed: (name: string) => `Laci couldn’t move ${name} to the Trash.`,
   },
   archive: {
     title: (name: string) => `Archive ${name}?`,
@@ -1911,11 +1895,7 @@ export const detailedSettings = {
     "Restarting closes Laci’s terminals and the AI chats running in them.",
   /** Why there is a link to the release page and no Install. */
   noticeNote:
-    "Laci can’t replace this copy of itself: a package manager, a script or a portable folder put it here, or macOS runs it from where it was downloaded. Get the new version from its release page.",
-  /** macOS, before an update: an app signed ad hoc looks like a new one to it after each update. */
-  macTitle: "macOS asks about your folders again",
-  macBody:
-    "Laci for macOS is signed ad hoc, without an Apple developer account, so macOS takes each update for a new app. After it is installed, macOS asks again whether Laci may open Documents, Desktop, Downloads or a drive. Choose Allow, as the first time.",
+    "Laci can’t replace this copy of itself: a package manager or a script put it here. Get the new version from its release page.",
   whatsNew: (version: string) => `What’s new in ${version}`,
   notesBlocked: "Release notes can open web and mail links only",
   remoteImages: (n: number) =>
@@ -1957,8 +1937,6 @@ export const polish = {
     linkOnly:
       "This copy of Laci can’t install updates itself. Get the new version from the release page.",
     openRelease: "Open the release page",
-    macNote:
-      "After the update, macOS asks again whether Laci may open your folders, such as Documents, Desktop and Downloads. Choose Allow, or Laci can’t read the projects in them.",
     downloading: (version: string) => `Downloading version ${version}…`,
     progressLabel: "Download progress",
     percent: (n: number) => `${n}%`,

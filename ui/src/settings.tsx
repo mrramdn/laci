@@ -13,15 +13,12 @@ import {
   expandHome,
   isAbsolutePath,
   isWholeDisk,
-  joinPath,
-  pathKey,
   plural,
   reportList,
   shortDay,
   tilde,
   trimSep,
 } from "./helpers";
-import { OS } from "./platform";
 import { Select } from "./select";
 import { LaciMark } from "./brand";
 import { Icon } from "./common";
@@ -55,14 +52,8 @@ import type {
   TerminalTarget,
 } from "./types";
 import { ago, detailedSettings as said, firstRun, views } from "./words";
-/** Where another drive is found, for the examples of a path. */
-const OTHER_DRIVE =
-  OS === "windows" ? "D:\\" : OS === "macos" ? "/Volumes" : "/mnt";
 /** Where config.json is without LACI_HOME or XDG_CONFIG_HOME, for the moment before the desktop says. */
-const USUAL_CONFIG_PATH =
-  OS === "windows"
-    ? "~\\AppData\\Local\\io.github.mrramdn.laci\\config.json"
-    : "~/.config/laci/config.json";
+const USUAL_CONFIG_PATH = "~/.config/laci/config.json";
 let prefsSaid: Prefs | undefined;
 /**
  * The saved choices, as the desktop gave them when first asked; undefined until it answers. `fresh`
@@ -96,15 +87,12 @@ export function useConfigPath() {
 type Updates = NonNullable<Prefs["updates"]>;
 /**
  * What first run says about this computer, once the desktop tells `setup/info`: `git` is false when
- * no Git can be run (on macOS, without Apple's command line tools), and `translocated` is true when
- * macOS runs Laci from where it was downloaded instead of from Applications. The engine sends `git`
- * (the port's step P6); `translocated` comes with step P10, and until then its note never shows.
+ * no Git can be run.
  */
-type ThisComputer = { git?: boolean; translocated?: boolean };
-/** The program a missing `git` asks for, where to get it, and how macOS installs it. */
+type ThisComputer = { git?: boolean };
+/** The program a missing `git` asks for, and where to get it. */
 const GIT = "Git";
 const GIT_DOWNLOADS = "https://git-scm.com/downloads";
-const MAC_INSTALL = "xcode-select --install";
 /** The settings Save and rescan sends, the folders as full paths. */
 interface Setup {
   roots: Set<string>;
@@ -271,8 +259,8 @@ export function Settings({ first = false }: { first?: boolean }) {
    */
   function addFolder(raw: string, chosen = false) {
     let path = trimSep(raw.trim());
-    // Not a whole disk ("/", or a drive such as C:\): Laci doesn't look through one. A typed one is
-    // passed over, as "/" always was; a chosen one says why nothing was added.
+    // Not a whole disk ("/"): Laci doesn't look through one. A typed one is passed over, as "/" always
+    // was; a chosen one says why nothing was added.
     if (!path || isWholeDisk(path)) {
       if (path && chosen) setError(said.wholeDisk);
       return;
@@ -282,8 +270,7 @@ export function Settings({ first = false }: { first?: boolean }) {
       setError("Use a full path like ~/work");
       return;
     }
-    // On Windows another spelling of a folder in the list (its case, or / for \) is that folder.
-    const listed = candidates.find((c) => pathKey(c.path) === pathKey(path));
+    const listed = candidates.find((c) => c.path === path);
     const added = listed?.path ?? path;
     // A chosen folder arrives after the picker closes, so these take the lists as they are by then.
     if (!listed)
@@ -316,7 +303,7 @@ export function Settings({ first = false }: { first?: boolean }) {
     const archivePath = full(archiveDir);
     if (archivePath && !isAbsolutePath(archivePath)) {
       setError(
-        `Use a full archive folder path like ~/archive or ${joinPath(OTHER_DRIVE, "backup", "archive")}`,
+        "Use a full archive folder path like ~/archive or /mnt/backup/archive",
       );
       return;
     }
@@ -397,20 +384,9 @@ export function Settings({ first = false }: { first?: boolean }) {
         <div className="empty">{error || "Loading your settings…"}</div>
       ) : (
         <>
-          {first && OS === "macos" && info.translocated ? (
-            <Note warn title={firstRun.moveTitle}>
-              <p>{firstRun.moveBody}</p>
-            </Note>
-          ) : null}
           {first && info.git === false ? (
             <Note warn title={firstRun.installTitle(GIT)}>
               <p>{firstRun.installBody(GIT)}</p>
-              {OS === "macos" ? (
-                <p>
-                  {firstRun.installMac}{" "}
-                  <code className="mono">{MAC_INSTALL}</code>
-                </p>
-              ) : null}
               <button
                 className="linkbtn"
                 onClick={() => urlOpen(GIT_DOWNLOADS)}
@@ -429,11 +405,6 @@ export function Settings({ first = false }: { first?: boolean }) {
               including mounted drives. You can leave every folder unchecked and
               browse without scanning.
             </p>
-            {first && OS === "macos" ? (
-              <Note title={firstRun.folderAccessTitle}>
-                <p>{firstRun.folderAccess}</p>
-              </Note>
-            ) : null}
             {candidates.map((c) => {
               const unavailable = info.rootStatus?.find(
                 (root) => root.path === c.path && !root.available,
@@ -494,7 +465,7 @@ export function Settings({ first = false }: { first?: boolean }) {
                 className="inp mono"
                 value={folder}
                 onChange={(e) => setFolder(e.target.value)}
-                placeholder={`~/work or ${joinPath(OTHER_DRIVE, "projects")}`}
+                placeholder="~/work or /mnt/projects"
                 autoComplete="off"
                 aria-label="Another folder"
               />
@@ -1008,7 +979,6 @@ function UpdatesSetting() {
   const [picked, setPicked] = useState<Updates | null>(null);
   const title = useId();
   const choiceTitle = useId();
-  const macNote = useId();
   useEffect(() => {
     void useUpdate.getState().refresh();
   }, []);
@@ -1016,8 +986,6 @@ function UpdatesSetting() {
   const busy = pending || view.action.busy;
   // Undefined until the desktop says; null while nothing is chosen.
   const saved = picked ?? (status?.enabled ? "daily" : prefs?.updates);
-  // An app signed ad hoc is a new app to macOS after each update, so it asks again for the folders.
-  const mac = OS === "macos" && Boolean(status?.version);
   function act() {
     if (busy) return;
     const { kind } = view.action;
@@ -1057,18 +1025,12 @@ function UpdatesSetting() {
       >
         {view.line}
       </p>
-      {mac ? (
-        <Note title={said.macTitle}>
-          <p id={macNote}>{said.macBody}</p>
-        </Note>
-      ) : null}
       <div className="rp-copy">
         <button
           type="button"
           className="btn"
           data-ui="update-action"
           aria-busy={busy || undefined}
-          aria-describedby={mac ? macNote : undefined}
           onClick={act}
         >
           {view.action.label}

@@ -152,7 +152,6 @@ export async function thePreviewOffersAnUpdateDownloadsItAndRestarts() {
   globalThis.window = { crypto: globalThis.crypto };
   try {
     load("preview/ipc.ts").installIpc({
-      os: "linux",
       design: "simple",
       theme: "light",
     });

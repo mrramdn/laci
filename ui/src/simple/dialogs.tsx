@@ -9,7 +9,6 @@ import type { Dispatch, Ref, SetStateAction } from "react";
 import { api, errorText } from "../api";
 import { restoreFocus } from "../common";
 import { bytes, expandHome, isAbsolutePath, RISK, tilde } from "../helpers";
-import { OS } from "../platform";
 import { changed, run, selectWhenReady, useApp } from "../store";
 import type { Modal } from "../store";
 import type { ArchivePlan, Change, DeletePlan, Issue, Node, Op } from "../types";
@@ -172,7 +171,7 @@ function DeleteBody({ node, stage, setStage }: Body) {
   const about =
     (plan || failure) && !allowed
       ? said.delete.notYet
-      : [named ? "" : said.delete.typeFirst, said.delete.trashNote, said.restoreSteps(OS)]
+      : [named ? "" : said.delete.typeFirst, said.delete.trashNote, said.restoreSteps]
           .filter(Boolean)
           .join(" ");
   const risks = safetyIssues(node).filter((issue) => RISK.has(issue.code));
@@ -207,7 +206,7 @@ function DeleteBody({ node, stage, setStage }: Body) {
         const modal = useApp.getState().modal;
         const change = await api<Change>("delete", { id: node.id, confirm: true });
         if (useApp.getState().modal === modal) close();
-        changed(change, said.delete.moved(node.label), said.restoreSteps(OS));
+        changed(change, said.delete.moved(node.label), said.restoreSteps);
         leave(node.id);
       },
       said.delete.moving(node.label),

@@ -406,7 +406,7 @@ function ProjectsCard({
           title={said.addFolderTitle}
           defaultPath="~"
           onPick={(path) => {
-            // A whole disk ("/", or a drive such as C:\) isn't a folder Laci looks through.
+            // A whole disk ("/") isn't a folder Laci looks through.
             if (isWholeDisk(path))
               toast(said.wholeDisk, said.wholeDiskNote, { error: true });
             else edit((d) => withRoot(d, path));

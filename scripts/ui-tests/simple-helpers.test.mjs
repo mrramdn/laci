@@ -643,8 +643,6 @@ export async function aLinkInASummaryOpensAnotherInItsFolder() {
   assert.equal(link("/notes/reports/b c.md"), "b c.md");
   assert.equal(link("../elsewhere/b c.md"), undefined);
   assert.equal(link("sub/2026-10-01-a.md"), undefined);
-  // Next to a Windows folder, either separator and any case names it.
-  assert.equal(link("C:\\Notes\\Reports\\b c.md", "c:\\notes\\reports"), "b c.md");
 }
 
 // ── The page ───────────────────────────────────────────────────────────────────────────────────────

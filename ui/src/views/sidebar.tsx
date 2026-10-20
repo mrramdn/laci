@@ -4,7 +4,6 @@ import { Icon } from "../common";
 import { useApp, readListing, setDesign, setTheme, rescan } from "../store";
 import { useNow } from "../clock";
 import { useUpdateStatus } from "../palette";
-import { withMod } from "../platform";
 import { navBadges, placesCounts } from "../selectors";
 import { detailedData, views } from "../words";
 import { base, cap, LOCALE, plural, tilde } from "../helpers";
@@ -161,13 +160,13 @@ export function Sidebar() {
       <div className="sb-search-wrap">
         <button
           className="sb-search-bar"
-          aria-label={`Search projects and actions (${withMod("K")})`}
-          title={`Search projects and actions (${withMod("K")})`}
+          aria-label="Search projects and actions (Ctrl K)"
+          title="Search projects and actions (Ctrl K)"
           onClick={() => useApp.setState({ palette: true })}
         >
           <Icon name="search" className="sm" />
           <span>Search projects…</span>
-          <kbd>{withMod("K")}</kbd>
+          <kbd>Ctrl K</kbd>
         </button>
       </div>
       <div className="sb-scroll">

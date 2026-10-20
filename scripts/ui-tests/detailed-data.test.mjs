@@ -57,7 +57,7 @@ function world({ answers = {}, counted = [], terminals = [] } = {}) {
   const elements = new Map();
   const timers = [];
   Object.assign(page.document, {
-    documentElement: { dataset: { os: "linux", design: "detailed" } },
+    documentElement: { dataset: { design: "detailed" } },
     getElementById: (id) => elements.get(id) ?? null,
   });
   const globals = {

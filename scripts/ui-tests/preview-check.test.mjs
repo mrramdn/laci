@@ -105,7 +105,6 @@ const FAKE_SIMPLE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   Object.assign(document.documentElement.dataset, {
     design: query.get("design"),
     theme: query.get("theme"),
-    os: "linux",
   });
   const title = document.getElementById("title");
   const places = [...document.querySelectorAll("nav button")];

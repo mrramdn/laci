@@ -318,10 +318,10 @@ const disclosure = (page) =>
 
 /**
  * One of the update parts on the stand-in, on the window's own store, the update store and a desktop of
- * the test's own, started on `os`. The browser's storage is `storage`; `inWindow` false draws it as
- * the page tests do in Node, where there is no document.
+ * the test's own. The browser's storage is `storage`; `inWindow` false draws it as the page tests do
+ * in Node, where there is no document.
  */
-function updatesPage(part, { os = "linux", storage = newStorage(), inWindow = true } = {}) {
+function updatesPage(part, { storage = newStorage(), inWindow = true } = {}) {
   const page = standIn();
   const d = desktop();
   const session = startWindow({ storage });
@@ -343,7 +343,7 @@ function updatesPage(part, { os = "linux", storage = newStorage(), inWindow = tr
       "../readme": markdown,
       "./ui": simpleBlocks({ Disclosure: disclosure(page) }),
     },
-    inWindow ? { document: { documentElement: { dataset: { os } } } } : {},
+    inWindow ? { document: { documentElement: { dataset: {} } } } : {},
   );
   page.mount(createElement(updates[part]));
   return {
@@ -490,24 +490,11 @@ export async function theSettingsPanelTellsWhereTheUpdateStandsStepByStep() {
   assert.equal(page.button(say.restart).props.disabled, true, "a restart that was taken ends the window");
 }
 
-export async function aMacIsToldItWillAskForFolderAccessAgainBeforeAnythingIsInstalled() {
-  const mac = updatesPage("UpdatePanel", { os: "macos" });
-  await mac.looks(status("available", NEW));
-  const order = mac.all(() => true).map((n) => n.textContent);
-  const note = order.findIndex((text) => text === say.macNote);
-  const install = order.findIndex((text) => text === say.install("3.0.1"));
-  assert.ok(note > 0 && install > note, "the note comes before the button");
-  // As plain as the other statuses: its icon and words.
-  assert.equal(mac.find((n) => n.textContent === say.macNote).props["data-tone"], "fyi");
-  // Done by hand it asks as well, and once Laci has installed it there is nothing left to say.
-  await mac.told(status("available", { ...NEW, install: "notice" }));
-  assert.match(mac.text(), new RegExp(say.macNote));
-  await mac.told(status("ready", NEW));
-  assert.doesNotMatch(mac.text(), new RegExp(say.macNote));
-  for (const os of ["linux", "windows"]) {
-    const other = updatesPage("UpdatePanel", { os });
-    await other.looks(status("available", NEW));
-    assert.doesNotMatch(other.text(), /macOS/, os);
+export async function nothingIsSaidAboutFolderAccessBeforeAnInstall() {
+  for (const part of ["UpdatePanel", "UpdateCard"]) {
+    const page = updatesPage(part);
+    await page.looks(status("available", NEW));
+    assert.doesNotMatch(page.text(), /macOS|folder access/, part);
   }
 }
 
@@ -575,8 +562,8 @@ export async function aRestartThatDidNotStartSaysWhyOnceInThePanel() {
   await page.looks(status("ready", NEW));
   page.act(() => page.button(say.restart).props.onClick());
   await page.settle();
-  // Windows: the installer didn't start. The desktop sends the failure and refuses the click with it.
-  const why = "The installer didn't start. Try the update again.";
+  // The new version didn't start: the desktop sends the failure and refuses the click with it.
+  const why = "The new version didn't start. Try the update again.";
   await page.told(status("error", { ...NEW, error: why }));
   await page.d.refuse("update/restart", why);
   await page.settle();
@@ -725,23 +712,12 @@ export async function aFailureIsToldInTheCardWhereTheClickWasAndNotTwice() {
 }
 
 export async function aCopyThatOnlyLinksGetsALinkOnHomeToo() {
-  const page = updatesPage("UpdateCard", { os: "macos" });
+  const page = updatesPage("UpdateCard");
   await page.looks(status("available", { ...NEW, install: "notice" }));
   assert.match(page.text(), new RegExp(say.linkOnly));
-  assert.match(page.text(), new RegExp(say.macNote));
   assert.deepEqual(page.buttons(), [say.openRelease, card.notNow]);
   page.act(() => page.button(say.openRelease).props.onClick());
   assert.deepEqual(page.opened(), [NEW.url]);
-}
-
-export async function aMacIsToldAboutFolderAccessOnHomeBeforeTheInstallButton() {
-  const page = updatesPage("UpdateCard", { os: "macos" });
-  await page.looks(status("available", NEW));
-  const order = page.all(() => true).map((n) => n.textContent);
-  assert.ok(order.indexOf(say.macNote) > 0 && order.indexOf(say.macNote) < order.indexOf(say.install("3.0.1")));
-  const linux = updatesPage("UpdateCard");
-  await linux.looks(status("available", NEW));
-  assert.doesNotMatch(linux.text(), /macOS/);
 }
 
 export async function notNowHidesTheCardForThatVersionAlone() {
@@ -801,7 +777,6 @@ export async function settingsShowsThePanelAboveTheChoiceAndAsksAgainWhenItIsMad
     updates: null,
     configured: true,
     configPath: "~/c.json",
-    os: "linux",
   };
   const { SettingsPage } = load(
     "simple/SettingsPage.tsx",
@@ -851,7 +826,7 @@ export async function settingsShowsThePanelAboveTheChoiceAndAsksAgainWhenItIsMad
           createElement("section", { "data-card": title }, title, children, footer),
       }),
     },
-    { document: { documentElement: { dataset: { os: "linux" } } }, requestAnimationFrame: (fn) => fn() },
+    { document: { documentElement: { dataset: {} } }, requestAnimationFrame: (fn) => fn() },
   );
   page.mount(createElement(SettingsPage));
   await page.settle();
@@ -926,7 +901,7 @@ export async function homeKeepsTheCardFirstInItsSideColumnAndTheOneFilledButtonI
       },
       "./ui": simpleBlocks(),
     },
-    { document: { documentElement: { dataset: { os: "linux" } } } },
+    { document: { documentElement: { dataset: {} } } },
   );
   page.mount(createElement(Home));
   await d.reply("update/status", status("available", NEW));

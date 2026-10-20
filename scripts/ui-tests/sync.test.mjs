@@ -21,7 +21,6 @@ const prefs = (choices = {}) => ({
   updates: null,
   configured: true,
   configPath: "~/.config/laci/config.json",
-  os: "linux",
   ...choices,
 });
 const status = (revision, busy = false) => ({

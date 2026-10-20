@@ -192,6 +192,45 @@ fn a_window_names_an_item_by_its_whole_text_and_a_stale_click_closes_nothing_els
     assert_eq!(activity::read_log(&f.env, 100).len(), logged);
 }
 
+/// The report items closed so far are read even when a sync app keeps their file only online, and a file that is
+/// there but can't be read stops the next change: read as empty, it would be replaced by the new closure alone.
+/// Windows' offline attribute stands in for a file that is only online.
+#[test]
+fn closed_items_kept_only_online_or_unreadable_are_never_replaced_by_the_next_closure() {
+    let f = fixture();
+    let alpha = f.reports.join("2026-10-01-alpha.md");
+    let text =
+        fs::read_to_string(&alpha).unwrap().replace("- Ship it\n", "- Ship it\n- Measure the parser\n- Write docs\n");
+    write(&alpha, &text);
+    let mut service = Service::new(f.env.clone());
+    save_reports_dir(&mut service, &json!(f.reports)).unwrap();
+    let close = |service: &mut Service, item: &str| {
+        service.request("report/close", &json!({"report":"2026-10-01-alpha.md","item":item,"state":"done"}))
+    };
+    close(&mut service, "ship").unwrap();
+    let file = f.env.data_dir.join("report-items.json");
+    #[cfg(windows)]
+    {
+        let marked = std::process::Command::new("attrib").arg("+O").arg(&file).output().unwrap();
+        assert!(marked.status.success(), "{}", String::from_utf8_lossy(&marked.stderr));
+        close(&mut service, "measure").unwrap();
+        let open = report(&service.snapshot().unwrap(), "2026-10-01-alpha.md")["open"].clone();
+        assert_eq!(open, json!(["Write docs"]), "the earlier closure is kept");
+    }
+    // Cut short, as a sync app can leave a copy it hasn't finished.
+    let cut = br#"{"2026-10-01-alpha.md":{"#;
+    fs::write(&file, cut).unwrap();
+    let error = close(&mut service, "docs").unwrap_err();
+    assert!(error.contains("report-items.json"), "{error}");
+    assert_eq!(fs::read(&file).unwrap(), cut, "nothing was replaced");
+    let last = activity::read_log(&f.env, 100)
+        .into_iter()
+        .find(|e| e["undo"]["type"] == "report-item" && e["canUndo"] == true)
+        .unwrap();
+    assert!(service.request("log/undo", &json!({"id":last["id"]})).is_err());
+    assert_eq!(fs::read(&file).unwrap(), cut, "nor by an Undo");
+}
+
 #[test]
 fn reading_searching_and_opening_reach_only_reports_of_the_last_scan() {
     let f = fixture();

@@ -333,12 +333,24 @@ pub fn parse(name: &str, text: &str, modified: &str) -> Value {
     facts
 }
 
-/// The open items the user closed: report file name, then item key, then how and when.
-pub fn closed_items(env: &Env) -> Value {
-    files::text(&env.data_dir.join(CLOSED))
+/// The open items the user closed: report file name, then item key, then how and when. The list is read even when a
+/// sync app keeps it only online, and one that is there but can't be read is an error: read as empty, the next
+/// closure would replace every earlier one.
+pub fn closed_items(env: &Env) -> Result<Value> {
+    let file = env.data_dir.join(CLOSED);
+    if fs::symlink_metadata(&file).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+        return Ok(json!({}));
+    }
+    files::text_even_online(&file)
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
         .filter(Value::is_object)
-        .unwrap_or_else(|| json!({}))
+        .ok_or_else(|| {
+            format!(
+                "Laci can't read {}, where it keeps the report items you closed, so nothing was changed. Remove that \
+                 file to start the list again.",
+                paths::tilde(&file, &env.home)
+            )
+        })
 }
 /// An item is known by its text, so it stays closed while the report keeps it and reopens when it is
 /// reworded.
@@ -384,7 +396,7 @@ pub fn close_item(
     let facts = parse(id, &text, "");
     let all: Vec<String> =
         facts["items"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
-    let closed = closed_items(env);
+    let closed = closed_items(env)?;
     let pool: Vec<&String> = all.iter().filter(|i| closed[id][item_key(i)].is_object() == (state == "open")).collect();
     let chosen = match item {
         ItemName::Exact(exact) => match pool.iter().find(|i| i.as_str() == exact) {
@@ -426,7 +438,7 @@ pub fn close_item(
         .find(|r| r["id"] == id)
         .map_or(id, |r| r["title"].as_str().unwrap_or(id));
     ops::with_lock(env, || {
-        let mut closed = closed_items(env);
+        let mut closed = closed_items(env)?;
         let previous = closed[id][key.as_str()].clone();
         if state == "open" {
             if let Some(items) = closed[id].as_object_mut() {
@@ -453,7 +465,7 @@ pub fn close_item(
 pub(crate) fn restore_item(env: &Env, undo: &Value) -> Result<()> {
     let id = undo["report"].as_str().ok_or("Unknown report")?;
     let key = undo["item"].as_str().ok_or("Unknown report item")?;
-    let mut closed = closed_items(env);
+    let mut closed = closed_items(env)?;
     if undo["previous"].is_object() {
         if !closed[id].is_object() {
             closed[id] = json!({});
@@ -612,7 +624,8 @@ pub fn attach(env: &Env, snapshot: &mut Value) {
     };
     let (found, total) = candidates(&dir);
     let linker = Linker::new(env, snapshot);
-    let closed = closed_items(env);
+    // A list that can't be read shows every item open; closing one then says why it can't.
+    let closed = closed_items(env).unwrap_or_else(|_| json!({}));
     let mut cache = agents::Cache::open(env, CACHE);
     let mut reports: Vec<Value> = found
         .iter()

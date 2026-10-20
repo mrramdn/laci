@@ -110,6 +110,9 @@ fn connectors_move_and_restore_while_mentions_and_inside_history_stay_intact() {
     snap["connectors"] = json!([{"id":"logs","link":{"kind":"cwd","field":"project.path","dir":log.parent().unwrap()}},{"id":"named","link":{"kind":"named","naming":"sha256","dir":named.parent().unwrap()}},{"id":"plans","link":{"kind":"mentions","dir":mentions.parent().unwrap()}}]);
     snap["items"] = json!({"log":{"cwd":from.join("docs"),"connector":"logs","file":log},"named":{"cwd":from,"connector":"named","file":named},"mentions":{"cwd":from,"connector":"plans","file":mentions}});
     let j = ops::move_project(&env, &snap, "demo", to.to_str().unwrap(), &json!({})).unwrap();
+    // A journal the Log reads alone tells its change by the parts it was written with.
+    let entry = activity::read_log(&env, 5).into_iter().find(|e| e["journal"] == j["id"]).unwrap();
+    assert_eq!(entry["say"], json!({"form":"moved","name":"demo"}));
     // As JSON writes it.
     assert!(fs::read_to_string(&log).unwrap().contains(&json!(to.join("docs")).to_string()));
     assert_eq!(fs::read_to_string(&mentions).unwrap(), from.to_string_lossy());

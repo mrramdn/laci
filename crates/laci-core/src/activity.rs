@@ -102,7 +102,13 @@ pub fn read_log(env: &Env, limit: usize) -> Vec<Value> {
     let by_journal = journals.iter().filter_map(|j| j["id"].as_str().map(|id| (id, j))).collect::<HashMap<_, _>>();
     let covered = acts.iter().filter_map(|a| a["journal"].as_str().map(str::to_owned)).collect::<HashSet<_>>();
     let undone = acts.iter().filter_map(|a| a["undoes"].as_str().map(str::to_owned)).collect::<HashSet<_>>();
-    acts.extend(journals.iter().filter(|j|j["id"].as_str().is_some_and(|id|!covered.contains(id))).map(|j|json!({"id":format!("j:{}",j["id"].as_str().unwrap()),"at":j["at"],"by":"app","title":j["title"],"journal":j["id"],"undo":{"type":"journal","id":j["id"]}})));
+    acts.extend(journals.iter().filter(|j| j["id"].as_str().is_some_and(|id| !covered.contains(id))).map(|j| {
+        let mut entry = json!({"id":format!("j:{}",j["id"].as_str().unwrap()),"at":j["at"],"by":"app","title":j["title"],"journal":j["id"],"undo":{"type":"journal","id":j["id"]}});
+        if j["say"].is_object() {
+            entry["say"] = j["say"].clone();
+        }
+        entry
+    }));
     acts.sort_by(|a, b| b["at"].as_str().unwrap_or("").cmp(a["at"].as_str().unwrap_or("")));
     let mut seen = HashSet::new();
     let mut seen_tasks = HashSet::new();
@@ -345,7 +351,7 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
         }
         out["entry"] = record(
             env,
-            json!({"by":by,"title":format!("Undid: {}",a["title"].as_str().unwrap_or("change")),"path":a["path"],"undoes":a["id"]}),
+            json!({"by":by,"title":format!("Undid: {}",a["title"].as_str().unwrap_or("change")),"say":{"form":"undid"},"path":a["path"],"undoes":a["id"]}),
         );
         Ok(out)
     })

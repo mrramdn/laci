@@ -78,6 +78,8 @@ fn all_missing_owners_allow_quarantine_with_exact_undo() {
     assert_eq!(p["validation"]["projects"].as_array().unwrap().len(), 2);
     let changed = ops::apply_proposal(&env, &snapshot, p, "quarantine").unwrap();
     assert!(!log.exists());
+    assert_eq!(changed["say"]["form"], "chatsForDeleted");
+    assert!(changed["say"]["name"].is_string());
     ops::undo(&env, changed["id"].as_str().unwrap()).unwrap();
     assert_eq!(fs::read_to_string(log).unwrap(), bytes);
 }

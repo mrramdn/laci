@@ -439,6 +439,7 @@ pub fn close_item(
         activity::record(
             env,
             json!({"by":by,"title":format!("{} an item of the report “{}”",if state == "open" { "Reopened" } else { "Closed" },clip(title, 80)),
+                "say":if state == "open" { json!({"form":"reopenedItem","title":clip(title, 80)}) } else { json!({"form":"closedItem","title":clip(title, 80)}) },
                 "detail":chosen,"path":file,"key":format!("report:{id}:{key}"),
                 "undo":{"type":"report-item","report":id,"item":key,"previous":previous}}),
         );

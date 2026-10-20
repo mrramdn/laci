@@ -231,15 +231,15 @@ struct Tx<'a> {
     n: usize,
 }
 impl<'a> Tx<'a> {
-    fn new(env: &'a Env, title: &str) -> Result<Self> {
+    /// `say` is the change in parts, which the Log's readers tell in their own words (activity.rs `record`).
+    fn new(env: &'a Env, title: &str, say: Value) -> Result<Self> {
         let id = id();
         let file = data(env, "journal")?.join(format!("{id}.json"));
-        let tx = Self {
-            env,
-            journal: json!({"id":id,"at":files::now(),"title":title,"state":"running","entries":[]}),
-            file,
-            n: 0,
-        };
+        let mut journal = json!({"id":id,"at":files::now(),"title":title,"state":"running","entries":[]});
+        if say.is_object() {
+            journal["say"] = say;
+        }
+        let tx = Self { env, journal, file, n: 0 };
         tx.save()?;
         Ok(tx)
     }
@@ -433,9 +433,9 @@ impl<'a> Tx<'a> {
         platform::trash(path)
     }
 }
-fn transact(env: &Env, title: &str, work: impl FnOnce(&mut Tx<'_>) -> Result<()>) -> Result<Value> {
+fn transact(env: &Env, title: &str, say: Value, work: impl FnOnce(&mut Tx<'_>) -> Result<()>) -> Result<Value> {
     with_lock(env, || {
-        let mut tx = Tx::new(env, title)?;
+        let mut tx = Tx::new(env, title, say)?;
         match work(&mut tx).and_then(|_| {
             tx.journal["state"] = json!("applied");
             tx.save()
@@ -699,10 +699,13 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
     if contains(&src, &dest) {
         return Err("Can't move a folder into itself".into());
     }
-    let title = opts["title"].as_str().map(str::to_owned).unwrap_or_else(|| {
-        format!("Move {} → {}", node["name"].as_str().unwrap_or("project"), paths::tilde(&dest, &env.home))
-    });
-    transact(env, &title, |tx| {
+    let name = node["name"].as_str().unwrap_or("project");
+    let title = opts["title"]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("Move {name} → {}", paths::tilde(&dest, &env.home)));
+    let say = if opts["say"].is_object() { opts["say"].clone() } else { json!({"form":"moved","name":name}) };
+    transact(env, &title, say, |tx| {
         guard(std::slice::from_ref(&src))?;
         if opts["status"] == "archived" {
             crate::scan::check_archive_destination(env, &dest)?;
@@ -810,13 +813,14 @@ pub fn archive_project_to(
     trash_heavy: bool,
 ) -> Result<Value> {
     let plan = crate::scan::archive_plan(env, snap, id, destination)?;
-    let node = &snap["nodes"][id];
+    let name = snap["nodes"][id]["name"].as_str().unwrap_or("project");
     move_project(
         env,
         snap,
         id,
         plan["dest"].as_str().ok_or("Missing archive destination")?,
-        &json!({"status":"archived","trashHeavy":trash_heavy,"title":format!("Archive {}",node["name"].as_str().unwrap_or("project"))}),
+        &json!({"status":"archived","trashHeavy":trash_heavy,"title":format!("Archive {name}"),
+            "say":{"form":"archived","name":name}}),
     )
 }
 pub fn apply_proposal(env: &Env, snap: &Value, proposal: &Value, recovery: &str) -> Result<Value> {
@@ -827,26 +831,33 @@ pub fn apply_proposal(env: &Env, snap: &Value, proposal: &Value, recovery: &str)
         env,
         snap,
         proposal["title"].as_str().unwrap_or("Clean up history"),
+        proposal["say"].clone(),
         &proposal["action"],
         Some((proposal, recovery)),
     )
 }
 
 pub fn apply_action(env: &Env, snap: &Value, title: &str, a: &Value) -> Result<Value> {
-    apply_action_checked(env, snap, title, a, None)
+    apply_action_checked(env, snap, title, Value::Null, a, None)
+}
+
+/// `apply_action` with the parts the Log tells the change by (Tx::new).
+pub fn apply_action_saying(env: &Env, snap: &Value, title: &str, say: Value, a: &Value) -> Result<Value> {
+    apply_action_checked(env, snap, title, say, a, None)
 }
 
 fn apply_action_checked(
     env: &Env,
     snap: &Value,
     title: &str,
+    say: Value,
     a: &Value,
     reviewed: Option<(&Value, &str)>,
 ) -> Result<Value> {
     if a["type"] == "archive" {
         return archive_project(env, snap, a["nodeId"].as_str().ok_or("Missing project")?, false);
     }
-    transact(env, title, |tx| {
+    transact(env, title, say, |tx| {
         let mut checked = a.clone();
         if let Some((proposal, recovery)) = reviewed.filter(|(p, _)| p["category"] == "orphan") {
             let fresh = crate::scan::scan(env)?;
@@ -1061,11 +1072,11 @@ pub fn delete_sessions(env: &Env, snap: &Value, files: &[String]) -> Result<Valu
         }
         plan.push((id.to_owned(), provider == "claude", store, relative, title.to_owned()));
     }
-    let title = match plan.as_slice() {
-        [(.., one)] => format!("Deleted the session “{one}”"),
-        _ => format!("Deleted {} sessions", plan.len()),
+    let (title, say) = match plan.as_slice() {
+        [(.., one)] => (format!("Deleted the session “{one}”"), json!({"form":"deletedChat","title":one})),
+        _ => (format!("Deleted {} sessions", plan.len()), json!({"form":"deletedChats","chats":plan.len()})),
     };
-    transact(env, &title, |tx| {
+    transact(env, &title, say, |tx| {
         let id = tx.journal["id"].as_str().unwrap_or("removed").to_owned();
         let removed = data(env, "orphans")?.join("sessions").join(&id);
         let history = data(env, "history")?;
@@ -1286,7 +1297,7 @@ mod tests {
         dest: &Path,
         beside: impl Fn(&Path, &Path) -> std::io::Result<()>,
     ) -> Result<Value> {
-        transact(env, "Move", |tx| {
+        transact(env, "Move", Value::Null, |tx| {
             tx.log(json!({"kind":"move","from":src,"to":dest}))?;
             rename_across_with(src, dest, beside)
         })

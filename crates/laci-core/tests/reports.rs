@@ -136,6 +136,8 @@ fn open_items_close_and_reopen_in_laci_and_the_report_stays_as_written() {
         .request("report/close", &json!({"report":"2026-10-01-alpha.md","item":"measure","state":"done"}))
         .unwrap();
     assert_eq!(closed["item"], "Measure the parser");
+    let said = |env: &laci_core::env::Env| activity::read_log(env, 5)[0]["say"].clone();
+    assert_eq!(said(&f.env), json!({"form":"closedItem","title":"Alpha tokenizer"}));
     assert_eq!(open(&mut service), (json!(["Ship it", "Write docs"]), json!(2), json!(1)));
     // A number counts among the items still open.
     service.request("report/close", &json!({"report":"2026-10-01-alpha.md","item":2,"state":"dropped"})).unwrap();
@@ -149,8 +151,10 @@ fn open_items_close_and_reopen_in_laci_and_the_report_stays_as_written() {
         .find(|e| e["undo"]["type"] == "report-item" && e["canUndo"] == true)
         .unwrap();
     service.request("log/undo", &json!({"id":last["id"]})).unwrap();
+    assert_eq!(said(&f.env), json!({"form":"undid"}));
     assert_eq!(open(&mut service).0, json!(["Ship it", "Write docs"]));
     service.request("report/close", &json!({"report":"2026-10-01-alpha.md","item":"measure","state":"open"})).unwrap();
+    assert_eq!(said(&f.env), json!({"form":"reopenedItem","title":"Alpha tokenizer"}));
     assert_eq!(open(&mut service), (json!(["Ship it", "Measure the parser", "Write docs"]), json!(3), Value::Null));
     assert_eq!(fs::read_to_string(&alpha).unwrap(), text, "the reports folder is only read");
 }

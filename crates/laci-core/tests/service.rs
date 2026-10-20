@@ -44,6 +44,10 @@ fn undo_latest(service: &mut Service, key: &str) {
     let a = latest(&service.env, key);
     service.request("log/undo", &json!({"id":a["id"]})).unwrap();
 }
+/// The parts the newest Log entry tells its change by.
+fn said(env: &Env) -> Value {
+    activity::read_log(env, 5)[0]["say"].clone()
+}
 fn todo_key(project: &Path, file: &str, text: &str, occurrence: usize) -> String {
     format!("todo:{}:{file}:{text}:{occurrence}", project.display())
 }
@@ -252,6 +256,59 @@ fn metadata_tasks_and_notes_can_be_changed_and_undone_through_log() {
     undo_latest(&mut service, &format!("notes:{id}"));
     assert_eq!(notes(&project), "base notes");
 }
+/// Each change to a project, its to-dos, its notes and the settings is told in the Log by its form and parts.
+#[test]
+fn fields_to_dos_notes_settings_and_connectors_say_their_form() {
+    let (_temp, env, project) = fixture();
+    let mut service = loaded(&env, &project);
+    let id = project.to_str().unwrap();
+    let mut said_after = |name: &str, body: Value| {
+        service.request(name, &body).unwrap();
+        said(&env)
+    };
+    for (key, value, say) in [
+        ("status", "paused", json!({"form":"setStatus","name":"demo","status":"paused"})),
+        ("status", "", json!({"form":"clearedStatus","name":"demo"})),
+        ("priority", "high", json!({"form":"setPriority","name":"demo","priority":"high"})),
+        ("priority", "", json!({"form":"clearedPriority","name":"demo"})),
+        ("deadline", "2026-11-02", json!({"form":"setDeadline","name":"demo","deadline":"2026-11-02"})),
+        ("deadline", "", json!({"form":"clearedDeadline","name":"demo"})),
+        ("client", "Acme", json!({"form":"setClient","name":"demo","client":"Acme"})),
+        ("client", "", json!({"form":"clearedClient","name":"demo"})),
+        ("quiet", "no-git,no-readme", json!({"form":"muted","name":"demo","check":"no-git"})),
+        ("quiet", "no-readme,no-git", json!({"form":"changedMuted","name":"demo"})),
+        ("quiet", "", json!({"form":"unmuted","name":"demo","check":"no-git"})),
+    ] {
+        assert_eq!(said_after("meta", json!({"id":id,"key":key,"value":value})), say, "{key} = {value:?}");
+    }
+    for (op, more, form) in [
+        ("add", json!({"text":"Add tests"}), "addedStep"),
+        ("toggle", json!({"done":true}), "ticked"),
+        ("toggle", json!({"done":false}), "unticked"),
+        ("edit", json!({"to":"Write the docs"}), "editedTodo"),
+        ("delete", json!({"text":"Write the docs"}), "deletedStep"),
+    ] {
+        let mut body = json!({"id":id,"op":op,"file":".laci.md","text":"Write docs"});
+        body.as_object_mut().unwrap().extend(more.as_object().unwrap().clone());
+        assert_eq!(said_after("todo", body), json!({"form":form,"name":"demo"}), "{op}");
+    }
+    assert_eq!(said_after("notes", json!({"id":id,"text":"new notes"})), json!({"form":"editedNotes","name":"demo"}));
+    assert_eq!(
+        said_after("setup/save", json!({"roots":["~/project"],"presets":["claude"],"apps":{}})),
+        json!({"form":"changedSettings"})
+    );
+    assert_eq!(said_after("backup/auto", json!({"on":true})), json!({"form":"autoBackupOn"}));
+    assert_eq!(said_after("backup/auto", json!({"on":false})), json!({"form":"autoBackupOff"}));
+    let claude = json!({"form":"removedHistory","ai":"Claude Code"});
+    assert_eq!(said_after("connector/remove", json!({"id":"claude"})), claude);
+    let claude = json!({"form":"addedHistory","ai":"Claude Code"});
+    assert_eq!(said_after("connector/add", json!({"preset":"claude"})), claude);
+    let undone = activity::read_log(&env, 5)[0]["id"].clone();
+    assert_eq!(said_after("log/undo", json!({"id":undone})), json!({"form":"undid"}));
+    let fresh = json!({"parent":"~/project","name":"fresh","from":"empty","remote":"none"});
+    assert_eq!(said_after("new", fresh), json!({"form":"created","name":"fresh"}));
+}
+
 #[test]
 fn a_to_do_is_rewritten_with_its_mark_and_the_log_puts_the_old_words_back() {
     let (_temp, env, project) = fixture();
@@ -745,6 +802,7 @@ fn quarantine_execution_acknowledges_the_journal_before_refresh_and_keeps_undo_c
         snapshot["proposals"].as_array().unwrap().iter().find(|p| p["action"]["type"] == "quarantine").unwrap();
     let outcome = service.execute("apply", &json!({"id":proposal["id"]}), "app").unwrap();
     assert_eq!(outcome.value["journal"]["state"], "applied");
+    assert_eq!(said(&env), json!({"form":"chatsForGone"}));
     assert!(outcome.value.get("snapshot").is_none());
     assert!(outcome.refresh.agents && !outcome.refresh.full);
     assert!(!history.exists());
@@ -753,6 +811,7 @@ fn quarantine_execution_acknowledges_the_journal_before_refresh_and_keeps_undo_c
     let restored = service.request_as("undo", &json!({"id":outcome.value["journal"]["id"]}), "agent").unwrap();
     assert!(restored["snapshot"].is_object());
     assert_eq!(restored["journal"]["state"], "undone");
+    assert_eq!(said(&env), json!({"form":"undid"}));
     assert!(history.join("session.jsonl").exists());
 }
 
@@ -978,14 +1037,17 @@ fn a_backup_leaves_a_trace_and_clears_the_warning_until_a_session_changes() {
     assert_eq!((&snap["backup"]["pending"], &snap["backup"]["sessions"]), (&json!(0), &json!(1)));
     let entry = &activity::read_log(&env, 10)[0];
     assert_eq!(entry["title"], "Backed up 2 agent history files");
+    assert_eq!(entry["say"], json!({"form":"backedUp","files":2}));
     assert!(entry["detail"].as_str().unwrap().starts_with("1 session kept · "));
 
     service.request("backup", &json!({})).unwrap();
     assert_eq!(activity::read_log(&env, 10)[0]["title"], "Agent history backup is up to date");
+    assert_eq!(said(&env), json!({"form":"backupUpToDate"}));
 
     std::thread::sleep(std::time::Duration::from_millis(20));
     write(&session, &format!("{}\n{}\n", json!({"type":"user","cwd":project,"sessionId":"s1"}), json!({"more":1})));
     service.request("backup/auto", &json!({"on":true})).unwrap();
+    assert_eq!(said(&env), json!({"form":"autoBackupOn"}));
     let snap = service.rescan().unwrap();
     assert_eq!((&snap["backup"]["pending"], &snap["backup"]["auto"]), (&json!(1), &json!(true)));
     let warning = snap["warnings"].as_array().unwrap().iter().find(|w| w["code"] == "claude-cleanup").unwrap();
@@ -1018,6 +1080,7 @@ fn a_tool_the_user_describes_can_be_started_and_given_the_mcp_server() {
         json!({"launch":true,"resume":false,"titles":false,"modelDiscovery":"aliases","continue":true,"mcp":true})
     );
     assert_eq!(activity::read_log(&env, 10)[0]["title"], "Added Aider");
+    assert_eq!(said(&env), json!({"form":"addedTool","ai":"Aider"}));
     // A second tool without history is its own card, not a copy of the first.
     let snap = service.request("connector/add", &json!({"name":"Other","agent":{"command":"other"}})).unwrap();
     assert_eq!(snap["connectors"].as_array().unwrap().len(), 2);
@@ -1046,9 +1109,11 @@ fn a_tool_the_user_describes_can_be_started_and_given_the_mcp_server() {
         (&entry["title"], &entry["detail"]),
         (&json!("Added Laci's MCP server to Aider"), &json!("Edited ~/.aider/mcp.json"))
     );
+    assert_eq!(entry["say"], json!({"form":"letUse","ai":"Aider"}));
     service.request("agent/mcp/apply", &json!({"provider":"custom-aider","remove":true})).unwrap();
     let entry = &activity::read_log(&env, 10)[0];
     assert_eq!(entry["title"], "Removed Laci's MCP server from Aider");
+    assert_eq!(entry["say"], json!({"form":"stoppedUse","ai":"Aider"}));
     assert!(
         entry["detail"]
             .as_str()
@@ -1059,6 +1124,7 @@ fn a_tool_the_user_describes_can_be_started_and_given_the_mcp_server() {
 
     service.request("connector/remove", &json!({"id":"custom-aider"})).unwrap();
     assert_eq!(activity::read_log(&env, 10)[0]["title"], "Removed Aider");
+    assert_eq!(said(&env), json!({"form":"removedTool","ai":"Aider"}));
     assert!(laci_core::providers::get(&env, "custom-aider").is_err());
     undo_latest(&mut service, "connector:custom-aider");
     assert_eq!(laci_core::providers::get(&env, "custom-aider").unwrap().prompt, ["--message", "{prompt}"]);
@@ -1125,6 +1191,7 @@ fn sessions_only_the_backup_holds_are_listed_and_can_be_put_back() {
         (&entry["title"], &entry["detail"]),
         (&json!("Restored a Claude Code session from the backup"), &json!("Fix the login page"))
     );
+    assert_eq!(entry["say"], json!({"form":"restoredChat","ai":"Claude Code"}));
     assert!(service.request("backup/restore", &json!({"id":lost["id"]})).is_err(), "it is no longer missing");
     assert!(service.request("backup/restore", &json!({"id":"backup:claude:../../x.jsonl"})).is_err());
 }
@@ -1184,6 +1251,7 @@ fn deleted_sessions_go_to_the_quarantine_with_their_backup_copy_and_undo_brings_
 
     let done = service.request("session/delete", &json!({"files":[session]})).unwrap();
     assert_eq!(done["journal"]["title"], "Deleted the session “Fix the login page”");
+    assert_eq!(said(&env), json!({"form":"deletedChat","title":"Fix the login page"}));
     assert!(!session.exists() && !session.with_extension("").exists() && !copy.exists());
     let snap = service.rescan().unwrap();
     assert!(
@@ -1193,6 +1261,7 @@ fn deleted_sessions_go_to_the_quarantine_with_their_backup_copy_and_undo_brings_
     let entry = activity::read_log(&env, 20).into_iter().find(|e| e["journal"] == done["journal"]["id"]).unwrap();
     assert_eq!(entry["canUndo"], true);
     service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
+    assert_eq!(said(&env), json!({"form":"undid"}));
     assert!(session.exists() && session.with_extension("").join("subagents/agent-a.jsonl").exists() && copy.exists());
 
     // Emptying the quarantine makes a deletion final: the Log stops offering its Undo.
@@ -1201,6 +1270,7 @@ fn deleted_sessions_go_to_the_quarantine_with_their_backup_copy_and_undo_brings_
     let removed = storage["parts"].as_array().unwrap().iter().find(|p| p["id"] == "removed").unwrap();
     assert!(removed["bytes"].as_u64().unwrap() > 0);
     service.request("storage/free", &json!({"part":"removed"})).unwrap();
+    assert_eq!(said(&env), json!({"form":"emptiedKept"}));
     assert!(fs::read_dir(env.data_dir.join("orphans")).unwrap().next().is_none());
     let entry = activity::read_log(&env, 20).into_iter().find(|e| e["journal"] == done["journal"]["id"]).unwrap();
     assert_eq!(entry["canUndo"], false);
@@ -1222,6 +1292,7 @@ fn only_files_left_by_laci_1_are_freed_from_its_config_folder() {
     assert!(env.config_dir.join("config.json").exists() && env.config_dir.join("mine.txt").exists());
     assert!(service.request("storage/free", &json!({"part":"history"})).is_err());
     assert_eq!(activity::read_log(&env, 5)[0]["title"], "Removed files left by Laci 1");
+    assert_eq!(said(&env), json!({"form":"removedLaci1"}));
 }
 
 #[test]
@@ -1240,12 +1311,14 @@ fn a_dismissed_suggestion_stays_away_until_it_is_asked_back() {
     assert!(!snap["proposals"].as_array().unwrap().iter().any(|p| p["id"] == id));
     assert_eq!(snap["dismissed"][0]["id"], id);
     assert!(activity::read_log(&env, 5)[0]["title"].as_str().unwrap().starts_with("Dismissed: "));
+    assert_eq!(said(&env), json!({"form":"dismissed","title":snap["dismissed"][0]["title"]}));
     // A second click on the same button finds it done, and says so without a second Log entry.
     let logged = activity::read_log(&env, 50).len();
     service.request("proposal/dismiss", &json!({"id":id})).unwrap();
     assert_eq!(activity::read_log(&env, 50).len(), logged);
     let back = service.request("proposal/dismiss", &json!({"id":id,"undo":true})).unwrap();
     assert!(back["snapshot"]["proposals"].as_array().unwrap().iter().any(|p| p["id"] == id));
+    assert_eq!(said(&env)["form"], "suggestedAgain");
     service.request("proposal/dismiss", &json!({"id":id,"undo":true})).unwrap();
     assert_eq!(activity::read_log(&env, 50).len(), logged + 1);
 }
@@ -1260,6 +1333,7 @@ fn a_muted_check_is_marked_and_named_in_the_log() {
     let issue = snap["nodes"][id]["issues"].as_array().unwrap().iter().find(|i| i["code"] == "no-git").unwrap().clone();
     assert_eq!(issue["muted"], true);
     assert_eq!(activity::read_log(&env, 5)[0]["title"], "Muted “Not under version control” on demo");
+    assert_eq!(said(&env), json!({"form":"muted","name":"demo","check":"no-git"}));
     assert!(service.request("meta", &json!({"id":id,"key":"quiet","value":"No Git!"})).is_err());
 }
 
@@ -1281,4 +1355,5 @@ fn build_output_is_deleted_for_good_and_a_linked_build_folder_is_left_alone() {
     let entry = activity::read_log(&env, 5).into_iter().find(|e| e["journal"] == done["journal"]["id"]).unwrap();
     assert_eq!(entry["canUndo"], false);
     assert_eq!(entry["detail"], "Deleted build output comes back with the next install or build.");
+    assert_eq!(entry["say"], json!({"form":"clearedBuild","name":"demo"}));
 }

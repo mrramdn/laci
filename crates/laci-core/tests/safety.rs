@@ -238,6 +238,7 @@ fn keep_out_adds_one_anchored_line_each_and_undo_puts_the_old_bytes_back() {
         assert_eq!(listed(&env, &dir), pairs(&[("my1.pem", false)]), "each line matches its file alone");
         let logged = entry(&env, &change);
         assert_eq!(logged["title"], "Added 2 files to .gitignore in demo");
+        assert_eq!(logged["say"], json!({"form":"keptOut","files":2,"name":"demo"}));
         assert_eq!((&logged["detail"], &logged["canUndo"]), (&json!(".env, my[1].pem"), &json!(true)));
         // The Activity entry and the toast's journal Undo restore the same bytes.
         if before.is_some() {

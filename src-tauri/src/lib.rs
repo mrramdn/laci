@@ -38,7 +38,11 @@ fn run(action: Option<Action>, open: fn(Env) -> laci_core::Result<()>) -> laci_c
         None => open(Env::from_process()?),
         Some(Action::Mcp) => mcp::run(Env::from_process()?),
         Some(action) => {
-            let snapshot = Service::new(Env::from_process()?).rescan()?;
+            let mut snapshot = Service::new(Env::from_process()?).rescan()?;
+            // The parts the Log tells an applied suggestion by are the window's; the JSON stays as it was.
+            for proposal in snapshot.get_mut("proposals").and_then(Value::as_array_mut).into_iter().flatten() {
+                proposal.as_object_mut().map(|fields| fields.remove("say"));
+            }
             let mut out = io::stdout().lock();
             let written = match action {
                 Action::Json => writeln!(out, "{snapshot:#}"),

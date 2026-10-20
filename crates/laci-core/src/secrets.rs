@@ -187,7 +187,14 @@ fn create(file: &Path, bytes: &[u8]) -> Result<()> {
 
 /// Writes `after` over `file` with a journal in the form `ops` keeps, so Undo puts back the bytes `file` had, or
 /// removes it if it was new, as long as it still holds `after`. Runs under the change lock.
-fn write_journaled(env: &Env, title: &str, file: &Path, before: Option<&[u8]>, after: &[u8]) -> Result<Value> {
+fn write_journaled(
+    env: &Env,
+    title: &str,
+    say: Value,
+    file: &Path,
+    before: Option<&[u8]>,
+    after: &[u8],
+) -> Result<Value> {
     let journals = ops::data(env, "journal")?;
     let id = loop {
         let id = format!(
@@ -214,7 +221,7 @@ fn write_journaled(env: &Env, title: &str, file: &Path, before: Option<&[u8]>, a
         }
         None => None,
     };
-    let mut journal = json!({"id":id,"at":files::now(),"title":title,"state":"running","entries":[
+    let mut journal = json!({"id":id,"at":files::now(),"title":title,"say":say,"state":"running","entries":[
         {"kind":"file","path":file,"existed":before.is_some(),"backup":backup,
             "afterHash":format!("{:x}", Sha256::digest(after))}
     ]});
@@ -326,7 +333,8 @@ deleting {it}.",
         let names: Vec<&str> = added.iter().map(|found| found.path.as_str()).collect();
         let what = if let [one] = names.as_slice() { (*one).to_owned() } else { format!("{} files", names.len()) };
         let title = format!("Added {what} to .gitignore in {}", string(node, "name"));
-        let journal = write_journaled(env, &title, &file, before.as_deref(), &after)?;
+        let say = json!({"form":"keptOut","files":names.len(),"name":string(node, "name")});
+        let journal = write_journaled(env, &title, say.clone(), &file, before.as_deref(), &after)?;
         let mut warnings = vec![];
         if !tracked.is_empty() {
             let it = them(tracked.len());
@@ -352,7 +360,7 @@ deleting {it}.",
         }
         activity::record(
             env,
-            json!({"by":by,"title":title,"detail":names.join(", "),"path":dir,"journal":journal["id"],
+            json!({"by":by,"title":title,"say":say,"detail":names.join(", "),"path":dir,"journal":journal["id"],
                 "key":format!("gitignore:{}",dir.display()),"undo":{"type":"journal","id":journal["id"]}}),
         );
         Ok(json!({"journal":journal,"warnings":warnings}))

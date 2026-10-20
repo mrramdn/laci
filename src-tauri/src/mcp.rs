@@ -90,6 +90,7 @@ impl ServerHandler for Mcp {
                 if let Some(object) = value.as_object_mut() {
                     object.remove("snapshot");
                 }
+                unsaid(&mut value);
                 value
             })
         })
@@ -595,6 +596,15 @@ fn clip(text: &str, max: usize) -> String {
 }
 /// A Log entry as an agent reads it: what happened and whether it can be undone, without the stored undo data
 /// (a notes change keeps the whole previous notes there, which made the Log too long to read).
+/// Leaves out the parts the window tells a Log entry by ("say"), from a journal or a Log entry an answer passes
+/// through: an agent reads the title.
+fn unsaid(value: &mut Value) {
+    for key in ["journal", "plan", "entry"] {
+        if let Some(object) = value.get_mut(key).and_then(Value::as_object_mut) {
+            object.remove("say");
+        }
+    }
+}
 fn change(e: &Value) -> Value {
     let mut out = json!({});
     for key in ["id", "at", "by", "title", "path", "canUndo", "journal", "undoes", "error"] {
@@ -1219,6 +1229,23 @@ mod tests {
         assert_eq!((long["steps"].clone(), long["moreSteps"].clone()), (json!([0, 1, 2, 3, 4]), json!(2)));
         assert_eq!(shown["detail"].as_str().unwrap().chars().count(), 301, "300 characters and the ellipsis");
         assert_eq!(change(&json!({"state":"undone","superseded":true}))["state"], "undone");
+        assert!(change(&json!({"title":"Move a","say":{"form":"moved","name":"a"}})).get("say").is_none());
+    }
+
+    /// The parts the window tells a change by stay out of an answer that passes a journal or a Log entry through.
+    #[test]
+    fn an_answer_leaves_out_what_the_window_tells_a_change_by() {
+        let say = json!({"form":"moved","name":"a"});
+        let mut answer = json!({"journal":{"id":"j","title":"Move a","say":say},"plan":{"title":"Move a","say":say},
+            "entry":{"title":"Undid: Move a","say":{"form":"undid"}},"hint":"h"});
+        unsaid(&mut answer);
+        assert_eq!(
+            answer,
+            json!({"journal":{"id":"j","title":"Move a"},"plan":{"title":"Move a"},"entry":{"title":"Undid: Move a"},"hint":"h"})
+        );
+        let mut plans = json!({"plan":[{"kind":"move","say":"kept"}]});
+        unsaid(&mut plans);
+        assert_eq!(plans, json!({"plan":[{"kind":"move","say":"kept"}]}), "a list of operations is not an entry");
     }
 
     #[test]

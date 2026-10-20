@@ -176,6 +176,7 @@ fn invalid_default_archive_keeps_review_available_with_a_valid_alternative() {
     assert_eq!(plan["dest"], json!(dest));
     service.request("archive", &json!({"id":project,"destination":dest})).unwrap();
     assert!(dest.join("package.json").exists());
+    assert_eq!(activity::read_log(&env, 5)[0]["say"], json!({"form":"archived","name":"demo"}));
 }
 
 // gio is Linux's Trash.

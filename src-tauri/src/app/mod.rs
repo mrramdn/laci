@@ -241,7 +241,7 @@ impl AppState {
                 let project_name = string(body, "name").to_owned();
                 let started = self.creations.start(env, body.clone(), move |result| {
                     if let Ok(value) = result.as_ref() {
-                        laci_core::activity::record(&record_env, json!({"by":"app","title":format!("Created {project_name}"),"path":value["path"],"detail":value["warnings"]}));
+                        laci_core::activity::record(&record_env, json!({"by":"app","title":format!("Created {project_name}"),"say":{"form":"created","name":project_name},"path":value["path"],"detail":value["warnings"]}));
                     }
                     if let Some(state) = weak.upgrade() {
                         state.engine.lock().unwrap_or_else(|e| e.into_inner()).finish_creation(result);

@@ -286,6 +286,10 @@ pub fn change(env: &Env, id: &str, remove: bool, by: &str) -> Result<Value> {
                 format!("Removed Laci's MCP server from {}", provider.name)
             } else {
                 format!("Added Laci's MCP server to {}", provider.name)
+            },"say":if remove {
+                json!({"form":"stoppedUse","ai":provider.name})
+            } else {
+                json!({"form":"letUse","ai":provider.name})
             },"detail":format!("{how}{kept}")}),
         );
     }

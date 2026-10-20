@@ -79,6 +79,22 @@ pub(crate) fn located(program: &str) -> Option<PathBuf> {
 fn installed(program: &str) -> bool {
     located(program).is_some()
 }
+/// The variables that give `program`, an agent Laci asks something, the home Laci reads, also on a demo home: HOME on
+/// Linux and macOS, USERPROFILE on Windows. Codex reads CODEX_HOME instead, and without it the profile Windows has for
+/// the user, whatever USERPROFILE says. So on a home that isn't the user's own, Codex gets that home's .codex, made
+/// first since Codex refuses a CODEX_HOME that isn't a folder; on the user's own home a CODEX_HOME they set stays.
+pub(crate) fn agent_home(env: &Env, program: &str) -> Result<Vec<(&'static str, String)>> {
+    let home = env.home.to_string_lossy().into_owned();
+    let mut vars = vec![("HOME", home.clone()), ("USERPROFILE", home)];
+    let own = crate::platform::home_dir().is_some_and(|own| crate::platform::path::same_path(&own, &env.home));
+    let codex = Path::new(program).file_stem().is_some_and(|name| name.eq_ignore_ascii_case("codex"));
+    if codex && !own {
+        let folder = env.home.join(".codex");
+        std::fs::create_dir_all(&folder).map_err(|e| format!("Couldn't make {}: {e}", folder.display()))?;
+        vars.push(("CODEX_HOME", folder.to_string_lossy().into_owned()));
+    }
+    Ok(vars)
+}
 pub fn session_id_valid(id: &str) -> bool {
     id.len() == 36
         && id.bytes().enumerate().all(
@@ -262,26 +278,22 @@ fn discover(env: &Env, provider: &str, refresh: bool) -> Result<Value> {
     let discovery = providers::get(env, provider)?.discovery;
     if result["installed"] == true && discovery != Discovery::Fixed {
         let found = if discovery == Discovery::Codex {
-            codex_models(&env.home)
+            codex_models(env)
         } else {
-            // The agent keeps its state under home; it must be the home Laci reads, also on a demo home. Windows
-            // programs read it from USERPROFILE.
-            let home = env.home.to_string_lossy();
-            crate::process::run_env(
-                "agy",
-                &["models"],
-                Some(&env.home),
-                Duration::from_secs(12),
-                &[("HOME", Some(home.as_ref())), ("USERPROFILE", Some(home.as_ref()))],
-            )
-            .and_then(|s| parse_agy_models(&s))
-            .map(|mut models| {
-                // The listing names no effort levels; --effort belongs to the session, so every model takes it.
-                for model in models.as_array_mut().into_iter().flatten() {
-                    model["efforts"] = result["defaultEfforts"].clone();
-                }
-                models
-            })
+            // The agent keeps its state under home; it must be the home Laci reads, also on a demo home.
+            agent_home(env, "agy")
+                .and_then(|vars| {
+                    let vars: Vec<_> = vars.iter().map(|(key, value)| (*key, Some(value.as_str()))).collect();
+                    crate::process::run_env("agy", &["models"], Some(&env.home), Duration::from_secs(12), &vars)
+                })
+                .and_then(|s| parse_agy_models(&s))
+                .map(|mut models| {
+                    // The listing names no effort levels; --effort belongs to the session, so every model takes it.
+                    for model in models.as_array_mut().into_iter().flatten() {
+                        model["efforts"] = result["defaultEfforts"].clone();
+                    }
+                    models
+                })
         };
         match found {
             Ok(models) => {
@@ -343,14 +355,14 @@ fn parse_codex_models(result: &Value) -> Result<Vec<Value>> {
         Some(json!({"id":id,"label":m["displayName"].as_str().unwrap_or(id),"efforts":efforts,"defaultEffort":m["defaultReasoningEffort"],"isDefault":m["isDefault"]}))
     }).collect())
 }
-/// `cwd` is Laci's home, which is also where Codex must look for its own settings.
-fn codex_models(cwd: &Path) -> Result<Value> {
+/// Asked in Laci's home, which is also where Codex must look for its own settings.
+fn codex_models(env: &Env) -> Result<Value> {
     // Only initialize/model-list messages; discovery never starts a thread or a turn.
     let output = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
+    let vars = agent_home(env, "codex")?;
     let mut child = crate::process::start("codex", &["app-server", "--listen", "stdio://"])?
-        .current_dir(cwd)
-        .env("HOME", cwd)
-        .env("USERPROFILE", cwd)
+        .current_dir(&env.home)
+        .envs(vars.iter().map(|(key, value)| (key, value)))
         .stdin(Stdio::piped())
         .stdout(output.reopen().map_err(|e| e.to_string())?)
         .stderr(Stdio::null())

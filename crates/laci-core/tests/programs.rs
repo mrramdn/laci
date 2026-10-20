@@ -156,8 +156,10 @@ fn the_login_shell_path_is_read_between_what_its_startup_files_print() {
 }
 
 /// An agent Laci asks for its models, or tells about Laci's MCP server, works in the home Laci reads, also on a demo
-/// home: HOME on Linux and macOS, USERPROFILE on Windows. The code is the same on every OS; on macOS a codex or agy
-/// on the login shell's PATH would come before these stand-ins.
+/// home: HOME on Linux and macOS, USERPROFILE on Windows. Codex reads CODEX_HOME before either, and on Windows
+/// otherwise the real profile, so on a demo home it gets the demo's .codex there, over one the user set; other agents
+/// keep what they inherit. The code is the same on every OS; on macOS a codex or agy on the login shell's PATH would
+/// come before these stand-ins.
 #[cfg(target_os = "linux")]
 #[test]
 fn an_agent_started_for_a_demo_home_gets_it_as_home_and_as_userprofile() {
@@ -174,6 +176,8 @@ fn an_agent_started_for_a_demo_home_gets_it_as_home_and_as_userprofile() {
         for provider in ["codex", "antigravity"] {
             let _ = launch::capabilities(&env, provider, true);
         }
+        let codex = providers::builtins().into_iter().find(|p| p.id == "codex").unwrap();
+        let _ = mcp_setup::apply(&env, &codex, false);
         let mcp = json!({"file":"~/.agent/mcp.json","add":"add {laci} mcp","remove":"remove"});
         let agent = providers::validate_agent(&env, &json!({"command":"agent","mcp":mcp})).unwrap();
         let provider = providers::from_spec(&json!({"id":"custom-agent","name":"Agent","agent":agent})).unwrap();
@@ -187,17 +191,35 @@ fn an_agent_started_for_a_demo_home_gets_it_as_home_and_as_userprofile() {
     for program in ["codex", "agy", "agent"] {
         support::script(
             &bin.join(program),
-            &format!("#!/bin/sh\nprintf '%s\\n%s\\n' \"$HOME\" \"$USERPROFILE\" > \"$HOME/{program}-env\"\n"),
+            &format!(
+                "#!/bin/sh\nprintf '%s %s %s %s\\n' \"$1\" \"$HOME\" \"$USERPROFILE\" \"$CODEX_HOME\" >> \"$HOME/{program}-env\"\n"
+            ),
         );
     }
     let path = std::env::join_paths(
         std::iter::once(bin.clone()).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
     )
     .unwrap();
-    let run = support::program(TEST, "agents").env("PATH", path).env("LACI_TEST_HOME", &home).output().unwrap();
+    // The user's own Codex folder, which a demo must not touch.
+    let theirs = temp.path().join("their-codex");
+    let run = support::program(TEST, "agents")
+        .env("PATH", path)
+        .env("LACI_TEST_HOME", &home)
+        .env("CODEX_HOME", &theirs)
+        .output()
+        .unwrap();
     assert!(run.status.success(), "{}{}", String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
     let seen = ["codex", "agy", "agent"].map(|program| fs::read_to_string(home.join(format!("{program}-env"))).ok());
-    assert_eq!(seen, [(); 3].map(|_| Some(format!("{h}\n{h}\n", h = home.display()))));
+    let (h, codex, theirs) = (home.display(), home.join(".codex"), theirs.display());
+    assert_eq!(
+        seen,
+        [
+            Some(format!("app-server {h} {h} {c}\nmcp {h} {h} {c}\n", c = codex.display())),
+            Some(format!("models {h} {h} {theirs}\n")),
+            Some(format!("add {h} {h} {theirs}\n")),
+        ]
+    );
+    assert!(codex.is_dir(), "Codex wants its folder to be there");
 }
 
 /// What a scan's Git calls get, read from Git's own trace in a run of this test with GIT_TRACE2_EVENT set: hooks

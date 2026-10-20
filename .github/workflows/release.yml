@@ -3,12 +3,17 @@ name: Release
 # of it, the deb, the rpm, latest.json, SHA256SUMS and provenance.json, each with a build provenance attestation.
 # rifkii checks the draft and publishes it; nothing here publishes. RELEASING.md has the steps.
 #
-# A manual run is the dry run, on any branch: the same checks, build and tests, signed with a throwaway key made in
-# the run. It keeps the would-be assets as the artifact laci-release-<version>; no environment, no attestation, no
-# release. `-f version=3.0.0-rc.1` builds as that version, to try a release candidate's names before tagging it.
+# Every other run is a dry run: a manual run on any branch (or tag), and a pull request that changes the release
+# workflow or its scripts. It has the same checks, build and tests, signed with a throwaway key made in the run, and
+# keeps the would-be assets as the artifact laci-release-<version>: no environment, no attestation, no release.
+# `-f version=3.0.0-rc.1` builds as that version, to try a release candidate's names before tagging it.
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/release/**
   workflow_dispatch:
     inputs:
       version:
@@ -66,11 +71,11 @@ jobs:
       - name: Tag, versions, branch and changelog
         id: release
         env:
-          EVENT: ${{ github.event_name }}
+          RELEASE: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
           TAG: ${{ github.ref_name }}
           VERSION: ${{ inputs.version }}
         run: |
-          if [ "$EVENT" = push ]; then
+          if [ "$RELEASE" = true ]; then
             node scripts/release/verify.mjs --tag "$TAG" --commit "$GITHUB_SHA"
           elif [ -n "$VERSION" ]; then
             node scripts/release/verify.mjs --dry-run --commit "$GITHUB_SHA" --version "$VERSION"
@@ -105,7 +110,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev patchelf git libglib2.0-bin xdg-utils webkit2gtk-driver xvfb rpm libarchive-tools
       - run: pnpm install --frozen-lockfile
       - name: Build as the dry run's version
-        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        if: ${{ !(github.event_name == 'push' && github.ref_type == 'tag') && inputs.version != '' }}
         env:
           VERSION: ${{ needs.verify.outputs.version }}
         run: node scripts/release/version.mjs set "$VERSION"
@@ -175,7 +180,7 @@ jobs:
   # reaches that one step and no file.
   sign:
     needs: [verify, build]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release
@@ -221,7 +226,7 @@ jobs:
   # The dry run's sign job: the same command, with a throwaway key and password made here, never stored.
   sign-dry-run:
     needs: [verify, build]
-    if: github.event_name == 'workflow_dispatch'
+    if: ${{ !(github.event_name == 'push' && github.ref_type == 'tag') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -291,7 +296,7 @@ jobs:
           path: ${{ runner.temp }}/signature
       - name: Assemble the release
         env:
-          EVENT: ${{ github.event_name }}
+          RELEASE: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
           VERSION: ${{ needs.verify.outputs.version }}
           TAG: ${{ needs.verify.outputs.tag }}
           GLIBC: ${{ needs.build.outputs.glibc }}
@@ -302,7 +307,7 @@ jobs:
           args=(--packages "$RUNNER_TEMP/packages" --out "$RUNNER_TEMP/release" --version "$VERSION" --tag "$TAG"
             --commit "$GITHUB_SHA" --runner "$BUILD_RUNNER" --glibc "$GLIBC" --run-url "$RUN_URL"
             --artifact "laci-release-$VERSION")
-          if [ "$EVENT" = workflow_dispatch ]; then
+          if [ "$RELEASE" != true ]; then
             args+=(--dry-run --public-key "$RUNNER_TEMP/signature/updater.key.pub")
           fi
           node scripts/release/finalize.mjs "${args[@]}"
@@ -329,7 +334,7 @@ jobs:
   # A build provenance attestation for every asset: gh attestation verify <file> -R mrramdn/laci.
   attest:
     needs: [verify, finalize]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -348,7 +353,7 @@ jobs:
   # The draft, marked as a pre-release when the version has a "-". rifkii publishes it.
   draft:
     needs: [verify, finalize, attest]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

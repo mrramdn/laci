@@ -33,7 +33,7 @@ The packages are built on Ubuntu 22.04. They need glibc 2.35 or newer: Ubuntu 22
 
 ### The dry run
 
-A manual run on any branch is a dry run:
+A manual run on any branch is a dry run, and so is the run of a pull request that changes `release.yml` or `scripts/release/`:
 
 ```sh
 gh workflow run release.yml --ref <branch>

@@ -126,6 +126,22 @@ jobs:
             xvfb-run -a dbus-run-session -- bash scripts/native-smoke.sh target/debug/laci "$laci_suite"
           done
       - run: pnpm build
+      # What the deb and rpm hold, so a release's file lists can be compared with the last one's without keeping
+      # the packages.
+      - name: Print what the deb and rpm hold
+        run: |
+          for deb in target/release/bundle/deb/*.deb; do
+            echo "== $deb"
+            bsdtar -xOf "$deb" 'control.tar*' | bsdtar -xOf - ./control
+            bsdtar -xOf "$deb" 'data.tar*' | bsdtar -tvf - | sort -k9
+            bsdtar -xOf "$deb" 'data.tar*' | bsdtar -xOf - --include '*.desktop'
+          done
+          for rpm in target/release/bundle/rpm/*.rpm; do
+            echo "== $rpm"
+            rpm -qip "$rpm"
+            rpm -qp --requires "$rpm"
+            bsdtar -tvf "$rpm" | sort -k9
+          done
       # The WebDriver server lets anything on this computer drive the window: only `--features e2e` brings it in,
       # and no release build may have it. A binary with the plugin holds its name, "wdio-webdriver"; the four
       # letters "wdio" alone could turn up in compressed data by chance.

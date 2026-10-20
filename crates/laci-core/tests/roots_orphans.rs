@@ -9,8 +9,8 @@ fn write(path: &Path, bytes: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, bytes).unwrap();
 }
-fn fixture() -> (tempfile::TempDir, Env, std::path::PathBuf, Service, Value) {
-    let temp = tempfile::tempdir().unwrap();
+fn fixture() -> (support::TempDir, Env, std::path::PathBuf, Service, Value) {
+    let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
     let root = env.home.join("projects");
     fs::create_dir_all(&root).unwrap();
@@ -96,7 +96,6 @@ fn reconnect_stale_bytes_and_symlinks_reject_reviewed_cleanup() {
 }
 
 // The writer is the shell, holding the log open from another folder.
-#[cfg(unix)]
 #[test]
 fn open_history_writer_blocks_cleanup_even_when_its_cwd_is_elsewhere() {
     use std::{
@@ -121,7 +120,6 @@ fn open_history_writer_blocks_cleanup_even_when_its_cwd_is_elsewhere() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn quarantine_defaults_to_exact_restore_and_duplicate_submission_is_rejected() {
     let (_temp, env, history, mut service, proposal) = fixture();
     assert_eq!(proposal["availability"], "missing");
@@ -162,26 +160,26 @@ fn pure_trash_has_no_laci_undo_and_mixed_journals_explain_partial_recovery() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn invalid_default_archive_keeps_review_available_with_a_valid_alternative() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
-    let project = env.home.join("projects/demo");
+    // A name at a time, as the scan spells the paths it finds.
+    let project = env.home.join("projects").join("demo");
     write(&project.join("package.json"), "{}");
     write(&env.home.join("projects/_archive/demo/occupied"), "existing");
     config::save(&env, &json!({"roots":["~/projects"],"presets":[]})).unwrap();
     let mut service = Service::new(env.clone());
     let snap = service.snapshot().unwrap();
     assert!(snap["nodes"][project.to_str().unwrap()]["archivePlan"]["error"].is_string());
-    let dest = env.home.join("other/demo");
+    let dest = env.home.join("other").join("demo");
     let plan = service.request("archive/plan", &json!({"id":project,"destination":dest})).unwrap();
     assert_eq!(plan["dest"], json!(dest));
     service.request("archive", &json!({"id":project,"destination":dest})).unwrap();
     assert!(dest.join("package.json").exists());
+    assert_eq!(activity::read_log(&env, 5)[0]["say"], json!({"form":"archived","name":"demo"}));
 }
 
 // gio is Linux's Trash.
-#[cfg(target_os = "linux")]
 #[test]
 fn system_trash_uses_checked_history_paths_and_never_offers_laci_undo() {
     const CHILD: &str = "LACI_ORPHAN_TRASH_TEST";

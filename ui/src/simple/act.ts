@@ -3,12 +3,11 @@
 // dialogs as Detailed, so the result is the same in both designs.
 import { api } from "../api";
 import { agentProviders } from "../agent-launch";
-import { APP_NAMES, base, cap, sessionsOf } from "../helpers";
-import { OS, FILE_MANAGER } from "../platform";
+import { APP_NAMES, base, cap, isWholeDisk, sessionsOf } from "../helpers";
 import { requestResume } from "../session-ui";
-import { changed, run, useApp } from "../store";
+import { changed, run, toast, useApp } from "../store";
 import type { Apps, Change, Node, SetupInfo, Snapshot } from "../types";
-import { home } from "../words";
+import { home, settings } from "../words";
 
 /** The AI tools Laci can start, as `{ value, label }`. */
 export const aiTools = (snapshot: Snapshot) =>
@@ -58,15 +57,20 @@ export function newChat(n: Node, provider?: string, prompt?: string) {
 export const editorName = (apps: Apps) =>
   APP_NAMES[apps.editor] ?? cap(apps.editor);
 
-/** The file manager's name: the system's own on macOS and Windows, the one chosen on Linux. */
+/** The file manager's name: the one chosen in Settings. */
 export const fileManagerName = (apps: Apps) =>
-  OS === "linux" ? (APP_NAMES[apps.files] ?? cap(apps.files)) : FILE_MANAGER;
+  APP_NAMES[apps.files] ?? cap(apps.files);
 
 /**
  * Adds a project folder, keeping every other setting as it is saved: what Settings does when a
- * folder is added there.
+ * folder is added there. A whole disk ("/") is no project folder: a toast says so, and nothing
+ * changes.
  */
-export function addProjectFolder(path: string) {
+export async function addProjectFolder(path: string) {
+  if (isWholeDisk(path)) {
+    toast(settings.wholeDisk, settings.wholeDiskNote, { error: true });
+    return;
+  }
   return run(
     async () => {
       const info = await api<SetupInfo>("setup/info");

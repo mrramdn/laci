@@ -1,10 +1,10 @@
 // Laci's mark from one description: the glyph on a 1024 grid, its plates, pixel maps for small sizes, the
 // symbolic glyph and the lockups. Writes the SVG sources in docs/brand/src; renders on request.
 //   node scripts/brand-icons.mjs                  SVG sources only
-//   node scripts/brand-icons.mjs --icons DIR      also the app icon set (PNG, ICO, ICNS, SVG) into DIR
+//   node scripts/brand-icons.mjs --icons DIR      also the app icon set (PNG, SVG) into DIR
 //   node scripts/brand-icons.mjs --sheet FILE     also a review sheet (PNG)
 //   node scripts/brand-icons.mjs --font TTF       outline the wordmark again from Plus Jakarta Sans Bold
-// Rendering needs resvg and ImageMagick (magick); ICNS uses the Tauri CLI; --font needs usvg.
+// Rendering needs resvg and ImageMagick (magick); --font needs usvg.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -41,8 +41,8 @@ const LIGHT = {
 const DARK = { ...LIGHT, plate: ["#231D17", "#14100C"], frame: "#FFC83D", opening: "#0B0806" };
 const FLAT = "#F9BF33"; // the plate at 32 px and below, where a gradient only blurs
 
-// The glyph: a cabinet whose drawer is pulled out, two folders inside, a cup pull. Groups are the layers
-// Icon Composer takes for macOS 26 (cabinet, contents, drawer front), back to front.
+// The glyph: a cabinet whose drawer is pulled out, two folders inside, a cup pull. Its groups are its layers
+// (cabinet, contents, drawer front), back to front.
 const glyph = (c) =>
   `<g id="g1-cabinet"><path id="frame" fill="${c.frame}" d="M256 544V312a96 96 0 0 1 96-96h320a96 96 0 0 1 96 96v232z"/>` +
   `<path id="opening" fill="${c.opening}" d="M312 544V312a40 40 0 0 1 40-40h320a40 40 0 0 1 40 40v232z"/></g>` +
@@ -56,21 +56,8 @@ const gradient = (id, [top, bottom]) =>
 const svg = (viewBox, body) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${body}</svg>\n`;
 
-// Apple's icon body: 824 units at 100 units in, with continuous corners (a superellipse, n = 5).
-function squircle() {
-  const points = [];
-  for (let i = 0; i < 720; i++) {
-    const t = (2 * Math.PI * i) / 720;
-    const [c, s] = [Math.cos(t), Math.sin(t)];
-    const x = 512 + 412 * Math.sign(c) * Math.abs(c) ** 0.4;
-    const y = 512 + 412 * Math.sign(s) * Math.abs(s) ** 0.4;
-    points.push(`${x.toFixed(2)} ${y.toFixed(2)}`);
-  }
-  return `M${points.join("L")}Z`;
-}
-
 const masters = {
-  // Glyph alone, for Icon Composer layers and in-app use on a coloured surface.
+  // Glyph alone, for use on a coloured surface.
   "laci-glyph.svg": svg("0 0 1024 1024", glyph(LIGHT)),
   // Linux (GNOME/KDE): a rounded square with a darker front edge, no shadow.
   "laci-icon-linux.svg": svg(
@@ -78,19 +65,12 @@ const masters = {
     `<defs>${gradient("plate", LIGHT.plate)}</defs><rect x="100" y="116" width="824" height="824" rx="185" fill="${LIGHT.edge}"/>` +
       `<rect x="100" y="100" width="824" height="824" rx="185" fill="url(#plate)"/>${scaled(0.8047, LIGHT)}`,
   ),
-  // macOS: Apple's template body and shadow, so macOS 26 shows it as drawn.
-  "laci-icon-macos.svg": svg(
-    "0 0 1024 1024",
-    `<defs>${gradient("plate", LIGHT.plate)}<filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">` +
-      `<feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".28"/></filter></defs>` +
-      `<path filter="url(#shadow)" fill="url(#plate)" d="${squircle()}"/>${scaled(0.8047, LIGHT)}`,
-  ),
-  // Windows frames from 36 px, the web and the app: the plate nearly fills the square.
+  // The web and the app: the plate nearly fills the square.
   "laci-icon-tight.svg": svg(
     "0 0 1024 1024",
     `<defs>${gradient("plate", LIGHT.plate)}</defs><rect x="32" y="32" width="960" height="960" rx="216" fill="url(#plate)"/>${scaled(0.9375, LIGHT)}`,
   ),
-  // The dark appearance, for macOS dark icons and dark surfaces that need a quieter mark.
+  // The dark appearance, for dark surfaces that need a quieter mark.
   "laci-icon-tight-dark.svg": svg(
     "0 0 1024 1024",
     `<defs>${gradient("plate", DARK.plate)}</defs><rect x="32" y="32" width="960" height="960" rx="216" fill="url(#plate)"/>${scaled(0.9375, DARK)}`,
@@ -107,9 +87,7 @@ const masters = {
 // [top, bottom, left, right], inclusive. The cabinet and drawer get one-pixel corner notches.
 const PIXEL = {
   16: { rx: 3, cabinet: [3, 7, 4, 11], drawer: [9, 13, 3, 12], folder: [[5, 7, 6, 9]], hole: [[10, 10, 6, 9], [11, 11, 7, 8]] },
-  20: { rx: 4, cabinet: [3, 9, 5, 14], drawer: [11, 16, 4, 15], card: [[5, 9, 11, 12]], folder: [[6, 6, 7, 8], [7, 9, 7, 10]], hole: [[13, 13, 8, 11], [14, 14, 9, 10]] },
   24: { rx: 5, cabinet: [4, 11, 6, 17], drawer: [13, 19, 4, 19], card: [[6, 11, 13, 15]], folder: [[7, 7, 9, 11], [8, 11, 9, 14]], hole: [[15, 15, 10, 13], [16, 16, 11, 12]] },
-  30: { rx: 6.5, cabinet: [6, 14, 9, 20], drawer: [16, 22, 7, 22], card: [[8, 14, 15, 18]], folder: [[9, 9, 11, 13], [10, 14, 11, 16]], hole: [[18, 18, 12, 17], [19, 19, 13, 16]] },
   32: { rx: 7, cabinet: [7, 16, 9, 22], drawer: [18, 24, 7, 24], card: [[9, 16, 16, 20]], folder: [[10, 10, 11, 13], [11, 16, 11, 17]], hole: [[20, 20, 13, 18], [21, 21, 14, 17]] },
 };
 function pixelMap(size, spec) {
@@ -209,54 +187,6 @@ const png = (name, size) => {
 };
 const small = (size) => png(`laci-${size}.svg`, size);
 
-// ICO: 32-bit bitmap frames, and the 256 px frame stored as PNG, the way Windows' own icons are.
-// ImageMagick writes every frame as a bitmap, which makes the file five times larger.
-function ico(frames) {
-  const images = frames.map(([size, file]) => {
-    if (size >= 256) return readFileSync(file);
-    const rgba = execFileSync("magick", [file, "-depth", "8", "RGBA:-"]);
-    assert.equal(rgba.length, size * size * 4, `Unexpected pixel data for ${file}`);
-    const maskRow = Math.ceil(size / 32) * 4;
-    const header = Buffer.alloc(40);
-    header.writeUInt32LE(40, 0);
-    header.writeInt32LE(size, 4);
-    header.writeInt32LE(size * 2, 8); // the colour rows, then the transparency mask
-    header.writeUInt16LE(1, 12);
-    header.writeUInt16LE(32, 14);
-    header.writeUInt32LE(size * size * 4 + maskRow * size, 20);
-    const pixels = Buffer.alloc(size * size * 4);
-    const mask = Buffer.alloc(maskRow * size);
-    for (let y = 0; y < size; y++) {
-      const row = size - 1 - y; // bitmaps are stored bottom-up
-      for (let x = 0; x < size; x++) {
-        const from = (y * size + x) * 4;
-        const to = (row * size + x) * 4;
-        pixels[to] = rgba[from + 2];
-        pixels[to + 1] = rgba[from + 1];
-        pixels[to + 2] = rgba[from];
-        pixels[to + 3] = rgba[from + 3];
-        if (rgba[from + 3] === 0) mask[row * maskRow + (x >> 3)] |= 0x80 >> (x & 7);
-      }
-    }
-    return Buffer.concat([header, pixels, mask]);
-  });
-  const directory = Buffer.alloc(6 + 16 * frames.length);
-  directory.writeUInt16LE(1, 2);
-  directory.writeUInt16LE(frames.length, 4);
-  let offset = directory.length;
-  frames.forEach(([size], i) => {
-    const at = 6 + 16 * i;
-    directory.writeUInt8(size >= 256 ? 0 : size, at);
-    directory.writeUInt8(size >= 256 ? 0 : size, at + 1);
-    directory.writeUInt16LE(1, at + 4);
-    directory.writeUInt16LE(32, at + 6);
-    directory.writeUInt32LE(images[i].length, at + 8);
-    directory.writeUInt32LE(offset, at + 12);
-    offset += images[i].length;
-  });
-  return Buffer.concat([directory, ...images]);
-}
-
 const icons = option("--icons");
 if (icons) {
   mkdirSync(icons, { recursive: true });
@@ -265,27 +195,6 @@ if (icons) {
   for (const size of [16, 24, 32]) put(small(size), `${size}x${size}.png`);
   for (const size of [48, 64, 128]) put(png("laci-icon-linux.svg", size), `${size}x${size}.png`);
   put(png("laci-icon-linux.svg", 256), "128x128@2x.png");
-  // Windows picks the frame that fits, else scales the next larger one down; smallest first, as Windows
-  // 11's Task Manager expects.
-  const frames = [
-    ...[16, 20, 24, 30, 32].map((size) => [size, small(size)]),
-    ...[36, 40, 48, 60, 64, 72, 80, 96, 256].map((size) => [size, png("laci-icon-tight.svg", size)]),
-  ];
-  writeFileSync(path.join(icons, "icon.ico"), ico(frames));
-  const icns = path.join(temp, "icns");
-  run(path.join(root, "node_modules/.bin/tauri"), ["icon", path.join(src, "laci-icon-macos.svg"), "-o", icns]);
-  // tauri icon writes the ICNS entries in a different order on every run. Sorted by type, the file changes only
-  // when the picture does; readers look entries up by type.
-  const family = readFileSync(path.join(icns, "icon.icns"));
-  const entries = [];
-  for (let at = 8; at < family.length; ) {
-    const length = family.readUInt32BE(at + 4);
-    assert.ok(length >= 8 && at + length <= family.length, "Malformed icon.icns from tauri icon");
-    entries.push(family.subarray(at, at + length));
-    at += length;
-  }
-  entries.sort((a, b) => Buffer.compare(a.subarray(0, 4), b.subarray(0, 4)));
-  writeFileSync(path.join(icons, "icon.icns"), Buffer.concat([family.subarray(0, 8), ...entries]));
   put(path.join(src, "laci-icon-linux.svg"), "icon.svg");
   put(path.join(src, "laci-symbolic.svg"), "laci-symbolic.svg");
   console.log(`Rendered the icon set in ${path.relative(root, icons) || icons}`);
@@ -309,8 +218,8 @@ if (sheet) {
     run("magick", ["-background", background, "-gravity", "center", ...files.flatMap((f) => [f, "-bordercolor", background, "-border", "16"]), "+append", out]);
     return out;
   };
-  const masterRow = ["laci-icon-linux.svg", "laci-icon-macos.svg", "laci-icon-tight.svg", "laci-icon-tight-dark.svg"].map((n) => png(n, 256));
-  const sizes = [png("laci-icon-linux.svg", 128), png("laci-icon-linux.svg", 64), png("laci-icon-tight.svg", 48), ...[32, 30, 24, 20, 16].map(small)];
+  const masterRow = ["laci-icon-linux.svg", "laci-icon-tight.svg", "laci-icon-tight-dark.svg"].map((n) => png(n, 256));
+  const sizes = [png("laci-icon-linux.svg", 128), png("laci-icon-linux.svg", 64), png("laci-icon-tight.svg", 48), ...[32, 24, 16].map(small)];
   const zoomed = [32, 24, 16].map((size) => zoom(small(size), 6));
   const rows = [];
   for (const [background, mark] of [["#FBF8F3", lockups[0]], ["#1B1814", lockups[1]]]) {

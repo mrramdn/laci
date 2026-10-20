@@ -69,7 +69,6 @@ fn shared_live_and_missing_owners_block_both_cleanup_modes() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn all_missing_owners_allow_quarantine_with_exact_undo() {
     let (_temp, env, log) = fixture("codex");
     let bytes = record(&env, "gone-a") + &record(&env, "gone-b");
@@ -79,6 +78,8 @@ fn all_missing_owners_allow_quarantine_with_exact_undo() {
     assert_eq!(p["validation"]["projects"].as_array().unwrap().len(), 2);
     let changed = ops::apply_proposal(&env, &snapshot, p, "quarantine").unwrap();
     assert!(!log.exists());
+    assert_eq!(changed["say"]["form"], "chatsForDeleted");
+    assert!(changed["say"]["name"].is_string());
     ops::undo(&env, changed["id"].as_str().unwrap()).unwrap();
     assert_eq!(fs::read_to_string(log).unwrap(), bytes);
 }
@@ -107,7 +108,6 @@ fn equal_size_source_changes_invalidate_ownership_and_reviewed_cleanup() {
 }
 
 // gio is Linux's Trash.
-#[cfg(target_os = "linux")]
 #[test]
 fn all_missing_owners_allow_only_checked_trash_sources() {
     use std::{os::unix::fs::PermissionsExt, process::Command};
@@ -178,7 +178,6 @@ fn bounded_and_malformed_history_never_authorizes_cleanup() {
 }
 
 // Unreadable files are made with Unix modes.
-#[cfg(unix)]
 #[test]
 fn claude_folder_aggregation_propagates_incomplete_and_unreadable_evidence() {
     use std::os::unix::fs::PermissionsExt;
@@ -219,7 +218,6 @@ fn named_folder_without_authoritative_ownership_is_never_cleanup_proof() {
     blocked_in_both_modes(&env, &folder, &snapshot);
 }
 
-#[cfg(unix)]
 #[test]
 fn unreadable_cwd_logs_invalidate_cached_cleanup_permission() {
     use std::os::unix::fs::PermissionsExt;

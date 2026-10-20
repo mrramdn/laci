@@ -5,7 +5,7 @@ use crate::{
     Result,
     env::Env,
     files,
-    launch::located,
+    launch::{self, located},
     paths, process,
     providers::{self, Mcp, Provider, SERVER},
 };
@@ -72,7 +72,7 @@ fn same_program(command: &str, laci: &Path) -> bool {
     let path = Path::new(command);
     let found = if path.is_absolute() {
         Some(path.to_owned())
-    } else if command.contains('/') {
+    } else if command.contains(std::path::is_separator) {
         None
     } else {
         located(command)
@@ -80,19 +80,18 @@ fn same_program(command: &str, laci: &Path) -> bool {
     let actual = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_owned());
     found.is_some_and(|found| actual(&found) == actual(laci))
 }
-/// A command as it would be typed, for showing and copying. Nothing is ever run from this text.
+/// A command as it would be typed in a POSIX shell, for showing and copying. Nothing is ever run from this text.
 fn typed(program: &str, args: &[String]) -> String {
-    std::iter::once(program)
-        .chain(args.iter().map(String::as_str))
-        .map(|word| {
-            if !word.is_empty() && word.bytes().all(|c| c.is_ascii_alphanumeric() || b"_./:=@%+,-".contains(&c)) {
-                word.to_owned()
-            } else {
-                format!("'{}'", word.replace('\'', "'\\''"))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    std::iter::once(program).chain(args.iter().map(String::as_str)).map(shell_word).collect::<Vec<_>>().join(" ")
+}
+/// One word as a POSIX shell reads it: as it is when nothing in it means anything to the shell, else in single quotes.
+/// A single-quoted word ends at any `'`, so one is written `'\''`.
+fn shell_word(word: &str) -> String {
+    if !word.is_empty() && word.bytes().all(|c| c.is_ascii_alphanumeric() || b"_./:=@%+,-".contains(&c)) {
+        word.to_owned()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
 }
 fn server(env: &Env) -> Value {
     json!({"command":env.program,"args":["mcp"]})
@@ -126,14 +125,20 @@ pub fn status(env: &Env, provider: &Provider) -> Value {
             entry["args"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(str::to_owned)).collect();
         status["current"] = json!(typed(entry["command"].as_str().unwrap_or("?"), &args));
     }
+    // What sets Laci up by hand is left out while its program won't stay ([`Env::fleeting`]): `apply` refuses it too.
+    let lasting = env.fleeting().is_none();
     if recipe.add.is_empty() {
         // Shown so the same lines can be put in by hand.
         let nested = recipe.key.rsplit('.').fold(json!({SERVER:server(env)}), |inner, part| json!({part:inner}));
         status["how"] = json!("file");
-        status["snippet"] = json!(serde_json::to_string_pretty(&nested).unwrap_or_default());
+        if lasting {
+            status["snippet"] = json!(serde_json::to_string_pretty(&nested).unwrap_or_default());
+        }
     } else {
         status["how"] = json!("command");
-        status["add"] = json!(typed(&provider.command, &providers::fill(&recipe.add, "laci", &laci)));
+        if lasting {
+            status["add"] = json!(typed(&provider.command, &providers::fill(&recipe.add, "laci", &laci)));
+        }
         status["remove"] = json!(typed(&provider.command, &recipe.remove));
     }
     status
@@ -199,6 +204,11 @@ pub fn apply(env: &Env, provider: &Provider, remove: bool) -> Result<Value> {
     if !env.program.is_absolute() {
         return Err("Laci could not tell where its own program is installed".into());
     }
+    // An AppImage runs from a folder that goes with it: an agent told to start that program would find nothing later.
+    // Taking the server off needs no program and still works.
+    if !remove && let Some(why) = env.fleeting() {
+        return Err(why.into());
+    }
     let before = status(env, provider);
     if remove && before["state"] == "missing" {
         return Err(format!("{} has no Laci server to remove", provider.name));
@@ -212,17 +222,12 @@ pub fn apply(env: &Env, provider: &Provider, remove: bool) -> Result<Value> {
     }
     let copy = backup(env, provider, &file)?;
     if by_command {
-        let home = env.home.to_string_lossy();
+        // The agent must change the same home Laci reads, also when Laci runs on a demo home.
+        let vars = launch::agent_home(env, &provider.command)?;
+        let vars: Vec<_> = vars.iter().map(|(key, value)| (*key, Some(value.as_str()))).collect();
         let run = |args: &[String]| {
             let args: Vec<_> = args.iter().map(String::as_str).collect();
-            // The agent must change the same home Laci reads, also when Laci runs on a demo home.
-            process::run_env(
-                &provider.command,
-                &args,
-                Some(&env.home),
-                Duration::from_secs(40),
-                &[("HOME", Some(home.as_ref()))],
-            )
+            process::run_env(&provider.command, &args, Some(&env.home), Duration::from_secs(40), &vars)
         };
         if before["state"] != "missing" {
             run(&recipe.remove)?;
@@ -281,6 +286,10 @@ pub fn change(env: &Env, id: &str, remove: bool, by: &str) -> Result<Value> {
                 format!("Removed Laci's MCP server from {}", provider.name)
             } else {
                 format!("Added Laci's MCP server to {}", provider.name)
+            },"say":if remove {
+                json!({"form":"stoppedUse","ai":provider.name})
+            } else {
+                json!({"form":"letUse","ai":provider.name})
             },"detail":format!("{how}{kept}")}),
         );
     }
@@ -323,7 +332,6 @@ mod tests {
         assert_eq!(saved["mcp"]["servers"]["laci"], json!({"command":env.program,"args":["mcp"]}));
         let copy = PathBuf::from(done["backup"].as_str().unwrap());
         assert!(fs::read_to_string(&copy).unwrap().contains("\"theme\":\"dark\""), "the copy is the file as it was");
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(fs::metadata(&copy).unwrap().permissions().mode() & 0o777, 0o600);
@@ -373,14 +381,73 @@ mod tests {
         ));
         let found = status(&env, &codex);
         assert_eq!((&found["state"], &found["how"]), (&json!("registered"), &json!("command")));
-        assert_eq!(found["add"], format!("codex mcp add laci -- {laci} mcp"));
+        // The program as it would be typed in a shell.
+        assert_eq!(found["add"], format!("codex mcp add laci -- {} mcp", shell_word(laci)));
         assert_eq!(found["remove"], "codex mcp remove laci");
         write(format!("[mcp_servers.laci]\ncommand = '{laci}'\nargs = ['mcp']\nenabled = false\n"));
         assert_eq!(status(&env, &codex)["state"], "off");
         write("[mcp_servers.lacinia]\ncommand = \"x\"\n".into());
         assert_eq!(status(&env, &codex)["state"], "missing");
     }
-    #[cfg(unix)]
+    #[test]
+    fn a_command_is_shown_quoted_for_the_shell() {
+        let line =
+            |words: &[&str]| typed(words[0], &words[1..].iter().map(|word| word.to_string()).collect::<Vec<_>>());
+        let claude = |laci| ["claude", "mcp", "add", "laci", "--scope", "user", "--", laci, "mcp"];
+        assert_eq!(
+            line(&claude("/opt/Laci/usr/bin/laci")),
+            "claude mcp add laci --scope user -- /opt/Laci/usr/bin/laci mcp"
+        );
+        assert_eq!(
+            line(&["codex", "mcp", "add", "laci", "--", "/home/o'brien/My Apps/laci", "mcp"]),
+            r"codex mcp add laci -- '/home/o'\''brien/My Apps/laci' mcp"
+        );
+        assert_eq!(
+            line(&["/opt/My Agent/agent", "mcp", "remove", "laci", ""]),
+            "'/opt/My Agent/agent' mcp remove laci ''"
+        );
+    }
+    #[test]
+    fn a_program_that_is_gone_once_laci_quits_is_never_offered_to_an_agent() {
+        let home = tempfile::tempdir().unwrap();
+        let mut env = env(home.path());
+        let by_file = tool(&env, json!({"file":"~/.tool/mcp.json"}));
+        let by_command = tool(&env, json!({"file":"~/.agent/mcp.json","add":"add {laci} mcp","remove":"remove"}));
+        let file = home.path().join(".tool/mcp.json");
+        let unpacked = "Laci can't tell which AppImage file it runs from, and the folder it runs in is gone once it \
+                        quits. Start Laci from its AppImage file, then connect it again.";
+        for (program, refused) in [
+            // The folder an AppImage runs from, when Laci couldn't make sure which AppImage that is.
+            ("/tmp/.mount_LaciAbC/usr/bin/laci", Some(unpacked)),
+            ("/tmp/appimage_extracted_9f2/usr/bin/laci", Some(unpacked)),
+            ("/opt/Laci/usr/bin/laci", None),
+        ] {
+            env.program = PathBuf::from(program);
+            assert_eq!(env.fleeting(), refused, "{program}");
+            // Nothing to set it up by hand either; taking it off is still shown.
+            let (shown, typed) = (status(&env, &by_file), status(&env, &by_command));
+            assert_eq!(
+                (shown["snippet"].is_string(), typed["add"].is_string()),
+                (refused.is_none(), refused.is_none())
+            );
+            assert_eq!(typed["remove"], "tool remove", "{program}");
+            let added = apply(&env, &by_file, false);
+            if let Some(why) = refused {
+                assert_eq!(added.unwrap_err(), why);
+                assert!(!file.exists(), "nothing was written");
+            } else {
+                // Any other path is like any other.
+                assert!(added.err().is_none_or(|error| !error.contains("connect it again")), "{program}");
+                let _ = fs::remove_file(&file);
+            }
+        }
+        // Taking the server off needs no program that lasts.
+        env.program = PathBuf::from("/tmp/.mount_LaciAbC/usr/bin/laci");
+        let entry = json!({"command":"/opt/Laci/usr/bin/laci","args":["mcp"]});
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, json!({"mcpServers":{"laci":entry}}).to_string()).unwrap();
+        assert_eq!(apply(&env, &by_file, true).unwrap()["status"]["state"], "missing");
+    }
     #[test]
     fn the_agents_own_command_is_run_in_laci_home_and_a_change_that_did_not_land_is_reported() {
         use std::os::unix::fs::PermissionsExt;

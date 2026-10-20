@@ -9,7 +9,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::{env::Env, files, paths, platform, platform::path::same_path, providers};
+use crate::{env::Env, files, paths, platform, providers};
 
 pub fn catalog(env: &Env) -> Vec<Value> {
     vec![
@@ -120,21 +120,9 @@ pub fn safe(env: &Env, path: &Path) -> bool {
 }
 
 /// Resolve lossy Claude names by walking existing folders, never decoding punctuation blindly.
-/// Project folders must remain within home or an explicitly selected workspace root. Where names ignore case, Claude
-/// may have spelled a folder in another case, as under a terminal that reports `c:\`. Such a name counts only where
-/// Claude's spelling leads to the same folder, and only once no name matches as spelled.
+/// Project folders must remain within home or an explicitly selected workspace root.
 pub fn resolve_encoded(env: &Env, name: &str) -> Option<PathBuf> {
-    /// `text` with its letters in the case `head` has them, where `head` is Claude's encoding of `text` in another
-    /// case: the encoding keeps letters in place, one character for each UTF-16 unit.
-    fn spelled(text: &str, head: &str) -> Option<String> {
-        let units: Vec<u16> = text
-            .encode_utf16()
-            .zip(head.bytes())
-            .map(|(unit, letter)| if letter.is_ascii_alphabetic() { letter.into() } else { unit })
-            .collect();
-        String::from_utf16(&units).ok()
-    }
-    fn visit(env: &Env, dir: &Path, rest: &str, depth: usize, fold: bool) -> Option<PathBuf> {
+    fn visit(env: &Env, dir: &Path, rest: &str, depth: usize) -> Option<PathBuf> {
         if rest.is_empty() {
             return paths::workspace_path(&dir.to_string_lossy(), env).is_ok().then(|| dir.to_owned());
         }
@@ -142,24 +130,16 @@ pub fn resolve_encoded(env: &Env, name: &str) -> Option<PathBuf> {
             return None;
         }
         for entry in files::entries(dir) {
-            let text = entry.file_name().to_string_lossy().into_owned();
-            let piece = format!("-{}", paths::enc(&text));
-            let (Some(head), Some(next)) = (rest.get(..piece.len()), rest.get(piece.len()..)) else { continue };
+            let piece = format!("-{}", paths::enc(&entry.file_name().to_string_lossy()));
+            let Some(next) = rest.strip_prefix(&piece) else { continue };
             if !next.is_empty() && !next.starts_with('-') {
                 continue;
             }
             let path = entry.path();
-            if head != piece
-                && !(fold
-                    && head.eq_ignore_ascii_case(&piece)
-                    && spelled(&text, &head[1..]).is_some_and(|other| same_path(&path, &dir.join(other))))
-            {
-                continue;
-            }
             if !path.is_dir() || paths::workspace_path(&path.to_string_lossy(), env).is_err() {
                 continue;
             }
-            if let Some(found) = visit(env, &path, next, depth + 1, fold) {
+            if let Some(found) = visit(env, &path, next, depth + 1) {
                 return Some(found);
             }
         }
@@ -167,25 +147,14 @@ pub fn resolve_encoded(env: &Env, name: &str) -> Option<PathBuf> {
     }
     let mut roots = vec![env.home.clone()];
     roots.extend(paths::workspace_roots(env));
-    let passes: &[bool] = if platform::path::FOLDS_CASE { &[false, true] } else { &[false] };
-    for &fold in passes {
-        for root in &roots {
-            let text = root.to_string_lossy();
-            let prefix = paths::enc(&text);
-            let (Some(head), Some(rest)) = (name.get(..prefix.len()), name.get(prefix.len()..)) else { continue };
-            if head != prefix
-                && !(fold
-                    && head.eq_ignore_ascii_case(&prefix)
-                    && spelled(&text, head).is_some_and(|other| same_path(root, Path::new(&other))))
-            {
-                continue;
-            }
-            if !rest.is_empty() && !rest.starts_with('-') {
-                continue;
-            }
-            if let Some(found) = visit(env, root, rest, 0, fold) {
-                return Some(found);
-            }
+    for root in &roots {
+        let prefix = paths::enc(&root.to_string_lossy());
+        let Some(rest) = name.strip_prefix(&prefix) else { continue };
+        if !rest.is_empty() && !rest.starts_with('-') {
+            continue;
+        }
+        if let Some(found) = visit(env, root, rest, 0) {
+            return Some(found);
         }
     }
     None
@@ -1168,6 +1137,10 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, values.iter().map(|v| format!("{v}\n")).collect::<String>()).unwrap();
     }
+    /// `path`, as an agent records it. A working folder only counts when it is absolute.
+    fn abs(path: &str) -> String {
+        path.to_owned()
+    }
     #[test]
     fn connectors_are_opt_in_and_custom_store_identity_wins_without_losing_legacy() {
         let home = tempfile::tempdir().unwrap();
@@ -1218,13 +1191,13 @@ mod tests {
         ] {
             let mut payload = source;
             payload["id"] = json!(CHILD);
-            payload["cwd"] = json!("/projects/old");
+            payload["cwd"] = json!(abs("/projects/old"));
             let mut text = format!("{}\n", json!({"type":"session_meta","payload":payload}));
             text.push_str(&"{}\n".repeat(METADATA_RECORDS));
-            text.push_str(&format!("{}\n", json!({"type":"session_meta","payload":{"cwd":"/projects/latest"}})));
+            text.push_str(&format!("{}\n", json!({"type":"session_meta","payload":{"cwd":abs("/projects/latest")}})));
             fs::write(&log, text).unwrap();
             let facts = session_facts(&log, "codex");
-            assert_eq!(facts["cwd"], "/projects/latest");
+            assert_eq!(facts["cwd"], abs("/projects/latest"));
             assert_eq!(facts["parentId"], ID);
             assert_eq!(facts["sessionId"], CHILD);
             assert_eq!(facts["sourceKind"], "subagent");
@@ -1239,12 +1212,12 @@ mod tests {
             for boundary in ["bytes", "records"] {
                 let head = if provider == "codex" {
                     vec![
-                        json!({"type":"session_meta","payload":{"id":ID,"cwd":"/projects/old","source":"cli"}}),
+                        json!({"type":"session_meta","payload":{"id":ID,"cwd":abs("/projects/old"),"source":"cli"}}),
                         json!({"type":"event_msg","payload":{"type":"user_message","message":"Original user request"}}),
                     ]
                 } else {
                     vec![
-                        json!({"type":"user","sessionId":ID,"cwd":"/projects/old","message":{"role":"user","content":"Original user request"}}),
+                        json!({"type":"user","sessionId":ID,"cwd":abs("/projects/old"),"message":{"role":"user","content":"Original user request"}}),
                     ]
                 };
                 let mut text = head.iter().map(|v| format!("{v}\n")).collect::<String>();
@@ -1254,17 +1227,17 @@ mod tests {
                     text.push_str(&"{}\n".repeat(METADATA_RECORDS));
                 }
                 let tail = if provider == "codex" {
-                    json!({"type":"turn_context","payload":{"cwd":"/projects/latest"}})
+                    json!({"type":"turn_context","payload":{"cwd":abs("/projects/latest")}})
                 } else {
-                    json!({"type":"custom-title","customTitle":"Renamed late","cwd":"/projects/latest"})
+                    json!({"type":"custom-title","customTitle":"Renamed late","cwd":abs("/projects/latest")})
                 };
                 text.push_str(&format!("{tail}\n"));
                 fs::write(&log, text).unwrap();
                 let facts = session_facts(&log, provider);
-                assert_eq!(facts["cwd"], "/projects/latest", "{provider}/{boundary}");
+                assert_eq!(facts["cwd"], abs("/projects/latest"), "{provider}/{boundary}");
                 assert_eq!(facts["sessionId"], ID);
                 assert_eq!(facts["ownershipComplete"], false);
-                assert_eq!(facts["cwds"], json!({"/projects/old":1}));
+                assert_eq!(facts["cwds"], json!({abs("/projects/old"):1}));
                 assert_eq!(facts["title"], if provider == "claude" { "Renamed late" } else { "Original user request" });
             }
         }
@@ -1325,8 +1298,8 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let env = Env::for_home(home.path().to_owned());
         let log = env.home.join("session.jsonl");
-        // A working folder only counts when it is absolute, and on Windows that takes a drive.
-        let cwd = if cfg!(windows) { r"C:\p" } else { "/p" };
+        // A working folder only counts when it is absolute.
+        let cwd = "/p";
         let line = |text: &str| {
             format!("{}\n", json!({"type":"user","sessionId":ID,"cwd":cwd,"message":{"role":"user","content":text}}))
         };
@@ -1387,21 +1360,21 @@ mod tests {
         put(
             &log,
             &[
-                json!({"type":"session_meta","payload":{"id":ID,"cwd":"/projects/live"}}),
-                json!({"type":"turn_context","payload":{"cwd":"/projects/gone"}}),
+                json!({"type":"session_meta","payload":{"id":ID,"cwd":abs("/projects/live")}}),
+                json!({"type":"turn_context","payload":{"cwd":abs("/projects/gone")}}),
             ],
         );
         let mut old = Cache::load(&env);
         old.facts(
             "cwd:codex:cwd",
             &log,
-            || json!({"cwd":"/projects/gone","cwds":{"/projects/gone":1},"ownershipComplete":true}),
+            || json!({"cwd":abs("/projects/gone"),"cwds":{abs("/projects/gone"):1},"ownershipComplete":true}),
         );
         old.save(&env);
         fs::rename(env.cache_dir.join("v5-agent-facts.json"), env.cache_dir.join("v4-agent-facts.json")).unwrap();
         let history = read_all(&env, &connectors(&env, &json!({"presets":["codex"]})));
         let item = history.items.values().next().unwrap();
-        assert_eq!(item["cwds"], json!({"/projects/live":1,"/projects/gone":1}));
+        assert_eq!(item["cwds"], json!({abs("/projects/live"):1,abs("/projects/gone"):1}));
         assert_eq!(item["ownershipComplete"], true);
     }
     #[test]
@@ -1480,12 +1453,11 @@ mod tests {
         )
         .unwrap();
         let facts = log_facts(&file, "cwd", false);
-        assert_eq!(facts["cwd"], "/home/a/project one");
+        assert_eq!(facts["cwd"], abs("/home/a/project one"));
         assert_eq!(facts["lines"], 2);
         fs::write(&file, r#"{"cwd":"/home/a/project"}"#).unwrap();
-        assert_eq!(log_facts(&file, "cwd", false)["cwd"], "/home/a/project");
+        assert_eq!(log_facts(&file, "cwd", false)["cwd"], abs("/home/a/project"));
     }
-    #[cfg(unix)]
     #[test]
     fn equal_length_rewrite_with_preserved_mtime_invalidates_cached_history() {
         let home = tempfile::tempdir().unwrap();
@@ -1508,7 +1480,6 @@ mod tests {
         let mut cache = Cache::load(&env);
         assert_eq!(cache.facts("test", &log, || log_facts(&log, "cwd", false))["cwd"], "/home/test/bravo");
     }
-    #[cfg(unix)]
     #[test]
     fn connector_cannot_follow_store_or_inside_symlink_outside_home() {
         use std::os::unix::fs::symlink;

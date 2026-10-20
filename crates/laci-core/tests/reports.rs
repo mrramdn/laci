@@ -21,7 +21,7 @@ fn write(path: &Path, text: &str) {
 }
 
 struct Fixture {
-    _temp: tempfile::TempDir,
+    _temp: support::TempDir,
     env: Env,
     reports: PathBuf,
     project: PathBuf,
@@ -34,7 +34,7 @@ impl Fixture {
 
 /// Projects in home, a Claude session that worked in gamma, and reports on a disk outside home.
 fn fixture() -> Fixture {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     let mut env = Env::for_home(temp.path().join("home"));
     env.app_overrides.insert("editor", "true".into());
     env.app_overrides.insert("files", "true".into());
@@ -51,7 +51,7 @@ fn fixture() -> Fixture {
             json!({"type":"user","sessionId":SESSION,"cwd":gamma,"message":{"role":"user","content":"Fix the build"}})
         ),
     );
-    let reports = temp.path().join("disk/reports");
+    let reports = temp.path().join("disk").join("reports");
     write(
         &reports.join("2026-10-01-alpha.md"),
         &format!(
@@ -136,6 +136,8 @@ fn open_items_close_and_reopen_in_laci_and_the_report_stays_as_written() {
         .request("report/close", &json!({"report":"2026-10-01-alpha.md","item":"measure","state":"done"}))
         .unwrap();
     assert_eq!(closed["item"], "Measure the parser");
+    let said = |env: &laci_core::env::Env| activity::read_log(env, 5)[0]["say"].clone();
+    assert_eq!(said(&f.env), json!({"form":"closedItem","title":"Alpha tokenizer"}));
     assert_eq!(open(&mut service), (json!(["Ship it", "Write docs"]), json!(2), json!(1)));
     // A number counts among the items still open.
     service.request("report/close", &json!({"report":"2026-10-01-alpha.md","item":2,"state":"dropped"})).unwrap();
@@ -149,14 +151,15 @@ fn open_items_close_and_reopen_in_laci_and_the_report_stays_as_written() {
         .find(|e| e["undo"]["type"] == "report-item" && e["canUndo"] == true)
         .unwrap();
     service.request("log/undo", &json!({"id":last["id"]})).unwrap();
+    assert_eq!(said(&f.env), json!({"form":"undid"}));
     assert_eq!(open(&mut service).0, json!(["Ship it", "Write docs"]));
     service.request("report/close", &json!({"report":"2026-10-01-alpha.md","item":"measure","state":"open"})).unwrap();
+    assert_eq!(said(&f.env), json!({"form":"reopenedItem","title":"Alpha tokenizer"}));
     assert_eq!(open(&mut service), (json!(["Ship it", "Measure the parser", "Write docs"]), json!(3), Value::Null));
     assert_eq!(fs::read_to_string(&alpha).unwrap(), text, "the reports folder is only read");
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn a_moved_project_keeps_its_reports_through_their_session() {
     let f = fixture();
     let mut service = Service::new(f.env.clone());
@@ -191,6 +194,36 @@ fn a_window_names_an_item_by_its_whole_text_and_a_stale_click_closes_nothing_els
     let logged = activity::read_log(&f.env, 100).len();
     close(&mut service, "Fix login", "open").unwrap();
     assert_eq!(activity::read_log(&f.env, 100).len(), logged);
+}
+
+/// A file of the report items closed so far that is there but can't be read stops the next change: read as empty, it
+/// would be replaced by the new closure alone.
+#[test]
+fn closed_items_that_are_unreadable_are_never_replaced_by_the_next_closure() {
+    let f = fixture();
+    let alpha = f.reports.join("2026-10-01-alpha.md");
+    let text =
+        fs::read_to_string(&alpha).unwrap().replace("- Ship it\n", "- Ship it\n- Measure the parser\n- Write docs\n");
+    write(&alpha, &text);
+    let mut service = Service::new(f.env.clone());
+    save_reports_dir(&mut service, &json!(f.reports)).unwrap();
+    let close = |service: &mut Service, item: &str| {
+        service.request("report/close", &json!({"report":"2026-10-01-alpha.md","item":item,"state":"done"}))
+    };
+    close(&mut service, "ship").unwrap();
+    let file = f.env.data_dir.join("report-items.json");
+    // Cut short, as a sync app can leave a copy it hasn't finished.
+    let cut = br#"{"2026-10-01-alpha.md":{"#;
+    fs::write(&file, cut).unwrap();
+    let error = close(&mut service, "docs").unwrap_err();
+    assert!(error.contains("report-items.json"), "{error}");
+    assert_eq!(fs::read(&file).unwrap(), cut, "nothing was replaced");
+    let last = activity::read_log(&f.env, 100)
+        .into_iter()
+        .find(|e| e["undo"]["type"] == "report-item" && e["canUndo"] == true)
+        .unwrap();
+    assert!(service.request("log/undo", &json!({"id":last["id"]})).is_err());
+    assert_eq!(fs::read(&file).unwrap(), cut, "nor by an Undo");
 }
 
 #[test]
@@ -252,7 +285,8 @@ fn the_reports_setting_is_validated_logged_and_undone() {
     {
         assert!(save_reports_dir(&mut service, &bad).is_err(), "{bad}");
     }
-    let inside = f.env.home.join("notes/reports");
+    // A name at a time, as Laci spells `~/notes/reports`.
+    let inside = f.env.home.join("notes").join("reports");
     fs::create_dir_all(&inside).unwrap();
     save_reports_dir(&mut service, &json!("~/notes/reports")).unwrap();
     assert_eq!(config::load(&f.env)["reportsDir"], "~/notes/reports");

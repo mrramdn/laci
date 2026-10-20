@@ -1,5 +1,5 @@
-//! The checks that keep Laci from changing a folder a program works in, or history a program writes to. They run on
-//! every OS, and where a check can't look, it refuses instead of answering.
+//! The checks that keep Laci from changing a folder a program works in, or history a program writes to. Where a check
+//! can't look, it refuses instead of answering.
 use laci_core::{config, deletion, env::Env, ops, paths, platform, service::Service};
 use serde_json::json;
 use std::{
@@ -12,8 +12,7 @@ use std::{
 
 mod support;
 
-/// Waits up to twenty seconds for `found` to give something: a program can be slow to start on Windows, where
-/// Defender looks at it first.
+/// Waits up to twenty seconds for `found` to give something.
 fn soon<T>(what: &str, mut found: impl FnMut() -> Option<T>) -> T {
     let since = Instant::now();
     loop {
@@ -25,11 +24,10 @@ fn soon<T>(what: &str, mut found: impl FnMut() -> Option<T>) -> T {
     }
 }
 
-/// A temporary folder, spelled as the OS names working folders: with links resolved on Linux and macOS, where it
-/// can sit below one such as /var, and as given on Windows.
+/// A temporary folder, spelled as the OS names working folders: with links resolved.
 fn folder() -> (tempfile::TempDir, PathBuf) {
     let temp = tempfile::tempdir().unwrap();
-    let root = if cfg!(windows) { temp.path().to_owned() } else { temp.path().canonicalize().unwrap() };
+    let root = temp.path().canonicalize().unwrap();
     (temp, root)
 }
 
@@ -80,11 +78,8 @@ fn a_process_working_inside_a_folder_is_found() {
     assert!(program.starts_with(&found.name) || FOUND.starts_with(&found.name), "{}", found.name);
     assert_eq!(fs::canonicalize(&found.cwd).unwrap(), fs::canonicalize(project.join("src")).unwrap());
     let listed = |path: PathBuf| platform::processes_in(&[path]).unwrap().iter().any(|h| h.pid == pid);
-    // As Laci keeps its folders: with links and Windows' short 8.3 names resolved.
+    // As Laci keeps its folders: with links resolved.
     assert!(listed(fs::canonicalize(&project).unwrap()));
-    if !cfg!(target_os = "linux") {
-        assert!(listed(root.join("PROJECT")), "macOS and Windows ignore case");
-    }
     assert!(!listed(beside), "a folder whose name only begins the same");
     let everything = platform::processes_in(&[root.ancestors().last().unwrap().to_owned()]).unwrap();
     assert!(everything.iter().any(|h| h.pid == pid));
@@ -93,13 +88,8 @@ fn a_process_working_inside_a_folder_is_found() {
     assert!(!listed(project), "gone once stopped");
 }
 
-/// What `ensure_idle` says about a file another program writes to. Windows refuses any other holder, reader or writer
-/// alike: a file another program holds open often can't be moved there.
-const WRITER: &str = if cfg!(windows) {
-    "History is open in another program. Stop the session before cleaning it up."
-} else {
-    "History has an open writer. Stop the session before cleaning it up."
-};
+/// What `ensure_idle` says about a file another program writes to.
+const WRITER: &str = "History has an open writer. Stop the session before cleaning it up.";
 const IDLE: &str = "history_with_a_writer_or_a_process_inside_is_not_idle";
 
 #[test]
@@ -118,11 +108,8 @@ fn history_with_a_writer_or_a_process_inside_is_not_idle() {
     let idle = || platform::ensure_idle(sources).ok();
     soon("idle while nothing holds the history", idle);
     let reader = File::open(&log).unwrap();
-    if cfg!(windows) {
-        assert_eq!(platform::ensure_idle(sources).unwrap_err(), WRITER, "any other holder counts");
-    } else {
-        platform::ensure_idle(sources).unwrap();
-    }
+    // Only writers count.
+    platform::ensure_idle(sources).unwrap();
     drop(reader);
     soon("idle once the reader is closed", idle);
     let writer = OpenOptions::new().append(true).open(&log).unwrap();
@@ -147,21 +134,18 @@ fn a_process_id_is_alive_while_its_process_runs() {
     }
     assert!(platform::pid_alive(std::process::id()).unwrap());
     assert!(!platform::pid_alive(u32::MAX).unwrap());
-    // Another user's: init or launchd, which macOS doesn't let this process signal, and Windows' System.
-    assert!(platform::pid_alive(if cfg!(windows) { 4 } else { 1 }).unwrap());
+    // Another user's: init.
+    assert!(platform::pid_alive(1).unwrap());
     let mut child = Running(support::program(ALIVE, "stay").stdout(Stdio::null()).spawn().unwrap());
     let pid = child.0.id();
     assert!(platform::pid_alive(pid).unwrap());
     child.0.kill().unwrap();
     child.0.wait().unwrap();
-    // Reaped, its id is free again. Windows hands ids out again soon, so another process could have it by now.
-    if cfg!(unix) {
-        assert!(!platform::pid_alive(pid).unwrap());
-    }
+    // Reaped, its id is free again.
+    assert!(!platform::pid_alive(pid).unwrap());
 }
 
-/// Laci v1's lock holds a process id, which Linux and macOS check. Windows' lock is on the open file instead.
-#[cfg(unix)]
+/// Laci v1's lock holds a process id, which Laci checks.
 #[test]
 fn a_lock_left_by_a_process_that_is_gone_is_taken_over() {
     let (_temp, root) = folder();
@@ -178,13 +162,13 @@ fn a_lock_left_by_a_process_that_is_gone_is_taken_over() {
 const MOVE: &str = "a_move_waits_until_no_program_works_in_the_folder";
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn a_move_waits_until_no_program_works_in_the_folder() {
     if support::role().is_some() {
         return stay();
     }
-    let (_temp, root) = folder();
-    let env = Env::for_home(root.join("home"));
+    // As Laci spells the folders it finds.
+    let temp = support::tempdir();
+    let env = Env::for_home(temp.path().join("home"));
     let (from, to) = (env.home.join("project/demo"), env.home.join("project/_archive/demo"));
     fs::create_dir_all(from.join("src")).unwrap();
     fs::write(from.join("README.md"), "# demo\n").unwrap();
@@ -206,14 +190,15 @@ const LOG: &str = "LACI_TEST_LOG";
 const READY: &str = "LACI_TEST_READY";
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn history_cleanup_waits_for_a_writer_working_elsewhere() {
     if support::role().is_some() {
         let _writer = OpenOptions::new().append(true).open(std::env::var_os(LOG).unwrap()).unwrap();
         fs::write(std::env::var_os(READY).unwrap(), "").unwrap();
         return stay();
     }
-    let (_temp, root) = folder();
+    // As Laci spells the folders it finds, which the log records the project with.
+    let temp = support::tempdir();
+    let root = temp.path();
     let env = Env::for_home(root.join("home"));
     fs::create_dir_all(env.home.join("projects")).unwrap();
     config::save(&env, &json!({"roots":["~/projects"],"presets":["claude"]})).unwrap();
@@ -228,7 +213,7 @@ fn history_cleanup_waits_for_a_writer_working_elsewhere() {
     let apply = json!({"id":orphan["id"]});
     let ready = root.join("ready");
     let mut writer = support::program(CLEANUP, "write");
-    writer.env(LOG, &log).env(READY, &ready).current_dir(&root).stdout(Stdio::null());
+    writer.env(LOG, &log).env(READY, &ready).current_dir(root).stdout(Stdio::null());
     let writer = Running(writer.spawn().unwrap());
     soon("the writer has the log open", || ready.exists().then_some(()));
     assert_eq!(service.request("apply", &apply).unwrap_err(), WRITER);
@@ -256,13 +241,13 @@ fn git(dir: &Path, args: &[&str]) {
 const TRASH: &str = "moving_a_project_to_the_trash_waits_until_no_program_works_in_it";
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn moving_a_project_to_the_trash_waits_until_no_program_works_in_it() {
     if support::role().is_some() {
         return stay();
     }
-    let (_temp, root) = folder();
-    let env = Env::for_home(root.join("home"));
+    // As Laci spells the folders it finds.
+    let temp = support::tempdir();
+    let env = Env::for_home(temp.path().join("home"));
     let (dir, remote) = (env.home.join("project/demo"), env.home.join("backup.git"));
     fs::create_dir_all(&dir).unwrap();
     fs::create_dir_all(&remote).unwrap();

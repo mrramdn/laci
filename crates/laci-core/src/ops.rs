@@ -5,7 +5,7 @@ use crate::{
     files, paths,
     platform::{
         self,
-        path::{below, contains, may_contain, relocate, renames_case, rewrite_prefix, same_path, stays_below},
+        path::{below, contains, git_dir_name, may_contain, relocate, rewrite_prefix, same_path, stays_below},
         preserve,
     },
     process, sidecar,
@@ -48,8 +48,7 @@ fn journal_path(env: &Env, entry: &Value, key: &str) -> Result<PathBuf> {
     if checked.is_err()
         && key == "from"
         && entry["kind"] == "move"
-        && let (Some(volume), Some(file)) =
-            (entry["parentDevice"].as_u64(), platform::Identity::file_from_json(&entry["parentInode"]))
+        && let (Some(volume), Some(file)) = (entry["parentDevice"].as_u64(), entry["parentInode"].as_u64())
     {
         let parent = platform::Identity { volume, file };
         return paths::restore_workspace_root(entry[key].as_str().ok_or("Missing source path")?, env, parent);
@@ -96,7 +95,7 @@ fn copy_tree_inner(src: &Path, dest: &Path, skip_git: bool) -> Result<()> {
         fs::create_dir(dest).map_err(|e| e.to_string())?;
         for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
             let e = entry.map_err(|e| e.to_string())?;
-            if skip_git && e.file_name() == ".git" {
+            if skip_git && git_dir_name(&e.file_name()) {
                 continue;
             }
             copy_tree_inner(&e.path(), &dest.join(e.file_name()), skip_git)?;
@@ -106,44 +105,78 @@ fn copy_tree_inner(src: &Path, dest: &Path, skip_git: bool) -> Result<()> {
         let mut input = File::open(src).map_err(|e| e.to_string())?;
         let mut output = OpenOptions::new().write(true).create_new(true).open(dest).map_err(|e| e.to_string())?;
         std::io::copy(&mut input, &mut output).and_then(|_| output.sync_all()).map_err(|e| e.to_string())?;
+        drop(output);
         preserve(&meta, dest)?;
     } else {
         return Err(format!("Unsupported special file {}", src.display()));
     }
     Ok(())
 }
-fn remove(path: &Path) -> Result<()> {
-    if fs::symlink_metadata(path).is_ok_and(|m| m.is_dir()) { fs::remove_dir_all(path) } else { fs::remove_file(path) }
-        .map_err(|e| e.to_string())
+/// Removes a file or a folder with everything in it ([`platform::remove_all`]), read-only files included.
+pub(crate) fn remove(path: &Path) -> Result<()> {
+    platform::remove_all(path).map_err(|e| e.to_string())
 }
 fn rename(src: &Path, dest: &Path) -> Result<()> {
     match platform::rename_noreplace(src, dest) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && renames_case(src, dest) => rename_case(src, dest),
-        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
-            // Copy into a private sibling first, then publish atomically. A failed copy leaves the source intact.
-            let staged = tempfile::Builder::new()
-                .prefix(".laci-move-")
-                .tempdir_in(dest.parent().ok_or("Missing destination parent")?)
-                .map_err(|e| e.to_string())?;
-            let payload = staged.path().join("payload");
-            copy_tree(src, &payload)?;
-            platform::rename_noreplace(&payload, dest).map_err(|e| e.to_string())?;
-            remove(src)
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => rename_across(src, dest),
         Err(e) => Err(e.to_string()),
     }
 }
-/// A rename that only changes the case of a name, where the file system counts the new name as taken by the old one.
-/// It goes by a free name in the same folder, and back if the second step fails.
-fn rename_case(src: &Path, dest: &Path) -> Result<()> {
-    let parent = src.parent().ok_or("Missing parent")?;
-    let staged =
-        parent.join(format!(".laci-rename-{:x}-{:x}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
-    platform::rename_noreplace(src, &staged).map_err(|e| e.to_string())?;
-    platform::rename_noreplace(&staged, dest).map_err(|e| {
-        let _ = platform::rename_noreplace(&staged, src);
-        e.to_string()
+/// A move to another volume: a copy, made in a private sibling of `dest` and published there in one step, and then
+/// the source is deleted. Whether the source can leave its folder is asked first, by setting it aside under a free name
+/// beside it and back: that fails when its folder can't be changed, so nothing is copied for a move that couldn't
+/// finish. The source stays in its place while
+/// it is copied, so a copy that stops part-way, as when Laci is closed, leaves it there. It is set aside again just
+/// before the copy is published, put back if that fails, and deleted only once the copy is in place. NFS, 9p
+/// (as WSL's /mnt/c), eCryptfs and FUSE file systems without RENAME2, such as sshfs, can't rename without replacing,
+/// so a source there is never set aside: its copy is published and then it is deleted where it is.
+fn rename_across(src: &Path, dest: &Path) -> Result<()> {
+    rename_across_with(src, dest, platform::rename_noreplace)
+}
+/// [`rename_across`] with `beside`, the rename in the source's own folder that sets it aside and puts it back.
+fn rename_across_with(src: &Path, dest: &Path, beside: impl Fn(&Path, &Path) -> std::io::Result<()>) -> Result<()> {
+    let name = src.file_name().unwrap_or_default().to_string_lossy();
+    let staged = tempfile::Builder::new()
+        .prefix(".laci-move-")
+        .tempdir_in(dest.parent().ok_or("Missing destination parent")?)
+        .map_err(|e| e.to_string())?;
+    let payload = staged.path().join("payload");
+    let aside = src.parent().ok_or("Missing parent")?.join(format!(
+        ".laci-move-{:x}-{:x}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let set_aside = || beside(src, &aside).map_err(|e| e.to_string());
+    let put_back = || {
+        beside(&aside, src)
+            .map_err(|e| format!("Laci couldn't put {name} back, so it is at {} now: {e}", aside.display()))
+    };
+    let settable = match beside(src, &aside) {
+        Ok(()) => put_back().map(|()| true)?,
+        // EINVAL: the file system can't rename without replacing, and nothing was renamed.
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => false,
+        Err(e) => return Err(e.to_string()),
+    };
+    // The copy keeps read-only files, which the staging folder has to lose too.
+    if let Err(error) = copy_tree(src, &payload).and_then(|()| if settable { set_aside() } else { Ok(()) }) {
+        let _ = remove(&payload);
+        return Err(error);
+    }
+    if let Err(error) = platform::rename_noreplace(&payload, dest).map_err(|e| e.to_string()) {
+        let back = if settable { put_back() } else { Ok(()) };
+        let _ = remove(&payload);
+        return Err(match back {
+            Ok(()) => error,
+            Err(e) => format!("{error} · {e}"),
+        });
+    }
+    let left = if settable { aside.as_path() } else { src };
+    remove(left).map_err(|e| {
+        format!(
+            "Laci couldn't delete {}, what is left of {name} after the copy, so delete that folder by hand: {e}",
+            left.display()
+        )
     })
 }
 /// The processes working inside `paths`, as messages and the UI show them. Fails where Laci can't list processes.
@@ -159,12 +192,10 @@ pub(crate) fn busy_in(paths: &[PathBuf]) -> Result<Vec<Value>> {
 }
 /// How long a change waits for Git that another program runs in the folder, such as a second Laci or an editor.
 /// Such a read is over in moments; Git that is still there after this, or anything else, keeps the folder in use.
-/// Git for Windows' `git.exe` runs Git in a second process, which isn't Laci's helper even when the first is, so
-/// Laci's own Git can be waited for there too.
 const GIT_WAIT: Duration = Duration::from_secs(3);
 /// [`busy_in`] for checks that decide something. A process counts only if it is still in the folder a moment
 /// later, so one that is just passing through, such as a helper of another Laci still starting, doesn't make the
-/// folder busy. While Git (`git…`, as `git.exe` on Windows) is all that stays, it looks again for up to
+/// folder busy. While Git (`git…`) is all that stays, it looks again for up to
 /// [`GIT_WAIT`].
 pub(crate) fn still_busy(paths: &[PathBuf]) -> Result<Vec<Value>> {
     let started = Instant::now();
@@ -200,15 +231,15 @@ struct Tx<'a> {
     n: usize,
 }
 impl<'a> Tx<'a> {
-    fn new(env: &'a Env, title: &str) -> Result<Self> {
+    /// `say` is the change in parts, which the Log's readers tell in their own words (activity.rs `record`).
+    fn new(env: &'a Env, title: &str, say: Value) -> Result<Self> {
         let id = id();
         let file = data(env, "journal")?.join(format!("{id}.json"));
-        let tx = Self {
-            env,
-            journal: json!({"id":id,"at":files::now(),"title":title,"state":"running","entries":[]}),
-            file,
-            n: 0,
-        };
+        let mut journal = json!({"id":id,"at":files::now(),"title":title,"state":"running","entries":[]});
+        if say.is_object() {
+            journal["say"] = say;
+        }
+        let tx = Self { env, journal, file, n: 0 };
         tx.save()?;
         Ok(tx)
     }
@@ -239,15 +270,13 @@ impl<'a> Tx<'a> {
     fn move_to(&mut self, src: &Path, dest: &Path) -> Result<()> {
         sidecar::plain_path(src)?;
         sidecar::plain_path(dest)?;
-        // Where case doesn't matter, the name in its new case already finds the folder itself.
-        let recased = renames_case(src, dest);
-        if exists(dest) && !recased {
+        if exists(dest) {
             return Err(format!("{} already exists", paths::tilde(dest, &self.env.home)));
         }
         if !exists(src) {
             return Err(format!("{} is gone", paths::tilde(src, &self.env.home)));
         }
-        if contains(src, dest) && !recased {
+        if contains(src, dest) {
             return Err("Can't move a folder into itself".into());
         }
         if src.is_dir() {
@@ -271,12 +300,8 @@ impl<'a> Tx<'a> {
         if src == dest {
             return Ok(());
         }
-        if !exists(dest) || renames_case(src, dest) {
+        if !exists(dest) {
             return self.move_to(src, dest);
-        }
-        // Another spelling of the same folder, on macOS and Windows: there is nothing to merge.
-        if same_path(src, dest) {
-            return Ok(());
         }
         sidecar::plain_path(src)?;
         sidecar::plain_path(dest)?;
@@ -396,7 +421,7 @@ impl<'a> Tx<'a> {
         guard(&[path.to_owned()])?;
         let bytes = files::size(path);
         self.log(json!({"kind":"cleared","path":path,"bytes":bytes}))?;
-        fs::remove_dir_all(path).map_err(|e| e.to_string())
+        remove(path)
     }
     fn trash(&mut self, path: &Path) -> Result<()> {
         sidecar::plain_path(path)?;
@@ -408,9 +433,9 @@ impl<'a> Tx<'a> {
         platform::trash(path)
     }
 }
-fn transact(env: &Env, title: &str, work: impl FnOnce(&mut Tx<'_>) -> Result<()>) -> Result<Value> {
+fn transact(env: &Env, title: &str, say: Value, work: impl FnOnce(&mut Tx<'_>) -> Result<()>) -> Result<Value> {
     with_lock(env, || {
-        let mut tx = Tx::new(env, title)?;
+        let mut tx = Tx::new(env, title, say)?;
         match work(&mut tx).and_then(|_| {
             tx.journal["state"] = json!("applied");
             tx.save()
@@ -491,7 +516,7 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
     for e in entries.iter().filter(|e| e["kind"] == "move") {
         let from = journal_path(env, e, "from")?;
         let to = journal_path(env, e, "to")?;
-        if exists(&from) && exists(&to) && !renames_case(&to, &from) {
+        if exists(&from) && exists(&to) {
             return Err(format!("{} already exists; undo would overwrite it", from.display()));
         }
     }
@@ -501,7 +526,7 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
                 let from = journal_path(env, e, "from")?;
                 let to = journal_path(env, e, "to")?;
                 if exists(&to) {
-                    if exists(&from) && !renames_case(&to, &from) {
+                    if exists(&from) {
                         return Err(format!("{} already exists; undo would overwrite it", from.display()));
                     }
                     fs::create_dir_all(from.parent().ok_or("Missing parent")?).map_err(|e| e.to_string())?;
@@ -671,19 +696,21 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
     }) {
         return Err("Can't move Laci's settings, history, cache or recovery data".into());
     }
-    if contains(&src, &dest) && !renames_case(&src, &dest) {
+    if contains(&src, &dest) {
         return Err("Can't move a folder into itself".into());
     }
-    let title = opts["title"].as_str().map(str::to_owned).unwrap_or_else(|| {
-        format!("Move {} → {}", node["name"].as_str().unwrap_or("project"), paths::tilde(&dest, &env.home))
-    });
-    transact(env, &title, |tx| {
+    let name = node["name"].as_str().unwrap_or("project");
+    let title = opts["title"]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("Move {name} → {}", paths::tilde(&dest, &env.home)));
+    let say = if opts["say"].is_object() { opts["say"].clone() } else { json!({"form":"moved","name":name}) };
+    transact(env, &title, say, |tx| {
         guard(std::slice::from_ref(&src))?;
         if opts["status"] == "archived" {
             crate::scan::check_archive_destination(env, &dest)?;
         }
-        // Which history belongs to the folder is asked while it is still there: on macOS and Windows another
-        // spelling of it counts only as long as the file system can confirm it.
+        // Which history belongs to the folder is asked while it is still there.
         let claude: Vec<(&Value, &Path, PathBuf)> = snap["claude"]
             .as_object()
             .into_iter()
@@ -786,13 +813,14 @@ pub fn archive_project_to(
     trash_heavy: bool,
 ) -> Result<Value> {
     let plan = crate::scan::archive_plan(env, snap, id, destination)?;
-    let node = &snap["nodes"][id];
+    let name = snap["nodes"][id]["name"].as_str().unwrap_or("project");
     move_project(
         env,
         snap,
         id,
         plan["dest"].as_str().ok_or("Missing archive destination")?,
-        &json!({"status":"archived","trashHeavy":trash_heavy,"title":format!("Archive {}",node["name"].as_str().unwrap_or("project"))}),
+        &json!({"status":"archived","trashHeavy":trash_heavy,"title":format!("Archive {name}"),
+            "say":{"form":"archived","name":name}}),
     )
 }
 pub fn apply_proposal(env: &Env, snap: &Value, proposal: &Value, recovery: &str) -> Result<Value> {
@@ -803,26 +831,33 @@ pub fn apply_proposal(env: &Env, snap: &Value, proposal: &Value, recovery: &str)
         env,
         snap,
         proposal["title"].as_str().unwrap_or("Clean up history"),
+        proposal["say"].clone(),
         &proposal["action"],
         Some((proposal, recovery)),
     )
 }
 
 pub fn apply_action(env: &Env, snap: &Value, title: &str, a: &Value) -> Result<Value> {
-    apply_action_checked(env, snap, title, a, None)
+    apply_action_checked(env, snap, title, Value::Null, a, None)
+}
+
+/// `apply_action` with the parts the Log tells the change by (Tx::new).
+pub fn apply_action_saying(env: &Env, snap: &Value, title: &str, say: Value, a: &Value) -> Result<Value> {
+    apply_action_checked(env, snap, title, say, a, None)
 }
 
 fn apply_action_checked(
     env: &Env,
     snap: &Value,
     title: &str,
+    say: Value,
     a: &Value,
     reviewed: Option<(&Value, &str)>,
 ) -> Result<Value> {
     if a["type"] == "archive" {
         return archive_project(env, snap, a["nodeId"].as_str().ok_or("Missing project")?, false);
     }
-    transact(env, title, |tx| {
+    transact(env, title, say, |tx| {
         let mut checked = a.clone();
         if let Some((proposal, recovery)) = reviewed.filter(|(p, _)| p["category"] == "orphan") {
             let fresh = crate::scan::scan(env)?;
@@ -905,12 +940,7 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
         {
             let src = value_path(env, &c["link"]["dir"])?;
             let connector = c["id"].as_str().ok_or("Missing connector")?;
-            // On Windows a `C:` in front would make the join below start over on that drive.
-            if connector.is_empty()
-                || connector.contains(['/', '\\'])
-                || connector == ".."
-                || (cfg!(windows) && connector.contains(':'))
-            {
+            if connector.is_empty() || connector.contains(['/', '\\']) || connector == ".." {
                 return Err("Invalid connector id".into());
             }
             if dest.starts_with(&src) {
@@ -1021,11 +1051,8 @@ pub fn delete_sessions(env: &Env, snap: &Value, files: &[String]) -> Result<Valu
             .flatten()
             .find(|c| c["id"] == session["connector"])
             .ok_or("Connect this agent before deleting its sessions")?;
-        // On Windows `\` and a drive's `:` would lead the joins below out of the quarantine.
-        let id = connector["id"]
-            .as_str()
-            .filter(|id| !id.is_empty() && !id.contains(['/', '.']) && !(cfg!(windows) && id.contains(['\\', ':'])))
-            .ok_or("Unknown agent")?;
+        let id =
+            connector["id"].as_str().filter(|id| !id.is_empty() && !id.contains(['/', '.'])).ok_or("Unknown agent")?;
         let store = value_path(env, &connector["link"]["dir"])?;
         let source = value_path(env, &session["file"])?;
         let relative = source
@@ -1045,11 +1072,11 @@ pub fn delete_sessions(env: &Env, snap: &Value, files: &[String]) -> Result<Valu
         }
         plan.push((id.to_owned(), provider == "claude", store, relative, title.to_owned()));
     }
-    let title = match plan.as_slice() {
-        [(.., one)] => format!("Deleted the session “{one}”"),
-        _ => format!("Deleted {} sessions", plan.len()),
+    let (title, say) = match plan.as_slice() {
+        [(.., one)] => (format!("Deleted the session “{one}”"), json!({"form":"deletedChat","title":one})),
+        _ => (format!("Deleted {} sessions", plan.len()), json!({"form":"deletedChats","chats":plan.len()})),
     };
-    transact(env, &title, |tx| {
+    transact(env, &title, say, |tx| {
         let id = tx.journal["id"].as_str().unwrap_or("removed").to_owned();
         let removed = data(env, "orphans")?.join("sessions").join(&id);
         let history = data(env, "history")?;
@@ -1079,60 +1106,7 @@ pub fn backup_state(env: &Env) -> Option<Value> {
     Some(state)
 }
 
-/// What macOS and Windows add to a move: a new case for a name.
-#[cfg(all(test, not(target_os = "linux")))]
-mod elsewhere {
-    use super::*;
-
-    #[test]
-    fn a_file_renamed_to_another_case_is_renamed_and_undo_renames_it_back() {
-        let temp = tempfile::tempdir().unwrap();
-        let env = Env::for_home(platform::path::canonical(temp.path()).unwrap().join("home"));
-        fs::create_dir_all(&env.home).unwrap();
-        let (src, dest) = (env.home.join("Notes.md"), env.home.join("notes.md"));
-        fs::write(&src, "kept").unwrap();
-        if !exists(&dest) {
-            eprintln!("This volume tells case apart; there is no such rename.");
-            return;
-        }
-        let names = || {
-            let mut names: Vec<_> =
-                files::entries(&env.home).iter().map(|e| e.file_name()).filter(|n| n != ".local").collect();
-            names.sort();
-            names
-        };
-        let journal = transact(&env, "Rename", |tx| tx.move_to(&src, &dest)).unwrap();
-        assert_eq!(names(), ["notes.md"]);
-        undo_entries(&env, journal["entries"].as_array().unwrap()).unwrap();
-        assert_eq!(names(), ["Notes.md"]);
-        assert_eq!(fs::read_to_string(&src).unwrap(), "kept");
-        // A name that another file has is still taken, in any case.
-        fs::write(env.home.join("other.md"), "other").unwrap();
-        assert!(transact(&env, "Rename", |tx| tx.move_to(&src, &env.home.join("OTHER.md"))).is_err());
-        assert_eq!(fs::read_to_string(env.home.join("other.md")).unwrap(), "other");
-    }
-
-    /// A history folder merged into itself, spelled with a folder above it in another case, stays as it is.
-    #[test]
-    fn a_folder_merged_into_itself_under_another_spelling_is_left_as_it_is() {
-        let temp = tempfile::tempdir().unwrap();
-        let env = Env::for_home(platform::path::canonical(temp.path()).unwrap().join("home"));
-        let store = env.home.join("store");
-        fs::create_dir_all(&store).unwrap();
-        fs::write(store.join("session.jsonl"), "{}\n").unwrap();
-        let other = env.home.with_file_name("HOME").join("store");
-        if !exists(&other) {
-            eprintln!("This volume tells case apart; there is nothing to merge.");
-            return;
-        }
-        let journal = transact(&env, "Merge", |tx| tx.merge(&store, &other)).unwrap();
-        assert_eq!(journal["entries"], json!([]));
-        assert_eq!(files::entries(&store).iter().map(|e| e.file_name()).collect::<Vec<_>>(), ["session.jsonl"]);
-        assert_eq!(fs::read_to_string(store.join("session.jsonl")).unwrap(), "{}\n");
-    }
-}
-
-/// These run on every OS. This test binary stands in for Git and the other programs: started again under their names,
+/// This test binary stands in for Git and the other programs: started again under their names,
 /// it runs only [`tests::stand_in`].
 #[cfg(test)]
 mod tests {
@@ -1159,24 +1133,18 @@ mod tests {
         }
     }
 
-    /// A project folder, and this test binary as each program in `names`. Linux gets links, as a program written
-    /// here could fail to start with "Text file busy" while another test starts a process; macOS and Windows get
-    /// copies, so each is listed under its own name. Each runs once first, as Windows can make a new program wait
-    /// while Defender looks at it.
+    /// A project folder, and this test binary as each program in `names`: links, as a program written here could fail
+    /// to start with "Text file busy" while another test starts a process. Each runs once first.
     fn fixture<const N: usize>(names: [&str; N]) -> (tempfile::TempDir, PathBuf, [PathBuf; N]) {
         let temp = tempfile::tempdir().unwrap();
-        // Linux and macOS name working folders with links resolved; Windows keeps the spelling it was given.
-        let root = if cfg!(windows) { temp.path().to_owned() } else { temp.path().canonicalize().unwrap() };
+        // Linux names working folders with links resolved.
+        let root = temp.path().canonicalize().unwrap();
         let (project, bin) = (root.join("project"), root.join("bin"));
         fs::create_dir(&project).unwrap();
         fs::create_dir(&bin).unwrap();
         let programs = names.map(|name| {
             let (this, program) = (std::env::current_exe().unwrap(), bin.join(name));
-            let program = program.with_extension(std::env::consts::EXE_EXTENSION);
-            #[cfg(target_os = "linux")]
             std::os::unix::fs::symlink(this, &program).unwrap();
-            #[cfg(not(target_os = "linux"))]
-            fs::copy(this, &program).unwrap();
             let ran = Command::new(&program).args(STAND_IN).env(ROLE, "stay 0").stdout(Stdio::null()).status();
             assert!(ran.unwrap().success(), "{name} runs");
             program
@@ -1184,7 +1152,7 @@ mod tests {
         (temp, project, programs)
     }
 
-    /// The name the OS lists `program` under: `git`, or `git.exe` on Windows.
+    /// The name the OS lists `program` under, such as `git`.
     fn name(program: &Path) -> String {
         program.file_name().unwrap().to_string_lossy().into_owned()
     }
@@ -1304,5 +1272,196 @@ mod tests {
         assert!(checked.elapsed() < GIT_WAIT / 3, "no wait while something besides Git is there");
         assert!(error.starts_with("In use by ") && error.ends_with(". Close it first."), "{error}");
         assert!(error.contains(&format!("{} (pid {})", name(&shell), terminal.0.id())), "{error}");
+    }
+
+    /// A home in a fresh temporary folder, spelled as the file system spells it, with the folders a move needs.
+    fn home() -> (tempfile::TempDir, Env, PathBuf, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let env = Env::for_home(platform::path::canonical(temp.path()).unwrap().join("home"));
+        let (src, dest) = (env.home.join("project").join("demo"), env.home.join("archive").join("demo"));
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        fs::write(src.join("README.md"), "# demo\n").unwrap();
+        (temp, env, src, dest)
+    }
+
+    /// A move to another volume as [`Tx::move_to`] journals it, made on the volume the test runs on.
+    fn move_across(env: &Env, src: &Path, dest: &Path) -> Result<Value> {
+        move_across_by(env, src, dest, platform::rename_noreplace)
+    }
+
+    /// [`move_across`], with `beside` setting the source aside.
+    fn move_across_by(
+        env: &Env,
+        src: &Path,
+        dest: &Path,
+        beside: impl Fn(&Path, &Path) -> std::io::Result<()>,
+    ) -> Result<Value> {
+        transact(env, "Move", Value::Null, |tx| {
+            tx.log(json!({"kind":"move","from":src,"to":dest}))?;
+            rename_across_with(src, dest, beside)
+        })
+    }
+
+    /// The names in `dir`, sorted.
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> =
+            fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    fn make_read_only(path: &Path) {
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    /// Git makes its objects read-only. A move to another volume takes them along as they are, deletes them where they
+    /// were, and leaves nothing set aside or staged on either side; Undo brings the project back.
+    #[test]
+    fn a_move_across_volumes_takes_read_only_files_along_and_leaves_nothing_behind() {
+        let (_temp, env, src, dest) = home();
+        let objects = src.join(".git").join("objects").join("ab");
+        fs::create_dir_all(&objects).unwrap();
+        fs::write(objects.join("cdef"), "object").unwrap();
+        make_read_only(&objects.join("cdef"));
+        let journal = move_across(&env, &src, &dest).unwrap();
+        assert!(!src.exists());
+        let object = dest.join(".git").join("objects").join("ab").join("cdef");
+        assert_eq!(fs::read_to_string(&object).unwrap(), "object");
+        assert!(fs::metadata(&object).unwrap().permissions().readonly());
+        assert_eq!(names(&env.home.join("project")), Vec::<String>::new(), "nothing set aside is left");
+        assert_eq!(names(&env.home.join("archive")), ["demo"], "no staging folder is left");
+        undo(&env, journal["id"].as_str().unwrap()).unwrap();
+        assert_eq!(fs::read_to_string(src.join("README.md")).unwrap(), "# demo\n");
+    }
+
+    /// A copy that fails partway, here at a socket no copy can take, removes what it copied. The source was copied
+    /// where it is, so a copy that stops there, as when Laci is closed, leaves it in its place too.
+    #[test]
+    fn a_move_across_volumes_that_cannot_copy_everything_leaves_the_source_in_its_place() {
+        let (_temp, env, src, dest) = home();
+        fs::write(src.join("LICENSE"), "MIT\n").unwrap();
+        make_read_only(&src.join("LICENSE"));
+        let _socket = std::os::unix::net::UnixListener::bind(src.join("socket")).unwrap();
+        let error = move_across(&env, &src, &dest).unwrap_err();
+        assert_eq!(error, format!("Unsupported special file {}", src.join("socket").display()));
+        assert!(!dest.exists());
+        assert_eq!(names(&env.home.join("archive")), Vec::<String>::new(), "the staging folder is gone");
+        assert_eq!(names(&env.home.join("project")), ["demo"], "nothing is set aside");
+        assert_eq!(names(&src), ["LICENSE", "README.md", "socket"]);
+    }
+
+    /// A source that can't leave its folder, here as that folder is read-only, stops the move before anything is
+    /// copied. Before, the copy was published, the source emptied, and the two together blocked the rollback.
+    #[test]
+    fn a_source_that_cannot_leave_its_folder_is_never_copied() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_temp, env, src, dest) = home();
+        let parent = env.home.join("project");
+        let mode = |mode: u32| fs::set_permissions(&parent, fs::Permissions::from_mode(mode)).unwrap();
+        mode(0o555);
+        if fs::write(parent.join("probe"), "").is_ok() {
+            eprintln!("Nothing is read-only to this user, as to root; nothing to check.");
+            mode(0o755);
+            return;
+        }
+        let moved = move_across(&env, &src, &dest);
+        mode(0o755);
+        let error = moved.unwrap_err();
+        assert!(error.contains("ermission denied"), "{error}");
+        assert_eq!(names(&env.home.join("archive")), Vec::<String>::new(), "nothing was copied or staged");
+        assert_eq!(names(&parent), ["demo"]);
+        assert_eq!(fs::read_to_string(src.join("README.md")).unwrap(), "# demo\n");
+    }
+
+    /// A source that can't be deleted once the copy is in place, here as a folder in it is read-only, is named in the
+    /// error, and the rollback brings the copy back. Before, the source stayed half deleted beside the copy, and the
+    /// two together blocked the rollback and every Undo.
+    #[test]
+    fn a_source_left_after_a_move_across_volumes_is_named_and_the_move_rolls_back() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path, mode: u32| fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        let (_temp, env, src, dest) = home();
+        let locked = src.join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("kept"), "kept").unwrap();
+        mode(&locked, 0o555);
+        if fs::remove_file(locked.join("kept")).is_ok() {
+            eprintln!("Nothing is read-only to this user, as to root; nothing to check.");
+            mode(&locked, 0o755);
+            return;
+        }
+        let error = move_across(&env, &src, &dest).unwrap_err();
+        let parent = env.home.join("project");
+        let left: Vec<PathBuf> =
+            names(&parent).iter().filter(|n| n.starts_with(".laci-move-")).map(|n| parent.join(n)).collect();
+        // So the temporary folder can go.
+        for dir in left.iter().map(|aside| aside.join("locked")).chain([locked.clone(), dest.join("locked")]) {
+            if dir.exists() {
+                mode(&dir, 0o755);
+            }
+        }
+        let [aside] = left.as_slice() else { panic!("one folder set aside: {left:?}") };
+        assert!(error.contains(&format!("Laci couldn't delete {}", aside.display())), "{error}");
+        assert!(error.contains("delete that folder by hand"), "{error}");
+        assert!(!dest.exists());
+        assert_eq!(fs::read_to_string(locked.join("kept")).unwrap(), "kept", "the copy came back");
+        assert_eq!(fs::read_to_string(src.join("README.md")).unwrap(), "# demo\n");
+    }
+
+    /// How NFS, 9p (as WSL's /mnt/c), eCryptfs and FUSE file systems without RENAME2 answer a rename that mustn't
+    /// replace anything, on Linux: EINVAL, with nothing renamed.
+    fn refused(_: &Path, _: &Path) -> std::io::Result<()> {
+        Err(rustix::io::Errno::INVAL.into())
+    }
+
+    /// A source on such a file system can't be set aside, and still moves to another volume: its copy is published, it
+    /// is deleted where it is, and nothing is left on either side. Before, the move stopped at "Invalid argument"
+    /// without copying anything, where it used to work.
+    #[test]
+    fn a_source_that_cannot_be_set_aside_still_moves_across_volumes() {
+        let (_temp, env, src, dest) = home();
+        let journal = move_across_by(&env, &src, &dest, refused).unwrap();
+        assert!(!src.exists());
+        assert_eq!(fs::read_to_string(dest.join("README.md")).unwrap(), "# demo\n");
+        assert_eq!(names(&env.home.join("project")), Vec::<String>::new(), "nothing set aside is left");
+        assert_eq!(names(&env.home.join("archive")), ["demo"], "no staging folder is left");
+        undo(&env, journal["id"].as_str().unwrap()).unwrap();
+        assert_eq!(fs::read_to_string(src.join("README.md")).unwrap(), "# demo\n");
+    }
+
+    /// Such a source that can't be deleted once its copy is in place, here as a folder in it is read-only, is named in
+    /// the error, so what is left of it can be deleted by hand: the copy holds everything.
+    #[test]
+    fn a_source_that_cannot_be_set_aside_or_deleted_is_named() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path, mode: u32| fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        let (_temp, env, src, dest) = home();
+        let locked = src.join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("kept"), "kept").unwrap();
+        mode(&locked, 0o555);
+        if fs::remove_file(locked.join("kept")).is_ok() {
+            eprintln!("Nothing is read-only to this user, as to root; nothing to check.");
+            mode(&locked, 0o755);
+            return;
+        }
+        let error = move_across_by(&env, &src, &dest, refused).unwrap_err();
+        // So the temporary folder can go.
+        for dir in [locked.clone(), dest.join("locked")] {
+            if dir.exists() {
+                mode(&dir, 0o755);
+            }
+        }
+        let named = format!(
+            "Laci couldn't delete {}, what is left of demo after the copy, so delete that folder",
+            src.display()
+        );
+        assert!(error.starts_with(&named) && error.contains("ermission denied"), "{error}");
+        assert_eq!(fs::read_to_string(dest.join("locked").join("kept")).unwrap(), "kept", "the copy holds everything");
+        assert_eq!(names(&env.home.join("archive")), ["demo"], "no staging folder is left");
+        assert_eq!(names(&env.home.join("project")), ["demo"], "nothing is set aside");
     }
 }

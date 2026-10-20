@@ -93,3 +93,21 @@ export async function theButtonSaysWhatItDoes() {
     '<button type="button" class="btn sm" disabled="">Choose another folder…</button>',
   );
 }
+
+export async function aButtonBesideAFieldSaysWhichFolderItChooses() {
+  const { renderToStaticMarkup } = requireUi("react-dom/server");
+  const { createElement } = requireUi("react");
+  const { ChooseFolder } = picker(async () => ({ path: null }));
+  // Its words are the same beside every field; its name for a screen reader is not.
+  assert.equal(
+    renderToStaticMarkup(
+      createElement(ChooseFolder, {
+        onPick() {},
+        label: "Choose…",
+        name: "Choose your archive folder",
+        title: "Choose your archive folder",
+      }),
+    ),
+    '<button type="button" class="btn" aria-label="Choose your archive folder">Choose…</button>',
+  );
+}

@@ -227,8 +227,13 @@ export interface SearchHit {
   /** When it last changed: `hitTime` says it as "3 d". */
   at?: string;
 }
-/** Something the palette can do: its id, its name, its icon. */
-export type SearchAction = readonly [id: string, label: string, icon: string];
+/** Something the palette can do: its id, its name, its icon, and what it says beside its name. */
+export type SearchAction = readonly [
+  id: string,
+  label: string,
+  icon: string,
+  sub?: string,
+];
 /** Newest first, as `days()` orders them, without reading the clock: ties keep their order. */
 const age = (at?: string) => (at ? -Date.parse(at) : Infinity);
 const searchCache = cache<Snapshot, SearchHit[]>();
@@ -364,7 +369,9 @@ export function searchAll(
       ...todoHits,
       ...actions
         .filter(([, label]) => matches(label))
-        .map(([id, label, icon]) => found(id, "Actions", label, "", icon)),
+        .map(([id, label, icon, sub = ""]) =>
+          found(id, "Actions", label, sub, icon),
+        ),
     ];
   });
 }

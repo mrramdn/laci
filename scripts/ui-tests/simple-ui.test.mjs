@@ -443,7 +443,7 @@ function windowKeys(store) {
     },
     {
       document: {
-        documentElement: { dataset: { os: "linux" } },
+        documentElement: { dataset: {} },
         activeElement: null,
         querySelector: () => null,
         querySelectorAll: () => [],

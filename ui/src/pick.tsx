@@ -50,12 +50,18 @@ export async function chooseFolder(
 export function ChooseFolder({
   onPick,
   label = "Choose folder…",
+  name,
   className = "btn",
   disabled = false,
   ...options
 }: PickOptions & {
   onPick: (path: string) => void;
   label?: string;
+  /**
+   * The button's name for a screen reader, when its words don't say which folder it chooses. It
+   * starts with those words, so it is the name a voice command uses too.
+   */
+  name?: string;
   className?: string;
   disabled?: boolean;
 }) {
@@ -65,6 +71,7 @@ export function ChooseFolder({
       type="button"
       className={className}
       disabled={disabled}
+      aria-label={name}
       aria-busy={open || undefined}
       onClick={() => {
         if (open) return;

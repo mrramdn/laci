@@ -47,7 +47,6 @@ fn blocked(env: &Env, node: &Value) -> String {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn live_remote_refs_allow_trash_but_ignored_files_remain_explicit() {
     let (_home, env, dir, node) = fixture();
     fs::write(dir.join(".git/info/exclude"), "secret.env\n").unwrap();
@@ -64,7 +63,6 @@ fn live_remote_refs_allow_trash_but_ignored_files_remain_explicit() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn stale_remote_tracking_refs_and_other_local_branches_cannot_authorize_removal() {
     let (_home, env, dir, node) = fixture();
     fs::write(dir.join("README.md"), "new work\n").unwrap();
@@ -82,7 +80,6 @@ fn stale_remote_tracking_refs_and_other_local_branches_cannot_authorize_removal(
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn dirty_untracked_stash_and_unreachable_remote_are_refused_again_at_execution() {
     let (_home, env, dir, node) = fixture();
     assert_eq!(deletion::plan(&env, &node).unwrap()["allowed"], true);
@@ -101,7 +98,6 @@ fn dirty_untracked_stash_and_unreachable_remote_are_refused_again_at_execution()
 }
 
 // The program working in the folder is `sleep`, and the links are Unix links.
-#[cfg(unix)]
 #[test]
 fn worktrees_in_use_paths_and_symlinks_are_refused() {
     let (home, env, dir, node) = fixture();
@@ -123,7 +119,6 @@ fn worktrees_in_use_paths_and_symlinks_are_refused() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn a_project_cannot_use_itself_as_a_remote_backup() {
     let (_home, env, dir, node) = fixture();
     for url in [
@@ -138,8 +133,6 @@ fn a_project_cannot_use_itself_as_a_remote_backup() {
     }
 }
 
-// A Windows file name can't hold a colon.
-#[cfg(unix)]
 #[test]
 fn colons_in_local_paths_cannot_bypass_the_self_backup_guard() {
     let (_home, env, dir, mut node) = fixture();
@@ -157,7 +150,6 @@ fn colons_in_local_paths_cannot_bypass_the_self_backup_guard() {
 }
 
 // The stand-in for git-upload-pack is a shell script.
-#[cfg(unix)]
 #[test]
 fn local_work_created_while_the_remote_answers_prevents_trash() {
     use std::os::unix::fs::PermissionsExt;
@@ -193,7 +185,6 @@ fn hidden_tracked_changes_cannot_pass_the_trash_guard() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn shared_local_backups_must_be_independent_before_trash() {
     let (_home, env, dir, node) = fixture();
     let backup = env.home.join("backup.git");
@@ -220,7 +211,6 @@ fn a_remote_object_store_linked_into_the_project_is_not_a_backup() {
 }
 
 // The stand-in for git-upload-pack is a shell script.
-#[cfg(unix)]
 #[test]
 fn hidden_changes_created_during_remote_verification_are_rechecked() {
     use std::os::unix::fs::PermissionsExt;
@@ -256,4 +246,15 @@ fn local_backups_cannot_borrow_pack_or_loose_object_subdirectories() {
         assert!(deletion::trash(&env, &node).is_err());
         assert!(dir.join("README.md").exists());
     }
+}
+
+/// The repository names its remotes. One named like an option, such as `--push`, is still the remote whose live refs
+/// back the project up: Git never reads it as an option.
+#[test]
+fn a_remote_named_like_an_option_is_still_the_backup() {
+    let (_home, env, dir, node) = fixture();
+    git(&dir, &["remote", "rename", "origin", "--", "--push"]);
+    let plan = deletion::plan(&env, &node).unwrap();
+    assert_eq!(plan["allowed"], true, "{plan}");
+    assert_eq!(plan["checks"][0]["title"], "Local Git refs verified on --push");
 }

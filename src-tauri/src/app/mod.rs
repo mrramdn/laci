@@ -241,7 +241,7 @@ impl AppState {
                 let project_name = string(body, "name").to_owned();
                 let started = self.creations.start(env, body.clone(), move |result| {
                     if let Ok(value) = result.as_ref() {
-                        laci_core::activity::record(&record_env, json!({"by":"app","title":format!("Created {project_name}"),"path":value["path"],"detail":value["warnings"]}));
+                        laci_core::activity::record(&record_env, json!({"by":"app","title":format!("Created {project_name}"),"say":{"form":"created","name":project_name},"path":value["path"],"detail":value["warnings"]}));
                     }
                     if let Some(state) = weak.upgrade() {
                         state.engine.lock().unwrap_or_else(|e| e.into_inner()).finish_creation(result);
@@ -453,10 +453,10 @@ fn startup_design(design: &str, configured: bool) -> &'static str {
     }
 }
 
-/// Sets `data-theme`, `data-design`, `data-design-offer` and `data-os` on the page before it paints. A value from
+/// Sets `data-theme`, `data-design` and `data-design-offer` on the page before it paints. A value from
 /// config.json is only compared, never copied into the script. Tauri keeps this script from when the window was
 /// built, so after a switch and a reload it is stale: the page asks for `prefs` to know the saved choices.
-fn init_script(theme: &str, design: &str, configured: bool, os: &str) -> String {
+fn init_script(theme: &str, design: &str, configured: bool) -> String {
     let mut set = Vec::new();
     if let Some(theme) = ["light", "dark"].into_iter().find(|t| *t == theme) {
         set.push(("theme", theme));
@@ -465,9 +465,6 @@ fn init_script(theme: &str, design: &str, configured: bool, os: &str) -> String 
     // Set up before designs existed: it stays Detailed, and the page can offer Simple until a design is saved.
     if configured && !["simple", "detailed"].contains(&design) {
         set.push(("designOffer", "1"));
-    }
-    if let Some(os) = ["linux", "macos", "windows"].into_iter().find(|o| *o == os) {
-        set.push(("os", os));
     }
     let apply: String = set.iter().map(|(key, value)| format!("d.{key}='{value}';")).collect();
     format!(
@@ -489,14 +486,14 @@ fn background(design: &str, light: bool) -> tauri::webview::Color {
     tauri::webview::Color(r, g, b, 255)
 }
 
-/// Room for the title bar when a new window is kept inside the work area. Tauri counts it itself on Windows.
-const TITLE_BAR: f64 = if cfg!(windows) { 0.0 } else { 32.0 };
+/// Room for the title bar when a new window is kept inside the work area.
+const TITLE_BAR: f64 = 32.0;
 
 pub fn run(env: Env) -> Result<()> {
     let saved = config::load(&env);
     let (theme, configured) = (string(&saved, "theme").to_owned(), saved["roots"].is_array());
     let design = startup_design(string(&saved, "design"), configured);
-    let script = init_script(&theme, string(&saved, "design"), configured, std::env::consts::OS);
+    let script = init_script(&theme, string(&saved, "design"), configured);
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
@@ -616,17 +613,14 @@ mod tests {
         assert_eq!([startup_design("", true), startup_design("", false)], ["detailed", NEW_INSTALL_DESIGN]);
         // A new install opens in Simple, on Simple's colours, and first run asks with Simple preselected.
         assert_eq!(startup_design("", false), "simple");
-        let upgraded = init_script("", "", true, "linux");
-        assert!(upgraded.contains("dataset;d.design='detailed';d.designOffer='1';d.os='linux';}"), "{upgraded}");
-        let fresh = init_script("dark", "", false, "macos");
-        assert!(
-            fresh.contains(&format!("dataset;d.theme='dark';d.design='{NEW_INSTALL_DESIGN}';d.os='macos';}}")),
-            "{fresh}"
-        );
-        let chosen = init_script("light", "simple", true, "windows");
-        assert!(chosen.contains("dataset;d.theme='light';d.design='simple';d.os='windows';}"), "{chosen}");
-        // Set before the first paint when the page already has a root, else as soon as the parser adds it (WebView2
-        // runs this script before <html> exists), and again once the document is parsed.
+        let upgraded = init_script("", "", true);
+        assert!(upgraded.contains("dataset;d.design='detailed';d.designOffer='1';}"), "{upgraded}");
+        let fresh = init_script("dark", "", false);
+        assert!(fresh.contains(&format!("dataset;d.theme='dark';d.design='{NEW_INSTALL_DESIGN}';}}")), "{fresh}");
+        let chosen = init_script("light", "simple", true);
+        assert!(chosen.contains("dataset;d.theme='light';d.design='simple';}"), "{chosen}");
+        // Set before the first paint when the page already has a root, else as soon as the parser adds it, and again
+        // once the document is parsed.
         assert!(
             chosen.contains("document.addEventListener('DOMContentLoaded',apply);if(document.documentElement)apply();")
         );
@@ -647,11 +641,7 @@ mod tests {
         ];
         for value in hostile {
             for configured in [false, true] {
-                assert_eq!(
-                    init_script(value, value, configured, value),
-                    init_script("", "", configured, ""),
-                    "{value}"
-                );
+                assert_eq!(init_script(value, value, configured), init_script("", "", configured), "{value}");
             }
         }
     }

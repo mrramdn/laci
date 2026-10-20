@@ -105,7 +105,6 @@ const FAKE_SIMPLE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   Object.assign(document.documentElement.dataset, {
     design: query.get("design"),
     theme: query.get("theme"),
-    os: "linux",
   });
   const title = document.getElementById("title");
   const places = [...document.querySelectorAll("nav button")];
@@ -117,6 +116,9 @@ const FAKE_SIMPLE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   };
   places.forEach((b) => (b.onclick = () => go(b.textContent)));
   go("Home");
+  // A setup from before 3.0 is asked about new versions.
+  if (query.get("updates") === "unset")
+    title.insertAdjacentHTML("afterend", '<section data-ui="updates-offer"><h2>New versions</h2></section>');
   addEventListener("keydown", (e) => e.ctrlKey && e.key === "k" && openPalette());
   function openPalette() {
     const scrim = document.createElement("div");
@@ -179,7 +181,7 @@ export async function theMatrixIsEveryScreenAtTheFourTiersAndTheAppsWindow() {
   );
   assert.ok(options.sizes.every((size) => size.height === 900));
   assert.equal(SIZES.length, options.sizes.length);
-  assert.equal(SCREENS.length, 12);
+  assert.equal(SCREENS.length, 13);
   assert.deepEqual(
     [options.compare, options.axe, options.overflow, options.rules, options.strict],
     [undefined, false, false, false, false],
@@ -246,8 +248,8 @@ export async function aMistakeInTheOptionsIsRefusedInPlainWords() {
 export async function everyShotIsADesignThemeSizeAndScreenWithAFileOfItsOwn() {
   const options = parseArgs([]);
   const shots = shotsOf(options);
-  assert.equal(shots.length, 2 * 2 * 5 * 12);
-  assert.equal(shotsOf(options, ["detailed"]).length, 120);
+  assert.equal(shots.length, 2 * 2 * 5 * 13);
+  assert.equal(shotsOf(options, ["detailed"]).length, 130);
   assert.equal(shotsOf(options, []).length, 0);
   const files = new Set(shots.map(fileOf));
   assert.equal(files.size, shots.length, "no two shots share a file");

@@ -1,6 +1,6 @@
 // A project's page: its header, "Is it safe?", To-do, AI chats, About and Recent changes. The
 // filled button fixes an "Act now" problem when there is one, else it is "Continue with AI ▾".
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { addTodo, deleteTodo, muteCheck, toggleTodo, undoLogEntry } from "../actions";
 import { askAgent } from "../agent-launch";
@@ -23,7 +23,16 @@ import {
 import { openTerminal } from "../terminal-api";
 import type { Commit, Issue, LogEntry, Node, Snapshot } from "../types";
 import type { Conversation } from "../helpers";
-import { ago, home, project as said, projects, safety, spent } from "../words";
+import {
+  activity as activityWords,
+  ago,
+  home,
+  project as said,
+  projects,
+  safety,
+  spent,
+} from "../words";
+import { tell } from "./Activity";
 import {
   aiName,
   aiTools,
@@ -35,6 +44,7 @@ import {
 } from "./act";
 import { fixIcon, startFix } from "./fix";
 import {
+  actorOf,
   AI_FIXES,
   dueTone,
   fixable,
@@ -812,13 +822,19 @@ function ReadmeSheet({ n, onClose }: { n: Node; onClose: () => void }) {
 
 // --- Recent changes ------------------------------------------------------------------------------
 
-function RecentCard({ n }: { n: Node }) {
+/**
+ * What changed in this project, each change as one sentence in Simple's words, as Activity tells it:
+ * the engine's own titles name Git and paths. The whole log is told first, as an Undo's sentence names
+ * the change it undid, which may belong to another project.
+ */
+export function RecentCard({ n }: { n: Node }) {
   const activity = useApp((s) => s.activity);
   const historyPending = useApp((s) => s.historyPending);
   useEffect(() => {
     if (!useApp.getState().activity) void refreshLog();
   }, []);
-  const entries: LogEntry[] = activityModel(activity)
+  const told = useMemo(() => tell(activity), [activity]);
+  const entries: LogEntry[] = activityModel(told)
     .days.flatMap((day) => day.entries)
     .filter((entry) => entry.path && within(entry.path, n.path))
     .slice(0, 5);
@@ -847,8 +863,10 @@ function RecentCard({ n }: { n: Node }) {
               <div className="s-change-text">
                 <span>{entry.title}</span>
                 <span className="s-quiet">
-                  {entry.by === "agent" ? said.recent.byAi : said.recent.you},{" "}
-                  {ago(entry.at)}
+                  {activityWords.by(
+                    activityWords.who[actorOf(entry)],
+                    ago(entry.at),
+                  )}
                 </span>
               </div>
               {entry.state === "undone" ? (

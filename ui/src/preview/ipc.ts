@@ -27,7 +27,6 @@ import raw from "./fixtures.json";
 
 type Body = Record<string, unknown>;
 type Handler = (body: Body) => unknown;
-export type Os = "linux" | "macos" | "windows";
 export type Design = "detailed" | "simple";
 export type Theme = "light" | "dark" | "system";
 
@@ -94,7 +93,6 @@ let mcp: McpStatus[];
 let settings: {
   theme: Theme;
   design: Design;
-  os: Os;
   updates: "daily" | "off" | null;
 };
 /** Where the preview's make-believe update stands. Nothing is ever downloaded. */
@@ -734,7 +732,6 @@ const desktop: Record<string, Handler> = {
     updates: settings.updates,
     configured: true,
     configPath: "~/.config/laci/config.json",
-    os: settings.os,
   }),
   design: (body) => {
     settings.design = text(body, "design") as Design;
@@ -940,21 +937,30 @@ const terminals: Record<string, (args: Body) => unknown> = {
 // same one the pretend update starts from.
 terminals["plugin:app|version"] = () => PREVIEW_VERSION;
 
-/** Stands in for the desktop. Call before the window's own code is loaded. */
-export function installIpc(options: { os: Os; design: Design; theme: Theme }) {
+/**
+ * Stands in for the desktop. Call before the window's own code is loaded. The choice about new
+ * versions is saved, as on any setup but one from before 3.0: `updates: null` plays that one, whose
+ * Today and Home ask once.
+ */
+export function installIpc(options: {
+  design: Design;
+  theme: Theme;
+  updates?: "daily" | "off" | null;
+}) {
   snapshot = clone(fixtures.snapshot);
   log = clone(fixtures.log.entries);
   storage = clone(fixtures.storage);
   mcp = clone(fixtures["agent/mcp"].agents);
   keptOut = new Map();
-  settings = { ...options, updates: null };
+  const { design, theme, updates = "daily" } = options;
+  settings = { design, theme, updates };
   update = {
-    enabled: false,
+    enabled: updates === "daily",
     state: "idle",
     current: PREVIEW_VERSION,
     install: "click",
   };
-  mockConvertFileSrc(options.os === "windows" ? "windows" : "linux");
+  mockConvertFileSrc("linux");
   mockIPC(
     (command, payload) => {
       if (command === "request") {

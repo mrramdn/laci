@@ -6,6 +6,7 @@ import { api } from "./api";
 import { taskIdentity } from "./helpers";
 import { changed, run, toast, useApp } from "./store";
 import type { Change, Node, Proposal, Task } from "./types";
+import { polish } from "./words";
 
 /** Ticks or unticks a to-do in its file. */
 export function toggleTodo(node: Node, task: Task, done: boolean) {
@@ -56,7 +57,8 @@ export function deleteTodo(node: Node, task: Task) {
 /**
  * Closes one of a report's open items as done or dropped, or opens a closed one again. `text` is the
  * item's whole text, which names that item alone even after the list has changed; the toast shows it.
- * The report stays as written.
+ * The report stays as written. The toast is in the words of the design that shows it: Simple has
+ * summaries and "Still to do", not reports.
  */
 export function closeReportItem(
   report: string,
@@ -65,7 +67,14 @@ export function closeReportItem(
 ) {
   return run(async () => {
     await api("report/close", { report, text, state });
-    toast(state === "open" ? "Opened again" : "Closed in the report", text);
+    toast(
+      useApp.getState().design === "simple"
+        ? polish.summaryItem[state]
+        : state === "open"
+          ? "Opened again"
+          : "Closed in the report",
+      text,
+    );
   });
 }
 

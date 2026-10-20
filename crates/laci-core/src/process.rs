@@ -2,8 +2,9 @@ use crate::{Result, platform::exited};
 use std::{
     collections::BTreeSet,
     ffi::{OsStr, OsString},
+    fs::File,
     path::{Component, Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::{Mutex, MutexGuard},
     thread,
     time::{Duration, Instant},
@@ -87,6 +88,13 @@ pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
     command
 }
 
+/// [`command`] for `program` with `args`.
+pub(crate) fn start(program: &str, args: &[impl AsRef<OsStr>]) -> Command {
+    let mut command = command(program);
+    command.args(args);
+    command
+}
+
 pub(crate) fn host_path() -> OsString {
     host_env_overrides()
         .into_iter()
@@ -135,7 +143,10 @@ pub(crate) fn run_env(
     timeout: Duration,
     env: &[(&str, Option<&str>)],
 ) -> Result<String> {
-    let bytes = run_env_bytes(program, args, cwd, timeout, env)?;
+    text(run_env_bytes(program, args, cwd, timeout, env)?)
+}
+
+fn text(bytes: Vec<u8>) -> Result<String> {
     let text = String::from_utf8(bytes).map_err(|_| "stream did not contain valid UTF-8".to_owned())?;
     Ok(text.trim_end().into())
 }
@@ -148,12 +159,39 @@ pub(crate) fn run_env_bytes(
     timeout: Duration,
     env: &[(&str, Option<&str>)],
 ) -> Result<Vec<u8>> {
-    // Files avoid pipe backpressure and reader threads surviving a child with inherited descriptors.
+    let (mut command, output, errors) = prepare(program, args, cwd, env)?;
+    let mut child = command.spawn().map_err(|e| format!("Couldn't start {program}: {e}"))?;
+    let listed = Listed::new(&child);
+    let started = Instant::now();
+    loop {
+        if exited(&mut child)? {
+            // Forgotten before the pid is freed, so a listed pid never names a newer process.
+            drop(listed);
+            let status = child.wait().map_err(|e| e.to_string())?;
+            return outcome(program, status, output, errors);
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            drop(listed);
+            let _ = child.wait();
+            return Err(format!("{program} took too long"));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The command a helper runs as, with the files its output and its errors go to. Files avoid pipe backpressure and
+/// reader threads surviving a child with inherited descriptors.
+fn prepare(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[(&str, Option<&str>)],
+) -> Result<(Command, File, File)> {
     let output = tempfile::tempfile().map_err(|e| e.to_string())?;
     let errors = tempfile::tempfile().map_err(|e| e.to_string())?;
-    let mut command = command(program);
+    let mut command = start(program, args);
     command
-        .args(args)
         .stdin(Stdio::null())
         .stdout(output.try_clone().map_err(|e| e.to_string())?)
         .stderr(errors.try_clone().map_err(|e| e.to_string())?)
@@ -168,37 +206,24 @@ pub(crate) fn run_env_bytes(
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
-    let mut child = command.spawn().map_err(|e| format!("Couldn't start {program}: {e}"))?;
-    let listed = Listed::new(&child);
-    let started = Instant::now();
-    loop {
-        if exited(&mut child)? {
-            use std::io::{Read, Seek, SeekFrom};
-            // Forgotten before the pid is freed, so a listed pid never names a newer process.
-            drop(listed);
-            let status = child.wait().map_err(|e| e.to_string())?;
-            let mut file = if status.success() { output } else { errors };
-            file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
-            let mut bytes = Vec::new();
-            file.take(16_000_000).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-            return if status.success() {
-                Ok(bytes)
-            } else {
-                Err(format!("{program} failed: {}", String::from_utf8_lossy(&bytes).trim()))
-            };
-        }
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            drop(listed);
-            let _ = child.wait();
-            return Err(format!("{program} took too long"));
-        }
-        thread::sleep(Duration::from_millis(10));
+    Ok((command, output, errors))
+}
+
+/// What a helper that ended with `status` wrote, or, when it failed, its errors as the message.
+fn outcome(program: &str, status: ExitStatus, output: File, errors: File) -> Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = if status.success() { output } else { errors };
+    file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(16_000_000).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(bytes)
+    } else {
+        Err(format!("{program} failed: {}", String::from_utf8_lossy(&bytes).trim()))
     }
 }
 
-// AppImage is Linux's, and these paths and lists are written as Unix writes them.
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
@@ -256,7 +281,6 @@ mod tests {
         assert!(overrides(&[("PYTHONHOME", "/tmp/laci/usr"), ("PATH", "/tmp/laci/usr/bin")]).is_empty());
     }
 
-    #[cfg(unix)]
     #[test]
     fn appimage_environment_preserves_non_utf8_host_paths() {
         use std::os::unix::ffi::OsStringExt;
@@ -268,7 +292,6 @@ mod tests {
         assert_eq!(changes, vec![("PATH", Some(OsString::from_vec(b"/home/user/\xff/bin:/usr/bin".to_vec())))]);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn appimage_host_python_starts_with_host_paths() {
         use std::{fs, os::unix::fs::PermissionsExt};

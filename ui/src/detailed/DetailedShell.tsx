@@ -29,7 +29,11 @@ export default function DetailedShell() {
   const n = useApp((s) =>
     s.selected ? s.snapshot?.nodes[s.selected] : undefined,
   );
-  const covered = useApp((s) => Boolean(s.modal || s.palette || s.working));
+  // A dialog drawn over the window as Simple's sheets are, such as the look for secret files before a
+  // fix, counts as well.
+  const covered = useApp((s) =>
+    Boolean(s.modal || s.palette || s.working || s.sheets),
+  );
   const hasTerminals = useTerms((s) => s.tabs.length > 0);
   useEffect(namePanes);
   useEffect(() => {

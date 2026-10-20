@@ -17,6 +17,11 @@ custom-protocol = ["tauri/custom-protocol"]
 # drive a window that has it.
 e2e = ["dep:tauri-plugin-wdio-webdriver"]
 
+# Without a command it opens the window; src/lib.rs answers the commands.
+[[bin]]
+name = "laci"
+path = "src/main.rs"
+
 [build-dependencies]
 tauri-build.workspace = true
 
@@ -25,7 +30,7 @@ laci-core = { path = "../crates/laci-core" }
 tauri.workspace = true
 tauri-plugin-single-instance.workspace = true
 tauri-plugin-dialog.workspace = true
-# Without `zip`: Laci's releases are the plain AppImage, NSIS installer and .app.tar.gz, never Tauri 1's archives.
+# Without `zip`: Laci's releases are the plain AppImage, never Tauri 1's archives.
 tauri-plugin-updater = { version = "2.14", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-plugin-wdio-webdriver = { version = "1.5", optional = true }
 serde.workspace = true

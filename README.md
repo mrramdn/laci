@@ -11,7 +11,7 @@ laci shows every folder like a file manager, and for each project it adds its gi
   <img alt="The Today view: work that could be lost, projects to pick up again, and open to-dos" src="docs/screenshots/today-light.png">
 </picture>
 
-> Status: 2.5.1, Linux x86-64. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
+> Status: 2.5.2, Linux x86-64. Rust + Tauri 2, with a React interface. Distribution builds target Ubuntu 24.04. See the [changelog](CHANGELOG.md).
 
 ## Contents
 
@@ -67,7 +67,7 @@ Work that belongs to one project stays a to-do there, for **Work on it**. You se
 
 ### Browse everything
 
-Every folder and file, like Dolphin or Finder, with projects marked by their status, summary, stack, agent sessions and health. *Modified* means the same on every row: when anything inside last changed, whether a file, a commit or an agent session.
+Every folder and file, like Dolphin or GNOME Files, with projects marked by their status, summary, stack, agent sessions and health. *Modified* means the same on every row: when anything inside last changed, whether a file, a commit or an agent session.
 
 - **Filters**: *All files* shows the folder you're in. *Projects*, *Uses laci*, *Agent sessions* and *Needs attention* list matching projects in this folder and every folder below it.
 - **Display**: sort by name, modified, size or agent sessions in either direction, keep folders first or mix them in, and show hidden files or archived projects. Column headers sort too.
@@ -211,6 +211,8 @@ laci ships an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Cod
 ## Getting started
 
 ### Requirements
+
+Laci runs on Linux. Windows and macOS versions won't be made: porting is complex, and more than its maintainer can take on for now.
 
 Installed builds require Linux, WebKitGTK 4.1, git, `gio` (GLib) for trash operations, and `xdg-open` (xdg-utils) for opening files and URLs. To build from source, install Node and Rust too. `gh` and `glab` are optional, for creating remote repositories from *New project*.
 
@@ -504,7 +506,6 @@ LACI_HOME=/tmp/laci-demo pnpm dev
 - Broader live agent orchestration
 - File operations in the browser: copy, rename, individual-file delete, preview
 - Search across agent sessions ("when did I talk about Midtrans?")
-- Windows
 
 ## FAQ
 

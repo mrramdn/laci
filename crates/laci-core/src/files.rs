@@ -1,3 +1,4 @@
+use crate::platform;
 use chrono::{DateTime, SecondsFormat, Utc};
 use std::{
     fs,
@@ -35,16 +36,18 @@ pub fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 pub fn modified(path: &Path) -> String {
-    fs::metadata(path)
-        .and_then(|m| m.modified())
-        .map(|t| DateTime::<Utc>::from(t).to_rfc3339_opts(SecondsFormat::Millis, true))
-        .unwrap_or_default()
+    fs::metadata(path).map(|meta| modified_at(&meta)).unwrap_or_default()
+}
+/// [`modified`] from metadata already read, as a folder listing gives it.
+pub fn modified_at(meta: &fs::Metadata) -> String {
+    meta.modified().map(|t| DateTime::<Utc>::from(t).to_rfc3339_opts(SecondsFormat::Millis, true)).unwrap_or_default()
 }
 pub fn age(at: &str) -> f64 {
     DateTime::parse_from_rfc3339(at)
         .map(|t| (Utc::now().timestamp_millis() - t.timestamp_millis()) as f64 / 86_400_000.0)
         .unwrap_or(f64::INFINITY)
 }
+/// A small text file's content.
 pub fn text(path: &Path) -> Option<String> {
     let meta = fs::symlink_metadata(path).ok()?;
     if !meta.is_file() || meta.is_symlink() || meta.len() > 2_000_000 {
@@ -55,14 +58,7 @@ pub fn text(path: &Path) -> Option<String> {
 /// Like `text` for a file in a folder someone else writes: the last path component is never followed as a
 /// link, even when one replaces the file after it was listed, and a FIFO cannot block the read.
 pub fn text_nofollow(path: &Path, limit: u64) -> Option<String> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32);
-    }
-    let file = options.open(path).ok()?;
+    let file = platform::open_nofollow(path).ok()?;
     let meta = file.metadata().ok()?;
     if !meta.is_file() || meta.len() > limit {
         return None;
@@ -107,17 +103,12 @@ pub fn capitalize(text: &str) -> String {
     let mut chars = text.chars();
     chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
 }
-/// Set owner-only permissions on an existing path (Unix); other platforms keep their defaults.
+/// Set owner-only permissions on an existing path.
 pub fn restrict(path: &Path, mode: u32) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if fs::metadata(path)?.permissions().mode() & 0o777 != mode {
-            fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
-        }
+    use std::os::unix::fs::PermissionsExt;
+    if fs::metadata(path)?.permissions().mode() & 0o777 != mode {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
     }
-    #[cfg(not(unix))]
-    let _ = (path, mode);
     Ok(())
 }
 /// Create one of Laci's own folders as 0700, or tighten an existing one.
@@ -125,9 +116,7 @@ pub fn private_dir(path: &Path) -> crate::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut builder = fs::DirBuilder::new();
-    #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
     match builder.create(path) {
         Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Err(e.to_string()),
@@ -139,7 +128,6 @@ pub fn private_dir(path: &Path) -> crate::Result<()> {
 pub fn private_append(path: &Path) -> std::io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
     options.append(true).create(true);
-    #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     let file = options.open(path)?;
     restrict(path, 0o600)?;
@@ -153,7 +141,8 @@ pub fn rotate_private(path: &Path, to: &Path, limit: u64) {
     }
 }
 
-/// A private temporary inode prevents following a pre-created temporary-file symlink.
+/// A private temporary inode prevents following a pre-created temporary-file symlink. The file keeps its
+/// permissions.
 pub fn replace(path: &Path, contents: &[u8]) -> crate::Result<()> {
     let parent = path.parent().ok_or("File has no parent")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -161,12 +150,11 @@ pub fn replace(path: &Path, contents: &[u8]) -> crate::Result<()> {
         return Err(format!("Refusing to edit linked file {}", path.display()));
     }
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    if let Ok(meta) = fs::metadata(path) {
-        temp.as_file().set_permissions(meta.permissions()).map_err(|e| e.to_string())?;
+    if let Ok(old) = fs::metadata(path) {
+        temp.as_file().set_permissions(old.permissions()).map_err(|e| e.to_string())?;
     }
     temp.write_all(contents).and_then(|()| temp.as_file().sync_all()).map_err(|e| e.to_string())?;
-    temp.persist(path).map_err(|e| e.to_string())?;
-    Ok(())
+    temp.persist(path).map(drop).map_err(|e| e.error.to_string())
 }
 
 pub fn read_limit(path: &Path, limit: u64) -> Option<String> {

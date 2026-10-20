@@ -17,10 +17,11 @@ fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
 }
-fn fixture() -> (tempfile::TempDir, Env, PathBuf) {
-    let temp = tempfile::tempdir().unwrap();
+fn fixture() -> (support::TempDir, Env, PathBuf) {
+    let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
-    let project = env.home.join("project/demo");
+    // A name at a time, as the scan spells the paths it finds.
+    let project = env.home.join("project").join("demo");
     write(&project.join("package.json"), r#"{"name":"demo","scripts":{"safe":"node -e 'console.log(1)'"}}"#);
     write(&project.join("README.md"), "# Demo\n\n## TODO\n\n- [ ] Read the guide\n");
     write(
@@ -42,6 +43,10 @@ fn latest(env: &Env, key: &str) -> Value {
 fn undo_latest(service: &mut Service, key: &str) {
     let a = latest(&service.env, key);
     service.request("log/undo", &json!({"id":a["id"]})).unwrap();
+}
+/// The parts the newest Log entry tells its change by.
+fn said(env: &Env) -> Value {
+    activity::read_log(env, 5)[0]["say"].clone()
 }
 fn todo_key(project: &Path, file: &str, text: &str, occurrence: usize) -> String {
     format!("todo:{}:{file}:{text}:{occurrence}", project.display())
@@ -103,6 +108,116 @@ fn unknown_session_script_fix_and_connector_requests_do_not_change_history() {
     assert!(cmd.unwrap().contains("'safe'"));
     assert_eq!(shell_quote("a' && b"), "'a'\\'' && b'");
 }
+/// The push that a branch without an upstream gets names the remote and the branch the repository chose: after
+/// `--end-of-options`, Git can't read one as an option, such as `--receive-pack`, which names a program to run, and the
+/// branch is a full ref.
+#[test]
+fn the_push_of_a_new_branch_never_reads_a_name_as_an_option() {
+    let (_temp, env, project) = fixture();
+    let mut service = Service::new(env);
+    let node = |remote: &str, branch: &str| {
+        json!({"name":"demo","path":project,"issues":[{"code":"unpushed"}],
+            "git":{"upstream":"","branch":branch,"remotes":[{"name":remote}]}})
+    };
+    let (cmd, run, _) = service.action(&node("origin", "main"), "fix", "unpushed").unwrap();
+    assert_eq!(cmd.as_deref(), Some("git push -u --end-of-options 'origin' 'refs/heads/main'"));
+    assert!(!run, "the terminal shows it before it runs");
+    let (cmd, _, _) = service.action(&node("--receive-pack=touch pwned", "--force"), "fix", "unpushed").unwrap();
+    assert_eq!(cmd.as_deref(), Some("git push -u --end-of-options '--receive-pack=touch pwned' 'refs/heads/--force'"));
+}
+#[test]
+fn a_script_whose_name_begins_with_a_dash_is_not_started() {
+    let (_temp, env, project) = fixture();
+    write(
+        &project.join("package.json"),
+        r#"{"name":"demo","scripts":{"safe":"node -e 'console.log(1)'","-dash":"node -e 'console.log(2)'"}}"#,
+    );
+    let mut service = loaded(&env, &project);
+    let node = service.node(project.to_str().unwrap()).unwrap();
+    // The scan lists it like any other script; only starting it is refused.
+    assert!(node["stack"]["scripts"].as_array().unwrap().iter().any(|s| s["name"] == "-dash"));
+    assert!(service.action(&node, "script", "-dash").unwrap_err().contains("begins with a dash"));
+    let (cmd, run, _) = service.action(&node, "script", "safe").unwrap();
+    assert!(run);
+    assert!(cmd.unwrap().contains("'safe'"));
+}
+/// Runs `program` in `dir` with Git kept to the test's own settings and identity, and returns what it printed.
+fn run_in(dir: &Path, program: &str, args: &[&str]) -> String {
+    let out = std::process::Command::new(program)
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.test")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.test")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{program} {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+/// The command a fix suggests for `dir`, which waits in the terminal until the user runs it.
+fn suggested_fix(service: &mut Service, dir: &Path, code: &str) -> String {
+    let node = service.node(dir.to_str().unwrap()).unwrap();
+    let (cmd, run, _) = service.action(&node, "fix", code).unwrap();
+    assert!(!run, "a suggested fix waits for the user to run it");
+    cmd.unwrap()
+}
+/// A first push and a new GitHub repository are suggested as commands. The names in them come from the project:
+/// its folder, its remote and its branch. Each reaches the program as a name, also one that begins with a dash,
+/// and the suggested push still sets the upstream.
+#[test]
+fn suggested_fixes_pass_folder_remote_and_branch_names_as_names() {
+    let (temp, env, project) = fixture();
+    let bare = |name: &str| {
+        let dir = temp.path().join(name);
+        fs::create_dir(&dir).unwrap();
+        run_in(&dir, "git", &["init", "-q", "--bare", "--initial-branch=main"]);
+        dir
+    };
+    let first = |dir: &Path| {
+        run_in(dir, "git", &["init", "-q", "--initial-branch=main"]);
+        run_in(dir, "git", &["add", "-A"]);
+        run_in(dir, "git", &["commit", "-qm", "feat: first"]);
+    };
+    // An ordinary project: commits, a remote, and no upstream yet.
+    let backup = bare("backup.git");
+    first(&project);
+    run_in(&project, "git", &["remote", "add", "origin", backup.to_str().unwrap()]);
+    // A project whose folder and branch names begin with a dash, without a remote so far.
+    let dashed = env.home.join("project/-draft");
+    write(&dashed.join("notes.md"), "draft\n");
+    first(&dashed);
+    run_in(&dashed, "git", &["update-ref", "refs/heads/-topic", "HEAD"]);
+    run_in(&dashed, "git", &["symbolic-ref", "HEAD", "refs/heads/-topic"]);
+    run_in(&dashed, "git", &["update-ref", "-d", "refs/heads/main"]);
+
+    let mut service = loaded(&env, &project);
+    let push = suggested_fix(&mut service, &project, "unpushed");
+    assert_eq!(push, "git push -u --end-of-options 'origin' 'refs/heads/main'");
+    run_in(&project, "bash", &["--noprofile", "--norc", "-c", &push]);
+    assert_eq!(run_in(&project, "git", &["rev-parse", "--abbrev-ref", "@{upstream}"]), "origin/main");
+    assert_eq!(
+        suggested_fix(&mut service, &dashed, "no-remote"),
+        "gh repo create --private --source . --remote origin --push -- '-draft'"
+    );
+
+    // Its remote's name begins with a dash too.
+    let other = bare("other.git");
+    run_in(&dashed, "git", &["config", "remote.-backup.url", other.to_str().unwrap()]);
+    run_in(&dashed, "git", &["config", "remote.-backup.fetch", "+refs/heads/*:refs/remotes/-backup/*"]);
+    service.rescan().unwrap();
+    let push = suggested_fix(&mut service, &dashed, "unpushed");
+    assert_eq!(push, "git push -u --end-of-options '-backup' 'refs/heads/-topic'");
+    run_in(&dashed, "bash", &["--noprofile", "--norc", "-c", &push]);
+    assert_eq!(run_in(&dashed, "git", &["rev-parse", "--abbrev-ref", "@{upstream}"]), "-backup/-topic");
+    assert_eq!(run_in(&other, "git", &["for-each-ref", "--format=%(refname)"]), "refs/heads/-topic");
+}
 #[test]
 fn task_file_escape_is_rejected_even_if_a_cached_whitelist_mentions_it() {
     let (temp, env, project) = fixture();
@@ -141,6 +256,59 @@ fn metadata_tasks_and_notes_can_be_changed_and_undone_through_log() {
     undo_latest(&mut service, &format!("notes:{id}"));
     assert_eq!(notes(&project), "base notes");
 }
+/// Each change to a project, its to-dos, its notes and the settings is told in the Log by its form and parts.
+#[test]
+fn fields_to_dos_notes_settings_and_connectors_say_their_form() {
+    let (_temp, env, project) = fixture();
+    let mut service = loaded(&env, &project);
+    let id = project.to_str().unwrap();
+    let mut said_after = |name: &str, body: Value| {
+        service.request(name, &body).unwrap();
+        said(&env)
+    };
+    for (key, value, say) in [
+        ("status", "paused", json!({"form":"setStatus","name":"demo","status":"paused"})),
+        ("status", "", json!({"form":"clearedStatus","name":"demo"})),
+        ("priority", "high", json!({"form":"setPriority","name":"demo","priority":"high"})),
+        ("priority", "", json!({"form":"clearedPriority","name":"demo"})),
+        ("deadline", "2026-11-02", json!({"form":"setDeadline","name":"demo","deadline":"2026-11-02"})),
+        ("deadline", "", json!({"form":"clearedDeadline","name":"demo"})),
+        ("client", "Acme", json!({"form":"setClient","name":"demo","client":"Acme"})),
+        ("client", "", json!({"form":"clearedClient","name":"demo"})),
+        ("quiet", "no-git,no-readme", json!({"form":"muted","name":"demo","check":"no-git"})),
+        ("quiet", "no-readme,no-git", json!({"form":"changedMuted","name":"demo"})),
+        ("quiet", "", json!({"form":"unmuted","name":"demo","check":"no-git"})),
+    ] {
+        assert_eq!(said_after("meta", json!({"id":id,"key":key,"value":value})), say, "{key} = {value:?}");
+    }
+    for (op, more, form) in [
+        ("add", json!({"text":"Add tests"}), "addedStep"),
+        ("toggle", json!({"done":true}), "ticked"),
+        ("toggle", json!({"done":false}), "unticked"),
+        ("edit", json!({"to":"Write the docs"}), "editedTodo"),
+        ("delete", json!({"text":"Write the docs"}), "deletedStep"),
+    ] {
+        let mut body = json!({"id":id,"op":op,"file":".laci.md","text":"Write docs"});
+        body.as_object_mut().unwrap().extend(more.as_object().unwrap().clone());
+        assert_eq!(said_after("todo", body), json!({"form":form,"name":"demo"}), "{op}");
+    }
+    assert_eq!(said_after("notes", json!({"id":id,"text":"new notes"})), json!({"form":"editedNotes","name":"demo"}));
+    assert_eq!(
+        said_after("setup/save", json!({"roots":["~/project"],"presets":["claude"],"apps":{}})),
+        json!({"form":"changedSettings"})
+    );
+    assert_eq!(said_after("backup/auto", json!({"on":true})), json!({"form":"autoBackupOn"}));
+    assert_eq!(said_after("backup/auto", json!({"on":false})), json!({"form":"autoBackupOff"}));
+    let claude = json!({"form":"removedHistory","ai":"Claude Code"});
+    assert_eq!(said_after("connector/remove", json!({"id":"claude"})), claude);
+    let claude = json!({"form":"addedHistory","ai":"Claude Code"});
+    assert_eq!(said_after("connector/add", json!({"preset":"claude"})), claude);
+    let undone = activity::read_log(&env, 5)[0]["id"].clone();
+    assert_eq!(said_after("log/undo", json!({"id":undone})), json!({"form":"undid"}));
+    let fresh = json!({"parent":"~/project","name":"fresh","from":"empty","remote":"none"});
+    assert_eq!(said_after("new", fresh), json!({"form":"created","name":"fresh"}));
+}
+
 #[test]
 fn a_to_do_is_rewritten_with_its_mark_and_the_log_puts_the_old_words_back() {
     let (_temp, env, project) = fixture();
@@ -280,7 +448,6 @@ fn external_gitdir_exclude_cannot_be_written_by_service_or_activity_undo() {
     assert_eq!(fs::read(project.join(".laci.md")).unwrap(), sidecar_before);
 }
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn same_length_move_keeps_codex_history_attached_after_cached_rescan() {
     let (_temp, env, project) = fixture();
     let log = env.home.join(".codex/sessions/session.jsonl");
@@ -623,7 +790,6 @@ fn deleting_and_undoing_the_only_checkbox_preserves_file_boundaries() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn quarantine_execution_acknowledges_the_journal_before_refresh_and_keeps_undo_compatible() {
     let (_temp, env, project) = fixture();
     let history =
@@ -636,6 +802,7 @@ fn quarantine_execution_acknowledges_the_journal_before_refresh_and_keeps_undo_c
         snapshot["proposals"].as_array().unwrap().iter().find(|p| p["action"]["type"] == "quarantine").unwrap();
     let outcome = service.execute("apply", &json!({"id":proposal["id"]}), "app").unwrap();
     assert_eq!(outcome.value["journal"]["state"], "applied");
+    assert_eq!(said(&env), json!({"form":"chatsForGone"}));
     assert!(outcome.value.get("snapshot").is_none());
     assert!(outcome.refresh.agents && !outcome.refresh.full);
     assert!(!history.exists());
@@ -644,6 +811,7 @@ fn quarantine_execution_acknowledges_the_journal_before_refresh_and_keeps_undo_c
     let restored = service.request_as("undo", &json!({"id":outcome.value["journal"]["id"]}), "agent").unwrap();
     assert!(restored["snapshot"].is_object());
     assert_eq!(restored["journal"]["state"], "undone");
+    assert_eq!(said(&env), json!({"form":"undid"}));
     assert!(history.join("session.jsonl").exists());
 }
 
@@ -675,12 +843,10 @@ fn legacy_summary_uses_connected_provider_and_requires_choice_when_ambiguous() {
     assert!(service.action(&node, "summary", "antigravity").unwrap_err().contains("Choose a connected agent"));
 }
 
-#[cfg(unix)]
 fn mode(path: &Path) -> u32 {
     use std::os::unix::fs::PermissionsExt;
     fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
-#[cfg(unix)]
 #[test]
 fn data_folder_and_logs_are_private_even_when_they_existed_wider() {
     use std::os::unix::fs::PermissionsExt;
@@ -703,7 +869,6 @@ fn data_folder_and_logs_are_private_even_when_they_existed_wider() {
     service.snapshot().unwrap();
     assert_eq!(mode(&env.cache_dir), 0o700);
 }
-#[cfg(unix)]
 #[test]
 fn debug_does_not_write_through_a_linked_log() {
     let (temp, env, _project) = fixture();
@@ -755,7 +920,6 @@ fn log_titles_start_with_a_capital_and_settings_changes_say_what_changed() {
     assert_eq!(entry["detail"], "Editor: code → zed · Terminal: built-in → external · AI tools: Codex on");
 }
 
-#[cfg(unix)]
 #[test]
 fn readme_links_stay_inside_the_project_and_only_documents_open() {
     use laci_core::service::{LinkTarget, link_target};
@@ -873,14 +1037,17 @@ fn a_backup_leaves_a_trace_and_clears_the_warning_until_a_session_changes() {
     assert_eq!((&snap["backup"]["pending"], &snap["backup"]["sessions"]), (&json!(0), &json!(1)));
     let entry = &activity::read_log(&env, 10)[0];
     assert_eq!(entry["title"], "Backed up 2 agent history files");
+    assert_eq!(entry["say"], json!({"form":"backedUp","files":2}));
     assert!(entry["detail"].as_str().unwrap().starts_with("1 session kept · "));
 
     service.request("backup", &json!({})).unwrap();
     assert_eq!(activity::read_log(&env, 10)[0]["title"], "Agent history backup is up to date");
+    assert_eq!(said(&env), json!({"form":"backupUpToDate"}));
 
     std::thread::sleep(std::time::Duration::from_millis(20));
     write(&session, &format!("{}\n{}\n", json!({"type":"user","cwd":project,"sessionId":"s1"}), json!({"more":1})));
     service.request("backup/auto", &json!({"on":true})).unwrap();
+    assert_eq!(said(&env), json!({"form":"autoBackupOn"}));
     let snap = service.rescan().unwrap();
     assert_eq!((&snap["backup"]["pending"], &snap["backup"]["auto"]), (&json!(1), &json!(true)));
     let warning = snap["warnings"].as_array().unwrap().iter().find(|w| w["code"] == "claude-cleanup").unwrap();
@@ -913,6 +1080,7 @@ fn a_tool_the_user_describes_can_be_started_and_given_the_mcp_server() {
         json!({"launch":true,"resume":false,"titles":false,"modelDiscovery":"aliases","continue":true,"mcp":true})
     );
     assert_eq!(activity::read_log(&env, 10)[0]["title"], "Added Aider");
+    assert_eq!(said(&env), json!({"form":"addedTool","ai":"Aider"}));
     // A second tool without history is its own card, not a copy of the first.
     let snap = service.request("connector/add", &json!({"name":"Other","agent":{"command":"other"}})).unwrap();
     assert_eq!(snap["connectors"].as_array().unwrap().len(), 2);
@@ -941,9 +1109,11 @@ fn a_tool_the_user_describes_can_be_started_and_given_the_mcp_server() {
         (&entry["title"], &entry["detail"]),
         (&json!("Added Laci's MCP server to Aider"), &json!("Edited ~/.aider/mcp.json"))
     );
+    assert_eq!(entry["say"], json!({"form":"letUse","ai":"Aider"}));
     service.request("agent/mcp/apply", &json!({"provider":"custom-aider","remove":true})).unwrap();
     let entry = &activity::read_log(&env, 10)[0];
     assert_eq!(entry["title"], "Removed Laci's MCP server from Aider");
+    assert_eq!(entry["say"], json!({"form":"stoppedUse","ai":"Aider"}));
     assert!(
         entry["detail"]
             .as_str()
@@ -954,6 +1124,7 @@ fn a_tool_the_user_describes_can_be_started_and_given_the_mcp_server() {
 
     service.request("connector/remove", &json!({"id":"custom-aider"})).unwrap();
     assert_eq!(activity::read_log(&env, 10)[0]["title"], "Removed Aider");
+    assert_eq!(said(&env), json!({"form":"removedTool","ai":"Aider"}));
     assert!(laci_core::providers::get(&env, "custom-aider").is_err());
     undo_latest(&mut service, "connector:custom-aider");
     assert_eq!(laci_core::providers::get(&env, "custom-aider").unwrap().prompt, ["--message", "{prompt}"]);
@@ -965,7 +1136,8 @@ fn sessions_only_the_backup_holds_are_listed_and_can_be_put_back() {
     const CODEX: &str = "99999999-2222-3333-4444-555555555555";
     let (_temp, env, project) = fixture();
     config::save(&env, &json!({"roots":["~/project"],"presets":["claude","codex"],"custom":[]})).unwrap();
-    let store = env.home.join(".claude/projects").join(laci_core::paths::enc(&project.to_string_lossy()));
+    // Spelled as the place Laci puts a session back.
+    let store = env.home.join(".claude").join("projects").join(laci_core::paths::enc(&project.to_string_lossy()));
     let session = store.join(format!("{ID}.jsonl"));
     write(
         &session,
@@ -1004,7 +1176,7 @@ fn sessions_only_the_backup_holds_are_listed_and_can_be_put_back() {
         (&lost["title"], &lost["resumeCapability"], &lost["cwd"], &lost["restoreTo"]),
         (&json!("Fix the login page"), &json!("history-only"), &json!(project), &json!(session))
     );
-    assert!(lost["file"].as_str().unwrap().starts_with(env.data_dir.join("history/claude").to_str().unwrap()));
+    assert!(Path::new(lost["file"].as_str().unwrap()).starts_with(env.data_dir.join("history/claude")));
     assert!(kept.iter().any(|s| s["provider"] == "codex" && s["sessionId"] == CODEX));
     let (request, found) =
         service.agent_context(&json!({"provider":"claude","sessionId":ID,"projectPath":project})).unwrap();
@@ -1019,6 +1191,7 @@ fn sessions_only_the_backup_holds_are_listed_and_can_be_put_back() {
         (&entry["title"], &entry["detail"]),
         (&json!("Restored a Claude Code session from the backup"), &json!("Fix the login page"))
     );
+    assert_eq!(entry["say"], json!({"form":"restoredChat","ai":"Claude Code"}));
     assert!(service.request("backup/restore", &json!({"id":lost["id"]})).is_err(), "it is no longer missing");
     assert!(service.request("backup/restore", &json!({"id":"backup:claude:../../x.jsonl"})).is_err());
 }
@@ -1044,7 +1217,6 @@ fn old_session(env: &Env, project: &Path, id: &str, prompt: &str) -> PathBuf {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn deleted_sessions_go_to_the_quarantine_with_their_backup_copy_and_undo_brings_them_back() {
     const ID: &str = "11111111-2222-3333-4444-555555555555";
     const OTHER: &str = "22222222-2222-3333-4444-555555555555";
@@ -1079,6 +1251,7 @@ fn deleted_sessions_go_to_the_quarantine_with_their_backup_copy_and_undo_brings_
 
     let done = service.request("session/delete", &json!({"files":[session]})).unwrap();
     assert_eq!(done["journal"]["title"], "Deleted the session “Fix the login page”");
+    assert_eq!(said(&env), json!({"form":"deletedChat","title":"Fix the login page"}));
     assert!(!session.exists() && !session.with_extension("").exists() && !copy.exists());
     let snap = service.rescan().unwrap();
     assert!(
@@ -1088,6 +1261,7 @@ fn deleted_sessions_go_to_the_quarantine_with_their_backup_copy_and_undo_brings_
     let entry = activity::read_log(&env, 20).into_iter().find(|e| e["journal"] == done["journal"]["id"]).unwrap();
     assert_eq!(entry["canUndo"], true);
     service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
+    assert_eq!(said(&env), json!({"form":"undid"}));
     assert!(session.exists() && session.with_extension("").join("subagents/agent-a.jsonl").exists() && copy.exists());
 
     // Emptying the quarantine makes a deletion final: the Log stops offering its Undo.
@@ -1096,6 +1270,7 @@ fn deleted_sessions_go_to_the_quarantine_with_their_backup_copy_and_undo_brings_
     let removed = storage["parts"].as_array().unwrap().iter().find(|p| p["id"] == "removed").unwrap();
     assert!(removed["bytes"].as_u64().unwrap() > 0);
     service.request("storage/free", &json!({"part":"removed"})).unwrap();
+    assert_eq!(said(&env), json!({"form":"emptiedKept"}));
     assert!(fs::read_dir(env.data_dir.join("orphans")).unwrap().next().is_none());
     let entry = activity::read_log(&env, 20).into_iter().find(|e| e["journal"] == done["journal"]["id"]).unwrap();
     assert_eq!(entry["canUndo"], false);
@@ -1117,6 +1292,7 @@ fn only_files_left_by_laci_1_are_freed_from_its_config_folder() {
     assert!(env.config_dir.join("config.json").exists() && env.config_dir.join("mine.txt").exists());
     assert!(service.request("storage/free", &json!({"part":"history"})).is_err());
     assert_eq!(activity::read_log(&env, 5)[0]["title"], "Removed files left by Laci 1");
+    assert_eq!(said(&env), json!({"form":"removedLaci1"}));
 }
 
 #[test]
@@ -1135,12 +1311,14 @@ fn a_dismissed_suggestion_stays_away_until_it_is_asked_back() {
     assert!(!snap["proposals"].as_array().unwrap().iter().any(|p| p["id"] == id));
     assert_eq!(snap["dismissed"][0]["id"], id);
     assert!(activity::read_log(&env, 5)[0]["title"].as_str().unwrap().starts_with("Dismissed: "));
+    assert_eq!(said(&env), json!({"form":"dismissed","title":snap["dismissed"][0]["title"]}));
     // A second click on the same button finds it done, and says so without a second Log entry.
     let logged = activity::read_log(&env, 50).len();
     service.request("proposal/dismiss", &json!({"id":id})).unwrap();
     assert_eq!(activity::read_log(&env, 50).len(), logged);
     let back = service.request("proposal/dismiss", &json!({"id":id,"undo":true})).unwrap();
     assert!(back["snapshot"]["proposals"].as_array().unwrap().iter().any(|p| p["id"] == id));
+    assert_eq!(said(&env)["form"], "suggestedAgain");
     service.request("proposal/dismiss", &json!({"id":id,"undo":true})).unwrap();
     assert_eq!(activity::read_log(&env, 50).len(), logged + 1);
 }
@@ -1155,11 +1333,11 @@ fn a_muted_check_is_marked_and_named_in_the_log() {
     let issue = snap["nodes"][id]["issues"].as_array().unwrap().iter().find(|i| i["code"] == "no-git").unwrap().clone();
     assert_eq!(issue["muted"], true);
     assert_eq!(activity::read_log(&env, 5)[0]["title"], "Muted “Not under version control” on demo");
+    assert_eq!(said(&env), json!({"form":"muted","name":"demo","check":"no-git"}));
     assert!(service.request("meta", &json!({"id":id,"key":"quiet","value":"No Git!"})).is_err());
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn build_output_is_deleted_for_good_and_a_linked_build_folder_is_left_alone() {
     let (_temp, env, project) = fixture();
     write(&project.join("node_modules/pkg/index.js"), &"x".repeat(1_500_000));
@@ -1177,4 +1355,5 @@ fn build_output_is_deleted_for_good_and_a_linked_build_folder_is_left_alone() {
     let entry = activity::read_log(&env, 5).into_iter().find(|e| e["journal"] == done["journal"]["id"]).unwrap();
     assert_eq!(entry["canUndo"], false);
     assert_eq!(entry["detail"], "Deleted build output comes back with the next install or build.");
+    assert_eq!(entry["say"], json!({"form":"clearedBuild","name":"demo"}));
 }

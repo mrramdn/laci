@@ -4,13 +4,15 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 
 const binary = path.resolve(process.argv[2] || 'target/debug/laci');
-const home = await mkdtemp(path.join(tmpdir(), 'laci-mcp-smoke-'));
+// Laci names folders by their real path. The temporary folder may be reached through a link, so the checks below
+// start from its real path too.
+const home = await realpath(await mkdtemp(path.join(tmpdir(), 'laci-mcp-smoke-')));
 const encode = p => p.replace(/[^A-Za-z0-9]/g, '-');
 const exists = async p => stat(p).then(() => true, () => false);
 const write = async (file, text) => { await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, text); };

@@ -1,24 +1,23 @@
 // Help, in both designs: a page in Simple (view "help") and a dialog in Detailed (modal "help"). The
 // same four parts: how Laci keeps work safe, the words it uses (the glossary in words.ts), the
-// keyboard shortcuts of this system (shortcuts.ts; Detailed lists them as its Keyboard shortcuts
-// dialog does) and where to report a problem.
+// keyboard shortcuts (shortcuts.ts; Detailed lists them as its Keyboard shortcuts dialog does) and
+// where to report a problem.
 import { useState } from "react";
 import { DialogFrame, ShortcutGrid } from "./dialogs";
 import { Icon } from "./common";
-import { OS } from "./platform";
 import { chordText, shortcutsFor } from "./shortcuts";
 import type { Shortcut } from "./shortcuts";
 import { urlOpen, useApp } from "./store";
 import { findTerms, glossary, help } from "./words";
 
-/** One shortcut's keys: each way to press it, its keys as the system writes them. */
+/** One shortcut's keys: each way to press it. */
 function Keys({ shortcut }: { shortcut: Shortcut }) {
   return (
     <span className="help-keys">
       {shortcut.chords.map((chord, i) => (
         <span key={i}>
           {i ? <span className="help-or"> or </span> : null}
-          <kbd>{chordText(OS, chord)}</kbd>
+          <kbd>{chordText(chord)}</kbd>
         </span>
       ))}
     </span>
@@ -31,7 +30,7 @@ const report = () => urlOpen(help.reportUrl);
 export function HelpPage() {
   const [query, setQuery] = useState("");
   const terms = findTerms(query);
-  const keys = shortcutsFor(OS, "simple");
+  const keys = shortcutsFor("simple");
   return (
     <div className="s-page s-help">
       <header className="s-head">

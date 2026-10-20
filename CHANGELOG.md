@@ -6,6 +6,24 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+Laci stays Linux-only: Windows and macOS versions won't be made.
+
+### Changed
+
+- The root of the disk (`/`) can no longer be picked as a folder to scan, since it holds the system and everything else. One you picked in 2.5 stays, and Laci keeps looking through it.
+
+## [2.5.2] - 2026-10-20
+
+A security update for anyone who opens projects they didn't make themselves.
+
+### Security
+
+- Laci gives the programs it runs the names it reads from a project, such as Git tags, remotes and branches, always as names, never as options. Before, a project whose Git repository had a tag named like an option could make Laci overwrite a file when you selected that project ([GHSA-89vm-5q33-fffw](https://github.com/mrramdn/laci/security/advisories/GHSA-89vm-5q33-fffw)).
+
+### Changed
+
+- A package script whose name begins with a dash is no longer started from Laci; run it from a terminal.
+
 ## [2.5.1] - 2026-10-16
 
 MCP answers an agent can read in full, and an archive that no longer trips over Laci's own Git.

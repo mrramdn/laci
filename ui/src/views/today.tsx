@@ -1,3 +1,4 @@
+import { useId, useState } from "react";
 import {
   Icon,
   StatusGlyph,
@@ -8,37 +9,40 @@ import {
   Group,
   Expand,
 } from "../common";
-import { useApp, run, setDesign } from "../store";
+import { useApp, run, setDesign, toast } from "../store";
 import { useNow } from "../clock";
 import { BackupNotice } from "../backup";
 import { LookThumb } from "../looks";
-import { views } from "../words";
+import { useUpdate } from "../update";
+import { useUpdatesUnset } from "../updates-unset";
+import { detailedSettings, firstRun, views } from "../words";
 import {
-  deadlinesOf,
   latestReport,
   LOCALE,
   plural,
-  recency,
-  risksOf,
   sessionsOf,
   shortDay,
-  taskIdentity,
 } from "../helpers";
+import { todayModel } from "../selectors";
 import { DeadlinePill } from "../deadline";
-import { api } from "../api";
-import { closeReportItem } from "../actions";
+import { closeReportItem, toggleTodo } from "../actions";
 import { requestResume } from "../session-ui";
 import { askAgent } from "../agent-launch";
-import type { Node } from "../types";
+import type { Node, Tab } from "../types";
 export function Today() {
-  const s = useApp();
-  useNow();
-  const snapshot = s.snapshot!;
-  const all = Object.values(snapshot.nodes);
-  const risks = risksOf(snapshot);
-  const deadlines = deadlinesOf(snapshot);
-  const selectedRow = (n: Node, key: string) =>
-    s.selectedRow === key || (s.selectedRow === null && s.selected === n.id);
+  // Only what Today shows: news of a scan in progress doesn't draw it again.
+  const snapshot = useApp((s) => s.snapshot!);
+  const selected = useApp((s) => s.selected);
+  const selectedRow = useApp((s) => s.selectedRow);
+  const allRisks = useApp((s) => Boolean(s.expanded.risks));
+  const now = useNow();
+  // Worked out once a day for each scan (selectors.ts).
+  const { risks, deadlines, overdue, recent, activeCount, checks, handoffs } =
+    todayModel(snapshot, new Date(now));
+  const isSelected = (n: Node, key: string) =>
+    selectedRow === key || (selectedRow === null && selected === n.id);
+  const select = (id: string, tab: Tab, row: string) =>
+    useApp.getState().select(id, tab, row);
   const shortDate = (deadline?: string) => {
     const [y, m, d] = (deadline ?? "").split("-").map(Number);
     return new Date(y, m - 1, d).toLocaleDateString(LOCALE, {
@@ -46,34 +50,6 @@ export function Today() {
       month: "short",
     });
   };
-  const recent = all
-    .filter((n) => n.kind === "project" && !n.archived)
-    .sort(recency)
-    .slice(0, 5);
-  const activeCount = all.filter(
-    (n) => n.kind === "project" && !n.archived && n.status.value === "active",
-  ).length;
-  const checks = all
-    .filter((n) => !n.archived)
-    .sort(recency)
-    .flatMap((n) =>
-      n.tasks
-        .filter((t) => t.kind === "check" && !t.done)
-        .map((t) => ({ n, t })),
-    );
-  const handoffs = all
-    .flatMap((n) =>
-      n.taskFiles
-        .map((f) => ({
-          n,
-          f,
-          open: n.tasks.filter(
-            (t) => t.file === f.file && t.kind === "list" && !t.done,
-          ).length,
-        }))
-        .filter((h) => h.open && !n.archived),
-    )
-    .sort((a, b) => b.f.at.localeCompare(a.f.at));
   if (!snapshot.roots.length)
     return (
       <>
@@ -83,6 +59,7 @@ export function Today() {
         <div className="body">
           {/* Laci 2 let every folder stay unticked: that upgrade is offered Simple too. */}
           <TrySimple />
+          <UpdatesOffer />
           <div className="empty-box">
             <Icon name="folder" />
             <b>No folders selected yet</b>
@@ -92,7 +69,7 @@ export function Today() {
             </p>
             <button
               className="btn primary"
-              onClick={() => s.navigate("settings")}
+              onClick={() => useApp.getState().navigate("settings")}
             >
               Choose folders
             </button>
@@ -119,7 +96,7 @@ export function Today() {
               "due",
               "calendar",
               "sec-deadlines",
-              deadlines.some((d) => d.info.days <= 0) ? "bad" : "",
+              overdue ? "bad" : "",
             ],
             [risks.length, "at risk", "alert", "sec-risks", "bad"],
             [activeCount, "active", "play", "sec-recent", ""],
@@ -165,6 +142,7 @@ export function Today() {
             </div>
           ))}
         <TrySimple />
+        <UpdatesOffer />
         {deadlines.length ? (
           <Group
             title="Deadlines"
@@ -180,8 +158,8 @@ export function Today() {
                 key={n.id}
                 tabIndex={0}
                 data-id={n.id}
-                aria-selected={selectedRow(n, "deadline:" + n.id)}
-                onClick={() => s.select(n.id, "todo", "deadline:" + n.id)}
+                aria-selected={isSelected(n, "deadline:" + n.id)}
+                onClick={() => select(n.id, "todo", "deadline:" + n.id)}
               >
                 <SeverityGlyph
                   severity={
@@ -216,15 +194,15 @@ export function Today() {
           id="sec-risks"
         >
           {risks
-            .slice(0, s.expanded.risks ? undefined : 8)
+            .slice(0, allRisks ? undefined : 8)
             .map(({ n, issues }) => (
               <div
                 className="item"
                 key={n.id}
                 tabIndex={0}
                 data-id={n.id}
-                aria-selected={selectedRow(n, "risk:" + n.id)}
-                onClick={() => s.select(n.id, "health", "risk:" + n.id)}
+                aria-selected={isSelected(n, "risk:" + n.id)}
+                onClick={() => select(n.id, "health", "risk:" + n.id)}
               >
                 <SeverityGlyph severity={issues[0].severity} />
                 <span className="name">{n.label}</span>
@@ -283,9 +261,9 @@ export function Today() {
                 key={n.id}
                 tabIndex={0}
                 data-id={n.id}
-                aria-selected={selectedRow(n, "recent:" + n.id)}
+                aria-selected={isSelected(n, "recent:" + n.id)}
                 onClick={() =>
-                  s.select(
+                  select(
                     n.id,
                     sessionsOf(n, snapshot).length ? "agents" : "todo",
                     "recent:" + n.id,
@@ -373,21 +351,7 @@ export function Today() {
                 type="checkbox"
                 className="cb"
                 checked={t.done}
-                onChange={(e) =>
-                  void run(async () =>
-                    s.patch(
-                      await api<Node>("todo", {
-                        id: n.id,
-                        op: "toggle",
-                        file: t.file,
-                        line: t.line,
-                        text: t.text,
-                        ...taskIdentity(n, t),
-                        done: e.target.checked,
-                      }),
-                    ),
-                  )
-                }
+                onChange={(e) => void toggleTodo(n, t, e.target.checked)}
               />
               <span
                 className="t"
@@ -441,9 +405,9 @@ export function Today() {
                 key={`${n.id}:${f.file}`}
                 tabIndex={0}
                 data-id={n.id}
-                aria-selected={selectedRow(n, "todo:" + n.id + ":" + f.file)}
+                aria-selected={isSelected(n, "todo:" + n.id + ":" + f.file)}
                 onClick={() =>
-                  s.select(n.id, "todo", "todo:" + n.id + ":" + f.file)
+                  select(n.id, "todo", "todo:" + n.id + ":" + f.file)
                 }
               >
                 <Icon name="file" />
@@ -496,6 +460,77 @@ export function TrySimple() {
         >
           {views.offerNo}
         </button>
+      </div>
+    </div>
+  );
+}
+/**
+ * The card that asks someone who set Laci up before 3.0 whether Laci may look for new versions, as
+ * first run asks a new install: beside the card that offers Simple and apart from it, as each goes by
+ * its own choice. Either button saves the choice through the update store, as Settings › About &
+ * updates does, and the card is gone for good; until then Laci doesn't look. The two weigh the same:
+ * it is the user's consent to give.
+ */
+export function UpdatesOffer() {
+  const unset = useUpdatesUnset();
+  const [chosen, setChosen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [refusal, setRefusal] = useState("");
+  const title = useId();
+  if (!unset || chosen) return null;
+  async function choose(updates: "daily" | "off") {
+    if (sending) return;
+    setSending(true);
+    setRefusal("");
+    let saved = false;
+    try {
+      saved = await useUpdate.getState().choose(updates);
+    } catch {
+      // The store keeps what the desktop refused; without that, first run's words say it.
+    } finally {
+      setSending(false);
+    }
+    if (!saved) {
+      setRefusal(useUpdate.getState().refusal ?? firstRun.updatesFailed);
+      return;
+    }
+    setChosen(true);
+    toast(detailedSettings.updatesSaved[updates], firstRun.updatesLater);
+    // The button that had the focus goes with the card: Today takes it.
+    document.getElementById("main")?.focus({ preventScroll: true });
+  }
+  // Busy, not disabled, while the choice is sent: a refusal leaves the focus where it was.
+  return (
+    <div
+      className="callout"
+      role="group"
+      aria-labelledby={title}
+      aria-busy={sending || undefined}
+      data-ui="updates-offer"
+    >
+      <Icon name="refresh-cw" />
+      <div className="txt">
+        <b id={title}>{firstRun.updatesTitle}</b>
+        <p>{firstRun.updatesSends}</p>
+        <p>{firstRun.updatesNoInstall}</p>
+        {/* The red for words: Settings' red for marks (rp-status bad) is too faint on this grey. */}
+        {refusal ? (
+          <p role="alert" style={{ color: "var(--red-text)" }}>
+            {refusal}
+          </p>
+        ) : null}
+      </div>
+      <div className="acts">
+        {(["daily", "off"] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            className="btn sm"
+            onClick={() => void choose(value)}
+          >
+            {firstRun.updatesAsk[value]}
+          </button>
+        ))}
       </div>
     </div>
   );

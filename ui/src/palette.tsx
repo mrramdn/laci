@@ -4,20 +4,19 @@
 // run settings.tsx in Node, without CSS.
 import "./styles/looks.css";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useApp, goToProject, rescan, setDesign, setTheme } from "./store";
-import { useNow } from "./clock";
 import {
-  ago,
-  allSessions,
-  base,
-  days,
-  providerName,
-  reportList,
-  sessionKey,
-  sessionsOf,
-  shortDay,
-  tilde,
-} from "./helpers";
+  useApp,
+  goToProject,
+  rescan,
+  setDesign,
+  setTheme,
+  toast,
+  urlOpen,
+} from "./store";
+import { useNow } from "./clock";
+import { allSessions, sessionKey } from "./helpers";
+import { hitTime, searchAll } from "./selectors";
+import type { SearchAction, SearchHit, SearchSection } from "./selectors";
 import {
   Highlight,
   Icon,
@@ -26,8 +25,10 @@ import {
   restoreFocus,
 } from "./common";
 import { DeadlinePill } from "./deadline";
-import type { Design, Node, View } from "./types";
-import { ago as agoInWords, search, views } from "./words";
+import { useTerms } from "./terminal-api";
+import { useUpdate, type UpdateStatus } from "./update";
+import type { Design, View } from "./types";
+import { ago as agoInWords, detailedData, search, views } from "./words";
 /** Detailed's names for the groups of results. Simple's are its own, in words.ts. */
 const DETAILED_GROUPS = {
   projects: "Projects",
@@ -37,12 +38,28 @@ const DETAILED_GROUPS = {
   todos: "To-dos",
   actions: "Actions",
 };
+/** Where each kind of result goes: its group in DETAILED_GROUPS, and in Simple's `search.groups`. */
+const GROUP_OF: Record<SearchSection, keyof typeof DETAILED_GROUPS> = {
+  Projects: "projects",
+  Folders: "folders",
+  Sessions: "chats",
+  Reports: "summaries",
+  "To-dos": "todos",
+  Actions: "actions",
+};
 /**
- * The palette's actions in `design`, as `[id, label, icon]`, in the order of its sidebar: each
+ * The palette's actions in `design`, as `[id, label, icon, note]`, in the order of its sidebar: each
  * design's places in its own words, then the rest, and last the switch to the other design.
  * `reports` is whether a reports folder is set: Detailed then has a Reports view of its own.
+ * Detailed adds what can be done about a new version once `update` says where updates stand;
+ * `terminals` is how many are open, which a restart closes.
  */
-export function actionsFor(design: Design, reports: boolean): string[][] {
+export function actionsFor(
+  design: Design,
+  reports: boolean,
+  update: UpdateStatus | null = null,
+  terminals = 0,
+): SearchAction[] {
   if (design === "simple")
     return [
       ["view:today", search.actions.home, "house"],
@@ -61,23 +78,127 @@ export function actionsFor(design: Design, reports: boolean): string[][] {
     ["view:today", "Open Today", "inbox"],
     ["view:tidy", "Open Tidy up", "sparkles"],
     ["view:agents", "Open Agents", "history"],
-    ...(reports ? [["view:reports", "Open Reports", "report"]] : []),
+    ...(reports
+      ? [["view:reports", "Open Reports", "report"] as const]
+      : []),
     ["view:log", "Open Log", "scroll"],
     ["new", "New project", "plus"],
     ["shortcuts", "Keyboard shortcuts", "keyboard"],
     ["view:settings", "Open Settings", "gear"],
     ["rescan", "Scan again", "refresh"],
     ["theme", "Switch theme", "moon"],
+    ...updateActions(update, terminals),
     ["design", views.switchTo.simple, "panels-top-left"],
   ];
 }
+/**
+ * Detailed's commands for a new version: look for one, then install it (or, for a copy a package
+ * manager put in place, open its release page), then restart into it. Nothing until the desktop
+ * has said where updates stand.
+ */
+function updateActions(
+  update: UpdateStatus | null,
+  terminals: number,
+): SearchAction[] {
+  if (!update) return [];
+  const said = detailedData.update;
+  const version = update.version ? said.version(update.version) : "";
+  const actions: SearchAction[] = [];
+  if (["idle", "available", "error"].includes(update.state))
+    actions.push(["update:check", said.check, "refresh"]);
+  // A download that failed can be tried again.
+  if (version && (update.state === "available" || update.state === "error"))
+    actions.push(
+      update.install === "click"
+        ? ["update:install", said.install, "cloud-download", version]
+        : ["update:page", said.page, "external-link", version],
+    );
+  if (update.state === "ready")
+    actions.push([
+      "update:restart",
+      said.restart,
+      "refresh-cw",
+      terminals ? `${version} · ${said.closes(terminals)}` : version,
+    ]);
+  return actions;
+}
+/**
+ * Where an update stands, drawn again when it changes. The first to ask while nobody has asks the
+ * desktop, so Detailed's badge and commands know before Settings opens. Read through a
+ * subscription into the component's state, not zustand's own hook, so the tests' stand-in for React
+ * can draw the sidebar and the palette.
+ */
+export function useUpdateStatus() {
+  const [status, setStatus] = useState(() => useUpdate.getState().status);
+  useEffect(() => {
+    const stop = useUpdate.subscribe((update) => setStatus(update.status));
+    setStatus(useUpdate.getState().status);
+    if (!useUpdate.getState().status) void useUpdate.getState().refresh();
+    return stop;
+  }, []);
+  return status;
+}
+/** A toast that leaves an Undo in place, as a finished scan does. One that says what failed always shows. */
+function tell(title: string, message = "", error = false) {
+  if (error || !useApp.getState().toast?.undo) toast(title, message, { error });
+}
+async function checkForUpdates() {
+  const said = detailedData.update;
+  tell(said.checking);
+  await useUpdate.getState().check();
+  const { status, refusal } = useUpdate.getState();
+  if (refusal || status?.state === "error")
+    tell(said.checkFailed, refusal ?? status?.error ?? "", true);
+  else if (status?.version && status.state === "available")
+    tell(
+      said.found(status.version),
+      status.install === "click" ? said.foundClick : said.foundNotice,
+    );
+  else if (status) tell(said.upToDate, said.current(status.current));
+}
+async function installUpdate() {
+  const said = detailedData.update;
+  await useUpdate.getState().install();
+  const { status, refusal } = useUpdate.getState();
+  if (refusal) tell(said.installFailed, refusal, true);
+  else if (status?.version)
+    tell(said.downloading(status.version), said.downloadingNote);
+}
+async function restartToUpdate() {
+  await useUpdate.getState().restart();
+  const { refusal } = useUpdate.getState();
+  if (refusal) tell(detailedData.update.restartFailed, refusal, true);
+}
+/** Runs one of the commands `updateActions` lists; a toast says how it went. */
+export async function runUpdateCommand(
+  id: string,
+  update: UpdateStatus | null,
+) {
+  if (id === "update:check") await checkForUpdates();
+  else if (id === "update:install") await installUpdate();
+  else if (id === "update:restart") await restartToUpdate();
+  else if (id === "update:page" && update?.url) urlOpen(update.url);
+}
+/** Terminals whose program still runs. */
+const openTerminals = () =>
+  useTerms
+    .getState()
+    .tabs.filter((tab) => tab.exited === undefined || tab.exited === false)
+    .length;
+/** How long ago a result changed: Simple says it in words ("5 days ago"), Detailed in short ("5 d"). */
+const timeIn = (simple: boolean, hit: SearchHit) =>
+  !simple
+    ? hitTime(hit)
+    : hit.section === "To-dos" || hit.section === "Actions"
+      ? ""
+      : agoInWords(hit.at);
 export function Palette() {
-  const s = useApp();
+  const design = useApp((s) => s.design);
+  const snapshot = useApp((s) => s.snapshot!);
+  const update = useUpdateStatus();
   useNow();
-  const simple = s.design === "simple";
+  const simple = design === "simple";
   const groups = simple ? search.groups : DETAILED_GROUPS;
-  // Simple says how long ago in words ("5 days ago"), Detailed in short ("5 d").
-  const when = (at?: string) => (simple ? agoInWords(at) : ago(at));
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -87,143 +208,26 @@ export function Palette() {
       ? document.activeElement
       : null,
   );
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const matches = (hay: string) =>
-    terms.every((t) => hay.toLowerCase().includes(t));
-  const snapshot = s.snapshot!;
-  const hits = Object.values(snapshot.nodes)
-    .filter((n) =>
-      matches(
-        `${n.label} ${n.path} ${n.summary?.text ?? ""} ${n.stack?.labels.join(" ") ?? ""}`,
-      ),
-    )
-    .sort((a, b) => days(a.lastActivity?.at) - days(b.lastActivity?.at))
-    .slice(0, 9)
-    .map((n) => ({
-      id: "node:" + n.id,
-      section: n.kind === "folder" ? groups.folders : groups.projects,
-      label: n.label,
-      sub: tilde(n.path, snapshot.home),
-      icon: "",
-      project: "",
-      node: n as Node | null,
-      acc: when(n.lastActivity?.at),
-    }));
-  const found = (
-    id: string,
-    section: string,
-    label: string,
-    sub: string,
-    icon: string,
-    acc: string,
-    project = "",
-  ) => ({
-    id,
-    section,
-    label,
-    sub,
-    icon,
-    acc,
-    project,
-    node: null as Node | null,
-  });
-  // Sessions and to-dos only turn up for a typed query.
-  const sessionHits = terms.length
-    ? (() => {
-        const owner = new Map<string, Node>();
-        for (const n of Object.values(snapshot.nodes))
-          for (const session of sessionsOf(n, snapshot))
-            owner.set(sessionKey(session), n);
-        return allSessions(snapshot)
-          .filter(
-            (session) =>
-              session.sourceKind !== "subagent" &&
-              matches(`${session.title} ${session.firstPrompt ?? ""}`),
-          )
-          .slice(0, 5)
-          .map((session) => {
-            const n = owner.get(sessionKey(session));
-            return found(
-              "session:" + sessionKey(session),
-              groups.chats,
-              session.title,
-              `${providerName(snapshot, session.provider)} · ${
-                n ? n.label : tilde(session.cwd ?? "", snapshot.home)
-              }`,
-              "history",
-              when(session.updatedAt),
-            );
-          });
-      })()
-    : [];
-  const todoHits = terms.length
-    ? Object.values(snapshot.nodes)
-        .filter((n) => n.kind === "project" && !n.archived)
-        .flatMap((n) =>
-          n.tasks
-            .filter((t) => t.kind === "check" && !t.done)
-            .map((t) => ({ n, t })),
-        )
-        .filter(({ n, t }) => matches(`${t.text} ${n.label}`))
-        .slice(0, 5)
-        .map(({ n, t }) =>
-          found(
-            `todo:${n.id}:${t.file}:${t.line}`,
-            groups.todos,
-            t.text,
-            n.label,
-            "check",
-            "",
-            n.id,
-          ),
-        )
-    : [];
-  const projectNames = (paths: string[]) =>
-    paths.map((p) => snapshot.nodes[p]?.label ?? base(p)).join(", ");
-  const reportHits = terms.length
-    ? reportList(snapshot)
-        .filter((r) =>
-          matches(
-            `${r.title} ${r.summary ?? ""} ${r.scope ?? ""} ${projectNames(r.projects)}`,
-          ),
-        )
-        .slice(0, 5)
-        .map((r) =>
-          found(
-            "report:" + r.id,
-            groups.summaries,
-            r.title,
-            [shortDay(r.date), projectNames(r.projects)]
-              .filter(Boolean)
-              .join(" · "),
-            "report",
-            when(r.modified),
-          ),
-        )
-    : [];
-  const actions = actionsFor(s.design, Boolean(snapshot.reportsDir))
-    .filter(([, label]) => matches(label))
-    .map(([id, label, icon]) => ({
-      id,
-      label,
-      icon,
-      sub: "",
-      section: groups.actions,
-      project: "",
-      node: null as Node | null,
-      acc: "",
-    }));
-  const items = [
-    ...hits.filter((i) => i.section === groups.projects),
-    ...hits.filter((i) => i.section === groups.folders),
-    ...sessionHits,
-    ...reportHits,
-    ...todoHits,
-    ...actions,
-  ];
+  // The search is worked out once for each scan, query and set of actions (selectors.ts); each
+  // design names its groups and times in its own words.
+  const items = searchAll(
+    snapshot,
+    query,
+    actionsFor(
+      design,
+      Boolean(snapshot.reportsDir),
+      update,
+      update?.state === "ready" ? openTerminals() : 0,
+    ),
+  ).map((hit) => ({
+    ...hit,
+    section: groups[GROUP_OF[hit.section]],
+    acc: timeIn(simple, hit),
+  }));
   const index = Math.min(selected, Math.max(0, items.length - 1));
   function go(id: string) {
     useApp.setState({ palette: false });
+    const s = useApp.getState();
     if (id.startsWith("node:")) {
       const n = snapshot.nodes[id.slice(5)];
       if (n.kind === "folder") s.cd(n.path);
@@ -252,6 +256,7 @@ export function Palette() {
       useApp.setState({ modal: { kind: "shortcuts" } });
     else if (id === "help") s.navigate("help");
     else if (id === "design") setDesign(simple ? "detailed" : "simple");
+    else if (id.startsWith("update:")) void runUpdateCommand(id, update);
     else if (id === "rescan") rescan();
     else if (id === "theme") {
       const dark =

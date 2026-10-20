@@ -1,10 +1,9 @@
-// The keys of ui/src/hotkeys.ts on each system: the page names it in `data-os`, and ⌘ takes Ctrl's
-// place on macOS. The hooks run against a stand-in for the window, with the store they talk to.
+// The keys of ui/src/hotkeys.ts. The hooks run against a stand-in for the window, with the store they
+// talk to.
 import assert from "node:assert/strict";
 import { load } from "../ui-module.mjs";
 
 const noop = () => {};
-const SYSTEMS = ["linux", "windows", "macos"];
 
 class FakeElement {
   constructor({ typing = false, row = false } = {}) {
@@ -27,58 +26,54 @@ class FakeElement {
   }
 }
 
-/** The page being tried. The stubs of a module answer for it, so that a module loads once for each system. */
+/** The page being tried. The stubs of the module answer for it, so that the module loads once. */
 let current;
-const modules = new Map();
-/** hotkeys.ts as the page of `os` loads it. */
-function hotkeysOf(os) {
-  if (!modules.has(os))
-    modules.set(
-      os,
-      load(
-        "hotkeys.ts",
-        {
-          react: { useEffect: (effect) => void effect() },
-          "./api": { api: async () => ({}) },
-          "./store": {
-            useApp: {
-              getState: () => current.state,
-              setState: (change) =>
-                Object.assign(
-                  current.state,
-                  typeof change === "function" ? change(current.state) : change,
-                ),
-            },
-            run: (work) => work(),
-            savePref: (key, value) => current.calls.saved.push([key, value]),
-          },
-          "./select": { selectIsOpen: () => false },
-          "./terminal-api": { toggleTerminal: () => current.calls.terminal++ },
+let module;
+/** hotkeys.ts as the page loads it. */
+function hotkeys() {
+  module ??= load(
+    "hotkeys.ts",
+    {
+      react: { useEffect: (effect) => void effect() },
+      "./api": { api: async () => ({}) },
+      "./store": {
+        useApp: {
+          getState: () => current.state,
+          setState: (change) =>
+            Object.assign(
+              current.state,
+              typeof change === "function" ? change(current.state) : change,
+            ),
         },
-        {
-          document: {
-            documentElement: { dataset: { os } },
-            activeElement: null,
-            querySelector: () => null,
-            querySelectorAll: () => current.rows,
-          },
-          window: {
-            addEventListener: (type, handler, useCapture) => {
-              if (type === "keydown")
-                (useCapture ? current.capture : current.bubble).push(handler);
-            },
-            removeEventListener: noop,
-          },
-          HTMLElement: FakeElement,
-          Element: FakeElement,
+        run: (work) => work(),
+        savePref: (key, value) => current.calls.saved.push([key, value]),
+      },
+      "./select": { selectIsOpen: () => false },
+      "./terminal-api": { toggleTerminal: () => current.calls.terminal++ },
+    },
+    {
+      document: {
+        documentElement: { dataset: {} },
+        activeElement: null,
+        querySelector: () => null,
+        querySelectorAll: () => current.rows,
+      },
+      window: {
+        addEventListener: (type, handler, useCapture) => {
+          if (type === "keydown")
+            (useCapture ? current.capture : current.bubble).push(handler);
         },
-      ),
-    );
-  return modules.get(os);
+        removeEventListener: noop,
+      },
+      HTMLElement: FakeElement,
+      Element: FakeElement,
+    },
+  );
+  return module;
 }
 
-/** A window of `os` with both hooks running on the store `patch` changes, and a way to press keys in it. */
-function page(os, patch = {}) {
+/** A window with both hooks running on the store `patch` changes, and a way to press keys in it. */
+function page(patch = {}) {
   const calls = { terminal: 0, cd: [], navigate: [], saved: [], focused: [] };
   const rows = [new FakeElement({ row: true }), new FakeElement({ row: true })];
   for (const row of rows)
@@ -103,10 +98,10 @@ function page(os, patch = {}) {
       ...patch,
     },
   };
-  const hotkeys = hotkeysOf(os);
+  const keys = hotkeys();
   current = mine;
-  hotkeys.useGlobalHotkeys();
-  hotkeys.useDetailedHotkeys();
+  keys.useGlobalHotkeys();
+  keys.useDetailedHotkeys();
   const body = new FakeElement();
   /** Presses `key` as the browser would deliver it: the capture handlers, then the others. */
   function press(key, mods = {}, target = body) {
@@ -136,313 +131,200 @@ function page(os, patch = {}) {
     }
     return event;
   }
-  return { ...hotkeys, state: mine.state, calls, press, body, rows };
+  return { ...keys, state: mine.state, calls, press, body, rows };
 }
 
 const ctrl = { ctrlKey: true };
-const cmd = { metaKey: true };
+const meta = { metaKey: true };
 const alt = { altKey: true };
 
-export async function f4TogglesTheTerminalButAltCtrlAndCommandF4BelongToTheSystem() {
-  for (const os of SYSTEMS) {
-    const w = page(os);
-    const plain = w.press("F4");
-    assert.equal(w.calls.terminal, 1, os);
-    assert.ok(plain.defaultPrevented, os);
-    w.press("F4", { shiftKey: true });
-    assert.equal(w.calls.terminal, 2, `${os}: Shift+F4 is still F4`);
-    for (const mods of [
-      alt,
-      ctrl,
-      cmd,
-      { ...alt, shiftKey: true },
-      { ...ctrl, ...alt },
-    ]) {
-      const event = w.press("F4", mods);
-      assert.equal(w.calls.terminal, 2, `${os} ${JSON.stringify(mods)}`);
-      assert.equal(event.defaultPrevented, false, `${os}: the system gets it`);
-      assert.equal(event.stopped, false);
+export async function f4TogglesTheTerminalButAltCtrlAndSuperF4BelongToTheSystem() {
+  const w = page();
+  const plain = w.press("F4");
+  assert.equal(w.calls.terminal, 1);
+  assert.ok(plain.defaultPrevented);
+  w.press("F4", { shiftKey: true });
+  assert.equal(w.calls.terminal, 2, "Shift+F4 is still F4");
+  for (const mods of [alt, ctrl, meta, { ...alt, shiftKey: true }, { ...ctrl, ...alt }]) {
+    const event = w.press("F4", mods);
+    assert.equal(w.calls.terminal, 2, JSON.stringify(mods));
+    assert.equal(event.defaultPrevented, false, "the system gets it");
+    assert.equal(event.stopped, false);
+  }
+}
+
+export async function theTerminalOpensWithCtrlBacktick() {
+  const w = page();
+  const count = () => w.calls.terminal;
+  w.press("`", ctrl);
+  assert.equal(count(), 1, "Ctrl+`");
+  w.press("`", meta);
+  assert.equal(count(), 1, "Super+`");
+  // Ctrl+Alt can be AltGr: it types a ` and must not open anything.
+  w.press("`", { ...ctrl, ...alt });
+  w.press("`", alt);
+  w.press("`");
+  w.press("~", { ...ctrl, shiftKey: true });
+  w.press("~", { ...meta, shiftKey: true, code: "Backquote" });
+  w.press("Dead", { ...ctrl, code: "Backquote" });
+  assert.equal(count(), 1, "nothing else opens it");
+}
+
+export async function thePaletteOpensWithCtrlKOrSuperK() {
+  const w = page();
+  for (const mods of [ctrl, meta]) {
+    for (const key of ["k", "K"]) {
+      w.press(key, mods);
+      assert.equal(w.state.palette, true, key);
+      w.press(key, mods);
+      assert.equal(w.state.palette, false, key);
     }
   }
+  w.press("k");
+  assert.equal(w.state.palette, false);
 }
 
-export async function theTerminalOpensWithCtrlBacktickAndOnMacWithCommandToo() {
-  for (const os of SYSTEMS) {
-    const mac = os === "macos";
-    const w = page(os);
-    const count = () => w.calls.terminal;
-    w.press("`", ctrl);
-    assert.equal(count(), 1, `${os}: Ctrl+\``);
-    w.press("`", cmd);
-    assert.equal(count(), mac ? 2 : 1, `${os}: ⌘+\``);
-    // Ctrl+Alt is AltGr on Windows: it types a ` and must not open anything.
-    w.press("`", { ...ctrl, ...alt });
-    w.press("`", alt);
-    w.press("`");
-    w.press("~", { ...ctrl, shiftKey: true });
-    w.press("~", { ...cmd, shiftKey: true, code: "Backquote" });
-    assert.equal(count(), mac ? 2 : 1, `${os}: nothing else opens it`);
-    // A dead ` still has its place on the keyboard.
-    w.press("Dead", { ...ctrl, code: "Backquote" });
-    assert.equal(count(), mac ? 3 : 1, `${os}: Ctrl+dead key`);
+export async function theShortcutsListOpensWithAQuestionMarkOrCtrlSlash() {
+  const opens = (key, mods = {}, target) => {
+    const w = page();
+    w.press(key, mods, target);
+    return w.state.modal?.kind === "shortcuts";
+  };
+  assert.equal(opens("?"), true, "?");
+  assert.equal(opens("/", ctrl), true, "Ctrl+/");
+  assert.equal(opens("/", meta), false, "Super+/");
+  assert.equal(opens("/", { ...ctrl, ...alt }), false, "AltGr+/");
+  assert.equal(opens("/"), false, "a slash is a slash");
+  // In a field a ? is typed, and not taken for the list.
+  assert.equal(opens("?", {}, new FakeElement({ typing: true })), false);
+}
+
+export async function noKeyOpensSettings() {
+  const w = page();
+  for (const mods of [meta, ctrl, { ...meta, shiftKey: true }, { ...meta, ...alt }, {}]) {
+    const event = w.press(",", mods);
+    assert.equal(event.defaultPrevented, false, JSON.stringify(mods));
   }
-}
-
-export async function thePaletteOpensWithCtrlKOrCommandKOnEverySystem() {
-  for (const os of SYSTEMS) {
-    const w = page(os);
-    for (const mods of [ctrl, cmd]) {
-      for (const key of ["k", "K"]) {
-        w.press(key, mods);
-        assert.equal(w.state.palette, true, `${os} ${key}`);
-        w.press(key, mods);
-        assert.equal(w.state.palette, false, `${os} ${key}`);
-      }
-    }
-    w.press("k");
-    assert.equal(w.state.palette, false);
-  }
-}
-
-export async function theShortcutsListOpensWithAQuestionMarkOrCtrlSlashAndOnMacCommandSlash() {
-  for (const os of SYSTEMS) {
-    const mac = os === "macos";
-    const opens = (key, mods = {}, target) => {
-      const w = page(os);
-      w.press(key, mods, target);
-      return w.state.modal?.kind === "shortcuts";
-    };
-    assert.equal(opens("?"), true, `${os}: ?`);
-    assert.equal(opens("/", ctrl), true, `${os}: Ctrl+/`);
-    assert.equal(opens("/", cmd), mac, `${os}: ⌘+/`);
-    assert.equal(opens("/", { ...ctrl, ...alt }), false, `${os}: AltGr+/`);
-    assert.equal(opens("/"), false, `${os}: a slash is a slash`);
-    // In a field a ? is typed, and not taken for the list.
-    assert.equal(opens("?", {}, new FakeElement({ typing: true })), false, os);
-  }
-}
-
-export async function commandCommaOpensSettingsOnMacOnly() {
-  for (const os of SYSTEMS) {
-    const w = page(os);
-    const event = w.press(",", cmd);
-    assert.deepEqual(w.calls.navigate, os === "macos" ? ["settings"] : [], os);
-    assert.equal(event.defaultPrevented, os === "macos", os);
-    w.press(",", ctrl);
-    w.press(",", { ...cmd, shiftKey: true });
-    w.press(",", { ...cmd, ...alt });
-    w.press(",");
-    assert.equal(w.calls.navigate.length, os === "macos" ? 1 : 0, os);
-  }
-}
-
-export async function theSettingsKeyWaitsForADialogAndForThePalette() {
-  const w = page("macos", { modal: { kind: "archive", id: "x" } });
-  w.press(",", cmd);
   assert.deepEqual(w.calls.navigate, []);
-  const palette = page("macos", { palette: true });
-  palette.press(",", cmd);
-  assert.deepEqual(palette.calls.navigate, []);
-  assert.equal(palette.state.palette, true);
 }
 
-export async function hiddenFilesHaveCtrlHOutsideMacAndCommandShiftPeriodOnMac() {
-  const toggles = (os, key, mods, patch, target) => {
-    const w = page(os, patch);
+export async function hiddenFilesHaveCtrlH() {
+  const toggles = (key, mods, patch, target) => {
+    const w = page(patch);
     w.press(key, mods, target);
     return w.state.hidden;
   };
-  for (const os of ["linux", "windows"]) {
-    assert.equal(toggles(os, "h", ctrl), true, `${os}: Ctrl+H`);
-    assert.equal(toggles(os, "H", ctrl), true, `${os}: Ctrl+Shift+H`);
-    for (const mods of [cmd, { ...cmd, shiftKey: true }, {}])
-      assert.equal(
-        toggles(os, "h", mods),
-        false,
-        `${os} ${JSON.stringify(mods)}`,
-      );
-    assert.equal(
-      toggles(os, ">", { ...cmd, shiftKey: true, code: "Period" }),
-      false,
-      os,
-    );
-  }
-  const mac = "macos";
-  const finder = { ...cmd, shiftKey: true };
-  assert.equal(
-    toggles(mac, ">", { ...finder, code: "Period" }),
-    true,
-    "US keyboard",
-  );
-  assert.equal(toggles(mac, ".", finder), true, "a period typed with Shift");
-  assert.equal(
-    toggles(mac, ":", { ...finder, code: "Period" }),
-    true,
-    "German keyboard",
-  );
-  assert.equal(
-    toggles(mac, ".", { ...cmd, code: "Period" }),
-    false,
-    "⌘. alone is Stop",
-  );
-  assert.equal(toggles(mac, "h", ctrl), false, "Ctrl+H deletes a character");
-  assert.equal(toggles(mac, "h", cmd), false, "⌘H hides the app");
-  assert.equal(
-    toggles(mac, ">", { ...finder, ...ctrl, code: "Period" }),
-    false,
-  );
+  assert.equal(toggles("h", ctrl), true, "Ctrl+H");
+  assert.equal(toggles("H", ctrl), true, "Ctrl+Shift+H");
+  for (const mods of [meta, { ...meta, shiftKey: true }, {}])
+    assert.equal(toggles("h", mods), false, JSON.stringify(mods));
+  assert.equal(toggles(">", { ...meta, shiftKey: true, code: "Period" }), false);
   // Only in the folder view, and still while a field has the focus.
-  for (const os of SYSTEMS) {
-    const keys =
-      os === "macos" ? [">", { ...finder, code: "Period" }] : ["h", ctrl];
-    assert.equal(
-      toggles(os, ...keys, { view: "today" }),
-      false,
-      `${os}: not in Today`,
-    );
-    assert.equal(
-      toggles(os, ...keys, {}, new FakeElement({ typing: true })),
-      true,
-      os,
-    );
-    const w = page(os, { hidden: true });
-    w.press(...keys);
-    assert.equal(w.state.hidden, false, `${os}: and back again`);
-    assert.deepEqual(w.calls.saved, [["hidden", false]], os);
-  }
+  assert.equal(toggles("h", ctrl, { view: "today" }), false, "not in Today");
+  assert.equal(toggles("h", ctrl, {}, new FakeElement({ typing: true })), true);
+  const w = page({ hidden: true });
+  w.press("h", ctrl);
+  assert.equal(w.state.hidden, false, "and back again");
+  assert.deepEqual(w.calls.saved, [["hidden", false]]);
 }
 
-export async function theParentFolderHasBackspaceAndOnMacCommandUp() {
-  for (const os of SYSTEMS) {
-    const mac = os === "macos";
-    const parent = (key, mods, patch, target) => {
-      const w = page(os, patch);
-      const event = w.press(key, mods, target);
-      return { cd: w.calls.cd, event };
-    };
-    assert.deepEqual(parent("Backspace").cd, ["/home/me"], `${os}: Backspace`);
-    assert.ok(parent("Backspace").event.defaultPrevented);
-    assert.deepEqual(
-      parent("ArrowUp", cmd).cd,
-      mac ? ["/home/me"] : [],
-      `${os}: ⌘↑`,
-    );
-    assert.deepEqual(parent("ArrowUp", ctrl).cd, [], `${os}: Ctrl+↑`);
-    assert.deepEqual(parent("ArrowUp", { ...cmd, shiftKey: true }).cd, [], os);
-    assert.deepEqual(
-      parent("ArrowUp").cd,
-      [],
-      `${os}: ↑ alone moves between rows`,
-    );
-    // Not in another view, not at the top, and not while typing.
-    assert.deepEqual(parent("Backspace", {}, { view: "today" }).cd, [], os);
-    assert.deepEqual(parent("Backspace", {}, { cwd: "/" }).cd, [], os);
-    assert.deepEqual(parent("Backspace", {}, { snapshot: null }).cd, [], os);
-    assert.deepEqual(
-      parent("Backspace", {}, {}, new FakeElement({ typing: true })).cd,
-      [],
-      os,
-    );
-    assert.deepEqual(
-      parent("Backspace", {}, { modal: { kind: "help" } }).cd,
-      [],
-      os,
-    );
-    // A drive or a share goes up to its own root, and stops there.
-    const at = (cwd) => parent("Backspace", {}, { cwd }).cd;
-    assert.deepEqual(at("C:\\Users\\me\\project"), ["C:\\Users\\me"], os);
-    assert.deepEqual(at("C:\\Users"), ["C:\\"], os);
-    assert.deepEqual(at("C:\\"), [], os);
-    assert.deepEqual(at("\\\\nas\\files\\a"), ["\\\\nas\\files\\"], os);
-    assert.deepEqual(at("\\\\nas\\files\\"), [], os);
-  }
+export async function theParentFolderHasBackspace() {
+  const parent = (key, mods, patch, target) => {
+    const w = page(patch);
+    const event = w.press(key, mods, target);
+    return { cd: w.calls.cd, event };
+  };
+  assert.deepEqual(parent("Backspace").cd, ["/home/me"], "Backspace");
+  assert.ok(parent("Backspace").event.defaultPrevented);
+  assert.deepEqual(parent("ArrowUp", meta).cd, [], "Super+↑");
+  assert.deepEqual(parent("ArrowUp", ctrl).cd, [], "Ctrl+↑");
+  assert.deepEqual(parent("ArrowUp", { ...meta, shiftKey: true }).cd, []);
+  assert.deepEqual(parent("ArrowUp").cd, [], "↑ alone moves between rows");
+  // Not in another view, not at the top, and not while typing.
+  assert.deepEqual(parent("Backspace", {}, { view: "today" }).cd, []);
+  assert.deepEqual(parent("Backspace", {}, { cwd: "/" }).cd, []);
+  assert.deepEqual(parent("Backspace", {}, { snapshot: null }).cd, []);
+  assert.deepEqual(parent("Backspace", {}, {}, new FakeElement({ typing: true })).cd, []);
+  assert.deepEqual(parent("Backspace", {}, { modal: { kind: "help" } }).cd, []);
 }
 
 export async function aRowStillMovesWithTheArrowsAndOpensWithEnter() {
-  for (const os of SYSTEMS) {
-    const w = page(os);
-    const [first, second] = w.rows;
-    assert.ok(w.press("ArrowDown", {}, first).defaultPrevented);
-    assert.ok(w.press("ArrowUp", {}, second).defaultPrevented);
-    assert.deepEqual(w.calls.focused, [1, 0], os);
-    w.press("Enter", {}, first);
-    assert.deepEqual(w.calls.cd, ["/home/me/project/app"], os);
-    // A Mac's ⌘↑ on a row goes to the parent folder, not to the row above.
-    w.calls.focused.length = 0;
-    w.press("ArrowUp", cmd, second);
-    assert.deepEqual(w.calls.focused, os === "macos" ? [] : [0], os);
-  }
+  const w = page();
+  const [first, second] = w.rows;
+  assert.ok(w.press("ArrowDown", {}, first).defaultPrevented);
+  assert.ok(w.press("ArrowUp", {}, second).defaultPrevented);
+  assert.deepEqual(w.calls.focused, [1, 0]);
+  w.press("Enter", {}, first);
+  assert.deepEqual(w.calls.cd, ["/home/me/project/app"]);
+  // Super+↑ on a row moves to the row above too.
+  w.calls.focused.length = 0;
+  w.press("ArrowUp", meta, second);
+  assert.deepEqual(w.calls.focused, [0]);
 }
 
 export async function aDialogKeepsTheKeysItSwallows() {
-  for (const os of SYSTEMS) {
-    const w = page(os, { modal: { kind: "archive", id: "x" } });
-    const event = w.press("F4");
-    assert.equal(w.calls.terminal, 0, os);
-    assert.ok(event.defaultPrevented, os);
-    w.press("k", ctrl);
-    assert.equal(w.state.palette, false, os);
-    const busy = page(os, { working: "Archiving…" });
-    busy.press("F4");
-    assert.equal(busy.calls.terminal, 0, os);
-  }
+  const w = page({ modal: { kind: "archive", id: "x" } });
+  const event = w.press("F4");
+  assert.equal(w.calls.terminal, 0);
+  assert.ok(event.defaultPrevented);
+  w.press("k", ctrl);
+  assert.equal(w.state.palette, false);
+  const busy = page({ working: "Archiving…" });
+  busy.press("F4");
+  assert.equal(busy.calls.terminal, 0);
 }
 
 export async function aSimpleSheetKeepsTheKeysOfTheWindowBehindIt() {
-  for (const os of SYSTEMS) {
-    const w = page(os, { sheets: 1, selected: "/home/me/project/app" });
-    // Ctrl+K, F4 and ⌘, are taken, as with a dialog, and do nothing behind the sheet.
-    const palette = w.press("k", ctrl);
-    assert.equal(w.state.palette, false, os);
-    assert.ok(palette.defaultPrevented, os);
-    const terminal = w.press("F4");
-    assert.equal(w.calls.terminal, 0, os);
-    assert.ok(terminal.defaultPrevented, os);
-    w.press(",", cmd);
-    assert.deepEqual(w.calls.navigate, [], os);
-    // F6 is left alone: no pane behind the sheet gets the focus.
-    const panes = w.press("F6");
-    assert.equal(panes.defaultPrevented, false, os);
-    assert.equal(panes.stopped, false, os);
-    // Escape does not close the details behind it.
-    w.press("Escape");
-    assert.equal(w.state.selected, "/home/me/project/app", os);
-    // Without the sheet the same keys work.
-    w.state.sheets = 0;
-    w.press("k", ctrl);
-    assert.equal(w.state.palette, true, os);
-    w.state.palette = false;
-    w.press("F4");
-    assert.equal(w.calls.terminal, 1, os);
-    w.press("Escape");
-    assert.equal(w.state.selected, null, os);
-  }
+  const w = page({ sheets: 1, selected: "/home/me/project/app" });
+  // Ctrl+K and F4 are taken, as with a dialog, and do nothing behind the sheet.
+  const palette = w.press("k", ctrl);
+  assert.equal(w.state.palette, false);
+  assert.ok(palette.defaultPrevented);
+  const terminal = w.press("F4");
+  assert.equal(w.calls.terminal, 0);
+  assert.ok(terminal.defaultPrevented);
+  w.press(",", meta);
+  assert.deepEqual(w.calls.navigate, []);
+  // F6 is left alone: no pane behind the sheet gets the focus.
+  const panes = w.press("F6");
+  assert.equal(panes.defaultPrevented, false);
+  assert.equal(panes.stopped, false);
+  // Escape does not close the details behind it.
+  w.press("Escape");
+  assert.equal(w.state.selected, "/home/me/project/app");
+  // Without the sheet the same keys work.
+  w.state.sheets = 0;
+  w.press("k", ctrl);
+  assert.equal(w.state.palette, true);
+  w.state.palette = false;
+  w.press("F4");
+  assert.equal(w.calls.terminal, 1);
+  w.press("Escape");
+  assert.equal(w.state.selected, null);
 }
 
 export async function escapeKeepsItsLayersInDetailed() {
-  for (const os of SYSTEMS) {
-    const at = (patch) => {
-      const w = page(os, { selected: "/home/me/project/app", ...patch });
-      const escape = w.press("Escape");
-      return { state: w.state, escape };
-    };
-    // The details beside the view close first, as the key has always done.
-    const bare = at({});
-    assert.equal(bare.state.selected, null, os);
-    assert.ok(bare.escape.defaultPrevented, os);
-    // The palette, the display menu and a dialog each take it before the details do.
-    const palette = at({ palette: true });
-    assert.equal(palette.state.palette, false, os);
-    assert.equal(palette.state.selected, "/home/me/project/app", os);
-    const display = at({ display: true });
-    assert.equal(display.state.display, false, os);
-    assert.equal(display.state.selected, "/home/me/project/app", os);
-    const dialog = at({ modal: { kind: "archive", id: "x" } });
-    assert.equal(dialog.state.selected, "/home/me/project/app", os);
-    // And a change that runs leaves everything as it is.
-    const busy = at({ working: "Archiving…" });
-    assert.equal(busy.state.selected, "/home/me/project/app", os);
-  }
+  const at = (patch) => {
+    const w = page({ selected: "/home/me/project/app", ...patch });
+    const escape = w.press("Escape");
+    return { state: w.state, escape };
+  };
+  // The details beside the view close first, as the key has always done.
+  const bare = at({});
+  assert.equal(bare.state.selected, null);
+  assert.ok(bare.escape.defaultPrevented);
+  // The palette, the display menu and a dialog each take it before the details do.
+  const palette = at({ palette: true });
+  assert.equal(palette.state.palette, false);
+  assert.equal(palette.state.selected, "/home/me/project/app");
+  const display = at({ display: true });
+  assert.equal(display.state.display, false);
+  assert.equal(display.state.selected, "/home/me/project/app");
+  const dialog = at({ modal: { kind: "archive", id: "x" } });
+  assert.equal(dialog.state.selected, "/home/me/project/app");
+  // And a change that runs leaves everything as it is.
+  const busy = at({ working: "Archiving…" });
+  assert.equal(busy.state.selected, "/home/me/project/app");
 }
 
 // ── The list of shortcuts ──────────────────────────────────────────────────────────────────────────
@@ -451,13 +333,12 @@ const { SHORTCUTS, shortcutsFor } = load("shortcuts.ts");
 
 /** A chord from ui/src/shortcuts.ts as the key press it stands for. */
 function pressOf(chord) {
-  const named = { "↑": "ArrowUp", "↓": "ArrowDown", Esc: "Escape", Return: "Enter" };
+  const named = { "↑": "ArrowUp", "↓": "ArrowDown", Esc: "Escape" };
   const codes = { ".": "Period", "`": "Backquote", "/": "Slash", ",": "Comma" };
   const press = { key: "", code: "", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false };
   for (const key of chord) {
-    if (key === "Ctrl" || key === "⌃") press.ctrlKey = true;
-    else if (key === "⌘") press.metaKey = true;
-    else if (key === "Shift" || key === "⇧") press.shiftKey = true;
+    if (key === "Ctrl") press.ctrlKey = true;
+    else if (key === "Shift") press.shiftKey = true;
     else {
       press.key = named[key] ?? (key.length === 1 ? key.toLowerCase() : key);
       press.code = codes[key] ?? "";
@@ -473,7 +354,6 @@ const DOES = {
   shortcuts: (keys, press) => keys.isShortcutsKey(press),
   close: (_, press) => press.key === "Escape",
   terminal: (keys, press) => keys.isTerminalKey(press),
-  settings: (keys, press) => keys.isSettingsKey(press),
   panes: (_, press) => press.key === "F6" && !press.ctrlKey && !press.altKey,
   rows: (_, press) => ["ArrowDown", "ArrowUp"].includes(press.key),
   open: (_, press) => press.key === "Enter",
@@ -487,28 +367,23 @@ export async function everyKeyTheListsNameDoesWhatTheySay() {
     [],
     "a row without a check here",
   );
-  for (const os of SYSTEMS) {
-    const keys = hotkeysOf(os);
-    for (const design of ["simple", "detailed"])
-      for (const { id, chords } of shortcutsFor(os, design))
-        for (const chord of chords)
-          assert.ok(DOES[id](keys, pressOf(chord)), `${os} ${design}: ${chord.join(" ")} for ${id}`);
-  }
+  const keys = hotkeys();
+  for (const design of ["simple", "detailed"])
+    for (const { id, chords } of shortcutsFor(design))
+      for (const chord of chords)
+        assert.ok(DOES[id](keys, pressOf(chord)), `${design}: ${chord.join(" ")} for ${id}`);
 }
 
 export async function theShortcutsKeyOpensTheListOnlyInDetailed() {
-  for (const os of SYSTEMS) {
-    const detailed = page(os);
-    detailed.press("?");
-    assert.deepEqual(detailed.state.modal, { kind: "shortcuts" }, os);
-    // Simple opens its Help page with the key itself (SimpleShell.tsx).
-    const simple = page(os, { design: "simple" });
-    simple.press("?");
-    assert.equal(simple.state.modal, null, os);
-  }
+  const detailed = page();
+  detailed.press("?");
+  assert.deepEqual(detailed.state.modal, { kind: "shortcuts" });
+  // Simple opens its Help page with the key itself (SimpleShell.tsx).
+  const simple = page({ design: "simple" });
+  simple.press("?");
+  assert.equal(simple.state.modal, null);
 }
 
 export async function theDisplayMenuNamesTheKeyForHiddenFiles() {
-  for (const os of ["linux", "windows"]) assert.equal(page(os).HIDDEN_FILES_HINT, "Ctrl H", os);
-  assert.equal(page("macos").HIDDEN_FILES_HINT, "⌘⇧.");
+  assert.equal(page().HIDDEN_FILES_HINT, "Ctrl H");
 }

@@ -90,6 +90,7 @@ impl ServerHandler for Mcp {
                 if let Some(object) = value.as_object_mut() {
                     object.remove("snapshot");
                 }
+                unsaid(&mut value);
                 value
             })
         })
@@ -115,12 +116,13 @@ pub fn run(env: Env) -> Result<(), String> {
         Ok(())
     })
 }
+/// The project an agent names: by its path ([`Service::node`]), or by its name or label when only one project has it.
 fn project(service: &mut Service, raw: &str) -> Result<Value, String> {
-    let snap = service.snapshot()?;
     let expanded = paths::expand(raw, &service.env.home).to_string_lossy().into_owned();
-    if let Some(node) = snap["nodes"].get(&expanded) {
-        return Ok(node.clone());
+    if let Ok(node) = service.node(&expanded) {
+        return Ok(node);
     }
+    let snap = service.snapshot()?;
     let matches: Vec<_> = snap["nodes"]
         .as_object()
         .into_iter()
@@ -246,8 +248,7 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             let under = match args["project"].as_str().filter(|p| !p.is_empty()) {
                 Some(raw) => Some(match project(service, raw) {
                     Ok(node) => string(&node, "path").to_owned(),
-                    // A moved or deleted project is gone from the scan, while its changes stay in the Log. On Windows
-                    // a path can also start with a drive or a share.
+                    // A moved or deleted project is gone from the scan, while its changes stay in the Log.
                     Err(_) if raw.starts_with('/') || raw.starts_with('~') || Path::new(raw).is_absolute() => {
                         paths::expand(raw, &service.env.home).to_string_lossy().into_owned()
                     }
@@ -591,6 +592,15 @@ fn clip(text: &str, max: usize) -> String {
     match text.char_indices().nth(max) {
         Some((at, _)) => format!("{}…", &text[..at]),
         None => text.to_owned(),
+    }
+}
+/// Leaves out the parts the window tells a Log entry by ("say"), from a journal or a Log entry an answer passes
+/// through: an agent reads the title.
+fn unsaid(value: &mut Value) {
+    for key in ["journal", "plan", "entry"] {
+        if let Some(object) = value.get_mut(key).and_then(Value::as_object_mut) {
+            object.remove("say");
+        }
     }
 }
 /// A Log entry as an agent reads it: what happened and whether it can be undone, without the stored undo data
@@ -1219,6 +1229,23 @@ mod tests {
         assert_eq!((long["steps"].clone(), long["moreSteps"].clone()), (json!([0, 1, 2, 3, 4]), json!(2)));
         assert_eq!(shown["detail"].as_str().unwrap().chars().count(), 301, "300 characters and the ellipsis");
         assert_eq!(change(&json!({"state":"undone","superseded":true}))["state"], "undone");
+        assert!(change(&json!({"title":"Move a","say":{"form":"moved","name":"a"}})).get("say").is_none());
+    }
+
+    /// The parts the window tells a change by stay out of an answer that passes a journal or a Log entry through.
+    #[test]
+    fn an_answer_leaves_out_what_the_window_tells_a_change_by() {
+        let say = json!({"form":"moved","name":"a"});
+        let mut answer = json!({"journal":{"id":"j","title":"Move a","say":say},"plan":{"title":"Move a","say":say},
+            "entry":{"title":"Undid: Move a","say":{"form":"undid"}},"hint":"h"});
+        unsaid(&mut answer);
+        assert_eq!(
+            answer,
+            json!({"journal":{"id":"j","title":"Move a"},"plan":{"title":"Move a"},"entry":{"title":"Undid: Move a"},"hint":"h"})
+        );
+        let mut plans = json!({"plan":[{"kind":"move","say":"kept"}]});
+        unsaid(&mut plans);
+        assert_eq!(plans, json!({"plan":[{"kind":"move","say":"kept"}]}), "a list of operations is not an entry");
     }
 
     #[test]
@@ -1383,7 +1410,8 @@ mod tests {
         let home = dir.path().to_path_buf();
         let env = Env::for_home(home.clone());
         let at = |i: usize| format!("2026-10-{:02}T{:02}:00:00.000Z", 1 + i % 28, i % 24);
-        let project = |i: usize| format!("{}/project/p{i}", home.display());
+        // Spelled as a scan names a project, a name at a time.
+        let project = |i: usize| home.join("project").join(format!("p{i}")).display().to_string();
         let mut log = String::new();
         for i in 0..300 {
             log += &json!({"id":format!("e{i}"),"at":at(i),"by":"agent","title":format!("Edited the notes of p{}", i % 60),
@@ -1509,6 +1537,27 @@ mod tests {
         assert_eq!(items[0]["firstPrompt"].as_str().unwrap().chars().count(), 121, "the start of the first prompt");
         assert!(details["agents"].get("items").is_none(), "the item ids are not listed a second time");
         assert!(details["reports"][0].get("projects").is_none());
+    }
+
+    /// An agent may name a project as the file system spells its path. Another case is another folder.
+    #[test]
+    fn a_project_path_in_another_spelling_finds_the_project() {
+        let (_dir, mut service, big) = busy_home();
+        std::fs::create_dir_all(&big).unwrap();
+        let canonical = laci_core::platform::path::canonical(Path::new(&big)).unwrap();
+        let found = call(&mut service, "project_details", &json!({"project":canonical})).unwrap();
+        assert_eq!(found["path"], json!(big));
+        // Each name differs only in case from the file system's own.
+        let swapped: String = canonical
+            .to_string_lossy()
+            .chars()
+            .map(|c| if c.is_uppercase() { c.to_ascii_lowercase() } else { c.to_ascii_uppercase() })
+            .collect();
+        let found = call(&mut service, "project_details", &json!({"project":swapped}));
+        assert_eq!(found.is_ok(), Path::new(&swapped).is_dir(), "{found:?}");
+        if let Ok(found) = found {
+            assert_eq!(found["path"], json!(big));
+        }
     }
 
     #[test]

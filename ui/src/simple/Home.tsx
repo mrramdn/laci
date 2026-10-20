@@ -1,5 +1,6 @@
 // Home: one sentence on what needs you most and one filled button for it, then what else needs you,
-// where you left off, what is next and what is due (design-research §3.3).
+// where you left off, what is next and what is due (design-research §3.3), a quiet card when a new
+// version of Laci is ready, and one that asks a setup from before 3.0 whether Laci may look for them.
 import { useId, useState } from "react";
 import type { ReactNode } from "react";
 import { closeReportItem, toggleTodo } from "../actions";
@@ -35,6 +36,7 @@ import {
   useSimple,
 } from "./state";
 import { Button, EmptyState, Info, StatusChip } from "./ui";
+import { UpdateCard, UpdatesOffer } from "./updates";
 
 export function Home() {
   const snapshot = useApp((s) => s.snapshot!);
@@ -126,6 +128,9 @@ export function Home() {
             </section>
           ) : null}
           <div className="s-home-side">
+            {/* First in the side column, where it is seen on a wide window and moves none of the main one. */}
+            <UpdateCard />
+            <UpdatesOffer />
             {model.comingUp.length ? (
               <section className="s-section" aria-labelledby="home-coming">
                 <div className="s-section-head">
@@ -152,6 +157,8 @@ export function Home() {
           <NextUp todos={model.nextUp} />
         </div>
       )}
+      {/* With nothing to list yet, the question waits below the way to start. */}
+      {model.noFolders || !model.projects ? <UpdatesOffer /> : null}
       <HomeFoot snapshot={snapshot} />
     </div>
   );

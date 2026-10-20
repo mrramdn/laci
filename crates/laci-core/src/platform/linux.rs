@@ -1,18 +1,25 @@
 //! Linux, where Laci has run since v1. Processes are read from /proc, the Trash is gio's, files open with xdg-open,
 //! and settings and cache follow the XDG folders.
 pub use super::unix::{
-    Group, IDENTITY_FIELDS, Lock, change_stamp, copy_link, exited, file_change_stamp, home_dir, identity, lock,
-    preserve, rename_noreplace, spawn_group, user_dirs, which,
+    Group, Lock, change_stamp, copy_link, exited, file_change_stamp, home_dir, identity, lock, open_nofollow, preserve,
+    remove_all, rename_noreplace, spawn_group, user_dirs, which,
 };
 use super::{Apps, Holder};
 use crate::Result;
 use std::{
-    fs, io,
+    fs,
+    io::{self, Read},
     path::{Path, PathBuf},
     time::Duration,
 };
 
 const PROC: &str = "/proc";
+
+pub fn host_name() -> Option<String> {
+    let mut name = String::new();
+    fs::File::open("/etc/hostname").ok()?.take(256).read_to_string(&mut name).ok()?;
+    Some(name)
+}
 
 /// What `proc` lists, sorted by name. None when it can't be listed or doesn't list this process, as where it isn't
 /// mounted or a sandbox puts an empty folder there: that is no list of what runs, and nothing may pass as unused.

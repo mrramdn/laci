@@ -177,6 +177,10 @@ a:hover {
 .faint {
   color: var(--faint);
 }
+/* The browser draws <small> a size down, under 12 px in 13 px text: no label goes below 12. */
+small {
+  font-size: 12px;
+}
 .grow {
   flex: 1;
 }
@@ -204,7 +208,7 @@ kbd {
   min-width: 18px;
   height: 18px;
   padding: 0 4px;
-  font: 500 11px var(--mono);
+  font: 500 12px var(--mono);
   color: var(--muted);
   background: var(--hover);
   border: 1px solid var(--border-strong);
@@ -410,14 +414,14 @@ kbd {
   border: 1px solid var(--border);
   background: var(--hover);
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .sb-top-search:hover {
   border-color: var(--border-strong);
   color: var(--text);
 }
 .sb-top-search kbd {
-  font-size: 10px;
+  font-size: 12px;
   height: 16px;
   min-width: 16px;
   padding: 0 3px;
@@ -450,7 +454,7 @@ kbd {
 }
 .sb-search-bar kbd {
   margin-left: auto;
-  font-size: 10px;
+  font-size: 12px;
   height: 16px;
   padding: 0 4px;
 }
@@ -468,7 +472,7 @@ kbd {
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--bg);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
   cursor: pointer;
   transition:
@@ -547,7 +551,8 @@ kbd {
 }
 .sb-item .n {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 16.5px;
   padding: 1px 6px;
   border-radius: 999px;
   background: var(--hover);
@@ -570,7 +575,7 @@ kbd {
   height: 28px;
   padding: 0 10px;
   margin-top: 14px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -643,7 +648,7 @@ kbd {
 }
 .tree-row .n {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   font-family: var(--mono);
 }
@@ -746,7 +751,7 @@ kbd {
   background: var(--subtle);
   border-bottom: 1px solid var(--border);
   border-top: 1px solid var(--border);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -766,7 +771,7 @@ kbd {
   border-radius: 999px;
   background: var(--hover);
   color: var(--text);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   font-family: var(--mono);
 }
@@ -792,7 +797,7 @@ kbd {
   margin-left: auto;
   color: var(--faint);
   font-weight: 400;
-  font-size: 11.5px;
+  font-size: 12px;
   white-space: nowrap;
   text-transform: none;
   letter-spacing: 0;
@@ -857,7 +862,7 @@ kbd {
   font-size: 12px;
 }
 .item .meta .mono {
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .item .act {
   opacity: 0;
@@ -931,7 +936,7 @@ kbd {
   padding: 0 7px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
   background: var(--bg);
@@ -969,7 +974,7 @@ kbd {
   height: 20px;
   padding: 0 6px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
   flex: none;
@@ -1108,7 +1113,7 @@ kbd {
   padding: 0 16px 0 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--muted);
@@ -1147,7 +1152,7 @@ kbd {
 }
 .c-ai {
   flex: 0 0 64px;
-  font: 11.5px var(--mono);
+  font: 12px var(--mono);
   color: var(--muted);
   display: flex;
   justify-content: flex-end;
@@ -1157,13 +1162,13 @@ kbd {
 .c-when {
   flex: 0 0 80px;
   text-align: right;
-  font: 11.5px var(--mono);
+  font: 12px var(--mono);
   color: var(--faint);
 }
 .c-size {
   flex: 0 0 72px;
   text-align: right;
-  font: 11.5px var(--mono);
+  font: 12px var(--mono);
   color: var(--faint);
 }
 .c-health {
@@ -1207,7 +1212,7 @@ kbd {
   padding: 0 6px;
   border-radius: 4px;
   background: var(--hover);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--muted);
   white-space: nowrap;
@@ -1299,7 +1304,7 @@ kbd {
   color: var(--faint);
   font-weight: 400;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 .chipf .i {
   width: 13px;
@@ -1394,7 +1399,7 @@ kbd {
   margin: 6px -12px;
 }
 .menu .faint {
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .prop-row {
   border-bottom: 1px solid var(--border);
@@ -1419,7 +1424,7 @@ kbd {
   max-width: 72ch;
 }
 .conf {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
 }
 .conf.high {
@@ -1457,7 +1462,7 @@ kbd {
 }
 .ops .ft {
   grid-column: 2;
-  font: 11.5px/1.5 var(--mono);
+  font: 12px/1.5 var(--mono);
   color: var(--muted);
   overflow-wrap: anywhere;
 }
@@ -1524,7 +1529,7 @@ kbd {
   color: var(--muted);
 }
 .stat .p {
-  font: 11px var(--mono);
+  font: 12px var(--mono);
   color: var(--faint);
   margin-top: 8px;
   overflow-wrap: anywhere;
@@ -1816,7 +1821,7 @@ kbd {
 .ititle .path {
   margin-top: 4px;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 .ititle .sum {
@@ -1827,7 +1832,7 @@ kbd {
 }
 .ititle .sum .src {
   color: var(--faint);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .ititle .aka {
   margin: 6px 0 0;
@@ -1894,7 +1899,7 @@ kbd {
 }
 .pbtn .sub {
   color: var(--faint);
-  font-size: 11px;
+  font-size: 12px;
 }
 .pbtn.placeholder {
   color: var(--muted);
@@ -1950,7 +1955,7 @@ kbd {
   margin-left: 4px;
   font-weight: 400;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 .tabbody {
   padding: 8px 20px 32px;
@@ -1960,7 +1965,7 @@ kbd {
   align-items: center;
   gap: 8px;
   margin: 18px 0 8px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -2034,7 +2039,7 @@ kbd {
 .spark-cap {
   display: flex;
   justify-content: space-between;
-  font: 11px var(--mono);
+  font: 12px var(--mono);
   color: var(--faint);
   margin-top: 4px;
 }
@@ -2066,15 +2071,15 @@ kbd {
 }
 .hlist .h {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .hlist .w {
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .hlist .tag {
   min-width: 52px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .hlist .more-row .more {
   padding-top: 2px;
@@ -2093,7 +2098,7 @@ kbd {
   gap: 6px;
 }
 .cmds .btn {
-  font: 500 11.5px var(--mono);
+  font: 500 12px var(--mono);
 }
 .sess {
   display: flex;
@@ -2117,7 +2122,7 @@ kbd {
   font-size: 12.5px;
 }
 .sess .m {
-  font: 11px var(--mono);
+  font: 12px var(--mono);
   color: var(--faint);
   white-space: nowrap;
 }
@@ -2144,7 +2149,7 @@ kbd {
   font-size: 12.5px;
 }
 .todo .src {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   font-family: var(--mono);
 }
@@ -2290,7 +2295,7 @@ textarea.notes:focus {
   border: 1px dashed var(--border-strong);
   border-radius: 999px;
   background: var(--bg);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2502,7 +2507,7 @@ textarea.notes:focus {
 }
 .dialog .desc .mono {
   color: var(--text);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .dialog .db {
   padding: 10px 20px 14px;
@@ -2574,7 +2579,7 @@ textarea.notes:focus {
 }
 .pal-sec {
   padding: 8px 10px 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -2605,7 +2610,7 @@ textarea.notes:focus {
 }
 .pal-item .acc {
   margin-left: auto;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
   font-family: var(--mono);
@@ -2618,7 +2623,7 @@ textarea.notes:focus {
   padding: 0 14px;
   border-top: 1px solid var(--border);
   background: var(--subtle);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 .pal-foot span {
@@ -2645,7 +2650,7 @@ textarea.notes:focus {
 }
 .short-sec h3 {
   margin: 0 0 2px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -2778,7 +2783,7 @@ textarea.notes:focus {
   border-radius: 50%;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
 }
 .sset > p {
@@ -2809,7 +2814,7 @@ textarea.notes:focus {
 }
 .opt .r {
   margin-left: auto;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
   font-family: var(--mono);
@@ -2822,6 +2827,10 @@ textarea.notes:focus {
   display: flex;
   gap: 8px;
   margin: 8px 0 6px;
+}
+/* A box and its button in a field: the row is spaced as the box was alone in its field. */
+.fld > .addrow {
+  margin: 0;
 }
 .apps {
   display: grid;
@@ -3144,7 +3153,7 @@ textarea.notes:focus {
 }
 .root-offline {
   margin-left: auto;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .select-popup[data-compact] {
@@ -3192,7 +3201,7 @@ textarea.notes:focus {
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font: 11px var(--mono);
+  font: 12px var(--mono);
   background: var(--subtle);
 }
 .session-title {
@@ -3219,7 +3228,7 @@ textarea.notes:focus {
 }
 .session-title > small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .agents-page .stats {
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -3272,7 +3281,7 @@ textarea.notes:focus {
 .mcp-code {
   margin: 6px 0;
   padding: 8px 10px;
-  font: 11.5px var(--mono);
+  font: 12px var(--mono);
   background: var(--subtle);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -3417,7 +3426,7 @@ textarea.notes:focus {
 }
 .session-children-toggle {
   margin: 0 0 7px 24px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .session-children {
   margin-left: 12px;
@@ -3505,7 +3514,7 @@ textarea.notes:focus {
   text-decoration: none;
 }
 .session-block-h .faint {
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .session-block > .more {
   margin: 4px 0 6px;
@@ -3539,7 +3548,7 @@ textarea.notes:focus {
 }
 .said-k {
   margin-bottom: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--muted);
 }
@@ -3581,7 +3590,7 @@ textarea.notes:focus {
 }
 .delete-list li small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 @media (max-width: 1240px) {
   .sess > .pill {
@@ -3820,7 +3829,7 @@ textarea.notes:focus {
 }
 .rp-items-note {
   font-weight: 400;
-  font-size: 11px;
+  font-size: 12px;
 }
 .rp-item {
   display: flex;
@@ -3856,7 +3865,7 @@ textarea.notes:focus {
   padding: 0 4px;
 }
 .sess .sess-rep small {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
 }
 @media (max-width: 1240px) {

@@ -10,6 +10,24 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 
+/// The root of a disk or a share holds the system and everything else there, not a place of projects: picking it is
+/// refused. One kept from 2.5, which took it, stays, so the Settings that list it still save.
+#[test]
+fn a_whole_disk_is_not_a_place_to_scan() {
+    let temp = support::tempdir();
+    let env = Env::for_home(temp.path().join("home"));
+    fs::create_dir_all(&env.home).unwrap();
+    let whole = |disk: &str| {
+        format!("{disk} is a whole disk, and Laci doesn't look through one. Choose the folder where you keep projects.")
+    };
+    let disk = temp.path().ancestors().last().unwrap();
+    let error = config::validate_roots(&env, &json!([disk])).unwrap_err();
+    assert_eq!(error, whole(&disk.display().to_string()));
+    assert_eq!(config::validate_roots(&env, &json!([env.home])).unwrap(), json!(["~"]));
+    config::save(&env, &json!({"roots":[disk],"presets":[]})).unwrap();
+    assert_eq!(config::validate_roots(&env, &json!([disk, env.home])).unwrap(), json!([disk]));
+}
+
 #[test]
 fn external_selection_allows_only_selected_paths_and_rejects_symlink_escapes() {
     let temp = tempfile::tempdir().unwrap();
@@ -40,9 +58,9 @@ fn external_selection_allows_only_selected_paths_and_rejects_symlink_escapes() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn configured_external_archive_matches_preview_scan_and_undo() {
-    let temp = tempfile::tempdir().unwrap();
+    // Canonical, as Settings keeps a folder picked there, and so the scan names the projects in it.
+    let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
     let disk = temp.path().join("disk");
     let archive = temp.path().join("cold-storage");
@@ -100,12 +118,12 @@ fn archive_setting_is_optional_and_undo_restores_it() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn one_off_archive_keeps_only_chosen_project_visible_and_undo_restores_config_bytes() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));
-    let source = env.home.join("projects/research");
-    let destination = env.home.join("cold/research");
+    // A name at a time, as the scan spells the paths it finds.
+    let source = env.home.join("projects").join("research");
+    let destination = env.home.join("cold").join("research");
     write(&source.join("README.md"), "# Research\nExisting documentation\n");
     let original = b"{ \"roots\": [\"~/projects\"], \"presets\": [] }\n";
     fs::create_dir_all(&env.config_dir).unwrap();
@@ -128,12 +146,11 @@ fn one_off_archive_keeps_only_chosen_project_visible_and_undo_restores_config_by
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn archive_undo_does_not_overwrite_later_settings() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));
-    let source = env.home.join("projects/demo");
-    let destination = env.home.join("cold/demo");
+    let source = env.home.join("projects").join("demo");
+    let destination = env.home.join("cold").join("demo");
     write(&source.join("package.json"), "{}");
     config::save(&env, &json!({"roots":["~/projects"],"presets":[]})).unwrap();
     let mut service = Service::new(env.clone());
@@ -149,7 +166,6 @@ fn archive_undo_does_not_overwrite_later_settings() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn external_project_history_and_notes_survive_archive_and_undo() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));
@@ -180,16 +196,19 @@ fn external_project_history_and_notes_survive_archive_and_undo() {
     let archived = &snap["nodes"][dest.to_str().unwrap()];
     assert_eq!(archived["agents"]["claude"].as_array().unwrap().len(), 1);
     assert_eq!(archived["agents"]["items"].as_array().unwrap().len(), 2);
-    assert!(fs::read_to_string(&codex).unwrap().contains(dest.to_str().unwrap()));
+    // As JSON writes it.
+    assert!(fs::read_to_string(&codex).unwrap().contains(&json!(dest).to_string()));
     assert!(!claude.exists());
     service.request("undo", &json!({"id":changed["journal"]["id"]})).unwrap();
     assert!(claude.is_file());
-    assert!(fs::read_to_string(&codex).unwrap().contains(id));
+    assert!(fs::read_to_string(&codex).unwrap().contains(&json!(source).to_string()));
     assert!(source.join(".aider.chat.history.md").is_file());
 }
 
-fn exact_root_fixture() -> (tempfile::TempDir, Env, std::path::PathBuf, std::path::PathBuf) {
-    let temp = tempfile::tempdir().unwrap();
+/// In a canonical temporary folder, as Settings keeps a folder picked there: one picked again has its identity recorded
+/// under the name the tests look it up by.
+fn exact_root_fixture() -> (support::TempDir, Env, std::path::PathBuf, std::path::PathBuf) {
+    let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
     let source = temp.path().join("disk").join("demo");
     let archive = temp.path().join("archive");
@@ -226,7 +245,6 @@ fn replaced_standalone_archive_identity_blocks_preview_and_execution() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn archive_rechecks_a_replaced_destination_after_preview_and_inside_the_transaction() {
     let (_temp, env, source, archive) = exact_root_fixture();
     let mut service = Service::new(env.clone());
@@ -261,7 +279,6 @@ fn archive_rechecks_a_replaced_destination_after_preview_and_inside_the_transact
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn valid_alternative_and_explicit_archive_reselection_authorize_archiving() {
     let (temp, env, source, archive) = exact_root_fixture();
     let alternative = temp.path().join("other-disk");
@@ -276,7 +293,7 @@ fn valid_alternative_and_explicit_archive_reselection_authorize_archiving() {
     assert_eq!(config::load(&env)["rootIdentities"][archive.to_str().unwrap()], identity);
     assert!(service.request("archive/plan", &json!({"id":source})).is_err());
 
-    for destination in [alternative.join("demo"), env.home.join("cold/demo")] {
+    for destination in [alternative.join("demo"), env.home.join("cold").join("demo")] {
         let plan = service.request("archive/plan", &json!({"id":source,"destination":destination})).unwrap();
         assert_eq!(plan["dest"], json!(destination));
         let changed = service.request("archive", &json!({"id":source,"destination":destination})).unwrap();
@@ -298,7 +315,6 @@ fn valid_alternative_and_explicit_archive_reselection_authorize_archiving() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn nested_archive_selection_checks_its_identity_even_when_scan_roots_are_deduplicated() {
     let (temp, env, source, _) = exact_root_fixture();
     let root = temp.path().join("saved-disk");
@@ -327,8 +343,7 @@ fn archive_destination_requires_the_recorded_filesystem_device() {
     let mut service = Service::new(env.clone());
     service.request("setup/save", &json!({"roots":[source],"archiveDir":archive,"presets":[]})).unwrap();
     let mut cfg = config::load(&env);
-    // Windows records the volume where Unix records the device.
-    let field = if cfg!(windows) { "volume" } else { "device" };
+    let field = "device";
     let device = &mut cfg["rootIdentities"][archive.to_str().unwrap()][field];
     *device = json!(device.as_u64().unwrap().wrapping_add(1));
     config::save(&env, &cfg).unwrap();
@@ -340,7 +355,6 @@ fn archive_destination_requires_the_recorded_filesystem_device() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn exact_external_project_root_can_be_restored_after_archive() {
     let (_temp, env, source, archive) = exact_root_fixture();
     let mut service = Service::new(env.clone());
@@ -355,7 +369,6 @@ fn exact_external_project_root_can_be_restored_after_archive() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn failed_archive_step_rolls_back_an_exact_external_project_root() {
     let (_temp, env, source, archive) = exact_root_fixture();
     let mut service = Service::new(env.clone());
@@ -370,7 +383,6 @@ fn failed_archive_step_rolls_back_an_exact_external_project_root() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn exact_root_restore_refuses_a_replaced_parent_or_symlink() {
     let (temp, env, source, archive) = exact_root_fixture();
     let mut service = Service::new(env.clone());
@@ -392,13 +404,12 @@ fn exact_root_restore_refuses_a_replaced_parent_or_symlink() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn one_off_archive_honors_an_external_xdg_config_directory_without_granting_workspace_access() {
     let temp = tempfile::tempdir().unwrap();
     let mut env = Env::for_home(temp.path().join("home"));
     env.config_dir = temp.path().join("xdg/laci");
-    let source = env.home.join("projects/demo");
-    let destination = env.home.join("cold/demo");
+    let source = env.home.join("projects").join("demo");
+    let destination = env.home.join("cold").join("demo");
     write(&source.join("package.json"), "{}");
     let original = b"{ \"roots\": [\"~/projects\"], \"presets\": [] }\n";
     fs::create_dir_all(&env.config_dir).unwrap();
@@ -413,7 +424,6 @@ fn one_off_archive_honors_an_external_xdg_config_directory_without_granting_work
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn exact_root_restore_requires_the_recorded_filesystem_device() {
     let (_temp, env, source, archive) = exact_root_fixture();
     let mut service = Service::new(env.clone());
@@ -430,13 +440,12 @@ fn exact_root_restore_requires_the_recorded_filesystem_device() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn config_journal_scope_cannot_restore_a_neighboring_file() {
     let temp = tempfile::tempdir().unwrap();
     let mut env = Env::for_home(temp.path().join("home"));
     env.config_dir = temp.path().join("xdg/laci");
-    let source = env.home.join("projects/demo");
-    let destination = env.home.join("cold/demo");
+    let source = env.home.join("projects").join("demo");
+    let destination = env.home.join("cold").join("demo");
     let unrelated = env.config_dir.join("other.json");
     write(&source.join("package.json"), "{}");
     write(&unrelated, "untouched\n");

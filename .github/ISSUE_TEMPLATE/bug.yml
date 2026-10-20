@@ -11,15 +11,15 @@ body:
     id: os
     attributes:
       label: Operating system and version
-      description: For example Ubuntu 24.04, Fedora 42, Windows 11 or macOS 15.
+      description: For example Ubuntu 24.04, Fedora 42 or Arch Linux.
     validations:
       required: true
   - type: input
     id: version
     attributes:
       label: Laci version
-      description: Run `laci --version`, or look at the name of the file you installed, such as `laci_2.5.1_amd64.deb`.
-      placeholder: "2.5.1"
+      description: Run `laci --version`, or look at the name of the file you installed, such as `laci_2.5.2_amd64.deb`.
+      placeholder: "2.5.2"
     validations:
       required: true
   - type: dropdown

@@ -27,7 +27,6 @@ import {
 } from "../helpers";
 import { DeadlinePill } from "../deadline";
 import { HIDDEN_FILES_HINT } from "../hotkeys";
-import { FILE_MANAGER, OS } from "../platform";
 import { Select } from "../select";
 import { TerminalButton } from "../terminal-controls";
 import type { Entry, Node, Snapshot } from "../types";
@@ -347,8 +346,8 @@ export function Folder() {
         </div>
         <button
           className="icon-btn"
-          title={`Open in ${OS === "linux" ? "the file manager" : FILE_MANAGER}`}
-          aria-label={`Open in ${OS === "linux" ? "file manager" : FILE_MANAGER}`}
+          title="Open in the file manager"
+          aria-label="Open in file manager"
           onClick={() => external(s.cwd, "files")}
         >
           <Icon name="open" />

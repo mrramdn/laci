@@ -1,10 +1,10 @@
-//! What Linux and macOS share: the home folder from HOME, settings and cache in the XDG folders, files told apart by
-//! device and inode, the `flock` change lock, renames that never replace, links copied as links, and the programs Laci
+//! What Linux shares with other Unix systems: the home folder from HOME, settings and cache in the XDG folders, files
+//! told apart by device and inode, the `flock` change lock, renames that never replace, links copied as links, and the programs Laci
 //! finds, starts and stops.
 use super::{Dirs, Identity, Stamp};
 use crate::Result;
 use rustix::{
-    fs::{CWD, FlockOperation, RenameFlags, flock, renameat_with},
+    fs::{CWD, FlockOperation, OFlags, RenameFlags, flock, renameat_with},
     process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid},
 };
 use std::{
@@ -12,7 +12,7 @@ use std::{
     fs::{self, File, Metadata, OpenOptions},
     io::{self, Read, Write},
     os::unix::{
-        fs::{MetadataExt, PermissionsExt},
+        fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
         process::CommandExt,
     },
     path::{Path, PathBuf},
@@ -36,11 +36,8 @@ pub fn user_dirs(home: &Path) -> Result<Dirs> {
     Ok(dirs)
 }
 
-/// Laci v1's names for the device and the inode.
-pub const IDENTITY_FIELDS: [&str; 2] = ["device", "inode"];
-
 pub fn identity(_path: &Path, meta: &Metadata) -> Result<Identity> {
-    Ok(Identity { volume: meta.dev(), file: meta.ino().into() })
+    Ok(Identity { volume: meta.dev(), file: meta.ino() })
 }
 pub fn change_stamp(_path: &Path, meta: &Metadata) -> Result<Stamp> {
     Ok(stamp(meta))
@@ -50,7 +47,7 @@ pub fn file_change_stamp(_file: &File, meta: &Metadata) -> Result<Stamp> {
 }
 fn stamp(meta: &Metadata) -> Stamp {
     Stamp {
-        identity: Identity { volume: meta.dev(), file: meta.ino().into() },
+        identity: Identity { volume: meta.dev(), file: meta.ino() },
         modified: (meta.mtime(), meta.mtime_nsec()),
         changed: (meta.ctime(), meta.ctime_nsec()),
     }
@@ -140,8 +137,18 @@ pub fn preserve(meta: &Metadata, dest: &Path) -> Result<()> {
     file.set_times(times).map_err(|e| e.to_string())
 }
 
+/// A link isn't a folder here, so it is unlinked and nothing it leads to is touched.
+pub fn remove_all(path: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(path)?.is_dir() { fs::remove_dir_all(path) } else { fs::remove_file(path) }
+}
+
 pub fn copy_link(src: &Path, dest: &Path) -> Result<()> {
     std::os::unix::fs::symlink(fs::read_link(src).map_err(|e| e.to_string())?, dest).map_err(|e| e.to_string())
+}
+
+/// O_NOFOLLOW refuses a link, and O_NONBLOCK keeps a FIFO from blocking the open.
+pub fn open_nofollow(path: &Path) -> io::Result<File> {
+    OpenOptions::new().read(true).custom_flags((OFlags::NOFOLLOW | OFlags::NONBLOCK).bits() as i32).open(path)
 }
 
 pub fn which(program: &str, path: &OsStr) -> Option<PathBuf> {

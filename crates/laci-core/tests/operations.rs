@@ -21,7 +21,6 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 fn stamp(path: &Path) {
-    // Windows sets times only through a handle opened for writing.
     fs::OpenOptions::new()
         .write(true)
         .open(path)
@@ -34,8 +33,9 @@ fn stamp(path: &Path) {
         .unwrap();
 }
 fn fixture(env: &Env) -> (Value, PathBuf, PathBuf, PathBuf, String) {
-    let from = env.home.join("project/demo");
-    let to = env.home.join("project/_archive/demo");
+    // A name at a time, as Laci spells a path it was given.
+    let from = env.home.join("project").join("demo");
+    let to = env.home.join("project").join("_archive").join("demo");
     write(&from.join("README.md"), "# demo\noriginal bytes\n");
     write(&from.join(".serena/memories/context.md"), "keep inside history\n");
     let store = env.home.join(".claude/projects").join(paths::enc(&from.to_string_lossy()));
@@ -62,7 +62,6 @@ fn v1(env: &Env, args: &[&str]) -> Value {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn rust_move_can_be_undone_by_v1_without_losing_bytes_or_time() {
     let (_temp, env) = home();
     let (snap, from, to, store, original) = fixture(&env);
@@ -80,7 +79,6 @@ fn rust_move_can_be_undone_by_v1_without_losing_bytes_or_time() {
     assert!(!to.exists());
 }
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn v1_move_can_be_undone_by_rust_without_losing_bytes_or_time() {
     let (_temp, env) = home();
     let (_snap, from, to, store, original) = fixture(&env);
@@ -98,7 +96,6 @@ fn v1_move_can_be_undone_by_rust_without_losing_bytes_or_time() {
     assert!(!to.exists());
 }
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn connectors_move_and_restore_while_mentions_and_inside_history_stay_intact() {
     let (_temp, env) = home();
     let (mut snap, from, to, store, original) = fixture(&env);
@@ -113,7 +110,11 @@ fn connectors_move_and_restore_while_mentions_and_inside_history_stay_intact() {
     snap["connectors"] = json!([{"id":"logs","link":{"kind":"cwd","field":"project.path","dir":log.parent().unwrap()}},{"id":"named","link":{"kind":"named","naming":"sha256","dir":named.parent().unwrap()}},{"id":"plans","link":{"kind":"mentions","dir":mentions.parent().unwrap()}}]);
     snap["items"] = json!({"log":{"cwd":from.join("docs"),"connector":"logs","file":log},"named":{"cwd":from,"connector":"named","file":named},"mentions":{"cwd":from,"connector":"plans","file":mentions}});
     let j = ops::move_project(&env, &snap, "demo", to.to_str().unwrap(), &json!({})).unwrap();
-    assert!(fs::read_to_string(&log).unwrap().contains(to.join("docs").to_str().unwrap()));
+    // A journal the Log reads alone tells its change by the parts it was written with.
+    let entry = activity::read_log(&env, 5).into_iter().find(|e| e["journal"] == j["id"]).unwrap();
+    assert_eq!(entry["say"], json!({"form":"moved","name":"demo"}));
+    // As JSON writes it.
+    assert!(fs::read_to_string(&log).unwrap().contains(&json!(to.join("docs")).to_string()));
     assert_eq!(fs::read_to_string(&mentions).unwrap(), from.to_string_lossy());
     assert!(!named.exists());
     let expected =
@@ -128,7 +129,6 @@ fn connectors_move_and_restore_while_mentions_and_inside_history_stay_intact() {
     assert_eq!(fs::read_to_string(store.join("session.jsonl")).unwrap(), original);
 }
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn failed_history_rewrite_rolls_back_project_and_refuses_symlinks() {
     let (temp, env) = home();
     let (mut snap, from, to, _store, _original) = fixture(&env);
@@ -146,7 +146,6 @@ fn failed_history_rewrite_rolls_back_project_and_refuses_symlinks() {
     assert_eq!(journal["state"], "undone");
 }
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn destinations_quarantine_and_undo_reject_escape_and_overwrite() {
     let (temp, env) = home();
     let (snap, from, to, _store, _original) = fixture(&env);
@@ -173,7 +172,6 @@ fn destinations_quarantine_and_undo_reject_escape_and_overwrite() {
     assert!(ops::undo(&env, "../escape").is_err());
 }
 // Laci v1's lock holds a process id, and v1 ran on Unix alone; the busy program is the shell.
-#[cfg(unix)]
 #[test]
 fn compatible_pid_lock_and_busy_processes_prevent_changes() {
     let (_temp, env) = home();
@@ -192,7 +190,6 @@ fn compatible_pid_lock_and_busy_processes_prevent_changes() {
     assert!(from.is_dir());
 }
 // Linux cuts a program's name at 15 bytes, and a Unix file name can be bytes that aren't UTF-8.
-#[cfg(target_os = "linux")]
 #[test]
 fn busy_processes_with_names_or_folders_that_are_not_utf8_still_prevent_changes() {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
@@ -272,7 +269,6 @@ fn project_creation_template_validation_and_sidecar_edits_preserve_other_section
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn merging_history_restores_both_source_and_existing_destination() {
     let (_temp, env) = home();
     let (snap, from, to, store, original) = fixture(&env);

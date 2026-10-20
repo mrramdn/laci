@@ -3,7 +3,7 @@
 // fetches them.
 import "@fontsource-variable/plus-jakarta-sans";
 import "./simple.css";
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { LaciMark } from "../brand";
 import { useNow } from "../clock";
 import { Icon } from "../common";
@@ -131,6 +131,28 @@ const PLACES: { view: View; label: string; icon: string }[] = [
 const placeOf = (view: View): View =>
   view === "project" ? "folder" : view === "reports" ? "agents" : view;
 
+/**
+ * Whether the rail scrolls, as a short window makes it. Its column is as wide as the rail, but a
+ * browser may size it before it knows the rail scrolls, and keep that size until something else in
+ * the window moves: then the scrollbar takes its room from the places, whose words wrap. Saying so in
+ * a class has the column sized again, with the scrollbar's room (simple.css).
+ */
+function useScrolls() {
+  const ref = useRef<HTMLElement>(null);
+  const [now, setNow] = useState(false);
+  useLayoutEffect(() => {
+    const nav = ref.current;
+    if (!nav || typeof ResizeObserver === "undefined") return;
+    const measure = () => setNow(nav.scrollHeight > nav.clientHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(nav);
+    for (const part of nav.children) observer.observe(part);
+    return () => observer.disconnect();
+  }, []);
+  return { ref, now };
+}
+
 function Nav({ view }: { view: View }) {
   const snapshot = useApp((s) => s.snapshot!);
   const reportsSeen = useApp((s) => s.reportsSeen);
@@ -141,14 +163,16 @@ function Nav({ view }: { view: View }) {
   useSimple((s) => s.notNow);
   const urgent = urgentCount(homeModel(snapshot, now), readNotNow(dayOf(now)));
   const here = placeOf(view);
+  const scrolls = useScrolls();
   const counts: Partial<Record<View, [number, string]>> = {
     today: [urgent, shell.needYou(urgent)],
     tidy: [badges.suggestions, shell.suggestions(badges.suggestions)],
   };
   return (
     <nav
+      ref={scrolls.ref}
       id="side"
-      className="s-nav"
+      className={scrolls.now ? "s-nav s-nav-scrolls" : "s-nav"}
       aria-label={shell.nav}
       data-ui="nav"
       tabIndex={-1}

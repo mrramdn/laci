@@ -19,8 +19,11 @@
     outline: var(--focus-width) solid var(--brand);
     outline-offset: var(--focus-offset);
   }
+  /* A link sits in running text (a README, a summary, release notes): it is underlined, so it is
+     told apart by more than its colour (WCAG 1.4.1). Detailed's links stay as they are. */
   :root[data-design="simple"] a {
     color: var(--brand);
+    text-decoration: underline;
   }
   :root[data-design="simple"] .mono,
   .s-mono {
@@ -74,10 +77,15 @@
     container: shell / inline-size;
     height: 100vh;
   }
+  /* The rail is as wide as what is in it (.s-nav > *): 72 px, and the room of its scrollbar while a
+     short window makes it scroll, where scrollbars take room: GTK's classic ones, as with
+     GTK_OVERLAY_SCROLLING=0. A rail of a fixed 72 px gave that room up from its parts instead, until
+     their words broke and it scrolled sideways. Scrollbars that float over the page, as GTK's do by
+     default, take none. */
   .s-frame {
     display: grid;
     height: 100%;
-    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-columns: max-content minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
     grid-template-areas: "side main" "side term";
   }
@@ -103,6 +111,16 @@
     background: var(--canvas);
     border-right: 1px solid var(--line);
     outline: none;
+  }
+  /* The rail scrolls (SimpleShell's useScrolls): its column makes room for the scrollbar. */
+  .s-nav-scrolls {
+    scrollbar-gutter: stable;
+  }
+  /* 72 px less the rail's padding and border. A browser that leaves the scrollbar's room out of the
+     rail all the same squeezes the parts, and their words wrap rather than spill. */
+  .s-nav > * {
+    width: 59px;
+    max-width: 100%;
   }
   .s-brand {
     display: flex;
@@ -199,11 +217,14 @@
     min-height: 48px;
     padding-block: 4px;
   }
+  /* In the rail the toggle's buttons take nearly its whole width, and their words need no padding:
+     "Detailed" takes 54 px of 55. The padding of both used to leave it 39, and it stuck out of the
+     toggle. In a rail that is squeezed all the same the words wrap, as the places' do, not spill. */
   .s-seg {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    padding: 3px;
+    padding: 3px 1px;
     margin: 6px 0;
     border: 1px solid var(--line);
     border-radius: 10px;
@@ -211,12 +232,13 @@
   }
   .s-seg-btn {
     min-height: 32px;
-    padding: 4px 6px;
+    padding: 4px 0;
     border: 0;
     border-radius: 7px;
     background: none;
     color: var(--ink-2);
     font: 600 13px/18px var(--font);
+    overflow-wrap: anywhere;
     cursor: pointer;
   }
   .s-seg-btn[aria-pressed="true"] {
@@ -260,6 +282,9 @@
     .s-nav {
       padding: 16px 12px;
     }
+    .s-nav > * {
+      width: auto;
+    }
     .s-brand {
       flex-direction: row;
       gap: 10px;
@@ -293,10 +318,12 @@
     }
     .s-seg {
       flex-direction: row;
+      padding: 3px;
       margin: 8px 0;
     }
     .s-seg-btn {
       flex: 1;
+      padding: 4px 6px;
       font-size: 14px;
     }
     .s-scan {
@@ -995,6 +1022,11 @@
   }
   .s-home-grid > * + * {
     margin-top: 32px;
+  }
+  /* A card below an empty Home is as wide as what it sits under. */
+  .s-home > .s-card {
+    max-width: 480px;
+    margin: 32px auto 0;
   }
   .s-hero {
     display: grid;

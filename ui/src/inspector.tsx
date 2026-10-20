@@ -1188,7 +1188,7 @@ function AgentsTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
           return dir ? (
             <div className="kv-fragment" key={id}>
               <dt>Claude Code</dt>
-              <dd className="mono" style={{ fontSize: 11 }}>
+              <dd className="mono">
                 ~/.claude/projects/{dir.name}
                 <br />
                 <span className="faint">
@@ -1206,7 +1206,7 @@ function AgentsTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
           return c && c.link.kind !== "inside" ? (
             <div className="kv-fragment" key={id}>
               <dt>{c.name}</dt>
-              <dd className="mono" style={{ fontSize: 11 }}>
+              <dd className="mono">
                 {c.where}
               </dd>
             </div>
@@ -1215,7 +1215,7 @@ function AgentsTab({ node: n, snapshot }: { node: Node; snapshot: Snapshot }) {
         {n.agents.aiFiles.length ? (
           <>
             <dt>In folder</dt>
-            <dd className="mono" style={{ fontSize: 11 }}>
+            <dd className="mono">
               {n.agents.aiFiles.join(", ")}
             </dd>
           </>

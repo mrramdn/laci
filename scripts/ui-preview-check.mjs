@@ -51,6 +51,7 @@ export const SCREENS = [
   "archive",
   "delete",
   "clean",
+  "upgrade",
 ];
 /** The first width of each of Simple's tiers, and the window the app opens in. All 900 high. */
 export const SIZES = ["720x900", "840x900", "1200x900", "1440x900", "1600x900"];
@@ -72,7 +73,11 @@ for drawing without an error, and the screenshots are kept.
                      changed pixel fails.
   --axe              inject axe-core. Serious and critical findings fail Simple; Detailed is only
                      reported
-  --overflow         fails when the document scrolls sideways
+  --overflow         fails when the document, or a box that scrolls by itself such as a sidebar,
+                     scrolls sideways
+  --scrollbars       scrollbars that take room, as GTK's classic ones do (GTK_OVERLAY_SCROLLING=0).
+                     Headless Chromium hides them otherwise, so a page looks as with GTK's
+                     default ones, which float
   --rules            Simple only: one filled button per screen, no text under 13 px, an icon and
                      words on every status, targets of at least 24x24 px
   --strict           a screen that Simple does not show yet fails, instead of being skipped
@@ -112,13 +117,14 @@ export function parseArgs(argv) {
     compare: undefined,
     axe: false,
     overflow: false,
+    scrollbars: false,
     rules: false,
     strict: false,
     jobs: defaultJobs(),
     browser: undefined,
     help: false,
   };
-  const switches = ["axe", "overflow", "rules", "strict", "help"];
+  const switches = ["axe", "overflow", "scrollbars", "rules", "strict", "help"];
   const valued = ["design", "screens", "widths", "themes", "out", "compare", "jobs", "browser"];
   for (let i = 0; i < argv.length; i++) {
     const [flag, inline] = argv[i].split(/=(.*)/s);
@@ -223,7 +229,7 @@ export function serve(dir) {
 }
 
 /** Builds ui/preview.html of the checkout `tree` into `outDir`, with that checkout's own Vite. */
-async function buildPreview(tree, outDir) {
+export async function buildPreview(tree, outDir) {
   const input = path.join(tree, "ui", "preview.html");
   if (!existsSync(input))
     throw new UsageError(`${tree} has no ui/preview.html: it is older than the browser preview`);
@@ -324,6 +330,16 @@ async function simpleMore(page, item) {
 }
 
 /**
+ * Today or Home on a setup from before 3.0, which has no choice about new versions yet, so their
+ * card asks once (?updates=unset). Every other screen has the choice saved.
+ */
+const upgrader = (design) => async (page) => {
+  await page.goto(`${page.url()}&updates=unset`, { timeout: BOOT_MS });
+  await designs[design].home(page).waitFor({ timeout: BOOT_MS });
+  await page.locator('[data-ui="updates-offer"]').waitFor();
+};
+
+/**
  * How each design gets to each screen from the page it draws first. `home` is what shows once the
  * design has drawn at all. A screen's function ends when the screen is up.
  */
@@ -362,6 +378,7 @@ const designs = {
         await page.locator("#insp").getByRole("button", { name: "Delete build output…" }).click();
         await dialogShown(page);
       },
+      upgrade: upgrader("detailed"),
     },
   },
   // The five places, Settings, and a project's Archive, Delete and Free up space sheets through
@@ -402,6 +419,7 @@ const designs = {
         await simpleProject(page, HEAVY);
         await simpleMore(page, "Free up space");
       },
+      upgrade: upgrader("simple"),
     },
   },
 };
@@ -468,6 +486,31 @@ export function measureOverflow() {
       if (offenders.length === 5) break;
     }
   return { scrollWidth, clientWidth, offenders };
+}
+
+/**
+ * The boxes that scroll sideways by themselves, as a sidebar does when its own scrollbar squeezes
+ * it: `{ where, scrollWidth, clientWidth }` for the first five. The document is measureOverflow's.
+ * Code keeps its lines, a text field scrolls its own text and the terminal is its own, so those are
+ * left out, as desktop-smoke leaves them out of its check of a narrow window.
+ */
+export function measureBoxes() {
+  const found = [];
+  for (const box of document.body.querySelectorAll("*")) {
+    if (box.closest("pre, code, input, textarea, select, .xterm")) continue;
+    if (!box.getClientRects().length) continue;
+    if (!["auto", "scroll"].includes(getComputedStyle(box).overflowX)) continue;
+    if (box.scrollWidth <= box.clientWidth + 1) continue;
+    const classes = typeof box.className === "string" ? box.className.trim().split(/\s+/) : [];
+    const named = classes.filter(Boolean).slice(0, 2).join(".");
+    found.push({
+      where: `${box.tagName.toLowerCase()}${box.id ? `#${box.id}` : ""}${named ? `.${named}` : ""}`,
+      scrollWidth: box.scrollWidth,
+      clientWidth: box.clientWidth,
+    });
+    if (found.length === 5) break;
+  }
+  return found;
 }
 
 /**
@@ -635,14 +678,18 @@ export async function visitPage({ browser, side, shot, want, axePath, stepMs = S
     for (const font of await page.evaluate(untilFonts)) problem(`font failed to load: ${font}`);
     // The page is what the address asked for, and its clock stands where it was set.
     const state = await page.evaluate(() => ({ ...document.documentElement.dataset, now: Date.now() }));
-    for (const [key, wanted] of Object.entries({ design: shot.design, theme: shot.theme, os: "linux" }))
+    for (const [key, wanted] of Object.entries({ design: shot.design, theme: shot.theme }))
       if (state[key] !== wanted) problem(`<html> has data-${key}=${state[key]}, wanted ${wanted}`);
     if (state.now !== side.now.getTime()) problem("the clock is not held at the time of the fixtures");
     await page.evaluate(untilQuiet, [250, 5_000]);
     // A pointer left over a button would draw it hovered.
     await page.mouse.move(-1, -1);
     if (want.shoot) found.png = await page.screenshot({ animations: "disabled" });
-    if (want.overflow) found.overflow = await page.evaluate(measureOverflow);
+    if (want.overflow)
+      found.overflow = {
+        ...(await page.evaluate(measureOverflow)),
+        boxes: await page.evaluate(measureBoxes),
+      };
     if (want.rules) found.rules = await page.evaluate(pageRules);
     if (want.axe) {
       await page.addScriptTag({ path: axePath });
@@ -760,7 +807,6 @@ async function prepare(options, onExit) {
     const install = spawnSync("pnpm", ["install", "--frozen-lockfile", "--prefer-offline"], {
       cwd: checkout,
       encoding: "utf8",
-      shell: process.platform === "win32",
     });
     if (install.status !== 0)
       throw new Error(
@@ -895,7 +941,10 @@ export async function takeShots({
       }
       report.compare.set(shot.screen, row);
     }
-    if (now.overflow && now.overflow.scrollWidth > now.overflow.clientWidth)
+    if (
+      now.overflow &&
+      (now.overflow.scrollWidth > now.overflow.clientWidth || now.overflow.boxes?.length)
+    )
       report.overflow.push({ shot, ...now.overflow });
     for (const rule of now.rules ?? []) report.rules.push({ shot, ...rule });
     for (const violation of now.axe ?? []) {
@@ -962,10 +1011,16 @@ export function print({ options, out, trees, drawn, shots, report, problems, not
   if (options.overflow) {
     const wide = report.overflow.sort((a, b) => nameOf(a.shot).localeCompare(nameOf(b.shot)));
     for (const item of wide.slice(0, 30)) {
-      const what = item.offenders.length ? ` (${item.offenders.join("; ")})` : "";
-      console.log(
-        `overflow: ${nameOf(item.shot)}: ${item.scrollWidth} px of content in ${item.clientWidth} px${what}`,
-      );
+      if (item.scrollWidth > item.clientWidth) {
+        const what = item.offenders.length ? ` (${item.offenders.join("; ")})` : "";
+        console.log(
+          `overflow: ${nameOf(item.shot)}: ${item.scrollWidth} px of content in ${item.clientWidth} px${what}`,
+        );
+      }
+      for (const box of item.boxes ?? [])
+        console.log(
+          `overflow: ${nameOf(item.shot)}: ${box.where} scrolls sideways: ${box.scrollWidth} px of content in ${box.clientWidth} px`,
+        );
     }
     if (wide.length > 30) console.log(`overflow: … and ${wide.length - 30} more`);
     if (wide.length) problems.push(`${count(wide.length, "shot")} scroll sideways`);
@@ -1066,6 +1121,8 @@ export async function main(argv) {
       executablePath: browserPath,
       headless: true,
       args: ["--disable-partial-raster"],
+      // Playwright hides headless Chromium's scrollbars; --scrollbars keeps them, taking room.
+      ...(options.scrollbars ? { ignoreDefaultArgs: ["--hide-scrollbars"] } : {}),
     });
     exits.push(() => browser.close());
     const problems = [];
@@ -1087,7 +1144,7 @@ export async function main(argv) {
     console.log(
       `Taking ${count(shots.length, "shot")}: ${drawn.join(" and ") || "none"} · ` +
         `${options.screens.length} screens · ${sizes} · ${options.themes.join(" and ")} · ` +
-        `${options.jobs} at a time`,
+        `${options.scrollbars ? "scrollbars that take room · " : ""}${options.jobs} at a time`,
     );
     const report = await takeShots({
       options, want, out, trees, browser, axePath, pixels, shots, problems, notes,

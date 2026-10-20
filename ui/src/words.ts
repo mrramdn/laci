@@ -1,11 +1,9 @@
 // Every word Simple shows, by area, so the wording can be read, changed and later translated in one
-// place. Detailed keeps its own words; Help, shared by both, takes its words from here too. The
-// system's own names (Trash or Recycle Bin, ⌘ or Ctrl) come from platform.ts.
+// place. Detailed keeps its own words; Help, shared by both, takes its words from here too.
 //
 // Writing rules (design-research §3.4): plain words with the Git term one ⓘ away, sentence case,
 // times in words ("23 minutes ago", never "23 min"), and no idioms, so the text translates well.
-// Pure: it imports only platform.ts, so the tests read it as it is.
-import { TRASH, withMod } from "./platform";
+// Pure: it imports nothing, so the tests read it as it is.
 
 /** "1 project", "2 projects"; `many` for words that don't just take an s. */
 export const count = (n: number, one: string, many = `${one}s`) =>
@@ -96,7 +94,7 @@ export const shell = {
     `Laci checked your project folders ${when}. It watches them and updates by itself.`,
   search: "Search",
   searchLabel: (keys: string) => `Search and actions (${keys})`,
-  searchKey: withMod("K"),
+  searchKey: "Ctrl K",
 };
 
 /** The parts every screen is built from. */
@@ -453,8 +451,6 @@ export const project = {
     undo: "Undo",
     undoThis: (title: string) => `Undo: ${title}`,
     undone: "Undone",
-    you: "You",
-    byAi: "Your AI",
     empty: "No changes yet. What you or your AI change here shows up in Activity.",
     loading: "Reading Activity…",
     failed: "Laci couldn’t read Activity just now.",
@@ -669,8 +665,8 @@ export const glossary: Term[] = [
   },
   {
     id: "trash",
-    term: `Move to ${TRASH}`,
-    info: `Laci can’t undo this. Restore it from the ${TRASH}.`,
+    term: "Move to Trash",
+    info: "Laci can’t undo this. Restore it from the Trash.",
     was: "Move to Trash",
   },
   {
@@ -819,7 +815,7 @@ export const glossary: Term[] = [
   {
     id: "search",
     term: "Search and actions",
-    info: `One search box for every project, chat and action. Open it with ${withMod("K")}.`,
+    info: `One search box for every project, chat and action. Open it with Ctrl K.`,
     was: "Command palette",
   },
   {
@@ -853,7 +849,7 @@ export const help = {
     "Laci only reads your project folders. It changes nothing until you ask.",
     "Every change, by you or by your AI, is listed in Activity. Most can be undone there.",
     "Archive comes before deleting. An archived project keeps its AI chats and can come back.",
-    `What can’t be undone, like moving a project to the ${TRASH}, waits 5 seconds first, so you can cancel.`,
+    "What can’t be undone, like moving a project to the Trash, waits 5 seconds first, so you can cancel.",
     "Before a first saved version or an upload, Laci looks for files that look like passwords or keys, so they stay off the internet.",
     "When you ask your AI to fix something, Laci asks it to show each command first, and never to force an upload, rewrite the history or delete a line of work.",
     "What Laci learns about your projects stays on this computer.",
@@ -930,22 +926,27 @@ export const firstRun = {
     off: "Laci won’t look by itself.",
   },
   updatesFailed: "Laci couldn’t save your choice about new versions",
-  folderAccessTitle: "macOS asks first",
-  folderAccess:
-    "The first time Laci looks in Documents, Desktop, Downloads or a drive, macOS asks whether it may. Choose Allow, so Laci can find your projects there. You can change it later in System Settings, under Privacy & Security, then Files and Folders.",
-  moveTitle: "Move Laci to Applications",
-  moveBody:
-    "Laci is running from where it was downloaded. Move it to the Applications folder and open it from there, so your AI tools can always find it.",
+  /** On that card, under `updatesSends`: what checking does and doesn't do, as `updatesNotes.daily` says it. */
+  updatesNoInstall:
+    "Laci tells you when a new version is ready, and installs nothing until you choose to.",
+  /**
+   * The card that asks the same question once of a setup from before 3.0, whose config.json has no
+   * choice yet: on Detailed's Today and Simple's Home, under `updatesTitle`, `updatesSends` and
+   * `updatesNoInstall`.
+   */
+  updatesAsk: {
+    daily: "Check daily",
+    off: "Don’t check",
+  },
+  /** After a choice on that card, below what Settings says once a choice is saved. */
+  updatesLater: "You can change it in Settings.",
   installTitle: (program: string) => `Install ${program}`,
   installBody: (program: string) =>
     `Laci reads the saved versions of your projects with ${program}, a free program that isn’t on this computer yet.`,
-  /** Followed by the line to type. */
-  installMac:
-    "macOS installs it with Apple’s command line tools. Open Terminal, type this line and press Enter:",
   installLink: "How to install it",
 };
 
-/** Search and actions (Ctrl K, ⌘K on a Mac) in Simple: its groups, its actions and its hints. */
+/** Search and actions (Ctrl K) in Simple: its groups, its actions and its hints. */
 export const search = {
   label: "Search and actions",
   placeholder: (summaries: boolean) =>
@@ -1076,10 +1077,10 @@ export const cleanup = {
     button: "Set aside",
     doing: "Setting the AI chats aside…",
     done: "AI chats set aside",
-    trash: `Move to the ${TRASH} instead…`,
-    trashCounting: `Moving these AI chats to the ${TRASH}`,
-    trashDoing: `Moving the AI chats to the ${TRASH}…`,
-    trashDone: `AI chats moved to the ${TRASH}`,
+    trash: "Move to the Trash instead…",
+    trashCounting: "Moving these AI chats to the Trash",
+    trashDoing: "Moving the AI chats to the Trash…",
+    trashDone: "AI chats moved to the Trash",
     blockedTitle: "AI chats Laci can’t check",
     blocked:
       "Laci can’t confirm that their project folder is gone, so it leaves them alone.",
@@ -1251,11 +1252,11 @@ export const activity = {
     setAside: (name: string) => `Set aside the AI chats left from ${name}`,
     setAsideAny: "Set aside leftover AI chats",
     trashedChats: (name: string) =>
-      `Moved the AI chats left from ${name} to the ${TRASH}`,
-    trashedChatsAny: `Moved leftover AI chats to the ${TRASH}`,
+      `Moved the AI chats left from ${name} to the Trash`,
+    trashedChatsAny: "Moved leftover AI chats to the Trash",
     deletedChat: (title: string) => `Deleted the chat “${title}”`,
     deletedChats: (n: number) => `Deleted ${count(n, "chat")}`,
-    trashed: (name: string) => `Moved ${name} to the ${TRASH}`,
+    trashed: (name: string) => `Moved ${name} to the Trash`,
     hidSuggestion: "Hid a suggestion for 90 days",
     suggestedAgain: "Brought back a hidden suggestion",
     copied: (n: number) => `Copied ${count(n, "chat file")}`,
@@ -1271,6 +1272,67 @@ export const activity = {
     stoppedUse: (ai: string) => `Stopped ${ai} from using Laci`,
     created: (name: string) => `Created ${name}`,
   },
+};
+
+/**
+ * The sentence for each form of change the engine records with a Log entry since Laci 3.0 (its
+ * "say": the form and its parts, laci-core's service.rs and what it calls), keyed by the form.
+ * Activity hands each the parts it needs. Most say what `activity.changes` says for the same change
+ * found in an older entry's title.
+ */
+const told = activity.changes;
+export const logForms = {
+  undid: told.undidAny,
+  moved: told.moved,
+  archived: told.archived,
+  reconnected: told.reconnected,
+  chatsForGone: { kept: told.setAsideAny, trashed: told.trashedChatsAny },
+  chatsForDeleted: { kept: told.setAside, trashed: told.trashedChats },
+  finishedMoves: told.finishedMoves,
+  freed: told.freed,
+  clearedBuild: told.freedIn,
+  deletedChat: told.deletedChat,
+  deletedChats: told.deletedChats,
+  keptOut: told.keptOut,
+  setStatus: told.status,
+  clearedStatus: told.statusByLaci,
+  setPriority: told.priority,
+  clearedPriority: told.noPriority,
+  setDeadline: told.due,
+  clearedDeadline: told.noDue,
+  setClient: (name: string, client: string) => `Set the client of ${name} to ${client}`,
+  clearedClient: (name: string) => `Removed the client of ${name}`,
+  muted: told.hidWarning,
+  unmuted: told.warnAgain,
+  changedMuted: told.hiddenWarnings,
+  addedStep: told.addedStep,
+  ticked: told.ticked,
+  unticked: told.unticked,
+  editedTodo: told.editedTodo,
+  deletedStep: told.deletedStep,
+  editedNotes: told.notes,
+  addedHistory: told.showsChats,
+  removedHistory: told.hidesChats,
+  addedTool: told.addedTool,
+  removedTool: told.removedTool,
+  closedItem: told.closedItem,
+  reopenedItem: told.openedItem,
+  trashed: told.trashed,
+  dismissed: told.hidSuggestion,
+  suggestedAgain: told.suggestedAgain,
+  backedUp: told.copied,
+  backupUpToDate: told.copyUpToDate,
+  autoBackupOn: told.copyOn,
+  autoBackupOff: told.copyOff,
+  restoredChat: told.putBack,
+  restoredChatAny: told.putBackAny,
+  emptiedKept: told.emptiedKept,
+  removedOldUndo: told.removedOldUndo,
+  removedLaci1: told.removedLaci1,
+  letUse: told.letUse,
+  stoppedUse: told.stoppedUse,
+  created: told.created,
+  changedSettings: told.settings,
 };
 
 /** AI helpers: the chats of every project, the summaries your AI writes, and the AI tools Laci knows. */
@@ -1580,7 +1642,15 @@ export const settings = {
   remove: "Remove",
   removeFor: (folder: string) => `Remove ${folder}`,
   addFolder: "Add a folder…",
+  /**
+   * What a screen reader calls this button, which says which folder it chooses. Like
+   * chooseArchiveName and chooseSummariesName, it starts with the button's own words.
+   */
+  addFolderName: "Add a folder where you keep projects",
   addFolderTitle: "Choose a folder where you keep projects",
+  /** A whole disk chosen as a project folder, here or on Home: Laci doesn’t take it. */
+  wholeDisk: "Laci doesn’t look through a whole disk",
+  wholeDiskNote: "Choose the folder where you keep projects.",
   suggest: "Suggest folders",
   suggesting: "Looking for folders…",
   suggestions: "Folders with projects in them",
@@ -1591,6 +1661,7 @@ export const settings = {
   archive: "Archive folder",
   archiveNearest: "Each project goes to the nearest folder named _archive.",
   chooseArchive: "Choose folder…",
+  chooseArchiveName: "Choose folder for archived projects",
   chooseArchiveTitle: "Choose your archive folder",
   useNearest: "Use the nearest _archive folder",
 
@@ -1611,6 +1682,7 @@ export const settings = {
     read: (n: number) => `${count(n, "summary", "summaries")} found.`,
   },
   chooseSummaries: "Choose folder…",
+  chooseSummariesName: "Choose folder for summaries",
   chooseSummariesTitle: "Choose the folder your AI writes summaries in",
   stopSummaries: "Stop showing summaries",
   models: "Model and thinking effort",
@@ -1640,7 +1712,7 @@ export const settings = {
   updateNotes: {
     daily:
       "Laci tells you when a new version is ready, and installs nothing until you choose to.",
-    off: "Laci won’t look by itself. You can still download a new version from GitHub.",
+    off: "Laci won’t look by itself. Use Check now to look once.",
   },
   updatesUnset: "You haven’t chosen yet, so Laci doesn’t look.",
   updatesPrivacy:
@@ -1690,13 +1762,8 @@ export const settings = {
  * before the system's bin, and what can't be undone says so before its Countdown.
  */
 export const dialogs = {
-  /** How to get a folder back from the system's bin, on `os` (linux, macos or windows). */
-  restoreSteps: (os: string) =>
-    os === "macos"
-      ? "To get it back, open the Trash in the Dock and choose Put Back."
-      : os === "windows"
-        ? "To get it back, open the Recycle Bin on the desktop and choose Restore."
-        : "To get it back, open the Trash in your file manager and choose Restore.",
+  /** How to get a folder back from the Trash. */
+  restoreSteps: "To get it back, open the Trash in your file manager and choose Restore.",
   busy: "Laci is finishing another change. Try again in a moment.",
   checkAgain: "Check again",
   /** What "Show details" holds. */
@@ -1710,15 +1777,15 @@ export const dialogs = {
   },
   delete: {
     title: (name: string) => `Delete ${name}?`,
-    intro: `Archiving is the safer choice: you can undo it. Laci can’t undo a move to the ${TRASH}.`,
-    introArchived: `It is in your archive folder already. Laci can’t undo a move to the ${TRASH}.`,
+    intro: "Archiving is the safer choice: you can undo it. Laci can’t undo a move to the Trash.",
+    introArchived: "It is in your archive folder already. Laci can’t undo a move to the Trash.",
     lost: "What could be lost",
     checking: "Checking that nothing would be lost…",
     allSaved: "Everything in it is saved and online.",
     onlyHere:
       "Only this computer has these files. Your online copy can’t give them back:",
     more: (n: number) => `and ${count(n, "more file")}`,
-    blocked: (name: string) => `Laci can’t move ${name} to the ${TRASH} yet.`,
+    blocked: (name: string) => `Laci can’t move ${name} to the Trash yet.`,
     blockedWhy:
       "Laci does it only once every saved version is online, every change is saved as a version, nothing is set aside, and no program is using the folder. Show details says what stopped it.",
     noHistory:
@@ -1728,15 +1795,15 @@ export const dialogs = {
     archiveNote: (name: string) =>
       `Laci moves ${name}, with its AI chats, to your archive folder. You can undo it in Activity.`,
     typeName: (name: string) =>
-      `Type ${name} to move it to the ${TRASH} with these files`,
-    trash: `Move to ${TRASH}`,
+      `Type ${name} to move it to the Trash with these files`,
+    trash: "Move to Trash",
     trashNote: "Laci can’t undo this.",
     notYet: "Not possible yet. The reason is above.",
     typeFirst: "Type the name above first.",
-    counting: (name: string) => `Moving ${name} to the ${TRASH}`,
-    moving: (name: string) => `Moving ${name} to the ${TRASH}…`,
-    moved: (name: string) => `Moved ${name} to the ${TRASH}`,
-    moveFailed: (name: string) => `Laci couldn’t move ${name} to the ${TRASH}.`,
+    counting: (name: string) => `Moving ${name} to the Trash`,
+    moving: (name: string) => `Moving ${name} to the Trash…`,
+    moved: (name: string) => `Moved ${name} to the Trash`,
+    moveFailed: (name: string) => `Laci couldn’t move ${name} to the Trash.`,
   },
   archive: {
     title: (name: string) => `Archive ${name}?`,
@@ -1779,5 +1846,201 @@ export const dialogs = {
     freeing: (name: string) => `Freeing up space in ${name}…`,
     freed: (size: string, name: string) => `Freed ${size} in ${name}`,
     failed: (name: string) => `Laci couldn’t free up space in ${name}.`,
+  },
+};
+
+/**
+ * Detailed's words for a new version of Laci, at the foot of its sidebar and in its palette, and for
+ * the look for secret files before a fix that saves or uploads versions. Its buttons keep their Git
+ * names (FIX_LABEL in helpers.ts); what they open says it plainly.
+ */
+export const detailedData = {
+  update: {
+    /** The badge: what it says beside the new version, or beside how much of it has arrived. */
+    badge: {
+      available: "Update available",
+      downloading: "Downloading update",
+      ready: "Update ready",
+    },
+    /** What the badge says when it is pointed at, and to a screen reader after its words. */
+    badgeNote: {
+      available: (version: string) =>
+        `Laci ${version} is available. Settings shows how to get it.`,
+      downloading: (version: string) =>
+        `Laci is downloading ${version}. Settings shows how far it is.`,
+      ready: (version: string) =>
+        `Laci ${version} is installed. Restart Laci from Settings to use it.`,
+    },
+    check: "Check for updates",
+    install: "Install update",
+    restart: "Restart to update",
+    page: "Open the release page",
+    /** Beside a command: the version it brings. */
+    version: (version: string) => `Laci ${version}`,
+    /** Beside Restart to update while terminals are open: they close with Laci. */
+    closes: (n: number) => `closes ${count(n, "open terminal")}`,
+    checking: "Checking for updates…",
+    upToDate: "Laci is up to date",
+    current: (version: string) => `Version ${version} is the newest.`,
+    found: (version: string) => `Laci ${version} is available`,
+    foundClick: "Install it in Settings, or search for Install update.",
+    foundNotice: "Settings links to its release page.",
+    checkFailed: "Couldn’t check for updates",
+    downloading: (version: string) => `Downloading Laci ${version}…`,
+    downloadingNote: "Nothing changes until Laci restarts.",
+    installFailed: "Couldn’t install the update",
+    restartFailed: "Couldn’t restart",
+  },
+  secrets: {
+    title: (name: string) => `Files in ${name} look like passwords or keys`,
+    /** The title while Laci looks again, or when it couldn't look: nothing is known to be found. */
+    checkTitle: (name: string) => `Check ${name} for passwords or keys`,
+    /** `fix` is the button that was pressed. */
+    intro: (fix: string) =>
+      `Laci looked at the names of the files before “${fix}”. It never opens them.`,
+    checking: "Looking for files that look like passwords or keys…",
+    loose: "Not in .gitignore yet",
+    tracked: "Already in the history",
+    trackedNote:
+      ".gitignore can’t take a file out of the history. Ask your AI to stop tracking it first.",
+    more: (n: number) => `and ${count(n, "more file")}`,
+    failed: "Laci couldn’t look for files like these.",
+    checkAgain: "Check again",
+    keepOut: "Keep these out",
+    keepNote:
+      "Keep these out adds them to .gitignore, then goes on. The Log can undo it.",
+    goOnFailed: "Continue goes on without the check.",
+    keeping: "Keeping them out…",
+    keptOut: "Added to .gitignore",
+    goOn: "Continue",
+    cancel: "Cancel",
+  },
+};
+
+/**
+ * What Detailed's Settings, Archive and New project gained in 3.0: the "Choose…" beside each folder
+ * field, and Settings › About & updates. How often Laci looks for a new version is said as first
+ * run says it (`firstRun`), so the same question reads the same everywhere. The rest of Detailed
+ * keeps its words in its components.
+ */
+export const detailedSettings = {
+  /** The button beside a folder field, which opens the system's folder picker. */
+  choose: "Choose…",
+  /**
+   * The picker's title for each field. It is also what a screen reader calls the field's Choose…
+   * button, so each button says which folder it chooses; each starts with the button's own word.
+   */
+  addFolderTitle: "Choose a folder where you keep projects",
+  archiveFolderTitle: "Choose your archive folder",
+  reportsFolderTitle: "Choose the folder for reports",
+  destinationTitle: (name: string) => `Choose where to archive ${name}`,
+  locationTitle: "Choose where the new project goes",
+  templateTitle: "Choose a folder to start new projects from",
+  /** A folder chosen that Laci doesn’t take as a place to keep projects. */
+  wholeDisk:
+    "Laci doesn’t look through a whole disk. Choose the folder where you keep projects.",
+
+  // Settings › About & updates
+  updatesTitle: "About & updates",
+  updatesIntro:
+    "The version you run, and whether a newer one is out. A change here takes effect at once and needs no saving.",
+  version: (version: string) => `Version ${version}`,
+  reading: "Reading the update status…",
+  neverLooked: "Laci hasn’t looked for a new version yet.",
+  /** `when` is "5 minutes ago", or empty. */
+  upToDate: (when: string) =>
+    `No newer version was found${when ? ` ${when}` : ""}.`,
+  looking: "Looking for a new version…",
+  available: (version: string, when: string) =>
+    `Version ${version} is available${when ? `, published ${when}` : ""}.`,
+  downloading: (version: string, percent?: number) =>
+    `Downloading version ${version}…${percent === undefined ? "" : ` ${percent}%`}`,
+  ready: (version: string) =>
+    `Version ${version} is ready. Restart Laci to finish.`,
+  /** When the desktop gives no reason for a failure. */
+  failed: "Laci couldn’t update.",
+  /** The one button, by what it does. */
+  check: "Check now",
+  checking: "Checking…",
+  install: "Install",
+  installing: "Installing…",
+  restart: "Restart",
+  releasePage: "Open the release page",
+  restartNote:
+    "Restarting closes Laci’s terminals and the AI chats running in them.",
+  /** Why there is a link to the release page and no Install. */
+  noticeNote:
+    "Laci can’t replace this copy of itself: a package manager or a script put it here. Get the new version from its release page.",
+  whatsNew: (version: string) => `What’s new in ${version}`,
+  notesBlocked: "Release notes can open web and mail links only",
+  remoteImages: (n: number) =>
+    `${count(n, "image")} from the web ${n === 1 ? "is" : "are"} not loaded.`,
+  loadImages: "Load images",
+  /** The question about looking by itself, which Settings asks in a section of its own. */
+  updatesChoice: "Looking for new versions",
+  updatesUnset: "You haven’t chosen yet, so Laci doesn’t look.",
+  updatesSaved: {
+    daily: "Laci looks for new versions once a day",
+    off: "Laci won’t look for new versions",
+  },
+};
+
+/**
+ * Simple's update parts and the follow-ups from the review of its pages: the panel in Settings ›
+ * Updates and the card on Home say each step of an update in these words, and a summary item closed
+ * from AI helpers or Home says in Simple's words what it did. The desktop writes its own refusals and
+ * failures for the window ("Laci is busy with a change. Update when it's done."), so those show as
+ * they come.
+ */
+export const polish = {
+  updates: {
+    loading: "Reading the update status…",
+    unread: "Laci couldn’t read the update status.",
+    tryAgain: "Try again",
+    checking: "Looking for a new version…",
+    upToDate: "Up to date",
+    versionNow: (version: string) => `You have version ${version}.`,
+    lastChecked: (when: string) => `Last checked ${when}.`,
+    neverChecked: "Laci hasn’t looked for a new version yet.",
+    checkNow: "Check now",
+    checkAgain: "Check again",
+    readyToInstall: (version: string) => `Version ${version} is ready to install.`,
+    isAvailable: (version: string) => `Version ${version} is available.`,
+    released: (when: string) => `Released ${when}.`,
+    whatsNew: (version: string) => `What’s new in ${version}`,
+    install: (version: string) => `Install version ${version}`,
+    linkOnly:
+      "This copy of Laci can’t install updates itself. Get the new version from the release page.",
+    openRelease: "Open the release page",
+    downloading: (version: string) => `Downloading version ${version}…`,
+    progressLabel: "Download progress",
+    percent: (n: number) => `${n}%`,
+    readyToRestart: (version: string) => `Version ${version} is ready.`,
+    restartNote:
+      "Restart Laci to finish the update. Restarting closes the terminals in Laci, and the AI chats running in them.",
+    restart: "Restart Laci",
+    failed: "Laci couldn’t finish the update.",
+    // The release notes come from the web: pictures wait to be asked for, and only web and mail
+    // links open.
+    picturesHidden: (n: number) =>
+      `${count(n, "picture")} from the web ${n === 1 ? "isn’t" : "aren’t"} shown.`,
+    showPictures: "Show pictures",
+    linkBlocked: "Release notes can open web and mail links only.",
+    linkNotOpened: "Link not opened",
+  },
+  /** Home's card, which says it once for a version and then leaves it to Settings. */
+  card: {
+    title: "A new version of Laci is ready",
+    canInstall: (version: string) => `Version ${version} can be installed now.`,
+    notNow: "Not now",
+    hidden: (version: string) =>
+      `Laci won’t remind you about version ${version} here`,
+    hiddenNote: "You can still update in Settings.",
+  },
+  /** What closing a summary's item says, in the words of Still to do. */
+  summaryItem: {
+    done: "Marked as done",
+    dropped: "Marked as not needed",
+    open: "Back in Still to do",
   },
 };

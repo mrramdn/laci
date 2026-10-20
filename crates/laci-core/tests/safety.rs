@@ -14,6 +14,8 @@ use std::{
     process::{Command, Output},
 };
 
+mod support;
+
 fn run(dir: &Path, args: &[&str]) -> Output {
     Command::new("git")
         .args(args)
@@ -38,10 +40,11 @@ fn write(path: &Path, text: &str) {
 }
 /// A home whose `project` folder Laci reads, with one Git project in it. Laci's own Git calls read the user's Git
 /// settings, so the project names an empty ignore list in place of the user's.
-fn fixture() -> (tempfile::TempDir, Env, PathBuf) {
-    let temp = tempfile::tempdir().unwrap();
+fn fixture() -> (support::TempDir, Env, PathBuf) {
+    let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
-    let dir = env.home.join("project/demo");
+    // A name at a time, as the scan spells the paths it finds.
+    let dir = env.home.join("project").join("demo");
     fs::create_dir_all(&dir).unwrap();
     git(&dir, &["init", "-q", "--initial-branch=main"]);
     let none = temp.path().join("no-ignores");
@@ -150,7 +153,6 @@ fn a_secret_in_a_saved_version_that_isnt_online_yet_is_listed() {
     assert_eq!(listed(&env, &dir), pairs(&[]));
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn a_name_that_isnt_valid_text_is_listed_but_never_written_to_gitignore() {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
@@ -214,7 +216,6 @@ fn a_long_list_shows_fifty_and_counts_the_rest() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn keep_out_adds_one_anchored_line_each_and_undo_puts_the_old_bytes_back() {
     for (before, after) in [
         (None, "/.env\n/my\\[1].pem\n"),
@@ -237,6 +238,7 @@ fn keep_out_adds_one_anchored_line_each_and_undo_puts_the_old_bytes_back() {
         assert_eq!(listed(&env, &dir), pairs(&[("my1.pem", false)]), "each line matches its file alone");
         let logged = entry(&env, &change);
         assert_eq!(logged["title"], "Added 2 files to .gitignore in demo");
+        assert_eq!(logged["say"], json!({"form":"keptOut","files":2,"name":"demo"}));
         assert_eq!((&logged["detail"], &logged["canUndo"]), (&json!(".env, my[1].pem"), &json!(true)));
         // The Activity entry and the toast's journal Undo restore the same bytes.
         if before.is_some() {
@@ -253,7 +255,6 @@ fn keep_out_adds_one_anchored_line_each_and_undo_puts_the_old_bytes_back() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn keep_out_escapes_wildcards_and_keeps_the_file_mode() {
     use std::os::unix::fs::PermissionsExt;
@@ -277,7 +278,6 @@ fn keep_out_escapes_wildcards_and_keeps_the_file_mode() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn an_older_keep_out_waits_until_the_newer_one_is_undone() {
     let (_temp, env, dir) = fixture();
     write(&dir.join(".gitignore"), "dist\n");
@@ -298,7 +298,6 @@ fn an_older_keep_out_waits_until_the_newer_one_is_undone() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn undo_keeps_a_gitignore_that_changed_after_keep_out() {
     for existed in [true, false] {
         let (_temp, env, dir) = fixture();
@@ -324,7 +323,6 @@ fn undo_keeps_a_gitignore_that_changed_after_keep_out() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn undo_after_the_project_moved_brings_back_no_folder() {
     let (_temp, env, dir) = fixture();
     write(&dir.join(".gitignore"), "dist\n");
@@ -380,7 +378,6 @@ fn keep_out_refuses_anything_the_check_did_not_list() {
     assert!(!mutates("secrets/check") && !changes_history("secrets/check"));
 }
 
-#[cfg(unix)]
 #[test]
 fn keep_out_waits_for_the_change_lock_and_never_follows_a_link() {
     let (temp, env, dir) = fixture();
@@ -481,7 +478,14 @@ fn fix_prompts_carry_the_limits() {
     assert!(
         assistant::fix(&env, &node, "unpushed")
             .unwrap()
-            .contains("(no upstream), so push it with: git push -u origin main")
+            .contains("(no upstream), so push it with: git push -u -- origin main")
+    );
+    // A remote the repository named like an option stays a name.
+    node["git"]["remotes"][0]["name"] = json!("--receive-pack=touch pwned");
+    assert!(
+        assistant::fix(&env, &node, "unpushed")
+            .unwrap()
+            .contains("so push it with: git push -u -- '--receive-pack=touch pwned' main")
     );
     node["git"]["branch"] = json!("");
     assert!(assistant::fix(&env, &node, "unpushed").unwrap().contains("No branch is checked out."));
@@ -503,7 +507,7 @@ fn the_fix_prompt_answers_like_the_other_prompts() {
 }
 
 /// A project whose commits are all on a local backup, so a Trash plan allows removal.
-fn backed_up() -> (tempfile::TempDir, Env, PathBuf, Value) {
+fn backed_up() -> (support::TempDir, Env, PathBuf, Value) {
     let (temp, env, dir) = fixture();
     let remote = temp.path().join("backup.git");
     fs::create_dir(&remote).unwrap();
@@ -518,7 +522,6 @@ fn backed_up() -> (tempfile::TempDir, Env, PathBuf, Value) {
     (temp, env, dir, node)
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn a_trash_plan_names_ignored_files_whose_names_arent_valid_text() {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
@@ -537,7 +540,6 @@ fn a_trash_plan_names_ignored_files_whose_names_arent_valid_text() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
 fn a_trash_plan_names_what_only_this_computer_has_but_not_dependencies() {
     let (_temp, env, dir, node) = backed_up();
     for name in [

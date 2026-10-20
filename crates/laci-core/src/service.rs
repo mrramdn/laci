@@ -270,6 +270,7 @@ impl Service {
             let _ = writeln!(file, "{} {message}", files::now());
         }
     }
+    /// The scanned folder `id` names.
     pub fn node(&mut self, id: &str) -> Result<Value> {
         let snap = self.snapshot()?;
         snap["nodes"]
@@ -326,6 +327,9 @@ impl Service {
     }
     fn journaled(&mut self, journal: Value, path: Option<&str>, by: &str) -> Result<Value> {
         let mut entry = json!({"by":by,"title":journal["title"],"path":path,"journal":journal["id"]});
+        if journal["say"].is_object() {
+            entry["say"] = journal["say"].clone();
+        }
         if ops::can_undo(&journal) {
             entry["undo"] = json!({"type":"journal","id":journal["id"]});
         }
@@ -355,8 +359,7 @@ impl Service {
         json!({
             "theme":c["theme"],"design":c["design"],"updates":c["updates"],
             "configured":c["roots"].is_array(),
-            "configPath":paths::tilde(&self.env.config_dir.join("config.json"),&self.env.home),
-            "os":std::env::consts::OS
+            "configPath":paths::tilde(&self.env.config_dir.join("config.json"),&self.env.home)
         })
     }
     pub fn request(&mut self, name: &str, b: &Value) -> Result<Value> {
@@ -438,26 +441,42 @@ impl Service {
                     sidecar::set_meta(&dir, key, value)?;
                     if before != value {
                         let name = string(&node, "name");
-                        let title = if key == "quiet" {
+                        let (title, say) = if key == "quiet" {
                             let codes = |text: &str| -> BTreeSet<String> {
                                 text.split(',').map(str::trim).filter(|c| !c.is_empty()).map(str::to_owned).collect()
                             };
                             let (was, now) = (codes(before), codes(value));
                             match (now.difference(&was).next(), was.difference(&now).next()) {
-                                (Some(code), _) => format!("Muted “{}” on {name}", issue_name(code)),
-                                (None, Some(code)) => format!("Unmuted “{}” on {name}", issue_name(code)),
-                                _ => format!("Changed muted checks of {name}"),
+                                (Some(code), _) => (
+                                    format!("Muted “{}” on {name}", issue_name(code)),
+                                    json!({"form":"muted","name":name,"check":code}),
+                                ),
+                                (None, Some(code)) => (
+                                    format!("Unmuted “{}” on {name}", issue_name(code)),
+                                    json!({"form":"unmuted","name":name,"check":code}),
+                                ),
+                                _ => (
+                                    format!("Changed muted checks of {name}"),
+                                    json!({"form":"changedMuted","name":name}),
+                                ),
                             }
                         } else {
-                            format!(
-                                "{} of {name} {}",
-                                files::capitalize(key),
-                                if value.is_empty() { "cleared".into() } else { format!("set to {value}") }
-                            )
+                            let field = files::capitalize(key);
+                            if value.is_empty() {
+                                (
+                                    format!("{field} of {name} cleared"),
+                                    json!({"form":format!("cleared{field}"),"name":name}),
+                                )
+                            } else {
+                                (
+                                    format!("{field} of {name} set to {value}"),
+                                    json!({"form":format!("set{field}"),"name":name,(key):value}),
+                                )
+                            }
                         };
                         activity::record(
                             &self.env,
-                            json!({"by":by,"title":title,"path":dir,"key":format!("meta:{}:{key}",dir.display()),"undo":{"type":"meta","key":key,"value":before}}),
+                            json!({"by":by,"title":title,"say":say,"path":dir,"key":format!("meta:{}:{key}",dir.display()),"undo":{"type":"meta","key":key,"value":before}}),
                         );
                     }
                     Ok(())
@@ -480,7 +499,8 @@ impl Service {
                     }
                 }
                 ops::with_lock(&self.env, || {
-                    let (detail, undo, title) = match op {
+                    let name = string(&node, "name");
+                    let (detail, undo, title, form) = match op {
                         "add" => {
                             let step = text.split_whitespace().collect::<Vec<_>>().join(" ");
                             let step: String = step.chars().take(300).collect();
@@ -491,7 +511,8 @@ impl Service {
                             (
                                 step.clone(),
                                 json!({"type":"drop","file":sidecar::SIDECAR,"text":readers::strip_md(&step),"line":task.line,"occurrence":task.occurrence,"count":task.count}),
-                                format!("Added a next step to {}", string(&node, "name")),
+                                format!("Added a next step to {name}"),
+                                "addedStep",
                             )
                         }
                         "toggle" => {
@@ -505,11 +526,8 @@ impl Service {
                             (
                                 text.into(),
                                 json!({"type":"check","file":file,"text":text,"line":task.line,"occurrence":task.occurrence,"count":task.count,"done":before}),
-                                format!(
-                                    "{} a to-do in {}",
-                                    if done { "Ticked" } else { "Unticked" },
-                                    string(&node, "name")
-                                ),
+                                format!("{} a to-do in {name}", if done { "Ticked" } else { "Unticked" }),
+                                if done { "ticked" } else { "unticked" },
                             )
                         }
                         "edit" => {
@@ -527,7 +545,8 @@ impl Service {
                             (
                                 to.clone(),
                                 json!({"type":"edit","file":file,"text":now,"was":was,"line":after.line,"occurrence":after.occurrence,"count":after.count}),
-                                format!("Edited a to-do in {}", string(&node, "name")),
+                                format!("Edited a to-do in {name}"),
+                                "editedTodo",
                             )
                         }
                         "delete" => {
@@ -541,14 +560,15 @@ impl Service {
                             (
                                 text.into(),
                                 json!({"type":"add","file":file,"text":text,"line":task.line,"occurrence":task.occurrence,"count":task.count,"done":task.done,"restore":restore}),
-                                format!("Deleted a next step from {}", string(&node, "name")),
+                                format!("Deleted a next step from {name}"),
+                                "deletedStep",
                             )
                         }
                         _ => return Err("Unknown to-do operation".into()),
                     };
                     activity::record(
                         &self.env,
-                        json!({"by":by,"title":title,"detail":detail,"path":dir,"key":format!("todo:{}:{}:{}:{}",dir.display(),string(&undo,"file"),readers::strip_md(&detail),undo["occurrence"].as_u64().unwrap_or(0)),"undo":undo}),
+                        json!({"by":by,"title":title,"say":{"form":form,"name":name},"detail":detail,"path":dir,"key":format!("todo:{}:{}:{}:{}",dir.display(),string(&undo,"file"),readers::strip_md(&detail),undo["occurrence"].as_u64().unwrap_or(0)),"undo":undo}),
                     );
                     Ok(())
                 })?;
@@ -609,7 +629,7 @@ impl Service {
                     if sitting && before != text {
                         let entry = activity::record(
                             &self.env,
-                            json!({"by":by,"title":format!("Edited the notes of {}",string(&node,"name")),"path":dir,"key":key,"undo":{"type":"notes","text":before}}),
+                            json!({"by":by,"title":format!("Edited the notes of {}",string(&node,"name")),"say":{"form":"editedNotes","name":node["name"]},"path":dir,"key":key,"undo":{"type":"notes","text":before}}),
                         );
                         return Ok(Some(string(&entry, "id").to_owned()));
                     }
@@ -644,7 +664,7 @@ impl Service {
                 crate::deletion::trash(&self.env, &node)?;
                 activity::record(
                     &self.env,
-                    json!({"by":by,"title":format!("Moved {} to {}",string(&node,"name"),platform::BIN.bare),"path":node["path"],"detail":"Restore through your file manager. External agent history was preserved."}),
+                    json!({"by":by,"title":format!("Moved {} to {}",string(&node,"name"),platform::BIN.bare),"say":{"form":"trashed","name":node["name"]},"path":node["path"],"detail":"Restore through your file manager. External agent history was preserved."}),
                 );
                 Ok(json!({}))
             }
@@ -711,7 +731,8 @@ impl Service {
                 })?;
                 activity::record(
                     &self.env,
-                    json!({"by":by,"title":if back {format!("Suggested again: {title}")} else {format!("Dismissed: {title}")}}),
+                    json!({"by":by,"title":if back {format!("Suggested again: {title}")} else {format!("Dismissed: {title}")},
+                        "say":{"form":if back {"suggestedAgain"} else {"dismissed"},"title":title}}),
                 );
                 Ok(json!({"ok":true}))
             }
@@ -726,7 +747,9 @@ impl Service {
                     return Err("Nothing to clean in this project".into());
                 }
                 let title = format!("Deleted the build output of {}", string(&node, "name"));
-                let j = ops::apply_action(&self.env, &snap, &title, &json!({"type":"clear","paths":parts}))?;
+                let say = json!({"form":"clearedBuild","name":node["name"]});
+                let j =
+                    ops::apply_action_saying(&self.env, &snap, &title, say, &json!({"type":"clear","paths":parts}))?;
                 self.journaled(j, node["path"].as_str(), by)
             }
             "undo" => {
@@ -734,7 +757,7 @@ impl Service {
                 let entry = activity::read_log(&self.env, 300).into_iter().find(|e| e["journal"] == j["id"]);
                 activity::record(
                     &self.env,
-                    json!({"by":by,"title":format!("Undid: {}",string(&j,"title")),"undoes":entry.map(|e|e["id"].clone()).unwrap_or_else(||json!(format!("j:{}",string(&j,"id"))))}),
+                    json!({"by":by,"title":format!("Undid: {}",string(&j,"title")),"say":{"form":"undid"},"undoes":entry.map(|e|e["id"].clone()).unwrap_or_else(||json!(format!("j:{}",string(&j,"id"))))}),
                 );
                 Ok(json!({"journal":j}))
             }
@@ -773,7 +796,8 @@ impl Service {
                     );
                     activity::record(
                         &self.env,
-                        json!({"by":if auto {"auto"} else {by},"title":if copied > 0 {format!("Backed up {}",scan::plural(copied,"agent history file"))} else {"Agent history backup is up to date".into()},"detail":kept}),
+                        json!({"by":if auto {"auto"} else {by},"title":if copied > 0 {format!("Backed up {}",scan::plural(copied,"agent history file"))} else {"Agent history backup is up to date".into()},
+                            "say":if copied > 0 {json!({"form":"backedUp","files":copied})} else {json!({"form":"backupUpToDate"})},"detail":kept}),
                     );
                 }
                 Ok(result)
@@ -781,14 +805,18 @@ impl Service {
             "backup/restore" => {
                 let snap = self.snapshot()?;
                 let result = ops::restore_backup(&self.env, &snap, string(b, "id"))?;
-                let name = array(&snap["connectors"])
+                let known = array(&snap["connectors"])
                     .into_iter()
                     .find(|c| c["provider"] == result["provider"])
-                    .map(|c| string(&c, "name").to_owned())
-                    .unwrap_or_else(|| "agent".into());
+                    .map(|c| string(&c, "name").to_owned());
+                let mut say = json!({"form":"restoredChat"});
+                if let Some(ai) = &known {
+                    say["ai"] = json!(ai);
+                }
+                let name = known.unwrap_or_else(|| "agent".into());
                 activity::record(
                     &self.env,
-                    json!({"by":by,"title":format!("Restored a {name} session from the backup"),"path":result["restored"],"detail":result["title"]}),
+                    json!({"by":by,"title":format!("Restored a {name} session from the backup"),"say":say,"path":result["restored"],"detail":result["title"]}),
                 );
                 Ok(result)
             }
@@ -814,7 +842,7 @@ impl Service {
                 let result = storage::free(&self.env, string(b, "part"))?;
                 activity::record(
                     &self.env,
-                    json!({"by":by,"title":result["title"],"detail":format!("{} freed",scan::bytes(result["freed"].as_u64().unwrap_or(0)))}),
+                    json!({"by":by,"title":result["title"],"say":result["say"],"detail":format!("{} freed",scan::bytes(result["freed"].as_u64().unwrap_or(0)))}),
                 );
                 Ok(result)
             }
@@ -827,7 +855,8 @@ impl Service {
                         config::save(&self.env, &c)?;
                         activity::record(
                             &self.env,
-                            json!({"by":by,"title":format!("Automatic history backup turned {}",if on {"on"} else {"off"})}),
+                            json!({"by":by,"title":format!("Automatic history backup turned {}",if on {"on"} else {"off"}),
+                                "say":{"form":if on {"autoBackupOn"} else {"autoBackupOff"}}}),
                         );
                     }
                     Ok(())
@@ -937,7 +966,7 @@ impl Service {
                     if !detail.is_empty() {
                         activity::record(
                             &self.env,
-                            json!({"by":by,"title":"Changed settings","detail":detail,"key":"settings","undo":before}),
+                            json!({"by":by,"title":"Changed settings","say":{"form":"changedSettings"},"detail":detail,"key":"settings","undo":before}),
                         );
                     }
                     Ok(())
@@ -954,7 +983,7 @@ impl Service {
                 let r = create::create_project(&self.env, b)?;
                 activity::record(
                     &self.env,
-                    json!({"by":by,"title":format!("Created {}",string(b,"name")),"path":r["path"],"detail":r["warnings"]}),
+                    json!({"by":by,"title":format!("Created {}",string(b,"name")),"say":{"form":"created","name":string(b,"name")},"path":r["path"],"detail":r["warnings"]}),
                 );
                 Ok(r)
             }
@@ -971,7 +1000,7 @@ impl Service {
                                 .collect::<Vec<_>>()
                         );
                     }
-                    let (key, title, undo) = if name == "connector/remove" {
+                    let (key, title, say, undo) = if name == "connector/remove" {
                         let old = array(&snap["connectors"])
                             .into_iter()
                             .find(|c| c["id"] == id)
@@ -980,14 +1009,12 @@ impl Service {
                         c["presets"] = json!(array(&c["presets"]).into_iter().filter(|p| p != id).collect::<Vec<_>>());
                         c["custom"] =
                             json!(array(&c["custom"]).into_iter().filter(|p| p["id"] != id).collect::<Vec<_>>());
+                        // A tool Laci only starts has no history to speak of.
+                        let tool = old["link"]["kind"] == "none";
                         (
                             id.to_owned(),
-                            // A tool Laci only starts has no history to speak of.
-                            format!(
-                                "Removed {}{}",
-                                string(&old, "name"),
-                                if old["link"]["kind"] == "none" { "" } else { " history" }
-                            ),
+                            format!("Removed {}{}", string(&old, "name"), if tool { "" } else { " history" }),
+                            json!({"form":if tool {"removedTool"} else {"removedHistory"},"ai":old["name"]}),
                             if let Some(spec) = custom {
                                 json!({"type":"connector","spec":spec})
                             } else {
@@ -1007,6 +1034,7 @@ impl Service {
                         (
                             preset.into(),
                             format!("Added {} history", string(&old, "name")),
+                            json!({"form":"addedHistory","ai":old["name"]}),
                             json!({"type":"connector","remove":preset}),
                         )
                     } else {
@@ -1021,20 +1049,18 @@ impl Service {
                         let mut custom = array(&c["custom"]);
                         custom.push(spec.clone());
                         c["custom"] = json!(custom);
+                        let tool = spec["link"]["kind"] == "none";
                         (
                             key.clone(),
-                            format!(
-                                "Added {}{}",
-                                string(&spec, "name"),
-                                if spec["link"]["kind"] == "none" { "" } else { " history" }
-                            ),
+                            format!("Added {}{}", string(&spec, "name"), if tool { "" } else { " history" }),
+                            json!({"form":if tool {"addedTool"} else {"addedHistory"},"ai":spec["name"]}),
                             json!({"type":"connector","remove":key}),
                         )
                     };
                     config::save(&self.env, &c)?;
                     activity::record(
                         &self.env,
-                        json!({"by":by,"title":title,"key":format!("connector:{key}"),"undo":undo}),
+                        json!({"by":by,"title":title,"say":say,"key":format!("connector:{key}"),"undo":undo}),
                     );
                     Ok(())
                 })?;
@@ -1052,9 +1078,25 @@ impl Service {
                 if !path.is_dir() {
                     return Err("That folder doesn't exist anymore".into());
                 }
-                let entries:Vec<_>=files::entries(&path).into_iter().take(5000).map(|e|{let meta=fs::symlink_metadata(e.path()).ok();let link=meta.as_ref().is_some_and(|m|m.is_symlink());
-                    let allowed=paths::workspace_path(&e.path().to_string_lossy(),&self.env).is_ok();let dir=allowed&&e.path().is_dir();
-                    json!({"name":e.file_name().to_string_lossy(),"path":e.path(),"dir":dir,"link":link,"size":meta.map(|m|m.len()),"at":files::modified(&e.path()),"git":dir&&e.path().join(".git").exists()})}).collect();
+                // Each entry's own metadata comes with the listing. Only a link can lead out of the folder, which is
+                // checked already, and only a link's target is read.
+                let entries: Vec<_> = files::entries(&path)
+                    .into_iter()
+                    .take(5000)
+                    .map(|e| {
+                        let (path, meta) = (e.path(), e.metadata().ok());
+                        let link = meta.as_ref().is_some_and(|m| m.is_symlink());
+                        let (dir, at) = if link {
+                            let allowed = paths::workspace_path(&path.to_string_lossy(), &self.env).is_ok();
+                            (allowed && path.is_dir(), files::modified(&path))
+                        } else {
+                            let dir = meta.as_ref().is_some_and(|m| m.is_dir());
+                            (dir, meta.as_ref().map(files::modified_at).unwrap_or_default())
+                        };
+                        let hidden = platform::hidden(&e.file_name());
+                        json!({"name":e.file_name().to_string_lossy(),"path":path,"dir":dir,"link":link,"size":meta.map(|m|m.len()),"at":at,"git":dir&&path.join(".git").exists(),"hidden":hidden})
+                    })
+                    .collect();
                 Ok(json!({"path":path,"entries":entries}))
             }
             "ls/newest" => {
@@ -1065,7 +1107,7 @@ impl Service {
                     let newest = files::walk(&e.path(), false)
                         .filter(|e| e.file_type().is_file() && e.file_name() != ".laci.md")
                         .take(3000)
-                        .map(|e| files::modified(e.path()))
+                        .map(|e| e.metadata().map(|meta| files::modified_at(&meta)).unwrap_or_default())
                         .max()
                         .unwrap_or_else(|| files::modified(&e.path()));
                     out[e.file_name().to_string_lossy().as_ref()] = json!(newest);
@@ -1101,7 +1143,7 @@ impl Service {
             .map(|s| json!(paths::expand(s, &self.env.home)))
             .collect();
         Ok(
-            json!({"configured":c["roots"].is_array(),"roots":roots,"rootStatus":scan::root_status(&self.env,&c),"archiveDir":c["archiveDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"reportsDir":c["reportsDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"candidates":[],"presets":array(&c["presets"]),"custom":array(&c["custom"]).len(),"apps":self.apps(),"terminalTarget":c["terminalTarget"].as_str().unwrap_or("internal"),"installed":installed_apps()}),
+            json!({"configured":c["roots"].is_array(),"roots":roots,"rootStatus":scan::root_status(&self.env,&c),"archiveDir":c["archiveDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"reportsDir":c["reportsDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"candidates":[],"presets":array(&c["presets"]),"custom":array(&c["custom"]).len(),"apps":self.apps(),"terminalTarget":c["terminalTarget"].as_str().unwrap_or("internal"),"installed":installed_apps(),"git":crate::git::runs()}),
         )
     }
     /// Optional shallow discovery. Opening Settings never walks Home or selects suggestions.
@@ -1113,14 +1155,14 @@ impl Service {
             .map_err(|e| e.to_string())?
             .take(2000)
             .filter_map(std::result::Result::ok)
-            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && !e.file_name().to_string_lossy().starts_with('.'))
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && !platform::hidden(&e.file_name()))
             .take(100)
         {
             let mut repos = 0usize;
             for entry in
                 walkdir::WalkDir::new(entry.path()).max_depth(3).follow_links(false).into_iter().filter_entry(|e| {
                     e.depth() == 0
-                        || (!e.file_name().to_string_lossy().starts_with('.')
+                        || (!platform::hidden(e.file_name())
                             && !files::HEAVY.contains(&e.file_name().to_string_lossy().as_ref()))
                 })
             {
@@ -1195,6 +1237,11 @@ impl Service {
                 if !array(&node["stack"]["scripts"]).iter().any(|s| s["name"] == arg) {
                     return Err("Unknown script".into());
                 }
+                // The name comes from the project's package file and starts at once. One that begins with a dash
+                // would reach the package manager as an option rather than as the script's name.
+                if arg.starts_with('-') {
+                    return Err("This script's name begins with a dash; run it from a terminal".into());
+                }
                 let pm = node["stack"]["packageManager"]
                     .as_str()
                     .filter(|s| ["npm", "pnpm", "yarn", "bun"].contains(s))
@@ -1209,9 +1256,12 @@ impl Service {
                 if !array(&node["issues"]).iter().any(|i| i["code"] == arg) {
                     return Err("Nothing to fix".into());
                 }
+                // The names in these commands come from the project: its folder, its remote and its branch. Each is
+                // placed where the program can only read it as a name: after `--`, after `--end-of-options`, or
+                // as a full ref.
                 let command = match arg {
                     "no-remote" => {
-                        format!("gh repo create {} --private --source . --remote origin --push", shell_quote(&title))
+                        format!("gh repo create --private --source . --remote origin --push -- {}", shell_quote(&title))
                     }
                     "no-commits" => "git add -A && git commit -m 'chore: initial commit'".into(),
                     "dirty" => "git status --short".into(),
@@ -1222,7 +1272,11 @@ impl Service {
                         if branch.is_empty() {
                             return Err("Check out a branch before pushing".into());
                         }
-                        format!("git push -u {} {}", shell_quote(remote), shell_quote(branch))
+                        format!(
+                            "git push -u --end-of-options {} {}",
+                            shell_quote(remote),
+                            shell_quote(&format!("refs/heads/{branch}"))
+                        )
                     }
                     "unpushed" => "git push".into(),
                     "stash" => "git stash show -p stash@{0}".into(),
@@ -1438,22 +1492,21 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let env = Env::for_home(home.path().to_owned());
         let mut service = Service::new(env.clone());
-        let os = std::env::consts::OS;
         let path = "~/.config/laci/config.json";
         assert_eq!(
             service.request("prefs", &json!({})).unwrap(),
-            json!({"theme":null,"design":null,"updates":null,"configured":false,"configPath":path,"os":os})
+            json!({"theme":null,"design":null,"updates":null,"configured":false,"configPath":path})
         );
         assert!(!env.config_dir.join("config.json").exists());
         config::save(&env, &json!({"roots":["~/project"],"theme":"dark","design":"detailed","updates":"off"})).unwrap();
         assert_eq!(
             service.request("prefs", &json!({})).unwrap(),
-            json!({"theme":"dark","design":"detailed","updates":"off","configured":true,"configPath":path,"os":os})
+            json!({"theme":"dark","design":"detailed","updates":"off","configured":true,"configPath":path})
         );
         config::save(&env, &json!({"roots":[],"theme":"blue","design":"classic","updates":"weekly"})).unwrap();
         assert_eq!(
             service.request("prefs", &json!({})).unwrap(),
-            json!({"theme":null,"design":null,"updates":null,"configured":true,"configPath":path,"os":os})
+            json!({"theme":null,"design":null,"updates":null,"configured":true,"configPath":path})
         );
         assert!(activity::read_log(&env, 100).is_empty());
     }

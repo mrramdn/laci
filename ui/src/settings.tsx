@@ -1,4 +1,10 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { api, errorText } from "./api";
 import {
   agentInstruction,
@@ -6,18 +12,19 @@ import {
   cap,
   expandHome,
   isAbsolutePath,
-  joinPath,
+  isWholeDisk,
   plural,
   reportList,
   shortDay,
   tilde,
   trimSep,
 } from "./helpers";
-import { OS } from "./platform";
 import { Select } from "./select";
 import { LaciMark } from "./brand";
 import { Icon } from "./common";
+import { useMarkdown } from "./hooks";
 import { LookPicker } from "./looks";
+import { ChooseFolder } from "./pick";
 import {
   useApp,
   acknowledge,
@@ -28,10 +35,13 @@ import {
   run,
   setDesign,
   setTheme,
+  toast,
   urlOpen,
 } from "./store";
 import type { Theme } from "./store";
 import { useNow } from "./clock";
+import { useUpdate } from "./update";
+import type { UpdateStatus } from "./update";
 import type {
   Apps,
   Change,
@@ -41,15 +51,9 @@ import type {
   Snapshot,
   TerminalTarget,
 } from "./types";
-import { firstRun, views } from "./words";
-/** Where another drive is found, for the examples of a path. */
-const OTHER_DRIVE =
-  OS === "windows" ? "D:\\" : OS === "macos" ? "/Volumes" : "/mnt";
+import { ago, detailedSettings as said, firstRun, views } from "./words";
 /** Where config.json is without LACI_HOME or XDG_CONFIG_HOME, for the moment before the desktop says. */
-const USUAL_CONFIG_PATH =
-  OS === "windows"
-    ? "~\\AppData\\Local\\io.github.mrramdn.laci\\config.json"
-    : "~/.config/laci/config.json";
+const USUAL_CONFIG_PATH = "~/.config/laci/config.json";
 let prefsSaid: Prefs | undefined;
 /**
  * The saved choices, as the desktop gave them when first asked; undefined until it answers. `fresh`
@@ -83,15 +87,12 @@ export function useConfigPath() {
 type Updates = NonNullable<Prefs["updates"]>;
 /**
  * What first run says about this computer, once the desktop tells `setup/info`: `git` is false when
- * no Git can be run (on macOS, without Apple's command line tools), and `translocated` is true when
- * macOS runs Laci from where it was downloaded instead of from Applications. The engine doesn't send
- * them yet (the port's steps P6 and P10 add them), so until it does neither note shows.
+ * no Git can be run.
  */
-type ThisComputer = { git?: boolean; translocated?: boolean };
-/** The program a missing `git` asks for, where to get it, and how macOS installs it. */
+type ThisComputer = { git?: boolean };
+/** The program a missing `git` asks for, and where to get it. */
 const GIT = "Git";
 const GIT_DOWNLOADS = "https://git-scm.com/downloads";
-const MAC_INSTALL = "xcode-select --install";
 /** The settings Save and rescan sends, the folders as full paths. */
 interface Setup {
   roots: Set<string>;
@@ -252,6 +253,32 @@ export function Settings({ first = false }: { first?: boolean }) {
     else next.add(value);
     setter(next);
   }
+  /**
+   * Puts a folder among those Laci looks in, ticked: one typed in the box, or one chosen with the
+   * system's picker, whose own button is `chosen`.
+   */
+  function addFolder(raw: string, chosen = false) {
+    let path = trimSep(raw.trim());
+    // Not a whole disk ("/"): Laci doesn't look through one. A typed one is passed over, as "/" always
+    // was; a chosen one says why nothing was added.
+    if (!path || isWholeDisk(path)) {
+      if (path && chosen) setError(said.wholeDisk);
+      return;
+    }
+    path = expandHome(path, snapshot.home);
+    if (!isAbsolutePath(path)) {
+      setError("Use a full path like ~/work");
+      return;
+    }
+    const listed = candidates.find((c) => c.path === path);
+    const added = listed?.path ?? path;
+    // A chosen folder arrives after the picker closes, so these take the lists as they are by then.
+    if (!listed)
+      setExtra((now) => (now.includes(added) ? now : [...now, added]));
+    setRoots((now) => new Set([...now, added]));
+    setFolder("");
+    setError("");
+  }
   // Changes waiting for Save and rescan: a switch of design draws the other design's Settings
   // without them, so it waits for them. First run stays on the screen through a switch.
   const unsaved =
@@ -276,7 +303,7 @@ export function Settings({ first = false }: { first?: boolean }) {
     const archivePath = full(archiveDir);
     if (archivePath && !isAbsolutePath(archivePath)) {
       setError(
-        `Use a full archive folder path like ~/archive or ${joinPath(OTHER_DRIVE, "backup", "archive")}`,
+        "Use a full archive folder path like ~/archive or /mnt/backup/archive",
       );
       return;
     }
@@ -357,20 +384,9 @@ export function Settings({ first = false }: { first?: boolean }) {
         <div className="empty">{error || "Loading your settings…"}</div>
       ) : (
         <>
-          {first && OS === "macos" && info.translocated ? (
-            <Note warn title={firstRun.moveTitle}>
-              <p>{firstRun.moveBody}</p>
-            </Note>
-          ) : null}
           {first && info.git === false ? (
             <Note warn title={firstRun.installTitle(GIT)}>
               <p>{firstRun.installBody(GIT)}</p>
-              {OS === "macos" ? (
-                <p>
-                  {firstRun.installMac}{" "}
-                  <code className="mono">{MAC_INSTALL}</code>
-                </p>
-              ) : null}
               <button
                 className="linkbtn"
                 onClick={() => urlOpen(GIT_DOWNLOADS)}
@@ -389,11 +405,6 @@ export function Settings({ first = false }: { first?: boolean }) {
               including mounted drives. You can leave every folder unchecked and
               browse without scanning.
             </p>
-            {first && OS === "macos" ? (
-              <Note title={firstRun.folderAccessTitle}>
-                <p>{firstRun.folderAccess}</p>
-              </Note>
-            ) : null}
             {candidates.map((c) => {
               const unavailable = info.rootStatus?.find(
                 (root) => root.path === c.path && !root.available,
@@ -447,41 +458,46 @@ export function Settings({ first = false }: { first?: boolean }) {
               className="addrow"
               onSubmit={(e) => {
                 e.preventDefault();
-                let path = trimSep(folder.trim());
-                // Not "/", which was never taken as a folder to scan.
-                if (!path || path === "/") return;
-                path = expandHome(path, snapshot.home);
-                if (!isAbsolutePath(path)) {
-                  setError("Use a full path like ~/work");
-                  return;
-                }
-                if (!candidates.some((c) => c.path === path))
-                  setExtra([...extra, path]);
-                setRoots(new Set([...roots, path]));
-                setFolder("");
-                setError("");
+                addFolder(folder);
               }}
             >
               <input
                 className="inp mono"
                 value={folder}
                 onChange={(e) => setFolder(e.target.value)}
-                placeholder={`~/work or ${joinPath(OTHER_DRIVE, "projects")}`}
+                placeholder="~/work or /mnt/projects"
                 autoComplete="off"
                 aria-label="Another folder"
+              />
+              {/* A folder chosen is added at once: nothing is left in the box to add after it. */}
+              <ChooseFolder
+                label={said.choose}
+                name={said.addFolderTitle}
+                title={said.addFolderTitle}
+                defaultPath={folder.trim() || "~"}
+                onPick={(path) => addFolder(path, true)}
               />
               <button className="btn">Add folder</button>
             </form>
             <label className="fld">
               <span>Default archive folder</span>
-              <input
-                className="inp mono"
-                value={archiveDir}
-                onChange={(e) => setArchiveDir(e.target.value)}
-                placeholder="Nearest _archive folder"
-                autoComplete="off"
-                aria-label="Default archive folder"
-              />
+              <div className="addrow">
+                <input
+                  className="inp mono"
+                  value={archiveDir}
+                  onChange={(e) => setArchiveDir(e.target.value)}
+                  placeholder="Nearest _archive folder"
+                  autoComplete="off"
+                  aria-label="Default archive folder"
+                />
+                <ChooseFolder
+                  label={said.choose}
+                  name={said.archiveFolderTitle}
+                  title={said.archiveFolderTitle}
+                  defaultPath={archiveDir.trim() || "~"}
+                  onPick={(path) => setArchiveDir(tilde(path, snapshot.home))}
+                />
+              </div>
               <small>
                 Leave empty to use the nearest _archive folder. A custom folder
                 can be on another drive; each project gets its own subfolder.
@@ -638,6 +654,7 @@ export function Settings({ first = false }: { first?: boolean }) {
                 draft={full(reportsDir)}
               />
               <Appearance />
+              <UpdatesSetting />
             </>
           )}
         </>
@@ -748,14 +765,23 @@ function ReportsSetting({
       </p>
       <label className="fld">
         <span>Reports folder</span>
-        <input
-          className="inp mono"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="~/notes/agent-reports"
-          autoComplete="off"
-          aria-label="Reports folder"
-        />
+        <div className="addrow">
+          <input
+            className="inp mono"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="~/notes/agent-reports"
+            autoComplete="off"
+            aria-label="Reports folder"
+          />
+          <ChooseFolder
+            label={said.choose}
+            name={said.reportsFolderTitle}
+            title={said.reportsFolderTitle}
+            defaultPath={value.trim() || "~"}
+            onPick={(path) => onChange(tilde(path, snapshot.home))}
+          />
+        </div>
         <small className={`rp-status ${tone}`}>{status}</small>
       </label>
       <div className="rp-copy">
@@ -848,5 +874,253 @@ function Appearance() {
         </div>
       </div>
     </section>
+  );
+}
+/** The one button of About & updates, by what it does. */
+type UpdateAction = "check" | "install" | "restart" | "release";
+/** Where an update stands as About & updates says it, and the one button that moves it on. */
+export interface UpdateView {
+  /** Where it stands, in a sentence. */
+  line: string;
+  /** The sentence tells of a failure. */
+  bad: boolean;
+  action: { kind: UpdateAction; label: string; busy: boolean };
+  /** What the button's choice needs said beside it; empty when nothing does. */
+  hint: string;
+}
+/**
+ * Where an update stands, from what the desktop last said (null before it said anything), at `now`.
+ * The button looks for a new version, installs the one found, restarts to finish it, or, for a copy
+ * Laci can't replace itself, opens the page of the release.
+ */
+export function updateView(
+  status: UpdateStatus | null,
+  now = Date.now(),
+): UpdateView {
+  const check: UpdateView["action"] = {
+    kind: "check",
+    label: said.check,
+    busy: false,
+  };
+  if (!status)
+    return { line: said.reading, bad: false, action: check, hint: "" };
+  const version = status.version ?? "";
+  // A copy that can't install an update links to its release; with no address to link, all the
+  // button can do is look again.
+  const install: UpdateView["action"] =
+    status.install === "click"
+      ? { kind: "install", label: said.install, busy: false }
+      : status.url
+        ? { kind: "release", label: said.releasePage, busy: false }
+        : check;
+  const hint = status.install === "notice" && version ? said.noticeNote : "";
+  switch (status.state) {
+    case "checking":
+      return {
+        line: said.looking,
+        bad: false,
+        action: { ...check, label: said.checking, busy: true },
+        hint: "",
+      };
+    case "available":
+      return {
+        line: said.available(version, ago(status.date, now)),
+        bad: false,
+        action: install,
+        hint,
+      };
+    case "downloading":
+      return {
+        line: said.downloading(version, status.progress),
+        bad: false,
+        action: { kind: "install", label: said.installing, busy: true },
+        hint: "",
+      };
+    case "ready":
+      return {
+        line: said.ready(version),
+        bad: false,
+        action: { kind: "restart", label: said.restart, busy: false },
+        hint: said.restartNote,
+      };
+    case "error":
+      // The desktop keeps the version it found whether the check, the download or the restart
+      // failed, and doesn't say which. So the button looks again, as Simple's does, and a version
+      // still on offer comes back with its Install. A copy that only links keeps its link.
+      return {
+        line: status.error || said.failed,
+        bad: true,
+        action: install.kind === "release" ? install : check,
+        hint,
+      };
+    default:
+      return {
+        line: status.checkedAt
+          ? said.upToDate(ago(status.checkedAt, now))
+          : said.neverLooked,
+        bad: false,
+        action: check,
+        hint: "",
+      };
+  }
+}
+/**
+ * Settings › About & updates: the version, where an update stands with the one button that moves it
+ * on, the notes of a new version, and how often Laci looks. The desktop does all of it (update.ts).
+ * Like Appearance it changes at once; the rest of Settings waits for Save and rescan.
+ */
+function UpdatesSetting() {
+  const status = useUpdate((s) => s.status);
+  const refusal = useUpdate((s) => s.refusal);
+  const prefs = usePrefs(true);
+  const now = useNow();
+  const [pending, setPending] = useState(false);
+  // The choice just made, which is newer than what the saved choices said when this opened.
+  const [picked, setPicked] = useState<Updates | null>(null);
+  const title = useId();
+  const choiceTitle = useId();
+  useEffect(() => {
+    void useUpdate.getState().refresh();
+  }, []);
+  const view = updateView(status, now);
+  const busy = pending || view.action.busy;
+  // Undefined until the desktop says; null while nothing is chosen.
+  const saved = picked ?? (status?.enabled ? "daily" : prefs?.updates);
+  function act() {
+    if (busy) return;
+    const { kind } = view.action;
+    if (kind === "release") {
+      if (status?.url) urlOpen(status.url);
+      return;
+    }
+    const update = useUpdate.getState();
+    setPending(true);
+    void update[kind]().finally(() => setPending(false));
+  }
+  async function choose(updates: Updates) {
+    if (!(await useUpdate.getState().choose(updates))) return;
+    setPicked(updates);
+    toast(said.updatesSaved[updates]);
+  }
+  return (
+    <section
+      className="sset"
+      id="settings-updates"
+      tabIndex={-1}
+      aria-labelledby={title}
+      data-ui="updates"
+    >
+      <h2 id={title}>
+        <span className="num">6</span>
+        {said.updatesTitle}
+      </h2>
+      <p>{said.updatesIntro}</p>
+      {status ? (
+        <p data-ui="update-version">{said.version(status.current)}</p>
+      ) : null}
+      <p
+        role="status"
+        className={view.bad ? "rp-status bad" : undefined}
+        data-ui="update-status"
+      >
+        {view.line}
+      </p>
+      <div className="rp-copy">
+        <button
+          type="button"
+          className="btn"
+          data-ui="update-action"
+          aria-busy={busy || undefined}
+          onClick={act}
+        >
+          {view.action.label}
+        </button>
+        {refusal ? (
+          <small className="rp-status bad" role="alert">
+            {refusal}
+          </small>
+        ) : view.hint ? (
+          <small className="faint">{view.hint}</small>
+        ) : null}
+      </div>
+      {status?.version && status.notes ? (
+        <ReleaseNotes version={status.version} notes={status.notes} />
+      ) : null}
+      <div className="fld">
+        <span id={choiceTitle}>{said.updatesChoice}</span>
+        <div
+          className="choices"
+          role="radiogroup"
+          aria-labelledby={choiceTitle}
+          data-ui="updates-choice"
+        >
+          {(["daily", "off"] as const).map((value) => (
+            <label className="choice" key={value}>
+              <input
+                type="radio"
+                name="updates"
+                value={value}
+                checked={saved === value}
+                onChange={() => void choose(value)}
+              />
+              <div>
+                <b>{firstRun.updates[value]}</b>
+                <p>{firstRun.updatesNotes[value]}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+        {saved === null ? <small>{said.updatesUnset}</small> : null}
+        <small>{firstRun.updatesSends}</small>
+      </div>
+    </section>
+  );
+}
+/** The folder a README is read in. Release notes have none: an image they name by a path is nowhere. */
+const NOTES_FOLDER = "/release-notes";
+/**
+ * The notes of a new version, drawn as a README is: marked and DOMPurify load when they are first
+ * needed, and the text is never shown raw while they do. Images from the web wait for a click.
+ */
+function ReleaseNotes({ version, notes }: { version: string; notes: string }) {
+  const markdown = useMarkdown();
+  const [remoteFor, setRemoteFor] = useState<string>();
+  const loadRemote = remoteFor === version;
+  const { html, remote } = useMemo(
+    () =>
+      markdown?.renderReadme(notes, NOTES_FOLDER, loadRemote) ?? {
+        html: "",
+        remote: 0,
+      },
+    [markdown, notes, loadRemote],
+  );
+  return (
+    <>
+      <h3 className="sec-t">{said.whatsNew(version)}</h3>
+      {remote && !loadRemote ? (
+        <div className="readme-note">
+          <span>{said.remoteImages(remote)}</span>
+          <button
+            type="button"
+            className="btn sm"
+            onClick={() => setRemoteFor(version)}
+          >
+            {said.loadImages}
+          </button>
+        </div>
+      ) : null}
+      <div
+        className="readme"
+        data-ui="release-notes"
+        dangerouslySetInnerHTML={{ __html: html }}
+        onClick={(e) =>
+          markdown?.proseClick(e, {
+            remote: () => setRemoteFor(version),
+            blocked: said.notesBlocked,
+            relative: () => toast("Link not opened", said.notesBlocked),
+          })
+        }
+      />
+    </>
   );
 }

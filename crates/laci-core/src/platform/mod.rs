@@ -1,9 +1,7 @@
-//! What differs between Linux, macOS and Windows. The rest of Laci calls these functions and types, never the OS
-//! itself. What isn't written for an OS yet fails there with a plain message instead of guessing, so a change Laci
-//! can't check is refused.
+//! What Laci asks of the OS. The rest of Laci calls these functions and types, never the OS itself.
 //!
-//! `linux`, `macos` and `windows` each answer every call here; `unix` holds what Linux and macOS share, and `path`
-//! the rules for paths.
+//! `linux` answers every call here, with what it shares with other Unix systems in `unix`; `path` holds the rules for
+//! paths.
 use crate::Result;
 use serde_json::{Value, json};
 use std::{
@@ -16,26 +14,13 @@ use std::{
 
 pub mod path;
 
-#[cfg(unix)]
 mod unix;
 
-#[cfg(target_os = "linux")]
 mod linux;
-#[cfg(target_os = "linux")]
 use linux as os;
 
-#[cfg(target_os = "macos")]
-mod macos;
-#[cfg(target_os = "macos")]
-use macos as os;
-
-#[cfg(windows)]
-mod windows;
-#[cfg(windows)]
-use windows as os;
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-compile_error!("Laci runs on Linux, macOS and Windows");
+#[cfg(not(target_os = "linux"))]
+compile_error!("Laci runs on Linux only");
 
 /// A program started by [`spawn_group`] at the head of its own group of processes, so stopping the group stops what
 /// the program started too. `exited` tells whether the program has finished, and leaves it unreaped so its process
@@ -53,7 +38,7 @@ pub struct Dirs {
     pub cache: PathBuf,
 }
 impl Dirs {
-    /// The folders inside `home` where Laci v1 kept them. `LACI_HOME`, demos and tests use these on every OS.
+    /// The folders inside `home` where Laci v1 kept them. `LACI_HOME`, demos and tests use these.
     pub fn inside(home: &Path) -> Self {
         Self {
             config: home.join(".config").join("laci"),
@@ -66,34 +51,23 @@ impl Dirs {
 /// Which file a path names: the same for every path to that file, and different for any other file that exists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Identity {
-    /// The device or volume that holds the file.
+    /// The device that holds the file.
     pub volume: u64,
-    /// The file on that volume: its inode, or on Windows its 128-bit file ID.
-    pub file: u128,
+    /// The file on that device: its inode.
+    pub file: u64,
 }
 impl Identity {
-    /// The file number as JSON: a number, as Laci v1 wrote inodes, and text when it needs more than 64 bits, as a
-    /// file ID on ReFS can.
+    /// The file number as JSON: a number, as Laci v1 wrote inodes.
     pub fn file_json(&self) -> Value {
-        u64::try_from(self.file).map_or_else(|_| Value::from(self.file.to_string()), Value::from)
+        Value::from(self.file)
     }
-    /// The file number [`Identity::file_json`] wrote, if `value` is one.
-    pub fn file_from_json(value: &Value) -> Option<u128> {
-        match value {
-            Value::String(text) => text.parse().ok().filter(|file| u64::try_from(*file).is_err()),
-            value => value.as_u64().map(u128::from),
-        }
-    }
-    /// The identity as config.json keeps it for a scan location: `{"device", "inode"}` on Linux and macOS, as Laci
-    /// v1 wrote it, and `{"volume", "file"}` on Windows.
+    /// The identity as config.json keeps it for a scan location: `{"device", "inode"}`, as Laci v1 wrote it.
     pub fn to_json(&self) -> Value {
-        let [volume, file] = os::IDENTITY_FIELDS;
-        json!({volume: self.volume, file: self.file_json()})
+        json!({"device": self.volume, "inode": self.file_json()})
     }
     /// Whether `recorded`, as [`Identity::to_json`] wrote it, names this file.
     pub fn matches(&self, recorded: &Value) -> bool {
-        let [volume, file] = os::IDENTITY_FIELDS;
-        recorded[volume].as_u64() == Some(self.volume) && Self::file_from_json(&recorded[file]) == Some(self.file)
+        recorded["device"].as_u64() == Some(self.volume) && recorded["inode"].as_u64() == Some(self.file)
     }
 }
 
@@ -150,7 +124,7 @@ pub fn file_change_stamp(file: &File, meta: &Metadata) -> Result<Stamp> {
     os::file_change_stamp(file, meta)
 }
 
-/// Takes the change lock in the file at `path`, which Laci v1 reads too on Linux: one window, command or agent changes
+/// Takes the change lock in the file at `path`, which Laci v1 reads too: one window, command or agent changes
 /// files at a time. While another holds it, this fails at once with a message for the user.
 pub fn lock(path: PathBuf) -> Result<Lock> {
     os::lock(path)
@@ -172,13 +146,34 @@ pub fn preserve(meta: &Metadata, dest: &Path) -> Result<()> {
     os::preserve(meta, dest)
 }
 
+/// Removes `path`, and in a folder everything in it. A link is removed itself, never what it leads to.
+pub fn remove_all(path: &Path) -> io::Result<()> {
+    os::remove_all(path)
+}
+
+/// Whether a file manager hides the file `name`: a name that starts with a dot.
+pub fn hidden(name: &OsStr) -> bool {
+    name.as_encoded_bytes().starts_with(b".")
+}
+
+/// Opens the file `path` for reading, but not through a link in its last name, even one put there after the file was
+/// listed: a link fails to open. A FIFO doesn't block the open.
+pub fn open_nofollow(path: &Path) -> io::Result<File> {
+    os::open_nofollow(path)
+}
+
+/// The computer's name: what /etc/hostname says, as Laci v1 read it.
+pub fn host_name() -> Option<String> {
+    os::host_name()
+}
+
 /// Makes `dest` a link to where the link `src` leads, as a copy of a folder keeps its links.
 pub fn copy_link(src: &Path, dest: &Path) -> Result<()> {
     os::copy_link(src, dest)
 }
 
 /// Where `path`, a list of folders as in PATH, finds the program `program`: the first folder with it as a file that
-/// can run. On Windows the name may also end in one of PATHEXT's extensions.
+/// can run.
 pub fn which(program: &str, path: &OsStr) -> Option<PathBuf> {
     os::which(program, path)
 }
@@ -213,21 +208,17 @@ pub fn trash(path: &Path) -> Result<()> {
 /// The system's bin, in the words the UI uses for it too (`BIN` in ui/src/dialogs.tsx).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Bin {
-    /// At the start of a sentence: "System Trash", on Windows "Recycle Bin".
+    /// At the start of a sentence: "System Trash".
     pub name: &'static str,
-    /// Inside a sentence: "system Trash", on Windows "the Recycle Bin".
+    /// Inside a sentence: "system Trash".
     pub bare: &'static str,
 }
 
-/// Where [`trash`] moves things: the Trash on Linux and macOS, the Recycle Bin on Windows.
-pub const BIN: Bin = if cfg!(windows) {
-    Bin { name: "Recycle Bin", bare: "the Recycle Bin" }
-} else {
-    Bin { name: "System Trash", bare: "system Trash" }
-};
+/// Where [`trash`] moves things: the Trash.
+pub const BIN: Bin = Bin { name: "System Trash", bare: "system Trash" };
 
-/// Opens a file, a folder or a web address in the app the system picks for it, started in `cwd` (on Windows in
-/// Laci's own working folder), without waiting for that app.
+/// Opens a file, a folder or a web address in the app the system picks for it, started in `cwd`, without waiting for
+/// that app.
 pub fn open(target: &str, cwd: &Path) -> Result<()> {
     os::open(target, cwd)
 }

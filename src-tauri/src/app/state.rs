@@ -241,7 +241,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
     fn cached_startup_preserves_read_views_but_fences_history_until_a_full_refresh() {
         let (_home, previous, id) = engine();
         let snapshot = previous.service.current.clone().unwrap();
@@ -258,7 +257,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
     fn a_committed_action_does_not_wait_for_background_scan_and_stale_results_cannot_restore_proposals() {
         let (_home, engine, id) = engine();
         let shared = Arc::new(Mutex::new(engine));
@@ -306,7 +304,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "port:P4/P9b: Windows paths and file times aren't written yet")]
     fn a_failed_refresh_keeps_the_history_fence_until_a_successful_retry() {
         let (_home, mut engine, id) = engine();
         engine.execute("apply", &json!({"id":id})).unwrap();

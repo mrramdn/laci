@@ -9,12 +9,14 @@ use std::{
 
 const WAIT: Duration = Duration::from_secs(20);
 
+/// No hooks, including the one that follows an index refresh.
+const NO_HOOKS: &str = "core.hooksPath=/dev/null";
+
 /// Forced for every call, whatever the folder's own settings say.
 const FIXED: [&str; 5] = [
     // `status` asks this program which files changed.
     "core.fsmonitor=false",
-    // No hooks, including the one that follows an index refresh.
-    "core.hooksPath=/dev/null",
+    NO_HOOKS,
     "core.pager=cat",
     // `log` would start the signature checker.
     "log.showSignature=false",
@@ -23,7 +25,7 @@ const FIXED: [&str; 5] = [
 ];
 
 /// A read never fetches missing objects or prompts, and ignores a repository named by the parent process.
-const ENV: [(&str, Option<&str>); 5] = [
+pub(crate) const ENV: [(&str, Option<&str>); 5] = [
     ("GIT_NO_LAZY_FETCH", Some("1")),
     ("GIT_TERMINAL_PROMPT", Some("0")),
     ("GIT_DIR", None),
@@ -33,12 +35,22 @@ const ENV: [(&str, Option<&str>); 5] = [
 
 /// `args` after the settings every call forces.
 fn full<'a>(settings: &'a [String], args: &[&'a str]) -> Vec<&'a str> {
+    forced(FIXED.into_iter().chain(settings.iter().map(String::as_str)), args)
+}
+
+/// `args` after `settings`.
+fn forced<'a>(settings: impl Iterator<Item = &'a str>, args: &[&'a str]) -> Vec<&'a str> {
     let mut full = vec!["--no-pager"];
-    for setting in FIXED.iter().copied().chain(settings.iter().map(String::as_str)) {
+    for setting in settings {
         full.extend(["-c", setting]);
     }
     full.extend_from_slice(args);
     full
+}
+
+/// Whether Git runs here, for the first run's note asking to install it.
+pub(crate) fn runs() -> bool {
+    process::run("git", &["--version"], None, Duration::from_secs(5)).is_ok()
 }
 
 fn call(dir: &Path, settings: &[String], args: &[&str], timeout: Duration) -> Result<String> {
@@ -61,20 +73,22 @@ pub(crate) fn text(name: &[u8]) -> (String, bool) {
 
 /// Where the name `name`, relative to `dir`, leads, also when it isn't valid text.
 pub(crate) fn path(dir: &Path, name: &[u8]) -> PathBuf {
-    #[cfg(unix)]
-    let name = std::path::Path::new(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(name));
-    // Git for Windows writes names as UTF-8.
-    #[cfg(not(unix))]
-    let name = String::from_utf8_lossy(name);
-    #[cfg(not(unix))]
-    let name = Path::new(name.as_ref());
-    dir.join(name)
+    dir.join(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(name))
 }
 
 /// For commands that never read file contents (`rev-parse`, `remote`, `config`).
 /// Anything that compares the working tree, such as `status`, needs a [`Repo`].
 pub(crate) fn plain(dir: &Path, args: &[&str], timeout: Duration) -> Result<String> {
     call(dir, &[], args, timeout)
+}
+
+/// Git that makes a project: `clone`, `init`, `add`, `commit`, `remote`, `push`. The settings every call forces hold
+/// here too, and Git asks no question. All but hooks: the repository is the one Laci just made (a template's own, under
+/// any name, stays behind, and a clone brings none), so its hooks are the user's own, such as the pre-push hook Git
+/// LFS puts there that uploads the files it tracks.
+pub(crate) fn make(dir: &Path, args: &[&str], timeout: Duration) -> Result<String> {
+    let settings = FIXED.into_iter().filter(|setting| *setting != NO_HOOKS);
+    process::run_env("git", &forced(settings, args), Some(dir), timeout, &ENV)
 }
 
 /// The driver name in `filter.<name>.clean`, `.smudge` or `.process`: commands Git runs on file contents.

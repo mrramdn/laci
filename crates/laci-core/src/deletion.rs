@@ -109,13 +109,9 @@ fn local_backup(dir: &Path, remote: &Path) -> Result<()> {
 }
 
 /// Whether Git takes the remote `url` for a path on this computer rather than an SSH address: when no colon comes
-/// before its first slash, absolute paths included, and on Windows also when it starts with a drive letter, as in
-/// `C:\backup\repo.git`.
-fn local_url(url: &str, windows: bool) -> bool {
+/// before its first slash, absolute paths included.
+fn local_url(url: &str) -> bool {
     url.find(':').is_none_or(|colon| url.find('/').is_some_and(|slash| slash < colon))
-        || (windows
-            && url.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
-            && url.as_bytes().get(1) == Some(&b':'))
 }
 
 fn check(dir: &Path) -> Result<String> {
@@ -126,11 +122,12 @@ fn check(dir: &Path) -> Result<String> {
         .find(|n| *n == "origin")
         .or_else(|| names.lines().next())
         .ok_or("This project has no remote backup")?;
-    let url = git(dir, &["remote", "get-url", remote])?;
+    // `--end-of-options` so a remote name read from the repository is always the name argument, never an option.
+    let url = git(dir, &["remote", "get-url", "--end-of-options", remote])?;
     if url.starts_with("file://") {
         return Err("File URL backups cannot be verified safely. Use a network remote or a plain local backup path outside this project.".into());
     }
-    let local_remote = if local_url(&url, cfg!(windows)) {
+    let local_remote = if local_url(&url) {
         let local = Path::new(&url);
         let local = if local.is_absolute() { local.to_owned() } else { dir.join(local) };
         let actual = canonical(&local).map_err(|_| "The local remote backup is unavailable".to_owned())?;
@@ -273,16 +270,16 @@ mod tests {
     use super::local_url;
 
     #[test]
-    fn git_reads_a_drive_letter_as_a_path_only_on_windows() {
+    fn git_reads_a_url_without_a_colon_before_its_first_slash_as_a_path() {
         for url in ["/srv/backup.git", "../backup.git", "backup.git", "./odd:name.git", r"\\server\share\repo.git", ""]
         {
-            assert!(local_url(url, false) && local_url(url, true), "{url}");
+            assert!(local_url(url), "{url}");
         }
         for url in ["git@github.com:me/repo.git", "host:repo", "ssh://host/repo", "https://github.com/me/repo"] {
-            assert!(!local_url(url, false) && !local_url(url, true), "{url}");
+            assert!(!local_url(url), "{url}");
         }
         for url in [r"C:\backup\repo.git", "C:/backup/repo.git", "d:repo.git"] {
-            assert!(local_url(url, true) && !local_url(url, false), "{url}");
+            assert!(!local_url(url), "{url}");
         }
     }
 }

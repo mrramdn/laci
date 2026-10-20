@@ -85,7 +85,7 @@ pub fn report(env: &Env) -> Result<Value> {
 /// Frees one part of `report`. Returns how much was freed and what to tell the Log.
 pub fn free(env: &Env, part: &str) -> Result<Value> {
     ops::with_lock(env, || {
-        let (freed, title) = match part {
+        let (freed, title, form) = match part {
             "removed" => {
                 let dir = ops::data(env, "orphans")?;
                 let mut freed = 0;
@@ -97,7 +97,7 @@ pub fn free(env: &Env, part: &str) -> Result<Value> {
                 mark_journals(env, |entry| {
                     entry["kind"] == "move" && entry["to"].as_str().is_some_and(|to| Path::new(to).starts_with(&dir))
                 })?;
-                (freed, "Emptied the quarantine of deleted sessions and history")
+                (freed, "Emptied the quarantine of deleted sessions and history", json!({"form":"emptiedKept"}))
             }
             "undo" => {
                 let mut freed = 0;
@@ -108,7 +108,7 @@ pub fn free(env: &Env, part: &str) -> Result<Value> {
                     gone.insert(journal);
                 }
                 mark_ids(env, &gone)?;
-                (freed, "Removed undo copies of moves older than a week")
+                (freed, "Removed undo copies of moves older than a week", json!({"form":"removedOldUndo"}))
             }
             "legacy" => {
                 let mut freed = 0;
@@ -116,11 +116,11 @@ pub fn free(env: &Env, part: &str) -> Result<Value> {
                     freed += entry_size(&path);
                     remove(&path)?;
                 }
-                (freed, "Removed files left by Laci 1")
+                (freed, "Removed files left by Laci 1", json!({"form":"removedLaci1"}))
             }
             _ => return Err("That part cannot be freed".into()),
         };
-        Ok(json!({"freed":freed,"title":title}))
+        Ok(json!({"freed":freed,"title":title,"say":form}))
     })
 }
 fn remove(path: &Path) -> Result<()> {

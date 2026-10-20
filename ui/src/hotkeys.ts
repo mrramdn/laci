@@ -2,65 +2,32 @@ import { useEffect } from "react";
 import { api } from "./api";
 import { useApp, run, savePref } from "./store";
 import { parentOf } from "./helpers";
-import { isMac, OS } from "./platform";
 import { selectIsOpen } from "./select";
 import { chordsOf, chordText } from "./shortcuts";
 import { toggleTerminal } from "./terminal-api";
 /** The parts of a key press that the shortcuts look at. */
-type Press = Pick<
-  KeyboardEvent,
-  "key" | "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey"
->;
-/** Ctrl, and on macOS ⌘ as well: where the window asks for Ctrl, a Mac may press either. */
-const ctrlOrCmd = (event: Press) => event.ctrlKey || (isMac && event.metaKey);
+type Press = Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey">;
 /**
- * F4 on its own, or Ctrl+` (⌘+` too on macOS). F4 with Alt, Ctrl or ⌘ is the system's: Alt+F4 closes the
- * window and Ctrl+F4 a tab. Windows reports AltGr as Ctrl+Alt, and on some keyboards it types a `, so
- * Ctrl+Alt does not count.
+ * F4 on its own, or Ctrl+`. F4 with Alt, Ctrl or Super is the system's: Alt+F4 closes the window
+ * and Ctrl+F4 a tab. AltGr can arrive as Ctrl+Alt, and on some keyboards it types a `, so Ctrl+Alt
+ * does not count.
  */
 export const isTerminalKey = (event: Press) =>
   (event.key === "F4" && !event.altKey && !event.ctrlKey && !event.metaKey) ||
-  (ctrlOrCmd(event) &&
-    !event.altKey &&
-    (event.key === "`" ||
-      (isMac && !event.shiftKey && event.code === "Backquote")));
-/** Ctrl+K or ⌘+K, on every system. */
+  (event.ctrlKey && !event.altKey && event.key === "`");
+/** Ctrl+K, or Super+K. */
 export const isPaletteKey = (event: Press) =>
   (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k";
-/** `?`, or Ctrl+/ (⌘+/ too on macOS, and not with AltGr, as above). */
+/** `?`, or Ctrl+/ (not with AltGr, as above). */
 export const isShortcutsKey = (event: Press) =>
-  event.key === "?" || (ctrlOrCmd(event) && !event.altKey && event.key === "/");
-/** ⌘+, on macOS, where every app opens its settings with it. */
-export const isSettingsKey = (event: Press) =>
-  isMac &&
-  event.metaKey &&
-  !event.ctrlKey &&
-  !event.altKey &&
-  !event.shiftKey &&
-  event.key === ",";
-/**
- * Ctrl+H, or ⌘⇧. as in Finder on macOS, where Ctrl+H deletes a character and ⌘H hides the app. The
- * period is also found by its place on the keyboard, since Shift changes the character it types.
- */
+  event.key === "?" || (event.ctrlKey && !event.altKey && event.key === "/");
+/** Ctrl+H. */
 export const isHiddenFilesKey = (event: Press) =>
-  isMac
-    ? event.metaKey &&
-      event.shiftKey &&
-      !event.ctrlKey &&
-      !event.altKey &&
-      (event.code === "Period" || event.key === "." || event.key === ">")
-    : event.ctrlKey && event.key.toLowerCase() === "h";
-/** Backspace, or ⌘↑ as in Finder on macOS. */
-export const isParentFolderKey = (event: Press) =>
-  event.key === "Backspace" ||
-  (isMac &&
-    event.metaKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.shiftKey &&
-    event.key === "ArrowUp");
-/** What the Display menu says beside "Hidden files": Ctrl H, or ⌘⇧. on macOS. */
-export const HIDDEN_FILES_HINT = chordText(OS, chordsOf(OS, "hidden")[0]);
+  event.ctrlKey && event.key.toLowerCase() === "h";
+/** Backspace. */
+export const isParentFolderKey = (event: Press) => event.key === "Backspace";
+/** What the Display menu says beside "Hidden files": Ctrl H. */
+export const HIDDEN_FILES_HINT = chordText(chordsOf("hidden")[0]);
 /** Detailed's panes, in the order F6 visits them. */
 const PANES: [string, string][] = [
   ["sidebar", "#side"],
@@ -127,9 +94,8 @@ const typing = (target: HTMLElement) =>
   target.isContentEditable;
 /**
  * Keys for the whole window, in either design and on the first-run screen: F6 between the panes
- * that are shown, Ctrl or ⌘+K for the palette, F4 or Ctrl+` for the terminal, Escape for whatever is
- * on top, and ? or Ctrl+/ for the shortcuts. On macOS ⌘ does what Ctrl does here, and ⌘+, opens
- * Settings. A dialog, or one of Simple's sheets, has the keys to itself.
+ * that are shown, Ctrl+K for the palette, F4 or Ctrl+` for the terminal, Escape for whatever is on
+ * top, and ? or Ctrl+/ for the shortcuts. A dialog, or one of Simple's sheets, has the keys to itself.
  */
 export function useGlobalHotkeys() {
   useEffect(() => {
@@ -154,8 +120,7 @@ export function useGlobalHotkeys() {
       }
       const terminal = isTerminalKey(event);
       const palette = isPaletteKey(event);
-      const settings = isSettingsKey(event);
-      if (!terminal && !palette && !settings) return;
+      if (!terminal && !palette) return;
       event.preventDefault();
       event.stopPropagation();
       const state = useApp.getState();
@@ -163,7 +128,6 @@ export function useGlobalHotkeys() {
         return;
       if (palette) useApp.setState({ palette: !state.palette });
       else if (state.palette) return;
-      else if (settings) state.navigate("settings");
       else toggleTerminal();
     };
     const key = (event: KeyboardEvent) => {
@@ -198,8 +162,7 @@ export function useGlobalHotkeys() {
 }
 /**
  * Detailed's own keys: ↑ ↓ and Enter on list rows, Backspace for the parent folder and Ctrl+H for
- * hidden files (⌘↑ and ⌘⇧. on macOS). They come after the window's keys, which handle F6, Escape, ?
- * and Ctrl+/ first.
+ * hidden files. They come after the window's keys, which handle F6, Escape, ? and Ctrl+/ first.
  */
 export function useDetailedHotkeys() {
   useEffect(() => {
@@ -217,7 +180,6 @@ export function useDetailedHotkeys() {
         return;
       }
       if (typing(target)) return;
-      // Before the rows' own keys, which would take ⌘↑ on a row for a move to the row above.
       if (
         isParentFolderKey(event) &&
         state.view === "folder" &&

@@ -1,11 +1,9 @@
 // ui/src/words.ts: Simple's words follow its writing rules (design-research §3.4), every ⓘ has its
-// glossary entry, times read as words, and the system's own words come from platform.ts.
+// glossary entry, and times read as words.
 import assert from "node:assert/strict";
 import { load } from "../ui-module.mjs";
 
 const words = load("words.ts");
-const on = (os) =>
-  load("words.ts", {}, { document: { documentElement: { dataset: { os } } } });
 
 /**
  * Every text the areas of words.ts can give, with where it is: each string, and what each function
@@ -154,15 +152,11 @@ export async function yesterdayIsTheDayBeforeNotTwentyFourHoursAgo() {
   assert.equal(words.ago(evening, new Date(2026, 9, 7, 23, 30).getTime()), "an hour ago");
 }
 
-export async function eachSystemGetsItsOwnWords() {
-  const trash = (os) => on(os).termOf("trash");
-  assert.equal(trash("windows").term, "Move to Recycle Bin");
-  assert.match(trash("windows").info, /Restore it from the Recycle Bin\./);
-  assert.equal(trash("macos").term, "Move to Trash");
-  assert.equal(trash("linux").term, "Move to Trash");
-  assert.equal(on("macos").shell.searchKey, "⌘K");
-  assert.equal(on("windows").shell.searchKey, "Ctrl K");
-  assert.match(on("windows").help.safe.join(" "), /Recycle Bin/);
+export async function theTrashAndTheSearchKeyHaveTheirNames() {
+  assert.equal(words.termOf("trash").term, "Move to Trash");
+  assert.match(words.termOf("trash").info, /Restore it from the Trash\./);
+  assert.equal(words.shell.searchKey, "Ctrl K");
+  assert.match(words.help.safe.join(" "), /moving a project to the Trash/);
 }
 
 export async function helpFindsAWordByAnyOfItsNames() {

@@ -4,11 +4,11 @@ use crate::{
     files, paths,
     platform::{
         self,
-        path::{may_contain, stays_below},
+        path::{may_contain, same_path},
     },
 };
 use serde_json::{Value, json};
-use std::{path::Path, sync::LazyLock};
+use std::{fs, path::Path, sync::LazyLock};
 
 static APP_NAME: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^[\w.+-]{1,40}$").expect("app name pattern"));
@@ -22,11 +22,9 @@ static CONNECTOR_ID: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^custom-[a-z0-9][a-z0-9-]*$").expect("connector ID pattern"));
 
 pub fn load(env: &Env) -> Value {
-    let fresh = !env.config_dir.join("config.json").is_file();
-    let mut c = files::text(&env.config_dir.join("config.json"))
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .filter(Value::is_object)
-        .unwrap_or_else(|| json!({}));
+    let file = env.config_dir.join("config.json");
+    let fresh = !file.is_file();
+    let mut c = read(&file).unwrap_or_else(|| json!({}));
     if fresh {
         c["presets"] = json!([]);
     }
@@ -59,10 +57,24 @@ pub fn load(env: &Env) -> Value {
     }
     c
 }
+/// The settings config.json holds, or `None` when it can't be read as settings.
+fn read(file: &Path) -> Option<Value> {
+    files::text(file).and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object)
+}
 pub fn save(env: &Env, c: &Value) -> Result<()> {
+    let file = env.config_dir.join("config.json");
+    // Settings that are there but can't be read, as when the app that syncs them can't download them, were loaded as
+    // defaults: written over, they would be gone. An empty file holds nothing, and a link is refused below.
+    if fs::symlink_metadata(&file).is_ok_and(|meta| !meta.is_symlink() && meta.len() > 0) && read(&file).is_none() {
+        return Err(format!(
+            "Laci couldn't read your settings in {}, so it won't write over them. Make sure the app that syncs that \
+             folder is running, or fix the file, then try again.",
+            paths::tilde(&file, &env.home)
+        ));
+    }
     let mut text = serde_json::to_string_pretty(c).map_err(|e| e.to_string())?;
     text.push('\n');
-    files::replace(&env.config_dir.join("config.json"), text.as_bytes())
+    files::replace(&file, text.as_bytes())
 }
 pub fn validate_roots(env: &Env, roots: &Value) -> Result<Value> {
     let array = roots.as_array().ok_or("Pick folders to scan")?;
@@ -71,10 +83,18 @@ pub fn validate_roots(env: &Env, roots: &Value) -> Result<Value> {
         let raw = value.as_str().ok_or("Invalid folder")?;
         let requested = paths::expand(raw.trim(), &env.home);
         let existing = load(env)["roots"].as_array().is_some_and(|roots| {
-            roots.iter().filter_map(Value::as_str).any(|root| paths::expand(root, &env.home) == requested)
+            roots.iter().filter_map(Value::as_str).any(|root| same_path(&paths::expand(root, &env.home), &requested))
         });
         // Retaining a selected but disconnected disk must not prevent unrelated settings edits.
         let p = if existing && requested.is_absolute() { requested } else { paths::selected_directory(raw, env)? };
+        // The root of a disk or a share holds the system and everything else there, not a place of projects. One kept
+        // from before, as 2.5 took it, stays: Laci still looks through it, and other settings must still save.
+        if !existing && p.parent().is_none() {
+            return Err(format!(
+                "{} is a whole disk, and Laci doesn't look through one. Choose the folder where you keep projects.",
+                p.display()
+            ));
+        }
         if !roots.iter().any(|r| paths::within(&p, r)) {
             roots.push(p);
         }
@@ -128,7 +148,7 @@ fn chosen_folder(env: &Env, value: &Value, key: &str, missing: &str) -> Result<O
     }
     let requested = paths::expand(raw, &env.home);
     let stored = load(env)[key].as_str().map(|old| paths::expand(old, &env.home));
-    Ok(Some(if stored.as_ref() == Some(&requested) && requested.is_absolute() {
+    Ok(Some(if stored.is_some_and(|stored| same_path(&stored, &requested)) && requested.is_absolute() {
         requested
     } else {
         paths::selected_directory(raw, env)?
@@ -179,14 +199,7 @@ pub fn validate_connector(env: &Env, raw: &Value) -> Result<Value> {
         link = json!({"kind":"none"});
     } else if kind == "inside" {
         let p = link["path"].as_str().ok_or("Pick a path inside the project")?.trim().trim_end_matches('/');
-        // On Linux the last check adds nothing to the ones before it; on Windows it also catches `..\x`, `\x` and the
-        // drives in `C:\x` and `C:x`.
-        if p.is_empty()
-            || p.len() > 200
-            || p.starts_with('/')
-            || p.split('/').any(|s| s == ".." || s.is_empty())
-            || !stays_below(Path::new(p))
-        {
+        if p.is_empty() || p.len() > 200 || p.starts_with('/') || p.split('/').any(|s| s == ".." || s.is_empty()) {
             return Err("History path must stay inside the project".into());
         }
         link["path"] = json!(p);

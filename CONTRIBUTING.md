@@ -45,7 +45,7 @@ Use a disposable demo home when testing move, archive, Trash, undo or new-projec
 
 The watcher and full suites include Tidy orphan quarantine, a double Apply click, and Undo with exact session bytes and modification time preserved. Rust regressions hold a background scan open while committing a mutation, reject stale scan results, coalesce repeated agent events, and retain the history guard after a failed refresh. This covers the long Applying changes wait and scan churn without relying on timing thresholds from a small demo.
 
-Run `node scripts/ui-state-smoke.mjs` for reordered refresh/status/mutation replies and duplicate-submit regression coverage. The full desktop suite also checks external scan roots, Settings archive defaults, edited archive destinations with Undo, and Trash rejection when local work appears after preview. `LACI_MODULAR_ONLY=1` runs those modular-action checks alone. Git remotes in these tests are disposable local bare repositories, not live GitHub proof.
+Run `node scripts/ui-state-smoke.mjs` for reordered refresh/status/mutation replies and duplicate-submit regression coverage. The full desktop suite also checks external scan roots, Settings archive defaults, edited archive destinations with Undo, and Trash rejection when local work appears after preview. `LACI_MODULAR_ONLY=1` runs those modular-action checks alone. `LACI_SIMPLE_ONLY=1` runs the Simple design's checks alone, the suite CI calls `simple`: its places, the palette, Undo from Activity, Clean up, switching designs and the window at 720×560. Git remotes in these tests are disposable local bare repositories, not live GitHub proof.
 
 ## Demo scan benchmarks
 

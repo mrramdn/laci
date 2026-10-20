@@ -1,9 +1,15 @@
 //! Creation options used by the desktop form and MCP tool.
-use crate::{Result, config, env::Env, files, ops, paths, process, sidecar};
+use crate::{
+    Result, config,
+    env::Env,
+    files, ops, paths,
+    platform::path::{git_dir_name, may_contain, same_path},
+    process, sidecar,
+};
 use serde_json::{Value, json};
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
@@ -42,6 +48,24 @@ pub fn add_template(env: &Env, raw: &str) -> Result<Value> {
         Ok(json!({"templates":templates(env),"path":path}))
     })
 }
+/// The folder of the template `raw` names: one in Laci's own templates folder by its name, or one added by its path,
+/// in any spelling of that path, as an agent may write it with `~`, in another case or with the other separator. The
+/// folder is the one kept when it was added.
+fn template_folder(env: &Env, raw: &str) -> Result<PathBuf> {
+    let requested = paths::expand(raw, &env.home);
+    templates(env)
+        .into_iter()
+        .find_map(|t| {
+            let t = Path::new(&t);
+            if t.is_absolute() {
+                let known = paths::normalize(t);
+                (requested.is_absolute() && same_path(&known, &requested)).then_some(known)
+            } else {
+                (t.as_os_str() == raw).then(|| paths::normalize(&env.config_dir.join("templates").join(t)))
+            }
+        })
+        .ok_or_else(|| "Unknown template".to_owned())
+}
 pub fn hosts() -> Value {
     std::thread::scope(|scope| {
         let github = scope.spawn(|| process::run("gh", &["auth", "status"], None, Duration::from_secs(8)).is_ok());
@@ -50,7 +74,7 @@ pub fn hosts() -> Value {
     })
 }
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    process::run("git", args, Some(dir), Duration::from_secs(60))
+    crate::git::make(dir, args, Duration::from_secs(60))
 }
 /// Questions about the new repository, asked the same guarded way as everywhere else.
 fn git_read(dir: &Path, args: &[&str]) -> Result<String> {
@@ -97,22 +121,13 @@ fn create_unlocked(env: &Env, r: &Value, cancel: &AtomicBool, progress: &dyn Fn(
     {
         return Err("Repo URL: https://… or git@host:owner/repo".into());
     }
-    let template = r["template"].as_str().unwrap_or("");
-    if from == "template" && !templates(env).iter().any(|t| t == template) {
-        return Err("Unknown template".into());
-    }
     let template_source = if from == "template" {
-        let source = if Path::new(template).is_absolute() {
-            Path::new(template).to_owned()
-        } else {
-            env.config_dir.join("templates").join(template)
-        };
-        let source = paths::normalize(&source);
+        let source = template_folder(env, r["template"].as_str().unwrap_or(""))?;
         sidecar::plain_path(&source)?;
         if !source.is_dir() {
             return Err("The template folder is unavailable".into());
         }
-        if dest.starts_with(&source) {
+        if may_contain(&source, &dest) {
             return Err("The new project cannot be inside its template folder".into());
         }
         Some(source)
@@ -144,9 +159,16 @@ fn create_unlocked(env: &Env, r: &Value, cancel: &AtomicBool, progress: &dyn Fn(
             if let Some(src) = &template_source {
                 sidecar::plain_path(src)?;
                 for e in files::entries(src) {
-                    if e.file_name() != ".git" {
+                    if !git_dir_name(&e.file_name()) {
                         ops::copy_template(&e.path(), &dest.join(e.file_name()))?;
                     }
+                }
+                // Whatever else the file system reads as `.git` would be taken up by `git init` below, with its
+                // settings and hooks.
+                if fs::symlink_metadata(dest.join(".git")).is_ok() {
+                    return Err("The template holds Git metadata under another name. Remove it from the template \
+                                and try again."
+                        .into());
                 }
             }
             if cancel.load(Ordering::Relaxed) {
@@ -190,7 +212,7 @@ fn create_unlocked(env: &Env, r: &Value, cancel: &AtomicBool, progress: &dyn Fn(
                 dest.display()
             ));
         }
-        let _ = fs::remove_dir_all(&dest);
+        let _ = ops::remove(&dest);
         return Err(e);
     }
     if cancel.load(Ordering::Relaxed) {
@@ -203,11 +225,13 @@ fn create_unlocked(env: &Env, r: &Value, cancel: &AtomicBool, progress: &dyn Fn(
             let mut github = None;
             if (remote == "github" || remote == "both") && !cancel.load(Ordering::Relaxed) {
                 let dest_s = dest.to_string_lossy();
-                if process::run(
+                // gh pushes with Git, which must ask nothing either.
+                if process::run_env(
                     "gh",
                     &["repo", "create", name, "--private", "--source", &dest_s, "--remote", "origin", "--push"],
                     None,
                     Duration::from_secs(120),
+                    &crate::git::ENV,
                 )
                 .is_ok()
                 {

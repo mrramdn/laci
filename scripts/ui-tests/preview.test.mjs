@@ -17,7 +17,6 @@ async function onPreview(body) {
   globalThis.window = { crypto: globalThis.crypto };
   try {
     load("preview/ipc.ts").installIpc({
-      os: "linux",
       design: "detailed",
       theme: "light",
     });
@@ -94,6 +93,17 @@ export async function aRequestNobodyAnsweredIsRefusedInPlainWords() {
       assert.match(error, /no answer for "no\/such\/request"/);
       return true;
     });
+  });
+}
+
+/**
+ * The preview plays a setup whose choice about new versions is saved, so Today and Home show as
+ * they do on any setup but one from before 3.0, whose card asks once (?updates=unset plays that).
+ */
+export async function thePreviewHasChosenToLookForNewVersions() {
+  await onPreview(async ({ request }) => {
+    assert.equal((await request("prefs")).updates, "daily");
+    assert.equal((await request("update/status")).enabled, true);
   });
 }
 

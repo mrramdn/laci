@@ -43,11 +43,6 @@ static TICKS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`\n]+)`").expe
 static BRACES: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"((?:~|/)[^\s{}`,;()\[\]<>"]*)\{([^{}\n]*)\}([^\s{}`,;()\[\]<>"]*)"#).expect("brace pattern")
 });
-/// [`BRACES`] for paths on Windows, which can also start with a drive letter or `\\`.
-static WINDOWS_BRACES: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"((?:~|/|\\\\|\b[A-Za-z]:[\\/])[^\s{}`,;()\[\]<>"]*)\{([^{}\n]*)\}([^\s{}`,;()\[\]<>"]*)"#)
-        .expect("Windows brace pattern")
-});
 static BULLET: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$").expect("bullet pattern"));
 static CHECKBOX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\[[ xX]\]\s*").expect("checkbox pattern"));
@@ -141,9 +136,8 @@ fn clip(text: &str, max: usize) -> String {
 }
 
 /// `~/project/{api, web}/src` names `~/project/api/src` and `~/project/web/src`.
-fn expand_braces(text: &str, separator: &str, windows: bool) -> String {
-    let braces = if windows { &WINDOWS_BRACES } else { &BRACES };
-    braces
+fn expand_braces(text: &str, separator: &str) -> String {
+    BRACES
         .replace_all(text, |c: &regex::Captures| {
             c[2].split(',')
                 .map(str::trim)
@@ -156,21 +150,14 @@ fn expand_braces(text: &str, separator: &str, windows: bool) -> String {
         .into_owned()
 }
 
-/// Whether `text` starts like a path a report names: `/…` or `~/…`, and on Windows also `~\…`, `C:\…`, `C:/…` and
-/// `\\server\share\…`.
-fn starts_like_path(text: &str, windows: bool) -> bool {
-    let drive = |t: &[u8]| t.len() > 2 && t[0].is_ascii_alphabetic() && t[1] == b':' && matches!(t[2], b'\\' | b'/');
-    text.starts_with('/')
-        || text.starts_with("~/")
-        || (windows && (text.starts_with(r"~\") || text.starts_with(r"\\") || drive(text.as_bytes())))
+/// Whether `text` starts like a path a report names: `/…` or `~/…`.
+fn starts_like_path(text: &str) -> bool {
+    text.starts_with('/') || text.starts_with("~/")
 }
 
 /// Paths named in a header field. A path in backticks may hold spaces; elsewhere words and punctuation
 /// separate them, and a web address or a branch name is never a path.
 fn path_tokens(text: &str) -> Vec<String> {
-    tokens(text, cfg!(windows))
-}
-fn tokens(text: &str, windows: bool) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut rest = String::new();
     let mut last = 0;
@@ -179,8 +166,8 @@ fn tokens(text: &str, windows: bool) -> Vec<String> {
         rest.push_str(&text[last..whole.start()]);
         rest.push(' ');
         let inner = c[1].trim();
-        if starts_like_path(inner, windows) {
-            tokens.extend(expand_braces(inner, "\n", windows).split('\n').map(|t| t.trim().to_owned()));
+        if starts_like_path(inner) {
+            tokens.extend(expand_braces(inner, "\n").split('\n').map(|t| t.trim().to_owned()));
         } else {
             rest.push_str(inner);
             rest.push(' ');
@@ -188,14 +175,14 @@ fn tokens(text: &str, windows: bool) -> Vec<String> {
         last = whole.end();
     }
     rest.push_str(&text[last..]);
-    let rest = expand_braces(&rest, " ", windows);
+    let rest = expand_braces(&rest, " ");
     tokens.extend(
         rest.split(|c: char| c.is_whitespace() || ",;()[]<>\"`".contains(c))
-            .filter(|t| starts_like_path(t, windows) && !t.starts_with("//"))
+            .filter(|t| starts_like_path(t) && !t.starts_with("//"))
             .map(str::to_owned),
     );
     let mut seen = BTreeSet::new();
-    let trailing = |c: char| matches!(c, '.' | ':' | '/' | '*') || (windows && c == '\\');
+    let trailing = |c: char| matches!(c, '.' | ':' | '/' | '*');
     tokens
         .into_iter()
         .map(|t| t.trim_end_matches(trailing).to_owned())
@@ -333,12 +320,22 @@ pub fn parse(name: &str, text: &str, modified: &str) -> Value {
     facts
 }
 
-/// The open items the user closed: report file name, then item key, then how and when.
-pub fn closed_items(env: &Env) -> Value {
-    files::text(&env.data_dir.join(CLOSED))
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .filter(Value::is_object)
-        .unwrap_or_else(|| json!({}))
+/// The open items the user closed: report file name, then item key, then how and when. A list that is there but can't
+/// be read is an error: read as empty, the next closure would replace every earlier one.
+pub fn closed_items(env: &Env) -> Result<Value> {
+    let file = env.data_dir.join(CLOSED);
+    if fs::symlink_metadata(&file).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+        return Ok(json!({}));
+    }
+    files::text(&file).and_then(|text| serde_json::from_str::<Value>(&text).ok()).filter(Value::is_object).ok_or_else(
+        || {
+            format!(
+                "Laci can't read {}, where it keeps the report items you closed, so nothing was changed. Remove that \
+                 file to start the list again.",
+                paths::tilde(&file, &env.home)
+            )
+        },
+    )
 }
 /// An item is known by its text, so it stays closed while the report keeps it and reopens when it is
 /// reworded.
@@ -384,7 +381,7 @@ pub fn close_item(
     let facts = parse(id, &text, "");
     let all: Vec<String> =
         facts["items"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
-    let closed = closed_items(env);
+    let closed = closed_items(env)?;
     let pool: Vec<&String> = all.iter().filter(|i| closed[id][item_key(i)].is_object() == (state == "open")).collect();
     let chosen = match item {
         ItemName::Exact(exact) => match pool.iter().find(|i| i.as_str() == exact) {
@@ -426,7 +423,7 @@ pub fn close_item(
         .find(|r| r["id"] == id)
         .map_or(id, |r| r["title"].as_str().unwrap_or(id));
     ops::with_lock(env, || {
-        let mut closed = closed_items(env);
+        let mut closed = closed_items(env)?;
         let previous = closed[id][key.as_str()].clone();
         if state == "open" {
             if let Some(items) = closed[id].as_object_mut() {
@@ -442,6 +439,7 @@ pub fn close_item(
         activity::record(
             env,
             json!({"by":by,"title":format!("{} an item of the report “{}”",if state == "open" { "Reopened" } else { "Closed" },clip(title, 80)),
+                "say":if state == "open" { json!({"form":"reopenedItem","title":clip(title, 80)}) } else { json!({"form":"closedItem","title":clip(title, 80)}) },
                 "detail":chosen,"path":file,"key":format!("report:{id}:{key}"),
                 "undo":{"type":"report-item","report":id,"item":key,"previous":previous}}),
         );
@@ -453,7 +451,7 @@ pub fn close_item(
 pub(crate) fn restore_item(env: &Env, undo: &Value) -> Result<()> {
     let id = undo["report"].as_str().ok_or("Unknown report")?;
     let key = undo["item"].as_str().ok_or("Unknown report item")?;
-    let mut closed = closed_items(env);
+    let mut closed = closed_items(env)?;
     if undo["previous"].is_object() {
         if !closed[id].is_object() {
             closed[id] = json!({});
@@ -612,7 +610,8 @@ pub fn attach(env: &Env, snapshot: &mut Value) {
     };
     let (found, total) = candidates(&dir);
     let linker = Linker::new(env, snapshot);
-    let closed = closed_items(env);
+    // A list that can't be read shows every item open; closing one then says why it can't.
+    let closed = closed_items(env).unwrap_or_else(|_| json!({}));
     let mut cache = agents::Cache::open(env, CACHE);
     let mut reports: Vec<Value> = found
         .iter()
@@ -954,17 +953,8 @@ mod tests {
     }
 
     #[test]
-    fn windows_reports_name_paths_by_drive_share_or_home() {
-        let text = r"C:\Users\me\proj. and `C:\Users\me\my proj` \\nas\share\x, ~\notes c:/dev/{a,b} D: /c/d";
-        assert_eq!(
-            tokens(text, true),
-            [r"C:\Users\me\my proj", r"C:\Users\me\proj", r"\\nas\share\x", r"~\notes", "c:/dev/a", "c:/dev/b", "/c/d"]
-        );
-        assert_eq!(tokens(r"C:\Users\me `D:\x` ~\notes \\nas\share\x /c/d", false), ["/c/d"], "elsewhere no paths");
-        assert_eq!(
-            tokens(r"`C:\p\{api,web}\src` C:\q\{a, b}", true),
-            [r"C:\p\api\src", r"C:\p\web\src", r"C:\q\a", r"C:\q\b"]
-        );
+    fn paths_written_as_windows_writes_them_are_no_paths() {
+        assert_eq!(path_tokens(r"C:\Users\me `D:\x` ~\notes \\nas\share\x /c/d"), ["/c/d"]);
     }
 
     #[test]
@@ -1005,8 +995,7 @@ mod tests {
 
     #[test]
     fn reports_link_to_projects_never_to_folders_or_home() {
-        // `/h/…`, an absolute path on this OS: on Windows on drive C.
-        let at = |path: &str| if cfg!(windows) { format!("C:{}", path.replace('/', r"\")) } else { path.to_owned() };
+        let at = |path: &str| path.to_owned();
         let env = Env::for_home(PathBuf::from(at("/h")));
         let mut nodes = json!({});
         let kinds = [("/h", "project"), ("/h/p", "project"), ("/h/p/nested", "project"), ("/h/q", "project")];
@@ -1046,7 +1035,6 @@ mod tests {
         }
         fs::write(dir.join("bad.md"), [0xff, 0xfe, 0xfd]).unwrap();
         fs::write(dir.join("big.md"), "x".repeat(MAX_BYTES as usize + 1)).unwrap();
-        #[cfg(unix)]
         std::os::unix::fs::symlink(dir.join("2026-01-02-ok.md"), dir.join("link.md")).unwrap();
         let (found, total) = candidates(&dir);
         // Without a date in its name, a file is dated by its time: today, so first.
@@ -1066,7 +1054,6 @@ mod tests {
         assert!(snapshot.get("reportsDir").is_none() && snapshot.get("reports").is_none());
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_folder_that_moved_or_became_a_link_is_not_read() {
         let temp = tempfile::tempdir().unwrap();

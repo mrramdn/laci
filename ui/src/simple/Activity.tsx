@@ -9,8 +9,8 @@ import { useNow } from "../clock";
 import { Icon } from "../common";
 import { localDay, logKind } from "../helpers";
 import { changed, refreshLog, run, useApp } from "../store";
-import type { ActivityLog, Change, LogEntry } from "../types";
-import { activity as said, ago, project } from "../words";
+import type { ActivityLog, Change, LogEntry, LogSay } from "../types";
+import { activity as said, ago, logForms as forms, project } from "../words";
 import { ACTIVITY_FILTERS, activityView, actorOf, newerChange } from "./model";
 import type { ActivityFilter } from "./model";
 import { focused, focusLost } from "./page-focus";
@@ -152,7 +152,7 @@ const FORMS: Record<string, [RegExp, Saying][]> = {
     [/^Deleted (\d+) sessions$/, ([chats]) => say.deletedChats(Number(chats))],
   ],
   other: [
-    [/^Moved (.+) to (?:system Trash|the Recycle Bin)$/, ([name]) => say.trashed(name)],
+    [/^Moved (.+) to system Trash$/, ([name]) => say.trashed(name)],
     [/^Dismissed: /, () => say.hidSuggestion],
     [/^Suggested again: /, () => say.suggestedAgain],
     [/^Backed up (\d+) agent history files?$/, ([files]) => say.copied(Number(files))],
@@ -172,11 +172,120 @@ const FORMS: Record<string, [RegExp, Saying][]> = {
   ],
 };
 
+/** A part of a change as words, or nothing when the engine didn't record it. */
+const text = (part: LogSay[string]) =>
+  typeof part === "string" && part ? part : undefined;
+/** A part of a change as a count, or nothing when the engine didn't record one. */
+const number = (part: LogSay[string]) =>
+  typeof part === "number" ? part : undefined;
+/** Says `sentence` of a name-like part, when the engine recorded it. */
+const of =
+  (key: string, sentence: (value: string) => string) =>
+  (parts: LogSay) => {
+    const value = text(parts[key]);
+    return value && sentence(value);
+  };
+type Telling = (parts: LogSay, entry: LogEntry) => string | undefined;
+/** Leftover AI chats set aside in Kept for Undo, or sent to the Trash. */
+const leftover = (entry: LogEntry) => (keptForUndo(entry) ? "kept" : "trashed");
+
 /**
- * A change in Simple's words (design-research §3.4). Its kind is what the engine records with it:
- * what it undid, its key, or whether Undo takes it back step by step. Only the title names the
- * rest, so the title's known forms give the names and numbers; a form this page doesn't know yet
- * keeps the engine's words.
+ * Each form of change the engine records with an entry (its "say", Laci 3.0 on), told from its
+ * parts with that form's sentence in words.ts. A form or a part this page doesn't know says
+ * nothing, and the entry is told from its title as an older one is.
+ */
+const SAYS: Record<string, Telling> = {
+  undid: () => forms.undid,
+  moved: of("name", forms.moved),
+  archived: of("name", forms.archived),
+  reconnected: of("name", forms.reconnected),
+  chatsForGone: (_parts, entry) => forms.chatsForGone[leftover(entry)],
+  chatsForDeleted: (parts, entry) => {
+    const name = text(parts.name);
+    return name && forms.chatsForDeleted[leftover(entry)](name);
+  },
+  finishedMoves: ({ moves }) => {
+    const n = number(moves);
+    return n === undefined ? undefined : forms.finishedMoves(n);
+  },
+  freed: ({ size, projects }) => {
+    const [freed, n] = [text(size), number(projects)];
+    return freed && n !== undefined ? forms.freed(freed, n) : undefined;
+  },
+  clearedBuild: of("name", forms.clearedBuild),
+  deletedChat: of("title", forms.deletedChat),
+  deletedChats: ({ chats }) => {
+    const n = number(chats);
+    return n === undefined ? undefined : forms.deletedChats(n);
+  },
+  keptOut: ({ files, name }) => {
+    const [n, where] = [number(files), text(name)];
+    return n !== undefined && where ? forms.keptOut(n, where) : undefined;
+  },
+  setStatus: ({ name, status }) => {
+    const [where, value] = [text(name), project.status[text(status) ?? ""]];
+    return where && value && forms.setStatus(where, value);
+  },
+  clearedStatus: of("name", forms.clearedStatus),
+  setPriority: ({ name, priority }) => {
+    const [where, value] = [text(name), say.priorities[text(priority) ?? ""]];
+    return where && value && forms.setPriority(where, value);
+  },
+  clearedPriority: of("name", forms.clearedPriority),
+  setDeadline: ({ name, deadline }) => {
+    const [where, day] = [text(name), longDay(text(deadline) ?? "")];
+    return where && day && forms.setDeadline(where, day);
+  },
+  clearedDeadline: of("name", forms.clearedDeadline),
+  setClient: ({ name, client }) => {
+    const [where, value] = [text(name), text(client)];
+    return where && value && forms.setClient(where, value);
+  },
+  clearedClient: of("name", forms.clearedClient),
+  muted: of("name", forms.muted),
+  unmuted: of("name", forms.unmuted),
+  changedMuted: of("name", forms.changedMuted),
+  addedStep: of("name", forms.addedStep),
+  ticked: of("name", forms.ticked),
+  unticked: of("name", forms.unticked),
+  editedTodo: of("name", forms.editedTodo),
+  deletedStep: of("name", forms.deletedStep),
+  editedNotes: of("name", forms.editedNotes),
+  addedHistory: of("ai", forms.addedHistory),
+  removedHistory: of("ai", forms.removedHistory),
+  addedTool: of("ai", forms.addedTool),
+  removedTool: of("ai", forms.removedTool),
+  closedItem: of("title", forms.closedItem),
+  reopenedItem: of("title", forms.reopenedItem),
+  trashed: of("name", forms.trashed),
+  dismissed: () => forms.dismissed,
+  suggestedAgain: () => forms.suggestedAgain,
+  backedUp: ({ files }) => {
+    const n = number(files);
+    return n === undefined ? undefined : forms.backedUp(n);
+  },
+  backupUpToDate: () => forms.backupUpToDate,
+  autoBackupOn: () => forms.autoBackupOn,
+  autoBackupOff: () => forms.autoBackupOff,
+  restoredChat: ({ ai }) => {
+    const name = text(ai);
+    return name ? forms.restoredChat(name) : forms.restoredChatAny;
+  },
+  emptiedKept: () => forms.emptiedKept,
+  removedOldUndo: () => forms.removedOldUndo,
+  removedLaci1: () => forms.removedLaci1,
+  letUse: of("ai", forms.letUse),
+  stoppedUse: of("ai", forms.stoppedUse),
+  created: of("name", forms.created),
+  changedSettings: () => forms.changedSettings,
+};
+
+/**
+ * A change in Simple's words (design-research §3.4). An entry Laci 3.0 wrote says its form and
+ * parts, and that form's sentence tells it. An older entry is told from its title: its kind is
+ * what the engine records with it (what it undid, its key, or whether Undo takes it back step by
+ * step), and the title's known forms give the names and numbers. A form this page doesn't know
+ * yet keeps the engine's words.
  */
 function sentenceOf(entry: LogEntry, entries: LogEntry[]): string {
   if (entry.undoes) {
@@ -184,6 +293,11 @@ function sentenceOf(entry: LogEntry, entries: LogEntry[]): string {
     const undone = entries.find((e) => e.id === entry.undoes && !e.undoes);
     return undone ? say.undid(sentenceOf(undone, entries)) : say.undidAny;
   }
+  const told =
+    entry.say && Object.hasOwn(SAYS, entry.say.form)
+      ? SAYS[entry.say.form](entry.say, entry)
+      : undefined;
+  if (told) return told;
   const area = entry.key?.split(":")[0] ?? "";
   const forms = Object.hasOwn(FORMS, area)
     ? FORMS[area]
@@ -205,8 +319,8 @@ interface Told extends LogEntry {
   icon: string;
 }
 
-/** The log as Activity tells it. */
-function tell(log: ActivityLog | null): ActivityLog | null {
+/** The log as Activity tells it, and as a project's Recent changes does. */
+export function tell(log: ActivityLog | null): ActivityLog | null {
   if (!log) return null;
   const entries = log.entries.map(
     (entry): Told => ({

@@ -2,7 +2,8 @@
 // the technical part and About. How Laci looks, the update choice and the copy of AI chats change at
 // once, each through its own request; the project folders, AI tools, summaries folder and apps wait
 // for the filled "Save changes", which sends them all through `setup/save` as Detailed's Settings
-// does, with Undo in Activity.
+// does, with Undo in Activity. Updates also says where the update stands, with the one button that
+// moves it on (updates.tsx).
 import "./settings.css";
 import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode, SetStateAction, SyntheticEvent } from "react";
@@ -10,7 +11,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { api, errorText } from "../api";
 import { LaciMark } from "../brand";
 import { Icon } from "../common";
-import { agentInstruction, base, tilde } from "../helpers";
+import { agentInstruction, base, isWholeDisk, tilde } from "../helpers";
 import { ChooseFolder } from "../pick";
 import {
   changed,
@@ -49,6 +50,7 @@ import {
 } from "./model";
 import type { SettingsDraft, UpdateChoice } from "./model";
 import { Button, Callout, Card, Info, StatusChip } from "./ui";
+import { refreshUpdate, UpdatePanel } from "./updates";
 
 /** A change to the draft, as a value or from the draft as it is then. */
 type Edit = (change: SetStateAction<SettingsDraft>) => void;
@@ -400,9 +402,15 @@ function ProjectsCard({
         <ChooseFolder
           className="s-btn s-btn-outline s-btn-small"
           label={said.addFolder}
+          name={said.addFolderName}
           title={said.addFolderTitle}
           defaultPath="~"
-          onPick={(path) => edit((d) => withRoot(d, path))}
+          onPick={(path) => {
+            // A whole disk ("/") isn't a folder Laci looks through.
+            if (isWholeDisk(path))
+              toast(said.wholeDisk, said.wholeDiskNote, { error: true });
+            else edit((d) => withRoot(d, path));
+          }}
         />
         <Button kind="text" small icon="search" disabled={looking} onClick={suggest}>
           {looking ? said.suggesting : said.suggest}
@@ -452,6 +460,7 @@ function ProjectsCard({
         <ChooseFolder
           className="s-btn s-btn-outline s-btn-small"
           label={said.chooseArchive}
+          name={said.chooseArchiveName}
           title={said.chooseArchiveTitle}
           defaultPath={draft.archiveDir || "~"}
           onPick={(path) => edit((d) => ({ ...d, archiveDir: path }))}
@@ -556,6 +565,7 @@ function AiCard({
         <ChooseFolder
           className="s-btn s-btn-outline s-btn-small"
           label={said.chooseSummaries}
+          name={said.chooseSummariesName}
           title={said.chooseSummariesTitle}
           defaultPath={draft.reportsDir || "~"}
           onPick={(path) => edit((d) => ({ ...d, reportsDir: path }))}
@@ -669,7 +679,10 @@ function AppsCard({
 
 // --- Updates -------------------------------------------------------------------------------------
 
-/** How often Laci looks for a new version, saved at once through the `updates` request. */
+/**
+ * Where the update stands, with the one button that moves it on, and how often Laci looks for a new
+ * version, which is saved at once through the `updates` request.
+ */
 function UpdatesCard({
   prefs,
   onPrefs,
@@ -681,9 +694,12 @@ function UpdatesCard({
     void run(async () => {
       onPrefs(await api<Prefs>("updates", { updates }));
       toast(said.updatesSaved[updates]);
+      // The desktop says so itself; this covers a window that missed it.
+      refreshUpdate();
     });
   return (
     <Card title={said.updates} icon="refresh-cw">
+      <UpdatePanel />
       <Choices
         title={said.updatesQuestion}
         name="updates"

@@ -379,10 +379,14 @@ pub fn health(dir: &Path) -> Value {
     );
     let tag = repo.read(&["describe", "--tags", "--abbrev=0"]);
     if !tag.is_empty() {
+        // `describe` prints the tag's short name, read from the project's repository. Hand it back to Git as a
+        // full ref name (`refs/tags/<name>`), which can never begin with a dash, so Git always takes it as a ref
+        // to read. The answer is the same as the bare name for an ordinary tag.
+        let full = format!("refs/tags/{tag}");
         out["release"]["tag"] = json!(tag);
-        out["release"]["tagAt"] = json!(utc(&repo.read(&["log", "-1", "--format=%cI", &tag])));
+        out["release"]["tagAt"] = json!(utc(&repo.read(&["log", "-1", "--format=%cI", &full])));
         out["release"]["since"] =
-            json!(repo.read(&["rev-list", "--count", &format!("{tag}..HEAD")]).parse::<u64>().unwrap_or(0));
+            json!(repo.read(&["rev-list", "--count", &format!("{full}..HEAD")]).parse::<u64>().unwrap_or(0));
     }
     out
 }

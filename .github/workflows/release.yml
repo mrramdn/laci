@@ -139,8 +139,10 @@ jobs:
         run: |
           floor() { grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1 | sed 's/^GLIBC_//'; }
           binary="$(objdump -T target/release/laci | floor)"
-          appimage="$(find /tmp/laci-package-proof/appimage/squashfs-root -type f \( -name '*.so*' -o -perm -u+x \) \
-            -exec objdump -T {} + 2> /dev/null | floor)"
+          # Some of the files are scripts, which objdump refuses.
+          appimage="$({ find /tmp/laci-package-proof/appimage/squashfs-root -type f \( -name '*.so*' -o -perm -u+x \) \
+            -exec objdump -T {} + 2> /dev/null || true; } | floor)"
+          test -n "$binary" && test -n "$appimage"
           both="$(printf '%s\n' "$binary" "$appimage" | sort -V | tail -1)"
           . /etc/os-release
           echo "floor=$both" >> "$GITHUB_OUTPUT"

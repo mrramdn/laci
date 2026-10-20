@@ -72,7 +72,7 @@ The example is `3.0.0-rc.1`. For a final version, use `3.0.0`.
    git push origin v3.0.0-rc.1
    ```
 
-6. **Approve the environment.** Follow the run with `gh run watch`, or under Actions → Release. The build takes about half an hour. Then the sign job waits for **Review deployments → release → Approve and deploy**. Reject it if anything in the run looks wrong.
+6. **Approve the environment.** Follow the run with `gh run watch`, or under Actions → Release. The checks and the build take about ten minutes. Then the sign job waits for **Review deployments → release → Approve and deploy**. Reject it if anything in the run looks wrong.
 
 7. **Check the draft.**
    - Run `gh release view v3.0.0-rc.1`. It should be a draft holding 7 assets, and a pre-release if the version has a `-`.

@@ -4,7 +4,7 @@ use crate::{
     files, paths,
     platform::{
         self,
-        path::{may_contain, stays_below},
+        path::{may_contain, same_path, stays_below},
     },
 };
 use serde_json::{Value, json};
@@ -82,8 +82,9 @@ pub fn validate_roots(env: &Env, roots: &Value) -> Result<Value> {
     for value in array {
         let raw = value.as_str().ok_or("Invalid folder")?;
         let requested = paths::expand(raw.trim(), &env.home);
+        // A saved folder may come back spelled another way, as in another case on macOS and Windows.
         let existing = load(env)["roots"].as_array().is_some_and(|roots| {
-            roots.iter().filter_map(Value::as_str).any(|root| paths::expand(root, &env.home) == requested)
+            roots.iter().filter_map(Value::as_str).any(|root| same_path(&paths::expand(root, &env.home), &requested))
         });
         // Retaining a selected but disconnected disk must not prevent unrelated settings edits.
         let p = if existing && requested.is_absolute() { requested } else { paths::selected_directory(raw, env)? };
@@ -147,7 +148,7 @@ fn chosen_folder(env: &Env, value: &Value, key: &str, missing: &str) -> Result<O
     }
     let requested = paths::expand(raw, &env.home);
     let stored = load(env)[key].as_str().map(|old| paths::expand(old, &env.home));
-    Ok(Some(if stored.as_ref() == Some(&requested) && requested.is_absolute() {
+    Ok(Some(if stored.is_some_and(|stored| same_path(&stored, &requested)) && requested.is_absolute() {
         requested
     } else {
         paths::selected_directory(raw, env)?

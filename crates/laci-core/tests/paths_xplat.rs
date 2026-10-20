@@ -336,6 +336,41 @@ mod folding {
         assert_eq!(laci_core::agents::resolve_encoded(&env, &gone), None);
     }
 
+    /// An agent may name a scanned project in another spelling of its path, such as in another case: the scan's project
+    /// is found all the same, once the file system confirms it.
+    #[test]
+    fn a_project_named_in_another_spelling_is_found_in_the_scan() {
+        let (_temp, root) = folder();
+        let env = Env::for_home(root.join("home"));
+        let project = env.home.join("project").join("Demo");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join("package.json"), "{}").unwrap();
+        config::save(&env, &json!({"roots":["~/project"],"presets":[]})).unwrap();
+        let mut service = Service::new(env.clone());
+        assert!(service.snapshot().unwrap()["nodes"][project.to_str().unwrap()].is_object());
+        let gone = swapped(&env.home.join("project").join("Gone"));
+        assert!(service.node(&gone.to_string_lossy()).is_err());
+        if !folds(&root) {
+            eprintln!("This volume tells case apart; nothing else to find.");
+            return;
+        }
+        let other = swapped(&project);
+        assert_eq!(service.node(&other.to_string_lossy()).unwrap()["path"], json!(project));
+    }
+
+    /// A scan location saved while its disk was there may come back spelled through macOS's own link /var while the
+    /// disk is away. It is kept, as when spelled the same.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_saved_location_spelled_through_var_is_kept_while_its_disk_is_away() {
+        let (_temp, root) = folder();
+        let env = Env::for_home(root.join("home"));
+        let (saved, asked) = (Path::new("/private/var/laci-gone-disk"), Path::new("/var/laci-gone-disk"));
+        config::save(&env, &json!({"roots":[saved],"presets":[],"archiveDir":saved})).unwrap();
+        assert_eq!(config::validate_roots(&env, &json!([asked])).unwrap(), json!([asked]));
+        assert_eq!(config::validate_archive_dir(&env, &json!(asked)).unwrap(), json!(asked));
+    }
+
     /// A relative path would be asked about wherever Laci runs, so another spelling of it confirms nothing.
     #[test]
     fn a_relative_spelling_confirms_nothing() {

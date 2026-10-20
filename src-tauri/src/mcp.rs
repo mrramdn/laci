@@ -115,12 +115,14 @@ pub fn run(env: Env) -> Result<(), String> {
         Ok(())
     })
 }
+/// The project an agent names: by its path, also spelled another way on macOS and Windows ([`Service::node`]), or by
+/// its name or label when only one project has it.
 fn project(service: &mut Service, raw: &str) -> Result<Value, String> {
-    let snap = service.snapshot()?;
     let expanded = paths::expand(raw, &service.env.home).to_string_lossy().into_owned();
-    if let Some(node) = snap["nodes"].get(&expanded) {
-        return Ok(node.clone());
+    if let Ok(node) = service.node(&expanded) {
+        return Ok(node);
     }
+    let snap = service.snapshot()?;
     let matches: Vec<_> = snap["nodes"]
         .as_object()
         .into_iter()
@@ -1510,6 +1512,30 @@ mod tests {
         assert_eq!(items[0]["firstPrompt"].as_str().unwrap().chars().count(), 121, "the start of the first prompt");
         assert!(details["agents"].get("items").is_none(), "the item ids are not listed a second time");
         assert!(details["reports"][0].get("projects").is_none());
+    }
+
+    /// An agent may name a project by another spelling of its path: as the file system spells it, as through macOS's
+    /// /private or with Windows' long names where the scan has 8.3 short ones, or in another case. Each is the project
+    /// once the file system confirms it; on Linux another case is another folder.
+    #[test]
+    fn a_project_path_in_another_spelling_finds_the_project() {
+        let (_dir, mut service, big) = busy_home();
+        std::fs::create_dir_all(&big).unwrap();
+        let canonical = laci_core::platform::path::canonical(Path::new(&big)).unwrap();
+        let found = call(&mut service, "project_details", &json!({"project":canonical})).unwrap();
+        assert_eq!(found["path"], json!(big));
+        // Each name differs only in case from the file system's own: macOS's /VAR would be the link /var spelled
+        // another way too, which Laci doesn't read as the system's link.
+        let swapped: String = canonical
+            .to_string_lossy()
+            .chars()
+            .map(|c| if c.is_uppercase() { c.to_ascii_lowercase() } else { c.to_ascii_uppercase() })
+            .collect();
+        let found = call(&mut service, "project_details", &json!({"project":swapped}));
+        assert_eq!(found.is_ok(), Path::new(&swapped).is_dir(), "{found:?}");
+        if let Ok(found) = found {
+            assert_eq!(found["path"], json!(big));
+        }
     }
 
     #[test]

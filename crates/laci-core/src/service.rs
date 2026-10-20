@@ -1,7 +1,13 @@
 //! Application actions shared by IPC and MCP.
 use crate::{
-    Result, activity, agents, assistant, config, create, env::Env, files, ops, paths, platform, readers, reports, scan,
-    sidecar, storage,
+    Result, activity, agents, assistant, config, create,
+    env::Env,
+    files, ops, paths,
+    platform::{
+        self,
+        path::{FOLDS_CASE, same_path},
+    },
+    readers, reports, scan, sidecar, storage,
 };
 use serde_json::{Value, json};
 use std::{
@@ -270,12 +276,18 @@ impl Service {
             let _ = writeln!(file, "{} {message}", files::now());
         }
     }
+    /// The scanned folder `id` names. On macOS and Windows another spelling of its path finds it too, as an agent may
+    /// write it: in another case, and on Windows with `/` or an 8.3 short name.
     pub fn node(&mut self, id: &str) -> Result<Value> {
         let snap = self.snapshot()?;
-        snap["nodes"]
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "That folder is not in the last scan. Rescan and try again.".into())
+        let nodes = &snap["nodes"];
+        let found = nodes.get(id).or_else(|| {
+            // Linux tells every spelling apart.
+            let others = nodes.as_object().filter(|_| FOLDS_CASE)?;
+            let wanted = paths::expand(id, &self.env.home);
+            others.iter().find(|(key, _)| same_path(Path::new(key), &wanted)).map(|(_, node)| node)
+        });
+        found.cloned().ok_or_else(|| "That folder is not in the last scan. Rescan and try again.".into())
     }
     pub fn place(&mut self, id: &str) -> Result<Value> {
         if let Ok(node) = self.node(id) {

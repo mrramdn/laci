@@ -32,8 +32,6 @@ fn helper(home: &Path) -> (PathBuf, String) {
     let marker = home.join("started");
     let program = home.join("helper.sh");
     fs::write(&program, format!("#!/bin/sh\necho started >> '{}'\n", marker.display())).unwrap();
-    // Git for Windows runs a script by its first line; there is no mode to set.
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();

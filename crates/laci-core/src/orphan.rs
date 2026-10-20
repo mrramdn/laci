@@ -86,11 +86,7 @@ fn identity(env: &Env, source: &Path) -> Result<String> {
         let ((mtime, mtime_nsec), (ctime, ctime_nsec)) = (stamp.modified, stamp.changed);
         hash.update(entry.path().as_os_str().as_encoded_bytes());
         hash.update(stamp.identity.volume.to_le_bytes());
-        // A file number that fits in 64 bits, as an inode does, goes in as one; a wider Windows file ID whole.
-        match u64::try_from(stamp.identity.file) {
-            Ok(file) => hash.update(file.to_le_bytes()),
-            Err(_) => hash.update(stamp.identity.file.to_le_bytes()),
-        }
+        hash.update(stamp.identity.file.to_le_bytes());
         for value in [meta.len(), mtime as u64, mtime_nsec as u64, ctime as u64, ctime_nsec as u64] {
             hash.update(value.to_le_bytes());
         }

@@ -1,15 +1,13 @@
 //! Linux, where Laci has run since v1. Processes are read from /proc, the Trash is gio's, files open with xdg-open,
 //! and settings and cache follow the XDG folders.
 pub use super::unix::{
-    Group, IDENTITY_FIELDS, Lock, change_stamp, copy_link, exited, file_change_stamp, home_dir, identity, lock,
-    preserve, remove_all, rename_noreplace, spawn_group, user_dirs, which,
+    Group, Lock, change_stamp, copy_link, exited, file_change_stamp, home_dir, identity, lock, open_nofollow, preserve,
+    remove_all, rename_noreplace, spawn_group, user_dirs, which,
 };
-pub use super::unix::{explain, keep_attributes, move_notes, open_nofollow, retry};
 use super::{Apps, Holder};
 use crate::Result;
 use std::{
-    ffi::OsStr,
-    fs::{self, Metadata},
+    fs,
     io::{self, Read},
     path::{Path, PathBuf},
     time::Duration,
@@ -17,17 +15,6 @@ use std::{
 
 const PROC: &str = "/proc";
 
-/// Linux marks no file hidden besides its name, and keeps every file's content on the computer.
-pub fn hidden_flag(_meta: &Metadata) -> bool {
-    false
-}
-pub fn placeholder(_meta: &Metadata) -> bool {
-    false
-}
-/// The home folder holds no folder of the system's own, beside the dotted ones that are hidden anyway.
-pub fn system_folder(_name: &OsStr) -> bool {
-    false
-}
 pub fn host_name() -> Option<String> {
     let mut name = String::new();
     fs::File::open("/etc/hostname").ok()?.take(256).read_to_string(&mut name).ok()?;

@@ -1,13 +1,7 @@
 //! Application actions shared by IPC and MCP.
 use crate::{
-    Result, activity, agents, assistant, config, create,
-    env::Env,
-    files, ops, paths,
-    platform::{
-        self,
-        path::{FOLDS_CASE, same_path},
-    },
-    readers, reports, scan, sidecar, storage,
+    Result, activity, agents, assistant, config, create, env::Env, files, ops, paths, platform, readers, reports, scan,
+    sidecar, storage,
 };
 use serde_json::{Value, json};
 use std::{
@@ -224,7 +218,6 @@ fn issue_name(code: &str) -> &str {
         "behind" => "Behind remote",
         "stash" => "Forgotten stash",
         "no-git" => "Not under version control",
-        "online-only" => "Kept only online",
         "no-readme" => "No README",
         "template-readme" => "Template README",
         "stale-cwd" => "Old path in agent logs",
@@ -277,18 +270,13 @@ impl Service {
             let _ = writeln!(file, "{} {message}", files::now());
         }
     }
-    /// The scanned folder `id` names. On macOS and Windows another spelling of its path finds it too, as an agent may
-    /// write it: in another case, and on Windows with `/` or an 8.3 short name.
+    /// The scanned folder `id` names.
     pub fn node(&mut self, id: &str) -> Result<Value> {
         let snap = self.snapshot()?;
-        let nodes = &snap["nodes"];
-        let found = nodes.get(id).or_else(|| {
-            // Linux tells every spelling apart.
-            let others = nodes.as_object().filter(|_| FOLDS_CASE)?;
-            let wanted = paths::expand(id, &self.env.home);
-            others.iter().find(|(key, _)| same_path(Path::new(key), &wanted)).map(|(_, node)| node)
-        });
-        found.cloned().ok_or_else(|| "That folder is not in the last scan. Rescan and try again.".into())
+        snap["nodes"]
+            .get(id)
+            .cloned()
+            .ok_or_else(|| "That folder is not in the last scan. Rescan and try again.".into())
     }
     pub fn place(&mut self, id: &str) -> Result<Value> {
         if let Ok(node) = self.node(id) {
@@ -368,8 +356,7 @@ impl Service {
         json!({
             "theme":c["theme"],"design":c["design"],"updates":c["updates"],
             "configured":c["roots"].is_array(),
-            "configPath":paths::tilde(&self.env.config_dir.join("config.json"),&self.env.home),
-            "os":std::env::consts::OS
+            "configPath":paths::tilde(&self.env.config_dir.join("config.json"),&self.env.home)
         })
     }
     pub fn request(&mut self, name: &str, b: &Value) -> Result<Value> {
@@ -893,12 +880,6 @@ impl Service {
             // asks here after a reload.
             "prefs" => Ok(self.prefs()),
             "setup/info" => self.setup_info(),
-            // The `laci` command on macOS: a link in ~/.local/bin to the program inside Laci.app. Elsewhere the
-            // installer sees to it: Windows' puts bin on the Path, and the deb and rpm put laci in /usr/bin.
-            #[cfg(target_os = "macos")]
-            "cli/install" => crate::env::install_cli(&self.env, &platform::shell_path().unwrap_or_default()),
-            #[cfg(not(target_os = "macos"))]
-            "cli/install" => Err("Laci's installer adds the command line tool on this system.".into()),
             "setup/discover" => self.discover_roots(),
             "setup/save" => {
                 let roots = config::validate_roots(&self.env, &b["roots"])?;
@@ -1071,9 +1052,8 @@ impl Service {
                 if !path.is_dir() {
                     return Err("That folder doesn't exist anymore".into());
                 }
-                // Each entry's own metadata comes with the listing, where Windows would open every file to read it
-                // again. Only a link can lead out of the folder, which is checked already, and only a link's
-                // target is read.
+                // Each entry's own metadata comes with the listing. Only a link can lead out of the folder, which is
+                // checked already, and only a link's target is read.
                 let entries: Vec<_> = files::entries(&path)
                     .into_iter()
                     .take(5000)
@@ -1087,7 +1067,7 @@ impl Service {
                             let dir = meta.as_ref().is_some_and(|m| m.is_dir());
                             (dir, meta.as_ref().map(files::modified_at).unwrap_or_default())
                         };
-                        let hidden = platform::hidden(&e.file_name(), meta.as_ref());
+                        let hidden = platform::hidden(&e.file_name());
                         json!({"name":e.file_name().to_string_lossy(),"path":path,"dir":dir,"link":link,"size":meta.map(|m|m.len()),"at":at,"git":dir&&path.join(".git").exists(),"hidden":hidden})
                     })
                     .collect();
@@ -1136,13 +1116,9 @@ impl Service {
             .filter_map(Value::as_str)
             .map(|s| json!(paths::expand(s, &self.env.home)))
             .collect();
-        let mut info = json!({"configured":c["roots"].is_array(),"roots":roots,"rootStatus":scan::root_status(&self.env,&c),"archiveDir":c["archiveDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"reportsDir":c["reportsDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"candidates":[],"presets":array(&c["presets"]),"custom":array(&c["custom"]).len(),"apps":self.apps(),"terminalTarget":c["terminalTarget"].as_str().unwrap_or("internal"),"installed":installed_apps(),"git":crate::git::runs()});
-        // Only macOS runs Laci from where it was downloaded, and only there does Laci itself install `laci`.
-        if cfg!(target_os = "macos") {
-            info["translocated"] = json!(self.env.translocated());
-            info["cli"] = crate::env::cli_status(&self.env, &platform::shell_path().unwrap_or_default());
-        }
-        Ok(info)
+        Ok(
+            json!({"configured":c["roots"].is_array(),"roots":roots,"rootStatus":scan::root_status(&self.env,&c),"archiveDir":c["archiveDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"reportsDir":c["reportsDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"candidates":[],"presets":array(&c["presets"]),"custom":array(&c["custom"]).len(),"apps":self.apps(),"terminalTarget":c["terminalTarget"].as_str().unwrap_or("internal"),"installed":installed_apps(),"git":crate::git::runs()}),
+        )
     }
     /// Optional shallow discovery. Opening Settings never walks Home or selects suggestions.
     fn discover_roots(&self) -> Result<Value> {
@@ -1153,19 +1129,14 @@ impl Service {
             .map_err(|e| e.to_string())?
             .take(2000)
             .filter_map(std::result::Result::ok)
-            .filter(|e| {
-                e.file_type().is_ok_and(|t| t.is_dir())
-                    && !platform::hidden(&e.file_name(), e.metadata().ok().as_ref())
-                    && !platform::system_folder(&e.file_name())
-            })
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && !platform::hidden(&e.file_name()))
             .take(100)
         {
             let mut repos = 0usize;
             for entry in
                 walkdir::WalkDir::new(entry.path()).max_depth(3).follow_links(false).into_iter().filter_entry(|e| {
                     e.depth() == 0
-                        || (!platform::hidden(e.file_name(), e.metadata().ok().as_ref())
-                            && !platform::system_folder(e.file_name())
+                        || (!platform::hidden(e.file_name())
                             && !files::HEAVY.contains(&e.file_name().to_string_lossy().as_ref()))
                 })
             {
@@ -1495,22 +1466,21 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let env = Env::for_home(home.path().to_owned());
         let mut service = Service::new(env.clone());
-        let os = std::env::consts::OS;
         let path = "~/.config/laci/config.json";
         assert_eq!(
             service.request("prefs", &json!({})).unwrap(),
-            json!({"theme":null,"design":null,"updates":null,"configured":false,"configPath":path,"os":os})
+            json!({"theme":null,"design":null,"updates":null,"configured":false,"configPath":path})
         );
         assert!(!env.config_dir.join("config.json").exists());
         config::save(&env, &json!({"roots":["~/project"],"theme":"dark","design":"detailed","updates":"off"})).unwrap();
         assert_eq!(
             service.request("prefs", &json!({})).unwrap(),
-            json!({"theme":"dark","design":"detailed","updates":"off","configured":true,"configPath":path,"os":os})
+            json!({"theme":"dark","design":"detailed","updates":"off","configured":true,"configPath":path})
         );
         config::save(&env, &json!({"roots":[],"theme":"blue","design":"classic","updates":"weekly"})).unwrap();
         assert_eq!(
             service.request("prefs", &json!({})).unwrap(),
-            json!({"theme":null,"design":null,"updates":null,"configured":true,"configPath":path,"os":os})
+            json!({"theme":null,"design":null,"updates":null,"configured":true,"configPath":path})
         );
         assert!(activity::read_log(&env, 100).is_empty());
     }

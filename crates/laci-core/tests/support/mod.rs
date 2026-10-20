@@ -1,5 +1,4 @@
-//! What the tests need from the OS where Linux, macOS and Windows differ: temporary folders, links, and programs to
-//! start.
+//! What the tests need from the OS: temporary folders, links, and programs to start.
 // Each test file uses only some of these.
 #![allow(dead_code)]
 use std::{
@@ -13,8 +12,7 @@ pub struct TempDir {
     path: PathBuf,
 }
 impl TempDir {
-    /// The folder as Laci spells the paths it finds on the disk, and its home outside Linux: canonical. Windows' own
-    /// temp path can hold an 8.3 short name such as `RUNNER~1`, and macOS's leads through the link `/var`.
+    /// The folder as Laci spells the paths it finds on the disk: canonical.
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -27,41 +25,19 @@ pub fn tempdir() -> TempDir {
     TempDir { _dir: dir, path }
 }
 
-/// Makes `link` a link to the folder `target`. Windows makes symlinks only in Developer Mode or for an administrator;
-/// without either, a junction stands in, which Laci must refuse the same way.
+/// Makes `link` a link to the folder `target`.
 pub fn link_dir(target: &Path, link: &Path) {
-    #[cfg(unix)]
     std::os::unix::fs::symlink(target, link).unwrap();
-    #[cfg(windows)]
-    {
-        if std::os::windows::fs::symlink_dir(target, link).is_err() {
-            junction(target, link);
-        }
-    }
 }
 
-/// Makes `link` a junction to the folder `target`, as pnpm fills node_modules on Windows. Unlike a symlink, a
-/// junction needs no privilege, and it holds the full path of where it leads.
-#[cfg(windows)]
-pub fn junction(target: &Path, link: &Path) {
-    let made = Command::new("cmd").args(["/c", "mklink", "/J"]).arg(link).arg(target).output().unwrap();
-    assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
-}
-
-/// Makes `link` a link to the file `target`. On Windows this needs Developer Mode or an administrator.
+/// Makes `link` a link to the file `target`.
 pub fn link_file(target: &Path, link: &Path) {
-    #[cfg(unix)]
     std::os::unix::fs::symlink(target, link).unwrap();
-    #[cfg(windows)]
-    std::os::windows::fs::symlink_file(target, link).unwrap();
 }
 
-/// Removes the link [`link_dir`] made, and nothing it leads to. Windows removes a link to a folder as a folder.
+/// Removes the link [`link_dir`] made, and nothing it leads to.
 pub fn unlink_dir(link: &Path) {
-    #[cfg(unix)]
     std::fs::remove_file(link).unwrap();
-    #[cfg(windows)]
-    std::fs::remove_dir(link).unwrap();
 }
 
 const ROLE: &str = "LACI_TEST_ROLE";
@@ -71,9 +47,8 @@ pub fn role() -> Option<String> {
     std::env::var(ROLE).ok()
 }
 
-/// This test binary started again as a program, where Linux would use a shell or `sleep` and Windows has neither. It
-/// runs only the test named `test` (in full, as `cargo test -- --list` names it), which reads `role` from [`role`]
-/// first and plays that part instead of testing.
+/// This test binary started again as a program. It runs only the test named `test` (in full, as
+/// `cargo test -- --list` names it), which reads `role` from [`role`] first and plays that part instead of testing.
 pub fn program(test: &str, role: &str) -> Command {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command.args(["--exact", test, "--nocapture", "--test-threads=1"]).env(ROLE, role);
@@ -83,7 +58,6 @@ pub fn program(test: &str, role: &str) -> Command {
 /// Writes `body` to `path` as a program that can run. A child writes it, so this process never has the file open for
 /// writing: such a file goes along into every program another test thread starts meanwhile, and Linux won't start a
 /// program that any process has open for writing ("Text file busy").
-#[cfg(unix)]
 pub fn script(path: &Path, body: &str) {
     use std::{io::Write, process::Stdio};
     let mut writer = Command::new("/bin/sh")

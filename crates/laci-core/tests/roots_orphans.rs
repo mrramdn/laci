@@ -96,7 +96,6 @@ fn reconnect_stale_bytes_and_symlinks_reject_reviewed_cleanup() {
 }
 
 // The writer is the shell, holding the log open from another folder.
-#[cfg(unix)]
 #[test]
 fn open_history_writer_blocks_cleanup_even_when_its_cwd_is_elsewhere() {
     use std::{
@@ -164,7 +163,7 @@ fn pure_trash_has_no_laci_undo_and_mixed_journals_explain_partial_recovery() {
 fn invalid_default_archive_keeps_review_available_with_a_valid_alternative() {
     let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
-    // A name at a time, as the scan spells the paths it finds: on Windows a `/` given to `join` stays in the text.
+    // A name at a time, as the scan spells the paths it finds.
     let project = env.home.join("projects").join("demo");
     write(&project.join("package.json"), "{}");
     write(&env.home.join("projects/_archive/demo/occupied"), "existing");
@@ -180,7 +179,6 @@ fn invalid_default_archive_keeps_review_available_with_a_valid_alternative() {
 }
 
 // gio is Linux's Trash.
-#[cfg(target_os = "linux")]
 #[test]
 fn system_trash_uses_checked_history_paths_and_never_offers_laci_undo() {
     const CHILD: &str = "LACI_ORPHAN_TRASH_TEST";

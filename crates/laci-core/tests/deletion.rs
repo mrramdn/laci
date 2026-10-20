@@ -98,7 +98,6 @@ fn dirty_untracked_stash_and_unreachable_remote_are_refused_again_at_execution()
 }
 
 // The program working in the folder is `sleep`, and the links are Unix links.
-#[cfg(unix)]
 #[test]
 fn worktrees_in_use_paths_and_symlinks_are_refused() {
     let (home, env, dir, node) = fixture();
@@ -134,8 +133,6 @@ fn a_project_cannot_use_itself_as_a_remote_backup() {
     }
 }
 
-// A Windows file name can't hold a colon.
-#[cfg(unix)]
 #[test]
 fn colons_in_local_paths_cannot_bypass_the_self_backup_guard() {
     let (_home, env, dir, mut node) = fixture();
@@ -153,7 +150,6 @@ fn colons_in_local_paths_cannot_bypass_the_self_backup_guard() {
 }
 
 // The stand-in for git-upload-pack is a shell script.
-#[cfg(unix)]
 #[test]
 fn local_work_created_while_the_remote_answers_prevents_trash() {
     use std::os::unix::fs::PermissionsExt;
@@ -215,7 +211,6 @@ fn a_remote_object_store_linked_into_the_project_is_not_a_backup() {
 }
 
 // The stand-in for git-upload-pack is a shell script.
-#[cfg(unix)]
 #[test]
 fn hidden_changes_created_during_remote_verification_are_rechecked() {
     use std::os::unix::fs::PermissionsExt;

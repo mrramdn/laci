@@ -20,7 +20,7 @@ fn write(path: &Path, text: &str) {
 fn fixture() -> (support::TempDir, Env, PathBuf) {
     let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
-    // A name at a time, as the scan spells the paths it finds: on Windows a `/` given to `join` stays in the text.
+    // A name at a time, as the scan spells the paths it finds.
     let project = env.home.join("project").join("demo");
     write(&project.join("package.json"), r#"{"name":"demo","scripts":{"safe":"node -e 'console.log(1)'"}}"#);
     write(&project.join("README.md"), "# Demo\n\n## TODO\n\n- [ ] Read the guide\n");
@@ -121,7 +121,6 @@ fn a_script_whose_name_begins_with_a_dash_is_not_started() {
     assert!(cmd.unwrap().contains("'safe'"));
 }
 /// Runs `program` in `dir` with Git kept to the test's own settings and identity, and returns what it printed.
-#[cfg(unix)]
 fn run_in(dir: &Path, program: &str, args: &[&str]) -> String {
     let out = std::process::Command::new(program)
         .args(args)
@@ -142,7 +141,6 @@ fn run_in(dir: &Path, program: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 /// The command a fix suggests for `dir`, which waits in the terminal until the user runs it.
-#[cfg(unix)]
 fn suggested_fix(service: &mut Service, dir: &Path, code: &str) -> String {
     let node = service.node(dir.to_str().unwrap()).unwrap();
     let (cmd, run, _) = service.action(&node, "fix", code).unwrap();
@@ -152,7 +150,6 @@ fn suggested_fix(service: &mut Service, dir: &Path, code: &str) -> String {
 /// A first push and a new GitHub repository are suggested as commands. The names in them come from the project:
 /// its folder, its remote and its branch. Each reaches the program as a name, also one that begins with a dash,
 /// and the suggested push still sets the upstream.
-#[cfg(unix)]
 #[test]
 fn suggested_fixes_pass_folder_remote_and_branch_names_as_names() {
     let (temp, env, project) = fixture();
@@ -770,12 +767,10 @@ fn legacy_summary_uses_connected_provider_and_requires_choice_when_ambiguous() {
     assert!(service.action(&node, "summary", "antigravity").unwrap_err().contains("Choose a connected agent"));
 }
 
-#[cfg(unix)]
 fn mode(path: &Path) -> u32 {
     use std::os::unix::fs::PermissionsExt;
     fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
-#[cfg(unix)]
 #[test]
 fn data_folder_and_logs_are_private_even_when_they_existed_wider() {
     use std::os::unix::fs::PermissionsExt;
@@ -798,7 +793,6 @@ fn data_folder_and_logs_are_private_even_when_they_existed_wider() {
     service.snapshot().unwrap();
     assert_eq!(mode(&env.cache_dir), 0o700);
 }
-#[cfg(unix)]
 #[test]
 fn debug_does_not_write_through_a_linked_log() {
     let (temp, env, _project) = fixture();
@@ -850,7 +844,6 @@ fn log_titles_start_with_a_capital_and_settings_changes_say_what_changed() {
     assert_eq!(entry["detail"], "Editor: code → zed · Terminal: built-in → external · AI tools: Codex on");
 }
 
-#[cfg(unix)]
 #[test]
 fn readme_links_stay_inside_the_project_and_only_documents_open() {
     use laci_core::service::{LinkTarget, link_target};
@@ -1060,7 +1053,7 @@ fn sessions_only_the_backup_holds_are_listed_and_can_be_put_back() {
     const CODEX: &str = "99999999-2222-3333-4444-555555555555";
     let (_temp, env, project) = fixture();
     config::save(&env, &json!({"roots":["~/project"],"presets":["claude","codex"],"custom":[]})).unwrap();
-    // Spelled as the place Laci puts a session back: on Windows a `/` given to `join` stays in the text.
+    // Spelled as the place Laci puts a session back.
     let store = env.home.join(".claude").join("projects").join(laci_core::paths::enc(&project.to_string_lossy()));
     let session = store.join(format!("{ID}.jsonl"));
     write(
@@ -1271,71 +1264,4 @@ fn build_output_is_deleted_for_good_and_a_linked_build_folder_is_left_alone() {
     let entry = activity::read_log(&env, 5).into_iter().find(|e| e["journal"] == done["journal"]["id"]).unwrap();
     assert_eq!(entry["canUndo"], false);
     assert_eq!(entry["detail"], "Deleted build output comes back with the next install or build.");
-}
-
-/// Links in a project on Windows: the junctions pnpm fills node_modules with, and links to folders elsewhere.
-#[cfg(windows)]
-mod windows {
-    use super::*;
-    use std::io;
-
-    /// ERROR_PRIVILEGE_NOT_HELD: only Developer Mode or an administrator may make a symlink.
-    const PRIVILEGE_NOT_HELD: i32 = 1314;
-
-    /// Moves a project whose node_modules holds a link to a package inside it, as pnpm makes them, and which holds a
-    /// link to a folder elsewhere in home, both made by `link`, then moves it back with Undo. A link holds the full
-    /// path of where it leads, so each one keeps naming the folder it named, and nothing it leads to is changed.
-    /// `false` when this process may not make such a link; any other failure to make one fails the test.
-    fn links_travel_with_their_project(link: fn(&Path, &Path) -> io::Result<()>) -> bool {
-        let (_temp, env, project) = fixture();
-        let modules = project.join("node_modules");
-        let package = modules.join(".pnpm").join("left-pad@1.3.0").join("node_modules").join("left-pad");
-        write(&package.join("index.js"), "module.exports = 1\n");
-        let shared = env.home.join("shared");
-        write(&shared.join("notes.md"), "kept\n");
-        let links = [(package, modules.join("left-pad")), (shared.clone(), project.join("shared"))];
-        for (target, at) in &links {
-            match link(target, at) {
-                Ok(()) => {}
-                Err(error) if error.raw_os_error() == Some(PRIVILEGE_NOT_HELD) => return false,
-                Err(error) => panic!("No link at {} to {}: {error}", at.display(), target.display()),
-            }
-        }
-        let named: Vec<PathBuf> = links.iter().map(|(_, at)| fs::read_link(at).unwrap()).collect();
-        let mut service = loaded(&env, &project);
-        let dest = project.with_file_name("moved");
-        let moved = service.request("move", &json!({"id":project,"destination":dest})).unwrap();
-        assert!(!project.exists());
-        for ((_, at), named) in links.iter().zip(&named) {
-            let travelled = dest.join(at.strip_prefix(&project).unwrap());
-            assert_eq!(&fs::read_link(&travelled).unwrap(), named, "{} still names its folder", travelled.display());
-        }
-        assert_eq!(fs::read_to_string(shared.join("notes.md")).unwrap(), "kept\n");
-        service.request("undo", &json!({"id":moved["journal"]["id"]})).unwrap();
-        assert!(!dest.exists());
-        for ((_, at), named) in links.iter().zip(&named) {
-            assert_eq!(&fs::read_link(at).unwrap(), named, "{}", at.display());
-        }
-        assert_eq!(fs::read_to_string(modules.join("left-pad").join("index.js")).unwrap(), "module.exports = 1\n");
-        assert_eq!(fs::read_to_string(project.join("shared").join("notes.md")).unwrap(), "kept\n");
-        true
-    }
-
-    /// A junction needs no privilege, so every runner can make one.
-    #[test]
-    fn a_project_holding_junctions_moves_and_undo_brings_them_back_as_they_were() {
-        fn junction(target: &Path, at: &Path) -> io::Result<()> {
-            support::junction(target, at);
-            Ok(())
-        }
-        assert!(links_travel_with_their_project(junction));
-    }
-
-    /// A symlink needs Developer Mode or an administrator, which a runner may not have.
-    #[test]
-    fn a_project_holding_symlinks_moves_and_undo_brings_them_back_as_they_were() {
-        if !links_travel_with_their_project(|target, at| std::os::windows::fs::symlink_dir(target, at)) {
-            eprintln!("This runner can't make symlinks, so only junctions were tried.");
-        }
-    }
 }

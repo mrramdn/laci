@@ -80,68 +80,17 @@ fn same_program(command: &str, laci: &Path) -> bool {
     let actual = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_owned());
     found.is_some_and(|found| actual(&found) == actual(laci))
 }
-/// The shell a command shown for setting MCP up by hand is written for: PowerShell on Windows, which its terminal
-/// opens, and a POSIX shell elsewhere.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Shell {
-    Posix,
-    PowerShell,
-}
-const SHELL: Shell = if cfg!(windows) { Shell::PowerShell } else { Shell::Posix };
-
-/// A command as it would be typed in this system's shell, for showing and copying. Nothing is ever run from this text.
+/// A command as it would be typed in a POSIX shell, for showing and copying. Nothing is ever run from this text.
 fn typed(program: &str, args: &[String]) -> String {
-    typed_for(SHELL, program, args)
+    std::iter::once(program).chain(args.iter().map(String::as_str)).map(shell_word).collect::<Vec<_>>().join(" ")
 }
-fn typed_for(shell: Shell, program: &str, args: &[String]) -> String {
-    let line = std::iter::once(program)
-        .chain(args.iter().map(String::as_str))
-        .map(|word| shell_word(shell, word))
-        .collect::<Vec<_>>()
-        .join(" ");
-    // PowerShell takes a quoted first word for text to print; the call operator runs it.
-    if shell == Shell::PowerShell && line.starts_with('\'') { format!("& {line}") } else { line }
-}
-/// One word as `shell` reads it: as it is when nothing in it means anything to the shell, else in single quotes. A
-/// POSIX shell ends a single-quoted word at any `'`, so one is written `'\''`. In PowerShell two quotes stand for one,
-/// and the curly quotes count as quotes too. A plain word there starts with a letter, `_`, `\` or `/`, since one that
-/// starts with a digit or a dot can be read as a number; and one with a leading dash stays plain only as a flag such as
-/// `--scope`: PowerShell may drop a bare `--` before a program sees it, and splits a word such as `-a.b`.
-fn shell_word(shell: Shell, word: &str) -> String {
-    match shell {
-        Shell::Posix => {
-            if !word.is_empty() && word.bytes().all(|c| c.is_ascii_alphanumeric() || b"_./:=@%+,-".contains(&c)) {
-                word.to_owned()
-            } else {
-                format!("'{}'", word.replace('\'', "'\\''"))
-            }
-        }
-        Shell::PowerShell => {
-            let plain = match word.strip_prefix('-') {
-                Some(flag) => {
-                    let name = flag.strip_prefix('-').unwrap_or(flag);
-                    name.starts_with(|c: char| c.is_ascii_alphanumeric())
-                        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-                }
-                None => {
-                    word.starts_with(|c: char| c.is_ascii_alphabetic() || "_\\/".contains(c))
-                        && word.chars().all(|c| c.is_ascii_alphanumeric() || "_./\\:-".contains(c))
-                }
-            };
-            if plain {
-                return word.to_owned();
-            }
-            let mut quoted = String::with_capacity(word.len() + 2);
-            quoted.push('\'');
-            for c in word.chars() {
-                if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
-                    quoted.push(c);
-                }
-                quoted.push(c);
-            }
-            quoted.push('\'');
-            quoted
-        }
+/// One word as a POSIX shell reads it: as it is when nothing in it means anything to the shell, else in single quotes.
+/// A single-quoted word ends at any `'`, so one is written `'\''`.
+fn shell_word(word: &str) -> String {
+    if !word.is_empty() && word.bytes().all(|c| c.is_ascii_alphanumeric() || b"_./:=@%+,-".contains(&c)) {
+        word.to_owned()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
     }
 }
 fn server(env: &Env) -> Value {
@@ -255,9 +204,8 @@ pub fn apply(env: &Env, provider: &Provider, remove: bool) -> Result<Value> {
     if !env.program.is_absolute() {
         return Err("Laci could not tell where its own program is installed".into());
     }
-    // macOS runs a downloaded Laci from a copy it removes when Laci quits, or from the disk image, and an AppImage
-    // runs from a folder that goes with it: an agent told to start that program would find nothing later. Taking the
-    // server off needs no program and still works.
+    // An AppImage runs from a folder that goes with it: an agent told to start that program would find nothing later.
+    // Taking the server off needs no program and still works.
     if !remove && let Some(why) = env.fleeting() {
         return Err(why.into());
     }
@@ -380,7 +328,6 @@ mod tests {
         assert_eq!(saved["mcp"]["servers"]["laci"], json!({"command":env.program,"args":["mcp"]}));
         let copy = PathBuf::from(done["backup"].as_str().unwrap());
         assert!(fs::read_to_string(&copy).unwrap().contains("\"theme\":\"dark\""), "the copy is the file as it was");
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(fs::metadata(&copy).unwrap().permissions().mode() & 0o777, 0o600);
@@ -423,20 +370,15 @@ mod tests {
         let codex = providers::builtins().into_iter().find(|p| p.id == "codex").unwrap();
         assert_eq!(status(&env, &codex)["state"], "missing");
         let laci = env.program.to_str().unwrap();
-        // A basic TOML string writes the `\` of a Windows path as `\\`.
-        let escaped = laci.replace('\\', r"\\");
         fs::create_dir_all(home.path().join(".codex")).unwrap();
         let write = |body: String| fs::write(home.path().join(".codex/config.toml"), body).unwrap();
         write(format!(
-            "model = \"gpt\"\n\n[mcp_servers.other]\ncommand = \"x\"\n\n[mcp_servers.laci] # ours\ncommand = \"{escaped}\"\nargs = [\"mcp\"]\n\n[mcp_servers.laci.env]\nA = \"b\"\n"
+            "model = \"gpt\"\n\n[mcp_servers.other]\ncommand = \"x\"\n\n[mcp_servers.laci] # ours\ncommand = \"{laci}\"\nargs = [\"mcp\"]\n\n[mcp_servers.laci.env]\nA = \"b\"\n"
         ));
         let found = status(&env, &codex);
         assert_eq!((&found["state"], &found["how"]), (&json!("registered"), &json!("command")));
-        // The program as it would be typed in this system's shell.
-        assert_eq!(
-            found["add"],
-            format!("codex mcp add laci {} {} mcp", shell_word(SHELL, "--"), shell_word(SHELL, laci))
-        );
+        // The program as it would be typed in a shell.
+        assert_eq!(found["add"], format!("codex mcp add laci -- {} mcp", shell_word(laci)));
         assert_eq!(found["remove"], "codex mcp remove laci");
         write(format!("[mcp_servers.laci]\ncommand = '{laci}'\nargs = ['mcp']\nenabled = false\n"));
         assert_eq!(status(&env, &codex)["state"], "off");
@@ -444,62 +386,22 @@ mod tests {
         assert_eq!(status(&env, &codex)["state"], "missing");
     }
     #[test]
-    fn a_command_is_shown_quoted_for_the_shell_of_its_system() {
-        let line = |shell, words: &[&str]| {
-            typed_for(shell, words[0], &words[1..].iter().map(|word| word.to_string()).collect::<Vec<_>>())
-        };
+    fn a_command_is_shown_quoted_for_the_shell() {
+        let line =
+            |words: &[&str]| typed(words[0], &words[1..].iter().map(|word| word.to_string()).collect::<Vec<_>>());
         let claude = |laci| ["claude", "mcp", "add", "laci", "--scope", "user", "--", laci, "mcp"];
-        // A POSIX shell, as on Linux and macOS.
-        let posix = |words: &[&str]| line(Shell::Posix, words);
         assert_eq!(
-            posix(&claude("/Applications/Laci.app/Contents/MacOS/laci")),
-            "claude mcp add laci --scope user -- /Applications/Laci.app/Contents/MacOS/laci mcp"
+            line(&claude("/opt/Laci/usr/bin/laci")),
+            "claude mcp add laci --scope user -- /opt/Laci/usr/bin/laci mcp"
         );
         assert_eq!(
-            posix(&["codex", "mcp", "add", "laci", "--", "/Users/o'brien/My Apps/Laci.app/Contents/MacOS/laci", "mcp"]),
-            r"codex mcp add laci -- '/Users/o'\''brien/My Apps/Laci.app/Contents/MacOS/laci' mcp"
+            line(&["codex", "mcp", "add", "laci", "--", "/home/o'brien/My Apps/laci", "mcp"]),
+            r"codex mcp add laci -- '/home/o'\''brien/My Apps/laci' mcp"
         );
         assert_eq!(
-            posix(&["/opt/My Agent/agent", "mcp", "remove", "laci", ""]),
+            line(&["/opt/My Agent/agent", "mcp", "remove", "laci", ""]),
             "'/opt/My Agent/agent' mcp remove laci ''"
         );
-        // PowerShell, as on Windows: `--` quoted so that it reaches the agent, and two quotes for one.
-        let powershell = |words: &[&str]| line(Shell::PowerShell, words);
-        assert_eq!(
-            powershell(&claude(r"C:\Users\me\AppData\Local\Laci\bin\laci.exe")),
-            r"claude mcp add laci --scope user '--' C:\Users\me\AppData\Local\Laci\bin\laci.exe mcp"
-        );
-        for (program, shown) in [
-            (r"C:\Program Files\Laci\bin\laci.exe", r"'C:\Program Files\Laci\bin\laci.exe'"),
-            (r"C:\Users\O'Brien\Laci\bin\laci.exe", r"'C:\Users\O''Brien\Laci\bin\laci.exe'"),
-            ("C:\\Users\\O\u{2019}Brien\\laci.exe", "'C:\\Users\\O\u{2019}\u{2019}Brien\\laci.exe'"),
-            (r"C:\Users\RUNNER~1\Laci\bin\laci.exe", r"'C:\Users\RUNNER~1\Laci\bin\laci.exe'"),
-            (r"$env:USERPROFILE\laci.exe", r"'$env:USERPROFILE\laci.exe'"),
-            ("D:\\雨\\laci.exe", "'D:\\雨\\laci.exe'"),
-            ("a;b", "'a;b'"),
-            ("-a.b", "'-a.b'"),
-            ("-", "'-'"),
-            ("---", "'---'"),
-            ("", "''"),
-            // PowerShell could read these as numbers: 1kb is 1024 to it.
-            ("1kb", "'1kb'"),
-            (r".\laci.exe", r"'.\laci.exe'"),
-            ("-v", "-v"),
-            ("--a-b", "--a-b"),
-            (r"\\server\tools\laci.exe", r"\\server\tools\laci.exe"),
-            ("/opt/laci", "/opt/laci"),
-        ] {
-            assert_eq!(
-                powershell(&["codex", "mcp", "add", "laci", "--", program, "mcp"]),
-                format!("codex mcp add laci '--' {shown} mcp")
-            );
-        }
-        // A quoted program is run with the call operator; PowerShell would print it otherwise.
-        assert_eq!(
-            powershell(&[r"C:\Program Files\Agent\agent.exe", "mcp", "remove", "laci"]),
-            r"& 'C:\Program Files\Agent\agent.exe' mcp remove laci"
-        );
-        assert_eq!(powershell(&[r"C:\Tools\agent.exe", "mcp"]), r"C:\Tools\agent.exe mcp");
     }
     #[test]
     fn a_program_that_is_gone_once_laci_quits_is_never_offered_to_an_agent() {
@@ -508,17 +410,12 @@ mod tests {
         let by_file = tool(&env, json!({"file":"~/.tool/mcp.json"}));
         let by_command = tool(&env, json!({"file":"~/.agent/mcp.json","add":"add {laci} mcp","remove":"remove"}));
         let file = home.path().join(".tool/mcp.json");
-        let moved = "Move Laci to Applications first, then connect it again.";
         let unpacked = "Laci can't tell which AppImage file it runs from, and the folder it runs in is gone once it \
                         quits. Start Laci from its AppImage file, then connect it again.";
-        let (mac, linux) = (cfg!(target_os = "macos"), cfg!(target_os = "linux"));
         for (program, refused) in [
-            // macOS: the copy it made of a download, or a disk image.
-            ("/Volumes/Laci/Laci.app/Contents/MacOS/laci", mac.then_some(moved)),
-            ("/private/var/folders/x/T/AppTranslocation/0F1E/d/Laci.app/Contents/MacOS/laci", mac.then_some(moved)),
-            // Linux: the folder an AppImage runs from, when Laci couldn't make sure which AppImage that is.
-            ("/tmp/.mount_LaciAbC/usr/bin/laci", linux.then_some(unpacked)),
-            ("/tmp/appimage_extracted_9f2/usr/bin/laci", linux.then_some(unpacked)),
+            // The folder an AppImage runs from, when Laci couldn't make sure which AppImage that is.
+            ("/tmp/.mount_LaciAbC/usr/bin/laci", Some(unpacked)),
+            ("/tmp/appimage_extracted_9f2/usr/bin/laci", Some(unpacked)),
             ("/opt/Laci/usr/bin/laci", None),
         ] {
             env.program = PathBuf::from(program);
@@ -535,21 +432,18 @@ mod tests {
                 assert_eq!(added.unwrap_err(), why);
                 assert!(!file.exists(), "nothing was written");
             } else {
-                // Elsewhere such a path is like any other.
+                // Any other path is like any other.
                 assert!(added.err().is_none_or(|error| !error.contains("connect it again")), "{program}");
                 let _ = fs::remove_file(&file);
             }
         }
-        // Taking the server off needs no program that lasts. (On Windows a path without a drive is no program at all.)
-        if cfg!(unix) {
-            env.program = PathBuf::from("/Volumes/Laci/Laci.app/Contents/MacOS/laci");
-            let entry = json!({"command":"/Applications/Laci.app/Contents/MacOS/laci","args":["mcp"]});
-            fs::create_dir_all(file.parent().unwrap()).unwrap();
-            fs::write(&file, json!({"mcpServers":{"laci":entry}}).to_string()).unwrap();
-            assert_eq!(apply(&env, &by_file, true).unwrap()["status"]["state"], "missing");
-        }
+        // Taking the server off needs no program that lasts.
+        env.program = PathBuf::from("/tmp/.mount_LaciAbC/usr/bin/laci");
+        let entry = json!({"command":"/opt/Laci/usr/bin/laci","args":["mcp"]});
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, json!({"mcpServers":{"laci":entry}}).to_string()).unwrap();
+        assert_eq!(apply(&env, &by_file, true).unwrap()["status"]["state"], "missing");
     }
-    #[cfg(unix)]
     #[test]
     fn the_agents_own_command_is_run_in_laci_home_and_a_change_that_did_not_land_is_reported() {
         use std::os::unix::fs::PermissionsExt;

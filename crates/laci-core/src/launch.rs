@@ -8,7 +8,6 @@ use crate::{
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
-    ffi::OsString,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
@@ -79,10 +78,10 @@ pub(crate) fn located(program: &str) -> Option<PathBuf> {
 fn installed(program: &str) -> bool {
     located(program).is_some()
 }
-/// The variables that give `program`, an agent Laci asks something, the home Laci reads, also on a demo home: HOME on
-/// Linux and macOS, USERPROFILE on Windows. Codex reads CODEX_HOME instead, and without it the profile Windows has for
-/// the user, whatever USERPROFILE says. So on a home that isn't the user's own, Codex gets that home's .codex, made
-/// first since Codex refuses a CODEX_HOME that isn't a folder; on the user's own home a CODEX_HOME they set stays.
+/// The variables that give `program`, an agent Laci asks something, the home Laci reads, also on a demo home: HOME,
+/// and USERPROFILE as some tools read it. Codex reads CODEX_HOME before either. So on a home that isn't the user's
+/// own, Codex gets that home's .codex, made first since Codex refuses a CODEX_HOME that isn't a folder; on the user's
+/// own home a CODEX_HOME they set stays.
 pub(crate) fn agent_home(env: &Env, program: &str) -> Result<Vec<(&'static str, String)>> {
     let home = env.home.to_string_lossy().into_owned();
     let mut vars = vec![("HOME", home.clone()), ("USERPROFILE", home)];
@@ -111,19 +110,10 @@ pub fn resolve(env: &Env, request: &LaunchRequest, session: Option<&Value>) -> R
     } else {
         defaults(env, &request.provider)?
     };
-    let mut command = resolve_with_capabilities(env, request, session, &caps)?;
+    let command = resolve_with_capabilities(env, request, session, &caps)?;
     if !installed(&command.executable) {
         return Err(format!("{} is not installed or is not on PATH", command.executable));
     }
-    // The terminal starts what Laci's own children would: on Windows the file itself, never a name it looks up its
-    // own way, and node for an npm script.
-    let (executable, args) =
-        crate::process::program(&command.executable, command.args.iter().map(OsString::from).collect())?;
-    let text = |value: OsString| {
-        value.into_string().map_err(|value| format!("Laci can't hand {} to a terminal", value.to_string_lossy()))
-    };
-    command.executable = text(executable.into_os_string())?;
-    command.args = args.into_iter().map(text).collect::<Result<_>>()?;
     Ok(command)
 }
 fn resolve_with_capabilities(
@@ -360,7 +350,7 @@ fn codex_models(env: &Env) -> Result<Value> {
     // Only initialize/model-list messages; discovery never starts a thread or a turn.
     let output = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
     let vars = agent_home(env, "codex")?;
-    let mut child = crate::process::start("codex", &["app-server", "--listen", "stdio://"])?
+    let mut child = crate::process::start("codex", &["app-server", "--listen", "stdio://"])
         .current_dir(&env.home)
         .envs(vars.iter().map(|(key, value)| (key, value)))
         .stdin(Stdio::piped())
@@ -635,7 +625,6 @@ mod tests {
         assert_eq!(models[0]["efforts"], json!([]));
     }
     // Linux's terminals, and `sh` to read the quoting back.
-    #[cfg(target_os = "linux")]
     #[test]
     fn terminal_transport_keeps_argv_and_shell_quoting_round_trips() {
         let home = tempfile::tempdir().unwrap();

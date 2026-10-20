@@ -23,13 +23,6 @@ fn a_whole_disk_is_not_a_place_to_scan() {
     let disk = temp.path().ancestors().last().unwrap();
     let error = config::validate_roots(&env, &json!([disk])).unwrap_err();
     assert_eq!(error, whole(&disk.display().to_string()));
-    #[cfg(windows)]
-    {
-        // A share's own root, kept while the share is away.
-        let share = r"\\laci-test-server\projects";
-        config::save(&env, &json!({"roots":[share],"presets":[]})).unwrap();
-        assert_eq!(config::validate_roots(&env, &json!([share])).unwrap_err(), whole(&format!(r"{share}\")));
-    }
     assert_eq!(config::validate_roots(&env, &json!([env.home])).unwrap(), json!(["~"]));
 }
 
@@ -126,7 +119,7 @@ fn archive_setting_is_optional_and_undo_restores_it() {
 fn one_off_archive_keeps_only_chosen_project_visible_and_undo_restores_config_bytes() {
     let temp = tempfile::tempdir().unwrap();
     let env = Env::for_home(temp.path().join("home"));
-    // A name at a time, as the scan spells the paths it finds: on Windows a `/` given to `join` stays in the text.
+    // A name at a time, as the scan spells the paths it finds.
     let source = env.home.join("projects").join("research");
     let destination = env.home.join("cold").join("research");
     write(&source.join("README.md"), "# Research\nExisting documentation\n");
@@ -201,7 +194,7 @@ fn external_project_history_and_notes_survive_archive_and_undo() {
     let archived = &snap["nodes"][dest.to_str().unwrap()];
     assert_eq!(archived["agents"]["claude"].as_array().unwrap().len(), 1);
     assert_eq!(archived["agents"]["items"].as_array().unwrap().len(), 2);
-    // As JSON writes it: a Windows path's `\` is escaped there.
+    // As JSON writes it.
     assert!(fs::read_to_string(&codex).unwrap().contains(&json!(dest).to_string()));
     assert!(!claude.exists());
     service.request("undo", &json!({"id":changed["journal"]["id"]})).unwrap();
@@ -348,8 +341,7 @@ fn archive_destination_requires_the_recorded_filesystem_device() {
     let mut service = Service::new(env.clone());
     service.request("setup/save", &json!({"roots":[source],"archiveDir":archive,"presets":[]})).unwrap();
     let mut cfg = config::load(&env);
-    // Windows records the volume where Unix records the device.
-    let field = if cfg!(windows) { "volume" } else { "device" };
+    let field = "device";
     let device = &mut cfg["rootIdentities"][archive.to_str().unwrap()][field];
     *device = json!(device.as_u64().unwrap().wrapping_add(1));
     config::save(&env, &cfg).unwrap();

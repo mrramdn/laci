@@ -192,11 +192,10 @@ fn a_window_names_an_item_by_its_whole_text_and_a_stale_click_closes_nothing_els
     assert_eq!(activity::read_log(&f.env, 100).len(), logged);
 }
 
-/// The report items closed so far are read even when a sync app keeps their file only online, and a file that is
-/// there but can't be read stops the next change: read as empty, it would be replaced by the new closure alone.
-/// Windows' offline attribute stands in for a file that is only online.
+/// A file of the report items closed so far that is there but can't be read stops the next change: read as empty, it
+/// would be replaced by the new closure alone.
 #[test]
-fn closed_items_kept_only_online_or_unreadable_are_never_replaced_by_the_next_closure() {
+fn closed_items_that_are_unreadable_are_never_replaced_by_the_next_closure() {
     let f = fixture();
     let alpha = f.reports.join("2026-10-01-alpha.md");
     let text =
@@ -209,14 +208,6 @@ fn closed_items_kept_only_online_or_unreadable_are_never_replaced_by_the_next_cl
     };
     close(&mut service, "ship").unwrap();
     let file = f.env.data_dir.join("report-items.json");
-    #[cfg(windows)]
-    {
-        let marked = std::process::Command::new("attrib").arg("+O").arg(&file).output().unwrap();
-        assert!(marked.status.success(), "{}", String::from_utf8_lossy(&marked.stderr));
-        close(&mut service, "measure").unwrap();
-        let open = report(&service.snapshot().unwrap(), "2026-10-01-alpha.md")["open"].clone();
-        assert_eq!(open, json!(["Write docs"]), "the earlier closure is kept");
-    }
     // Cut short, as a sync app can leave a copy it hasn't finished.
     let cut = br#"{"2026-10-01-alpha.md":{"#;
     fs::write(&file, cut).unwrap();
@@ -290,7 +281,7 @@ fn the_reports_setting_is_validated_logged_and_undone() {
     {
         assert!(save_reports_dir(&mut service, &bad).is_err(), "{bad}");
     }
-    // A name at a time, as Laci spells `~/notes/reports`: on Windows a `/` given to `join` stays in the text.
+    // A name at a time, as Laci spells `~/notes/reports`.
     let inside = f.env.home.join("notes").join("reports");
     fs::create_dir_all(&inside).unwrap();
     save_reports_dir(&mut service, &json!("~/notes/reports")).unwrap();

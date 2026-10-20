@@ -1,5 +1,5 @@
-//! Files on each OS: what a move, a copy and Undo keep, names Windows keeps for itself, what the listing hides and a
-//! scan skips, files that are only online, links Laci doesn't read through, and what the move's preview warns about.
+//! Files: what a move, a copy and Undo keep, names other systems keep for themselves, what the listing hides and a
+//! scan skips, links Laci doesn't read through, and what the move's preview warns about.
 use laci_core::{create, env::Env, files, ops, paths, platform, scan, service::Service};
 use serde_json::{Value, json};
 use std::{
@@ -11,8 +11,7 @@ use std::{
 
 mod support;
 
-/// A home in a fresh temporary folder, spelled as the file system spells it: on Windows the temporary folder's path
-/// can come with 8.3 short names.
+/// A home in a fresh temporary folder, spelled as the file system spells it.
 fn home() -> (tempfile::TempDir, Env) {
     let temp = tempfile::tempdir().unwrap();
     let home = platform::path::canonical(temp.path()).unwrap().join("home");
@@ -30,14 +29,7 @@ const THEN: Duration = Duration::from_secs(1_600_000_000);
 /// Gives the file or folder `path` an old modification time, as a file that has been there a while.
 fn age(path: &Path) {
     let mut options = fs::OpenOptions::new();
-    #[cfg(unix)]
     options.read(true);
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        // FILE_WRITE_ATTRIBUTES, and FILE_FLAG_BACKUP_SEMANTICS, without which a folder doesn't open.
-        options.access_mode(0x100).custom_flags(0x0200_0000);
-    }
     let at = SystemTime::UNIX_EPOCH + THEN;
     options.open(path).unwrap().set_times(fs::FileTimes::new().set_modified(at).set_accessed(at)).unwrap();
 }
@@ -52,20 +44,9 @@ fn make_read_only(path: &Path) {
     permissions.set_readonly(true);
     fs::set_permissions(path, permissions).unwrap();
 }
-#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn run(command: &mut Command) {
     let output = command.output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-}
-/// Marks `path` hidden as the system's file manager does: Windows' hidden attribute, macOS's `hidden` flag. Linux
-/// has no such mark.
-fn mark_hidden(path: &Path) {
-    #[cfg(windows)]
-    run(Command::new("attrib").arg("+H").arg(path));
-    #[cfg(target_os = "macos")]
-    run(Command::new("chflags").arg("hidden").arg(path));
-    #[cfg(target_os = "linux")]
-    let _ = path;
 }
 /// A scan that knows only the project at `path`, as `demo`.
 fn snapshot(env: &Env, path: &Path) -> Value {
@@ -73,12 +54,11 @@ fn snapshot(env: &Env, path: &Path) -> Value {
 }
 
 /// Moving a project rewrites the paths in its Claude Code log and keeps the log's time and its read-only flag. Undo
-/// puts back the very bytes and times, the project's folders included. On Windows a rewrite failed before, so Undo
-/// had nothing to put back.
+/// puts back the very bytes and times, the project's folders included.
 #[test]
 fn undo_puts_back_the_bytes_and_times_of_a_rewritten_log_even_a_read_only_one() {
     let (_temp, env) = home();
-    // One name at a time: on Windows a `/` given to join stays in the text, and the log holds the path as Laci spells it.
+    // One name at a time, as the log holds the path as Laci spells it.
     let from = env.home.join("project").join("demo");
     let to = env.home.join("project").join("_archive").join("demo");
     write(&from.join("docs").join("README.md"), "# demo\n");
@@ -135,51 +115,9 @@ fn a_copy_keeps_the_times_of_folders_and_files_and_read_only_files() {
     assert!(!read_only(&dir.join("notes/plan.md")));
 }
 
-/// A copy keeps what Windows marks a file or folder with besides read-only: hidden, as Git for Windows hides .git,
-/// system, as on a folder's desktop.ini, archive, which backup tools clear, and whether Search indexes it. A file Laci
-/// writes in place of another keeps them too, with archive set, as any write sets it.
-#[cfg(windows)]
+/// Names Windows keeps for devices, such as CON and nul.txt, and a name that ends in a dot are names like any other.
 #[test]
-fn a_copy_and_a_rewrite_keep_the_marks_windows_gives_files() {
-    use std::os::windows::fs::MetadataExt;
-    // FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_ARCHIVE and FILE_ATTRIBUTE_NOT_CONTENT_INDEXED.
-    const HIDDEN: u32 = 0x2;
-    const SYSTEM: u32 = 0x4;
-    const ARCHIVE: u32 = 0x20;
-    const NOT_INDEXED: u32 = 0x2000;
-    let marks = |path: &Path| fs::metadata(path).unwrap().file_attributes() & (HIDDEN | SYSTEM | ARCHIVE | NOT_INDEXED);
-    let (_temp, env) = home();
-    let template = env.config_dir.join("templates").join("docs");
-    let (meta, ini, notes) = (Path::new("meta"), Path::new("desktop.ini"), Path::new("meta").join("notes.md"));
-    write(&template.join(&notes), "# Notes\n");
-    write(&template.join(ini), "[.ShellClassInfo]\n");
-    run(Command::new("attrib").arg("+H").arg(template.join(meta)));
-    // Each mark set or cleared, whatever the temporary folder passes on.
-    run(Command::new("attrib").args(["+H", "+S", "+A", "-I"]).arg(template.join(ini)));
-    // Backed up already, and left out of Search: a file written anew would have archive set.
-    run(Command::new("attrib").args(["-A", "+I"]).arg(template.join(&notes)));
-    let parent = env.home.join("project");
-    fs::create_dir(&parent).unwrap();
-    let made = create::create_project(
-        &env,
-        &json!({"name":"docs","parent":parent,"from":"template","template":"docs","remote":"none"}),
-    )
-    .unwrap();
-    let dir = Path::new(made["path"].as_str().unwrap());
-    assert_eq!(marks(&dir.join(meta)), marks(&template.join(meta)));
-    assert_eq!(marks(&dir.join(meta)) & HIDDEN, HIDDEN);
-    assert_eq!(marks(&dir.join(ini)), HIDDEN | SYSTEM | ARCHIVE);
-    assert_eq!(marks(&dir.join(&notes)), NOT_INDEXED);
-    files::replace(&dir.join(ini), b"[.ShellClassInfo]\r\nIconResource=docs.ico\r\n").unwrap();
-    assert_eq!(marks(&dir.join(ini)), HIDDEN | SYSTEM | ARCHIVE);
-    files::replace(&dir.join(&notes), b"# Notes\r\n\r\nMore.\r\n").unwrap();
-    assert_eq!(marks(&dir.join(&notes)), NOT_INDEXED | ARCHIVE);
-}
-
-/// Windows keeps CON, PRN, AUX, NUL, COM1–9 and LPT1–9 for devices, also with an extension, and drops a dot at the
-/// end of a name, so a project can't be called that there. Elsewhere these are names like any other.
-#[test]
-fn names_windows_keeps_for_itself_are_refused_there() {
+fn names_other_systems_keep_for_themselves_are_names_like_any_other() {
     let (_temp, env) = home();
     let parent = env.home.join("project");
     fs::create_dir(&parent).unwrap();
@@ -188,27 +126,19 @@ fn names_windows_keeps_for_itself_are_refused_there() {
         create::create_project(&env, &json!({"name":name,"parent":parent,"from":"empty","remote":"nowhere"}))
             .unwrap_err()
     };
-    for name in ["CON", "nul.txt", "Aux", "prn.tar.gz", "COM1", "lpt9.md", "demo."] {
-        if cfg!(windows) {
-            assert!(error(name).contains("Windows"), "{name}: {}", error(name));
-        } else {
-            assert_eq!(error(name), "Pick where to push it", "{name}");
-        }
-    }
-    for name in ["console", "COM10", "com0", "lpt", "nullable", "aux-tools"] {
+    for name in ["CON", "nul.txt", "Aux", "prn.tar.gz", "COM1", "lpt9.md", "demo.", "console", "COM10", "lpt"] {
         assert_eq!(error(name), "Pick where to push it", "{name}");
     }
 }
 
-/// The listing says what a file manager hides: a dotted name on every OS, and what the system marks hidden. Only a
-/// link is followed, and only into home or a chosen folder.
+/// The listing says what a file manager hides: a dotted name. Only a link is followed, and only into home or a chosen
+/// folder.
 #[test]
 fn the_listing_says_which_files_are_hidden_and_follows_only_links_that_stay_inside() {
     let (temp, env) = home();
-    for name in [".env", "marked", "plain"] {
+    for name in [".env", "plain"] {
         write(&env.home.join(name), "x");
     }
-    mark_hidden(&env.home.join("marked"));
     fs::create_dir(env.home.join("inside")).unwrap();
     support::link_dir(&env.home.join("inside"), &env.home.join("to-inside"));
     let outside = temp.path().join("outside");
@@ -220,7 +150,6 @@ fn the_listing_says_which_files_are_hidden_and_follows_only_links_that_stay_insi
         listing["entries"].as_array().unwrap().iter().find(|e| e["name"] == name).unwrap_or_else(|| panic!("{name}"))
     };
     assert_eq!(entry(".env")["hidden"], true);
-    assert_eq!(entry("marked")["hidden"], cfg!(any(target_os = "macos", windows)));
     assert_eq!(entry("plain")["hidden"], false);
     for (name, dir, link) in [("inside", true, false), ("to-inside", true, true), ("to-outside", false, true)] {
         assert_eq!((entry(name)["dir"].as_bool(), entry(name)["link"].as_bool()), (Some(dir), Some(link)), "{name}");
@@ -229,29 +158,9 @@ fn the_listing_says_which_files_are_hidden_and_follows_only_links_that_stay_insi
     assert!(entry("plain")["at"].as_str().is_some_and(|at| !at.is_empty()));
 }
 
-/// A project's README, package.json and the like are read, but not a file whose content is only online, as OneDrive
-/// and iCloud leave files: reading it would download it. Windows' offline attribute stands in for such a file here;
-/// iCloud's mark can't be set by hand.
+/// A scan reads the Git state of a repository left alone, offers it for archiving, and reads the reports.
 #[test]
-fn a_file_that_is_only_online_is_not_read() {
-    let (_temp, env) = home();
-    let file = env.home.join("README.md");
-    write(&file, "# demo\n");
-    assert_eq!(files::text(&file).as_deref(), Some("# demo\n"));
-    #[cfg(windows)]
-    {
-        run(Command::new("attrib").arg("+O").arg(&file));
-        assert_eq!(files::text(&file), None);
-    }
-}
-
-/// A repository a sync app keeps only online is listed, but Git isn't run in it: Git would download its history, and
-/// its work tree with it. Here one repository's index is only online, and in another the pack that holds its history.
-/// What wasn't read isn't taken for finished work: a check says so, and old files don't get it offered for archiving.
-/// Nor does a scan read a report kept only online. Windows' offline attribute stands in for such files; elsewhere all
-/// are read as before.
-#[test]
-fn a_scan_reads_no_repository_or_report_kept_only_online() {
+fn a_scan_reads_repositories_and_reports() {
     fn codes(list: &Value) -> Vec<&str> {
         list.as_array().into_iter().flatten().filter_map(|item| item["code"].as_str()).collect()
     }
@@ -277,54 +186,33 @@ fn a_scan_reads_no_repository_or_report_kept_only_online() {
     write(&reports.join("2026-10-19-demo.md"), "# Demo work\n\n## Open\n- Ship it\n");
     let settings = json!({"roots":["~/project"],"reportsDir":reports,"presets":[],"custom":[],"apps":{}});
     laci_core::config::save(&env, &settings).unwrap();
-    let online = cfg!(windows);
-    #[cfg(windows)]
-    {
-        let packs: Vec<PathBuf> = fs::read_dir(packed.join(".git").join("objects").join("pack"))
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| path.extension().is_some_and(|extension| extension == "pack"))
-            .collect();
-        assert!(!packs.is_empty());
-        for file in [indexed.join(".git").join("index"), reports.join("2026-10-19-demo.md")].into_iter().chain(packs) {
-            run(Command::new("attrib").arg("+O").arg(file));
-        }
-    }
     let snapshot = Service::new(env.clone()).snapshot().unwrap();
     let offered: Vec<&str> =
         snapshot["proposals"].as_array().into_iter().flatten().filter_map(|p| p["id"].as_str()).collect();
     for repo in [&indexed, &packed] {
         let node = &snapshot["nodes"][repo.to_str().unwrap()];
         assert_eq!(node["kind"], "project", "{node}");
-        assert_eq!(node["git"].is_object(), !online, "{node}");
-        assert_eq!(node["onlineOnly"] == true, online, "{node}");
+        assert!(node["git"].is_object(), "{node}");
         let issues = codes(&node["issues"]);
         assert!(!issues.contains(&"no-git"), "{issues:?}");
-        assert_eq!(issues.contains(&"online-only"), online, "{issues:?}");
         assert_eq!(node["status"]["value"], "dormant", "{node}");
         let plan = &node["archivePlan"];
         assert!(plan["dest"].is_string(), "{plan}");
-        let checks = codes(&plan["checks"]);
-        assert_eq!(checks.contains(&"online-only"), online, "{checks:?}");
         let archive = format!("archive:{}", repo.to_str().unwrap());
-        assert_eq!(offered.contains(&archive.as_str()), !online, "{offered:?}");
+        assert!(offered.contains(&archive.as_str()), "{offered:?}");
     }
     let report = &snapshot["reports"][0];
-    assert_eq!(report["title"], if online { "Demo" } else { "Demo work" }, "{report}");
-    assert_eq!(report["open"], if online { json!([]) } else { json!(["Ship it"]) }, "{report}");
-    assert_eq!(report["onlineOnly"] == true, online, "{report}");
+    assert_eq!(report["title"], "Demo work", "{report}");
+    assert_eq!(report["open"], json!(["Ship it"]), "{report}");
 }
 
-/// Laci's own settings are read even when a sync app keeps config.json only online: read as empty, they would be
-/// replaced by the next save.
+/// Laci's own settings are read from config.json.
 #[test]
-fn settings_kept_only_online_are_still_read() {
+fn settings_are_read() {
     let (_temp, env) = home();
     fs::create_dir_all(&env.config_dir).unwrap();
     let file = env.config_dir.join("config.json");
     write(&file, r#"{"roots":["~/projects"],"theme":"dark"}"#);
-    #[cfg(windows)]
-    run(Command::new("attrib").arg("+O").arg(&file));
     let config = laci_core::config::load(&env);
     assert_eq!(config["theme"], "dark");
     assert_eq!(config["roots"][0], "~/projects");
@@ -345,8 +233,7 @@ fn settings_that_cannot_be_read_are_never_written_over() {
     let error = create::add_template(&env, template.to_str().unwrap()).unwrap_err();
     assert!(error.starts_with("Laci couldn't read your settings in ~/.config/laci/config.json"), "{error}");
     assert_eq!(fs::read_to_string(&file).unwrap(), broken);
-    // A file this user may not read, which is what an unreachable cloud file is to Laci. Not to root, though.
-    #[cfg(unix)]
+    // A file this user may not read. Not to root, though.
     {
         use std::os::unix::fs::PermissionsExt;
         let whole = r#"{"roots":["~/projects"],"theme":"dark"}"#;
@@ -371,7 +258,7 @@ fn settings_that_cannot_be_read_are_never_written_over() {
     assert_eq!(laci_core::config::load(&env)["templatePaths"][0], json!(template));
 }
 
-/// A report is read without following a link put in its place, on Windows too.
+/// A report is read without following a link put in its place.
 #[test]
 fn a_link_in_place_of_a_report_is_not_read() {
     let (temp, env) = home();
@@ -384,73 +271,50 @@ fn a_link_in_place_of_a_report_is_not_read() {
     assert_eq!(files::text_nofollow(&secret, 1000).as_deref(), Some("secret\n"));
 }
 
-/// The scan names the computer: on Linux from /etc/hostname, as Laci v1 did, elsewhere as the system names it.
+/// The scan names the computer from /etc/hostname, as Laci v1 did.
 #[test]
 fn the_scan_names_the_computer() {
     let (_temp, env) = home();
     let host = Service::new(env).snapshot().unwrap()["host"].as_str().unwrap().to_owned();
-    if cfg!(target_os = "linux") {
-        let named = fs::read_to_string("/etc/hostname").map(|name| name.trim().to_owned());
-        assert_eq!(host, named.unwrap_or_else(|_| "localhost".into()));
-    } else {
-        assert!(!host.is_empty() && host != "localhost", "{host}");
-    }
+    let named = fs::read_to_string("/etc/hostname").map(|name| name.trim().to_owned());
+    assert_eq!(host, named.unwrap_or_else(|_| "localhost".into()));
 }
 
-/// Folder suggestions look for projects in the home folder, but not inside what the system and apps keep there,
-/// which on macOS would also ask for access to other apps' data.
+/// Folder suggestions look for projects in every folder of home, also ones named as other systems name their own.
 #[test]
-fn folder_suggestions_skip_the_system_folders() {
+fn folder_suggestions_look_in_every_folder() {
     let (_temp, env) = home();
-    let names = ["Projects", "Library", "AppData", "Tools.app", "$Recycle.Bin", "Marked"];
+    let names = ["Projects", "Library", "AppData", "Tools.app", "$Recycle.Bin"];
     for name in names {
         fs::create_dir_all(env.home.join(name).join("demo/.git")).unwrap();
     }
-    mark_hidden(&env.home.join("Marked"));
     let found = Service::new(env.clone()).request("setup/discover", &json!({})).unwrap();
     let suggested: Vec<PathBuf> =
         found["candidates"].as_array().unwrap().iter().map(|c| PathBuf::from(c["path"].as_str().unwrap())).collect();
-    let skipped: &[&str] = if cfg!(target_os = "macos") {
-        &["Library", "Tools.app", "Marked"]
-    } else if cfg!(windows) {
-        &["AppData", "$Recycle.Bin", "Marked"]
-    } else {
-        &[]
-    };
     for name in names {
         let shown = suggested.iter().any(|path| path.file_name().is_some_and(|n| n == name));
-        assert_eq!(shown, !skipped.contains(&name), "{name}: {suggested:?}");
+        assert!(shown, "{name}: {suggested:?}");
     }
 }
 
-/// A scan of home looks for projects in what a file manager shows, not in what the system and apps keep there, such
-/// as ~/Library and apps on macOS and AppData on Windows: on macOS, looking inside would also ask for access to other
-/// apps' data. Deeper down those names are the user's own, as a course's library exercise or a site named after its
-/// domain. On Linux only a dotted name is hidden, and every other folder is looked in as before.
+/// A scan of home looks for projects in what a file manager shows: only a dotted name is hidden, and every other folder
+/// is looked in.
 #[test]
-fn a_scan_of_home_skips_hidden_and_system_folders() {
+fn a_scan_of_home_skips_hidden_folders() {
     let (_temp, env) = home();
-    let names = ["Projects", "Library", "AppData", "Tools.app", "$Recycle.Bin", "Marked", ".hidden"];
+    let names = ["Projects", "Library", "AppData", "Tools.app", "$Recycle.Bin", ".hidden"];
     for name in names {
         fs::create_dir_all(env.home.join(name).join("demo").join(".git")).unwrap();
     }
-    mark_hidden(&env.home.join("Marked"));
     let deeper = ["library", "shop.app", "Photos.photoslibrary", "AppData", "$Recycle.Bin"];
     for name in deeper {
         fs::create_dir_all(env.home.join("Projects").join(name).join(".git")).unwrap();
     }
     laci_core::config::save(&env, &json!({"roots":["~"],"presets":[],"custom":[],"apps":{}})).unwrap();
     let snapshot = Service::new(env.clone()).snapshot().unwrap();
-    let skipped: &[&str] = if cfg!(target_os = "macos") {
-        &["Library", "Tools.app", "Marked", ".hidden"]
-    } else if cfg!(windows) {
-        &["AppData", "$Recycle.Bin", "Marked", ".hidden"]
-    } else {
-        &[".hidden"]
-    };
     for name in names {
         let found = snapshot["nodes"].get(env.home.join(name).join("demo").to_str().unwrap()).is_some();
-        assert_eq!(found, !skipped.contains(&name), "{name}");
+        assert_eq!(found, name != ".hidden", "{name}");
     }
     for name in deeper {
         let found = snapshot["nodes"].get(env.home.join("Projects").join(name).to_str().unwrap()).is_some();
@@ -458,10 +322,10 @@ fn a_scan_of_home_skips_hidden_and_system_folders() {
     }
 }
 
-/// pnpm and npm workspaces fill node_modules with links. On Windows they are junctions, which hold the full path of
-/// where they lead, so the move's preview says to reinstall; elsewhere the links lead there by a relative path.
+/// pnpm and npm workspaces fill node_modules with links, which lead there by a relative path, so the move's preview
+/// asks for no reinstall.
 #[test]
-fn the_move_preview_says_when_links_in_node_modules_keep_leading_to_the_old_place() {
+fn the_move_preview_asks_for_no_reinstall_for_links_in_node_modules() {
     let (_temp, env) = home();
     let reinstall = |ops: &[Value]| {
         ops.iter().any(|op| op["kind"] == "keep" && op["label"] == "Reinstall dependencies after the move")
@@ -472,86 +336,10 @@ fn the_move_preview_says_when_links_in_node_modules_keep_leading_to_the_old_plac
     fs::create_dir_all(linked.join("node_modules/@types")).unwrap();
     support::link_dir(&package, &linked.join("node_modules/@types/node"));
     let ops = scan::move_ops(&env, &linked, &env.home.join("archive/linked"), &json!({}));
-    assert_eq!(reinstall(&ops), cfg!(windows), "{ops:?}");
+    assert!(!reinstall(&ops), "{ops:?}");
 
     let plain = env.home.join("project/plain");
     fs::create_dir_all(plain.join("node_modules/left-pad")).unwrap();
     let ops = scan::move_ops(&env, &plain, &env.home.join("archive/plain"), &json!({}));
     assert!(!reinstall(&ops), "{ops:?}");
-}
-
-/// What a run of this test binary started by [`onedrive_preview`] prints before the preview it made.
-#[cfg(windows)]
-const PREVIEW: &str = "laci-preview: ";
-
-/// The preview of a move from `from` to `to` while OneDrive's folder is `onedrive`. It is made in a run of its own of
-/// the test that asks: a process reads its environment once.
-#[cfg(windows)]
-fn onedrive_preview(onedrive: &Path, from: &Path, to: &Path) -> Vec<String> {
-    let test = "the_move_preview_says_when_a_folder_leaves_or_goes_into_onedrive";
-    let output = support::program(test, "preview")
-        .env("OneDrive", onedrive)
-        .env_remove("OneDriveConsumer")
-        .env_remove("OneDriveCommercial")
-        .env("LACI_TEST_FROM", from)
-        .env("LACI_TEST_TO", to)
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "{stdout}\n{}", String::from_utf8_lossy(&output.stderr));
-    let ops = stdout.lines().find_map(|line| Some(line.split_once(PREVIEW)?.1)).unwrap_or_else(|| panic!("{stdout}"));
-    let ops: Vec<Value> = serde_json::from_str(ops).unwrap();
-    ops.iter().filter_map(|op| op["label"].as_str().map(str::to_owned)).collect()
-}
-
-/// Moving a folder out of OneDrive downloads what is only online first, and moving one in uploads it.
-#[cfg(windows)]
-#[test]
-fn the_move_preview_says_when_a_folder_leaves_or_goes_into_onedrive() {
-    if support::role().as_deref() == Some("preview") {
-        let path = |key: &str| PathBuf::from(std::env::var_os(key).unwrap());
-        let env = Env::for_home(std::env::temp_dir());
-        println!(
-            "{PREVIEW}{}",
-            json!(scan::move_ops(&env, &path("LACI_TEST_FROM"), &path("LACI_TEST_TO"), &json!({})))
-        );
-        return;
-    }
-    let (_temp, env) = home();
-    let onedrive = env.home.join("OneDrive");
-    let out = onedrive_preview(&onedrive, &onedrive.join("demo"), &env.home.join("demo"));
-    assert!(out.iter().any(|label| label == "Leaves OneDrive"), "{out:?}");
-    let into = onedrive_preview(&onedrive, &env.home.join("demo"), &onedrive.join("demo"));
-    assert!(into.iter().any(|label| label == "Goes into OneDrive"), "{into:?}");
-    let within = onedrive_preview(&onedrive, &onedrive.join("a"), &onedrive.join("b"));
-    assert!(!within.iter().any(|label| label.contains("OneDrive")), "{within:?}");
-}
-
-/// Antivirus scans, Search and OneDrive hold files for a moment, and a move waits for them instead of failing. A
-/// program that keeps a file open makes the move fail with a message that says what to do, and nothing moves.
-#[cfg(windows)]
-#[test]
-fn a_move_waits_a_moment_for_a_program_that_holds_a_file() {
-    use std::os::windows::fs::OpenOptionsExt;
-    let (_temp, env) = home();
-    let from = env.home.join("project/demo");
-    let to = env.home.join("project/_archive/demo");
-    write(&from.join("README.md"), "# demo\n");
-    // Opened without sharing, as a program that keeps others out does.
-    let hold = |path: &Path| fs::OpenOptions::new().read(true).share_mode(0).open(path).unwrap();
-
-    let held = hold(&from.join("README.md"));
-    let release = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(1200));
-        drop(held);
-    });
-    ops::move_project(&env, &snapshot(&env, &from), "demo", to.to_str().unwrap(), &json!({})).unwrap();
-    release.join().unwrap();
-    assert!(to.join("README.md").is_file());
-
-    let held = hold(&to.join("README.md"));
-    let error = ops::move_project(&env, &snapshot(&env, &to), "demo", from.to_str().unwrap(), &json!({})).unwrap_err();
-    drop(held);
-    assert!(error.contains("open in another program"), "{error}");
-    assert!(to.join("README.md").is_file() && !from.exists());
 }

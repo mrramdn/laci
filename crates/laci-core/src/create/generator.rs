@@ -146,7 +146,7 @@ pub fn run(plan: &Plan, cwd: &Path, cancel: &AtomicBool, progress: &dyn Fn(&str)
     progress(&format!("{}\n", preview["command"].as_str().unwrap_or("")));
     let output = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
     let mut reader = output.reopen().map_err(|e| e.to_string())?;
-    let mut command = process::start(&plan.program, &plan.args)?;
+    let mut command = process::start(&plan.program, &plan.args);
     command
         .current_dir(cwd)
         .stdin(Stdio::null())

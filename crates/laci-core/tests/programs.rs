@@ -1,91 +1,14 @@
-//! Finding and starting programs: Windows' PATHEXT, the shims npm, pnpm and yarn write, and the arguments a batch
-//! file can't take; the PATH a login shell sets up and the stand-in Git on macOS; Git's own settings; and the home an
-//! agent started on a demo home is given.
-use laci_core::{env::Env, platform, process, service::Service};
+//! Finding and starting programs: the PATH, Git's own settings, and the home an agent started on a demo home is given.
+use laci_core::{env::Env, platform, service::Service};
 use serde_json::Value;
 use std::{
-    ffi::OsString,
     fs,
     path::{Path, PathBuf},
 };
 
 mod support;
 
-/// What npm 7 and later (its cmd-shim 5 to 8) write for `claude`.
-const NPM: &str = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n) ELSE (\r\n  SET \"_prog=node\"\r\n  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & \"%_prog%\"  \"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js\" %*\r\n";
-/// cmd-shim 9, which sets PATHEXT on the line that runs node.
-const NPM_9: &str = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n) ELSE (\r\n  SET \"_prog=node\"\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & set PATHEXT=%PATHEXT:;.JS;=;% & \"%_prog%\"  \"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js\" %*\r\n";
-/// Yarn 1 and npm before 7.
-const YARN: &str = "@IF EXIST \"%~dp0\\node.exe\" (\r\n  \"%~dp0\\node.exe\"  \"%~dp0\\..\\Data\\global\\node_modules\\agy\\cli.js\" %*\r\n) ELSE (\r\n  @SETLOCAL\r\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n  node  \"%~dp0\\..\\Data\\global\\node_modules\\agy\\cli.js\" %*\r\n)";
-/// pnpm, for a program it installed globally.
-const PNPM: &str = "@SETLOCAL\r\n@IF NOT DEFINED NODE_PATH (\r\n  @SET \"NODE_PATH=C:\\Users\\Me\\AppData\\Local\\pnpm\\global\\5\\.pnpm\\node_modules\"\r\n) ELSE (\r\n  @SET \"NODE_PATH=C:\\Users\\Me\\AppData\\Local\\pnpm\\global\\5\\.pnpm\\node_modules;%NODE_PATH%\"\r\n)\r\n@IF EXIST \"%~dp0\\node.exe\" (\r\n  \"%~dp0\\node.exe\"  \"%~dp0\\global\\5\\node_modules\\pnpm\\bin\\pnpm.cjs\" %*\r\n) ELSE (\r\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n  node  \"%~dp0\\global\\5\\node_modules\\pnpm\\bin\\pnpm.cjs\" %*\r\n)\r\n";
-
-#[test]
-fn the_shims_npm_pnpm_and_yarn_write_name_the_script_node_runs() {
-    assert_eq!(process::npm_shim(NPM).as_deref(), Some(r"node_modules\@anthropic-ai\claude-code\cli.js"));
-    assert_eq!(process::npm_shim(NPM_9).as_deref(), Some(r"node_modules\@openai\codex\bin\codex.js"));
-    assert_eq!(process::npm_shim(YARN).as_deref(), Some(r"..\Data\global\node_modules\agy\cli.js"));
-    assert_eq!(process::npm_shim(PNPM).as_deref(), Some(r"global\5\node_modules\pnpm\bin\pnpm.cjs"));
-    assert_eq!(process::npm_shim(&NPM.replace("\r\n", "\n")), process::npm_shim(NPM), "line ends don't matter");
-}
-
-#[test]
-fn a_batch_file_that_does_more_than_a_shim_is_no_shim() {
-    let not_shims = [
-        String::new(),
-        "@echo off\r\ncalc.exe %*\r\n".into(),
-        // A variable set for the program, which node alone would miss.
-        NPM.replace("SETLOCAL\r\n", "SETLOCAL\r\n@SET NODE_ENV=production\r\n"),
-        // A PATH of its own, as pnpm writes for some programs.
-        PNPM.replace("@SETLOCAL\r\n", "@SETLOCAL\r\n@SET \"PATH=C:\\tools;%PATH%\"\r\n"),
-        // %_prog% and %dp0% that nothing sets.
-        NPM.replace("  SET \"_prog=node\"\r\n", ""),
-        NPM.replace("SET dp0=%~dp0\r\n", ""),
-        // Two scripts.
-        YARN.replacen("agy\\cli.js", "other\\cli.js", 1),
-        // A % in the script's name, which cmd.exe reads as a variable.
-        YARN.replace("agy\\cli.js", "%AGY%\\cli.js"),
-        // Another program than node, and an argument before the script.
-        YARN.replace("node.exe", "bun.exe").replace("node  ", "bun  "),
-        YARN.replace("node  \"", "node --preserve-symlinks \""),
-        // An extra command after the script, and arguments joined to the script's name.
-        YARN.replace(" %*\r\n", " %* & calc.exe\r\n"),
-        YARN.replace(" %*\r\n", "%*\r\n"),
-        // No line that starts node.
-        "@ECHO off\r\nSETLOCAL\r\n".into(),
-    ];
-    for text in not_shims {
-        assert_eq!(process::npm_shim(&text), None, "{text}");
-    }
-}
-
-#[test]
-fn a_batch_file_gets_no_argument_cmd_could_read_as_a_command() {
-    let script = Path::new(r"C:\Users\Me\AppData\Roaming\npm\agy.cmd");
-    let fine: Vec<OsString> = ["plain words", "C:\\Users\\Me\\R and D", "(a), b; c = d", "it's 雨", ""]
-        .into_iter()
-        .map(OsString::from)
-        .collect();
-    assert_eq!(process::batch_args(script, &fine), Ok(()));
-    for (text, named) in [
-        ("say \"hi\"", "the character \""),
-        ("100%", "the character %"),
-        ("wow!", "the character !"),
-        ("a^b", "the character ^"),
-        ("a & b", "the character &"),
-        ("a | b", "the character |"),
-        ("<in", "the character <"),
-        (">out", "the character >"),
-        ("first\nsecond", "a line break"),
-        ("first\rsecond", "a line break"),
-    ] {
-        let error = process::batch_args(script, &[OsString::from("fine"), text.into()]).unwrap_err();
-        assert!(error.contains(named) && error.contains("agy.cmd"), "{error}");
-    }
-}
-
 /// Linux finds a program as it always has: in PATH's order, a file that can run, also through a link.
-#[cfg(unix)]
 #[test]
 fn which_finds_the_first_file_that_can_run_in_path_order() {
     use std::os::unix::fs::{PermissionsExt, symlink};
@@ -112,132 +35,12 @@ fn which_finds_the_first_file_that_can_run_in_path_order() {
     assert_eq!(platform::which("missing", &path), None);
     // A path names the file itself, as an agent's command may.
     let tool = first.join("tool");
-    assert_eq!(platform::which(tool.to_str().unwrap(), "/nowhere".as_ref()), Some(tool.clone()));
-    // Elsewhere a program starts by name, and std finds it on the child's PATH.
-    if cfg!(target_os = "linux") {
-        let args = vec![OsString::from("a & b\n")];
-        assert_eq!(process::program("tool", args.clone()), Ok((PathBuf::from("tool"), args)));
-    }
-}
-
-/// A fake login shell: the body finds the command it was given, its last argument, in `$probe`. Shells print what
-/// their startup files print around what the command prints, which a fake shell runs with `PATH` set.
-#[cfg(unix)]
-fn shell(dir: &Path, name: &str, body: &str) -> PathBuf {
-    let path = dir.join(name);
-    support::script(&path, &format!("#!/bin/sh\nfor probe; do :; done\n{body}\n"));
-    path
-}
-
-#[cfg(unix)]
-#[test]
-fn the_login_shell_path_is_read_between_what_its_startup_files_print() {
-    use process::ShellPath;
-    use std::time::{Duration, Instant};
-    let temp = tempfile::tempdir().unwrap();
-    let wait = Duration::from_secs(10);
-    let chatty = shell(
-        temp.path(),
-        "chatty",
-        "echo 'Last login: Mon Oct 19 09:41:00 on ttys000'\nprintf 'no line end'\nPATH='/opt/fake/bin:/usr/bin:/bin' /bin/sh -c \"$probe\"\necho 'zsh: done'",
-    );
-    assert_eq!(process::login_shell_path(&chatty, wait), ShellPath::Found("/opt/fake/bin:/usr/bin:/bin".into()));
-    let silent = shell(temp.path(), "silent", "echo 'nothing for you'");
-    assert_eq!(process::login_shell_path(&silent, wait), ShellPath::Missing);
-    let cut = shell(temp.path(), "cut", "/bin/sh -c \"$probe\" | /usr/bin/head -n 2");
-    assert_eq!(process::login_shell_path(&cut, wait), ShellPath::Missing, "the PATH needs its end mark");
-    let empty = shell(temp.path(), "empty", "PATH= /bin/sh -c \"$probe\"");
-    assert_eq!(process::login_shell_path(&empty, wait), ShellPath::Missing);
-    assert_eq!(process::login_shell_path(&temp.path().join("missing"), wait), ShellPath::Missing);
-    let slow = shell(temp.path(), "slow", "/bin/sleep 30");
-    let started = Instant::now();
-    assert_eq!(process::login_shell_path(&slow, Duration::from_millis(300)), ShellPath::TooSlow);
-    assert!(started.elapsed() < Duration::from_secs(5), "a shell that takes too long is stopped");
-}
-
-/// The marks and the PATH come from one program the shell starts, so nushell, which shows only what the last of its
-/// commands gives, passes them all on; and tcsh, which takes -l only on its own, is asked without it.
-#[cfg(unix)]
-#[test]
-fn the_login_shell_path_is_read_from_nushell_and_tcsh_too() {
-    use process::ShellPath;
-    use std::time::Duration;
-    let temp = tempfile::tempdir().unwrap();
-    let wait = Duration::from_secs(10);
-    // Runs only the last of the commands that a `;` outside '…' separates, as nushell shows only what it gives.
-    let nu = shell(
-        temp.path(),
-        "nu",
-        r#"last=$(printf '%s\n' "$probe" | awk '{ q = 0; s = ""; for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); if (c == "\047") q = !q; if (c == ";" && !q) s = ""; else s = s c }; print s }')
-PATH='/opt/nu/bin:/usr/bin:/bin' /bin/sh -c "$last""#,
-    );
-    assert_eq!(process::login_shell_path(&nu, wait), ShellPath::Found("/opt/nu/bin:/usr/bin:/bin".into()));
-    // Refuses -l beside other arguments, as tcsh does, and is found by its name.
-    let dir = temp.path().join("tcsh");
-    fs::create_dir(&dir).unwrap();
-    let tcsh = shell(
-        &dir,
-        "tcsh",
-        r#"for arg; do case "$arg" in -*l*) [ $# -eq 1 ] || { echo "Unknown option: -l" >&2; exit 1; } ;; esac; done
-PATH='/opt/tcsh/bin:/usr/bin:/bin' /bin/sh -c "$probe""#,
-    );
-    assert_eq!(process::login_shell_path(&tcsh, wait), ShellPath::Found("/opt/tcsh/bin:/usr/bin:/bin".into()));
-}
-
-/// A login shell that is slow the first time, as one that loads nvm or conda right after login can be, is asked again
-/// at a later start, so its PATH isn't left out for the whole session; an answer is kept, and so is a shell that
-/// answered without a PATH. Only the first start waits, and only a moment.
-#[cfg(unix)]
-#[test]
-fn a_login_shell_that_took_too_long_is_asked_again_and_an_answer_is_kept() {
-    use process::LoginPath;
-    use std::time::{Duration, Instant};
-    let temp = tempfile::tempdir().unwrap();
-    let (started, slept) = (temp.path().join("started"), temp.path().join("slept"));
-    let starts = || fs::read_to_string(&started).map_or(0, |text| text.lines().count());
-    let slow_once = shell(
-        temp.path(),
-        "slow-once",
-        &format!(
-            "echo started >> '{}'\nif [ ! -e '{slept}' ]; then : > '{slept}'; /bin/sleep 30; fi\nPATH='/opt/fake/bin:/usr/bin' /bin/sh -c \"$probe\"",
-            started.display(),
-            slept = slept.display()
-        ),
-    );
-    let login = LoginPath::new(slow_once, Duration::from_millis(300), Duration::from_secs(1));
-    let asked = Instant::now();
-    assert_eq!(login.get(), None, "the first start takes what is known after a moment");
-    assert!(asked.elapsed() < Duration::from_millis(900), "{:?}", asked.elapsed());
-    let asked = Instant::now();
-    assert_eq!(login.get(), None);
-    assert!(asked.elapsed() < Duration::from_millis(250), "a later start doesn't wait for the slow shell");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let found = loop {
-        if let Some(path) = login.get() {
-            break path;
-        }
-        assert!(Instant::now() < deadline, "the shell was not asked again");
-        std::thread::sleep(Duration::from_millis(50));
-    };
-    assert_eq!(found, "/opt/fake/bin:/usr/bin");
-    assert_eq!(starts(), 2);
-    assert_eq!(login.get(), Some(found));
-    assert_eq!(starts(), 2, "an answer is kept");
-
-    fs::remove_file(&started).unwrap();
-    let silent = shell(temp.path(), "silent", &format!("echo started >> '{}'", started.display()));
-    let login = LoginPath::new(silent, Duration::from_secs(5), Duration::from_secs(5));
-    assert_eq!(login.get(), None);
-    assert_eq!(login.get(), None);
-    assert_eq!(starts(), 1, "a shell that answers without a PATH isn't asked again");
+    assert_eq!(platform::which(tool.to_str().unwrap(), "/nowhere".as_ref()), Some(tool));
 }
 
 /// An agent Laci asks for its models, or tells about Laci's MCP server, works in the home Laci reads, also on a demo
-/// home: HOME on Linux and macOS, USERPROFILE on Windows. Codex reads CODEX_HOME before either, and on Windows
-/// otherwise the real profile, so on a demo home it gets the demo's .codex there, over one the user set; other agents
-/// keep what they inherit. The code is the same on every OS; on macOS a codex or agy on the login shell's PATH would
-/// come before these stand-ins.
-#[cfg(target_os = "linux")]
+/// home: HOME, and USERPROFILE as some tools read it. Codex reads CODEX_HOME before either, so on a demo home it gets
+/// the demo's .codex there, over one the user set; other agents keep what they inherit.
 #[test]
 fn an_agent_started_for_a_demo_home_gets_it_as_home_and_as_userprofile() {
     use laci_core::{launch, mcp_setup, providers};
@@ -300,10 +103,10 @@ fn an_agent_started_for_a_demo_home_gets_it_as_home_and_as_userprofile() {
 }
 
 /// What a scan's Git calls get, read from Git's own trace in a run of this test with GIT_TRACE2_EVENT set: hooks
-/// switched off, on Windows through an empty folder of Laci's own, and long paths on Windows.
+/// switched off, and no setting for Windows' long paths.
 #[test]
-fn every_git_call_switches_hooks_off_and_windows_allows_long_paths() {
-    const TEST: &str = "every_git_call_switches_hooks_off_and_windows_allows_long_paths";
+fn every_git_call_switches_hooks_off() {
+    const TEST: &str = "every_git_call_switches_hooks_off";
     if support::role().as_deref() == Some("scan") {
         let repo = PathBuf::from(std::env::var_os("LACI_TEST_REPO").unwrap());
         assert!(laci_core::readers::git_info(&repo).is_some());
@@ -330,16 +133,7 @@ fn every_git_call_switches_hooks_off_and_windows_allows_long_paths() {
         support::program(TEST, "scan").env("GIT_TRACE2_EVENT", &trace).env("LACI_TEST_REPO", &repo).output().unwrap();
     assert!(run.status.success(), "{}{}", String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
 
-    let hooks = if cfg!(windows) {
-        let folder = platform::user_dirs(Path::new("")).unwrap().config.join("no-git-hooks");
-        assert!(
-            fs::read_dir(&folder).map_or(true, |mut entries| entries.next().is_none()),
-            "the hooks folder is empty"
-        );
-        format!("core.hooksPath={}", folder.display())
-    } else {
-        "core.hooksPath=/dev/null".into()
-    };
+    let hooks = "core.hooksPath=/dev/null";
     let mut calls = 0;
     for line in fs::read_to_string(&trace).unwrap().lines() {
         let event: Value = serde_json::from_str(line).unwrap();
@@ -349,16 +143,16 @@ fn every_git_call_switches_hooks_off_and_windows_allows_long_paths() {
             continue;
         }
         let settings: Vec<&str> = argv.windows(2).filter(|pair| pair[0] == "-c").map(|pair| pair[1]).collect();
-        assert!(settings.contains(&hooks.as_str()), "{argv:?}");
-        assert_eq!(settings.contains(&"core.longpaths=true"), cfg!(windows), "{argv:?}");
+        assert!(settings.contains(&hooks), "{argv:?}");
+        assert!(!settings.contains(&"core.longpaths=true"), "{argv:?}");
         calls += 1;
     }
     assert!(calls > 0, "no Git call was traced");
 }
 
 /// The Git that makes a project gets what every scan's Git gets: hooks and the file system monitor switched off, so
-/// nothing the new folder brings along starts a program, and GIT_TERMINAL_PROMPT=0, so it asks nothing. On Windows a
-/// question would wait on a console nobody sees. Git's own trace, in a run of this test, shows what each call got.
+/// nothing the new folder brings along starts a program, and GIT_TERMINAL_PROMPT=0, so it asks nothing. Git's own
+/// trace, in a run of this test, shows what each call got.
 #[test]
 fn the_git_that_makes_a_project_switches_hooks_off_and_asks_nothing() {
     const TEST: &str = "the_git_that_makes_a_project_switches_hooks_off_and_asks_nothing";
@@ -381,11 +175,7 @@ fn the_git_that_makes_a_project_switches_hooks_off_and_asks_nothing() {
         .unwrap();
     assert!(run.status.success(), "{}{}", String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
 
-    let hooks = if cfg!(windows) {
-        format!("core.hooksPath={}", platform::user_dirs(Path::new("")).unwrap().config.join("no-git-hooks").display())
-    } else {
-        "core.hooksPath=/dev/null".into()
-    };
+    let hooks = "core.hooksPath=/dev/null";
     let events: Vec<Value> =
         fs::read_to_string(&trace).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
     let mut made = Vec::new();
@@ -396,7 +186,7 @@ fn the_git_that_makes_a_project_switches_hooks_off_and_asks_nothing() {
             continue;
         }
         let settings: Vec<&str> = argv.windows(2).filter(|pair| pair[0] == "-c").map(|pair| pair[1]).collect();
-        assert!(settings.contains(&hooks.as_str()) && settings.contains(&"core.fsmonitor=false"), "{argv:?}");
+        assert!(settings.contains(&hooks) && settings.contains(&"core.fsmonitor=false"), "{argv:?}");
         let asks = events.iter().find(|event| {
             event["sid"] == start["sid"] && event["event"] == "def_param" && event["param"] == "GIT_TERMINAL_PROMPT"
         });
@@ -419,7 +209,6 @@ fn the_git_that_makes_a_project_switches_hooks_off_and_asks_nothing() {
 }
 
 /// gh pushes a new project with Git, which must ask nothing there either. A stand-in gh notes what it was given.
-#[cfg(target_os = "linux")]
 #[test]
 fn the_git_that_github_cli_runs_for_a_new_project_asks_nothing() {
     const TEST: &str = "the_git_that_github_cli_runs_for_a_new_project_asks_nothing";
@@ -452,8 +241,7 @@ fn the_git_that_github_cli_runs_for_a_new_project_asks_nothing() {
     assert_eq!(fs::read_to_string(home.join("gh-was-given")).unwrap(), "0\n");
 }
 
-/// The first run asks to install Git when it doesn't run. A run of this test without Git on PATH must hear so;
-/// macOS isn't asked, as there the login shell's PATH comes back.
+/// The first run asks to install Git when it doesn't run. A run of this test without Git on PATH must hear so.
 #[test]
 fn the_first_run_knows_whether_git_runs() {
     const TEST: &str = "the_first_run_knows_whether_git_runs";
@@ -464,173 +252,7 @@ fn the_first_run_knows_whether_git_runs() {
         return;
     }
     assert_eq!(info["git"], true);
-    if !cfg!(target_os = "macos") {
-        let empty = tempfile::tempdir().unwrap();
-        let run = support::program(TEST, "no-git").env("PATH", empty.path()).output().unwrap();
-        assert!(
-            run.status.success(),
-            "{}{}",
-            String::from_utf8_lossy(&run.stdout),
-            String::from_utf8_lossy(&run.stderr)
-        );
-    }
-}
-
-#[cfg(windows)]
-mod windows {
-    use super::*;
-
-    fn folders() -> (tempfile::TempDir, PathBuf, PathBuf) {
-        let temp = tempfile::tempdir().unwrap();
-        let (first, second) = (temp.path().join("first"), temp.path().join("second"));
-        fs::create_dir(&first).unwrap();
-        fs::create_dir(&second).unwrap();
-        (temp, first, second)
-    }
-
-    #[test]
-    fn path_order_comes_first_and_only_programs_and_batch_files_count() {
-        let (_temp, first, second) = folders();
-        let path = std::env::join_paths([&first, &second]).unwrap();
-        fs::write(first.join("tool.cmd"), "@echo off\r\n").unwrap();
-        fs::write(second.join("tool.exe"), "").unwrap();
-        assert_eq!(platform::which("tool", &path), Some(first.join("tool.cmd")));
-        // npm's sh script beside its .cmd, and a kind PATHEXT lists that Laci doesn't start.
-        fs::write(first.join("other"), "#!/bin/sh\n").unwrap();
-        fs::write(first.join("other.js"), "").unwrap();
-        fs::write(second.join("other.com"), "").unwrap();
-        assert_eq!(platform::which("other", &path), Some(second.join("other.com")));
-        assert_eq!(platform::which("other.exe", &path), None);
-        fs::create_dir(first.join("sub")).unwrap();
-        fs::write(first.join("sub").join("deep.exe"), "").unwrap();
-        assert_eq!(platform::which(r"sub\deep", &path), None, "a name with a folder in it is no program name");
-        assert_eq!(platform::which("tool", r"first;\second".as_ref()), None, "folders without a drive are skipped");
-    }
-
-    #[test]
-    fn an_npm_shim_starts_as_node_with_its_script_whatever_the_arguments() {
-        let (_temp, first, second) = folders();
-        let path = std::env::join_paths([&first, &second]).unwrap();
-        fs::write(first.join("claude.cmd"), NPM).unwrap();
-        let script = first.join(r"node_modules\@anthropic-ai\claude-code\cli.js");
-        fs::create_dir_all(script.parent().unwrap()).unwrap();
-        fs::write(&script, "").unwrap();
-        fs::write(second.join("node.exe"), "").unwrap();
-        let prompt = OsString::from("Review this:\r\n\"quotes\" & 100% ^ | < > !");
-        assert_eq!(
-            platform::program("claude", vec![prompt.clone()], &path),
-            Ok((second.join("node.exe"), vec![script.clone().into_os_string(), prompt]))
-        );
-        // A node.exe beside the shim comes first, as the shim itself has it.
-        fs::write(first.join("node.exe"), "").unwrap();
-        assert_eq!(platform::program("claude", vec![], &path).unwrap().0, first.join("node.exe"));
-        // Without its script, the shim is only a batch file.
-        fs::remove_file(&script).unwrap();
-        assert_eq!(
-            platform::program("claude", vec!["plain".into()], &path),
-            Ok((first.join("claude.cmd"), vec!["plain".into()]))
-        );
-        assert!(platform::program("claude", vec!["a & b".into()], &path).is_err());
-    }
-
-    #[test]
-    fn another_batch_file_is_refused_text_cmd_could_run_and_a_program_takes_anything() {
-        let (_temp, first, second) = folders();
-        let path = std::env::join_paths([&first, &second]).unwrap();
-        fs::write(first.join("tool.bat"), "@echo off\r\necho %*\r\n").unwrap();
-        let fine = vec![OsString::from("words, (with) commas; and = signs")];
-        assert_eq!(platform::program("tool", fine.clone(), &path), Ok((first.join("tool.bat"), fine)));
-        for text in ["a & b", "100%", "\"q\"", "line\nbreak", "x | y", "<in", ">out", "a^b", "!v!"] {
-            let error = platform::program("tool", vec![text.into()], &path).unwrap_err();
-            assert!(error.contains("tool.bat"), "{error}");
-        }
-        fs::write(second.join("prog.exe"), "").unwrap();
-        let any = vec![OsString::from("a & b\n\"%PATH%\"")];
-        assert_eq!(platform::program("prog", any.clone(), &path), Ok((second.join("prog.exe"), any)));
-        assert!(platform::program("missing", vec![], &path).unwrap_err().contains("not installed"));
-    }
-
-    /// A multi-line prompt full of what cmd.exe reads reaches an npm-installed agent unchanged, through Laci's own
-    /// start. Needs Node.js, which CI's Windows runners have.
-    #[test]
-    fn a_prompt_reaches_an_npm_installed_agent_as_it_is() {
-        const TEST: &str = "windows::a_prompt_reaches_an_npm_installed_agent_as_it_is";
-        const PROMPT: &str = "Review this:\r\n\"quotes\" & 100% ^ | < > ! %PATH% 雨";
-        if support::role().as_deref() == Some("start") {
-            let said = process::run("agent", &[PROMPT], None, std::time::Duration::from_secs(30)).unwrap();
-            assert_eq!(serde_json::from_str::<Value>(&said).unwrap(), serde_json::json!([PROMPT]));
-            return;
-        }
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        let node = platform::which("node", &path).expect("Node.js on PATH");
-        let (_temp, first, _) = folders();
-        fs::write(first.join("agent.cmd"), NPM.replace(r"@anthropic-ai\claude-code\cli.js", r"agent\cli.js")).unwrap();
-        fs::create_dir_all(first.join(r"node_modules\agent")).unwrap();
-        fs::write(
-            first.join(r"node_modules\agent\cli.js"),
-            "process.stdout.write(JSON.stringify(process.argv.slice(2)))",
-        )
-        .unwrap();
-        let path = std::env::join_paths([first, node.parent().unwrap().to_owned()]).unwrap();
-        let run = support::program(TEST, "start").env("PATH", path).output().unwrap();
-        assert!(
-            run.status.success(),
-            "{}{}",
-            String::from_utf8_lossy(&run.stdout),
-            String::from_utf8_lossy(&run.stderr)
-        );
-    }
-}
-
-#[cfg(target_os = "macos")]
-mod macos {
-    use super::*;
-    use std::ffi::OsStr;
-
-    /// A stand-in xcode-select that writes to `asked` each time it runs.
-    fn xcode_select(dir: &Path, name: &str, asked: &Path, answer: &str) -> PathBuf {
-        shell(dir, name, &format!("echo asked >> '{}'\n{answer}", asked.display()))
-    }
-
-    #[test]
-    fn the_stand_in_git_counts_only_with_the_command_line_tools() {
-        let temp = tempfile::tempdir().unwrap();
-        let dir = temp.path().canonicalize().unwrap();
-        let asked = dir.join("asked");
-        let missing = "echo 'xcode-select: error: unable to get active developer directory' >&2\nexit 2";
-        let usr = OsStr::new("/usr/bin");
-        let none = xcode_select(&dir, "none", &asked, missing);
-        assert!(platform::git(usr, &none).unwrap_err().contains("xcode-select --install"));
-        let tools = xcode_select(&dir, "tools", &asked, &format!("echo '{}'", dir.display()));
-        assert_eq!(platform::git(usr, &tools), Ok(PathBuf::from("/usr/bin/git")));
-        let gone = xcode_select(&dir, "gone", &asked, "echo /Library/Developer/NoSuchTools");
-        assert!(platform::git(usr, &gone).is_err(), "a developer folder that isn't there counts as none");
-
-        // Another Git counts without asking when it comes first, and in place of the stand-in when it comes after.
-        let brew = dir.join("brew");
-        fs::create_dir(&brew).unwrap();
-        shell(&brew, "git", "exit 0");
-        let first = xcode_select(&dir, "first", &dir.join("asked-first"), missing);
-        let before = std::env::join_paths([brew.as_path(), Path::new("/usr/bin")]).unwrap();
-        assert_eq!(platform::git(&before, &first), Ok(brew.join("git")));
-        assert!(!dir.join("asked-first").exists(), "xcode-select was asked although another Git comes first");
-        let after = std::env::join_paths([Path::new("/usr/bin"), brew.as_path()]).unwrap();
-        assert_eq!(platform::git(&after, &none), Ok(brew.join("git")));
-    }
-
-    #[test]
-    fn children_get_the_login_shell_path_and_the_usual_folders() {
-        let path = platform::child_path().expect("children get a PATH of their own");
-        assert_eq!(process::host_env_overrides(), vec![("PATH", Some(path.clone()))]);
-        let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
-        assert!(dirs.iter().all(|dir| dir.is_absolute()), "{dirs:?}");
-        let unique: std::collections::BTreeSet<_> = dirs.iter().collect();
-        assert_eq!(unique.len(), dirs.len(), "{dirs:?}");
-        let inherited = std::env::var_os("PATH").unwrap_or_default();
-        let own = std::env::split_paths(&inherited).filter(|dir| dir.is_absolute());
-        let usual = ["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from).into_iter().filter(|dir| dir.is_dir());
-        for dir in own.chain(usual) {
-            assert!(dirs.contains(&dir), "{} is missing from {dirs:?}", dir.display());
-        }
-    }
+    let empty = tempfile::tempdir().unwrap();
+    let run = support::program(TEST, "no-git").env("PATH", empty.path()).output().unwrap();
+    assert!(run.status.success(), "{}{}", String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
 }

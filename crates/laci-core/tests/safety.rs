@@ -43,7 +43,7 @@ fn write(path: &Path, text: &str) {
 fn fixture() -> (support::TempDir, Env, PathBuf) {
     let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
-    // A name at a time, as the scan spells the paths it finds: on Windows a `/` given to `join` stays in the text.
+    // A name at a time, as the scan spells the paths it finds.
     let dir = env.home.join("project").join("demo");
     fs::create_dir_all(&dir).unwrap();
     git(&dir, &["init", "-q", "--initial-branch=main"]);
@@ -153,7 +153,6 @@ fn a_secret_in_a_saved_version_that_isnt_online_yet_is_listed() {
     assert_eq!(listed(&env, &dir), pairs(&[]));
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn a_name_that_isnt_valid_text_is_listed_but_never_written_to_gitignore() {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
@@ -255,7 +254,6 @@ fn keep_out_adds_one_anchored_line_each_and_undo_puts_the_old_bytes_back() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn keep_out_escapes_wildcards_and_keeps_the_file_mode() {
     use std::os::unix::fs::PermissionsExt;
@@ -379,7 +377,6 @@ fn keep_out_refuses_anything_the_check_did_not_list() {
     assert!(!mutates("secrets/check") && !changes_history("secrets/check"));
 }
 
-#[cfg(unix)]
 #[test]
 fn keep_out_waits_for_the_change_lock_and_never_follows_a_link() {
     let (temp, env, dir) = fixture();
@@ -524,7 +521,6 @@ fn backed_up() -> (support::TempDir, Env, PathBuf, Value) {
     (temp, env, dir, node)
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn a_trash_plan_names_ignored_files_whose_names_arent_valid_text() {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt};

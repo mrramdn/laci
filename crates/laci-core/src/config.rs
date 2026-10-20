@@ -4,7 +4,7 @@ use crate::{
     files, paths,
     platform::{
         self,
-        path::{may_contain, same_path, stays_below},
+        path::{may_contain, same_path},
     },
 };
 use serde_json::{Value, json};
@@ -59,7 +59,7 @@ pub fn load(env: &Env) -> Value {
 }
 /// The settings config.json holds, or `None` when it can't be read as settings.
 fn read(file: &Path) -> Option<Value> {
-    files::text_even_online(file).and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object)
+    files::text(file).and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object)
 }
 pub fn save(env: &Env, c: &Value) -> Result<()> {
     let file = env.config_dir.join("config.json");
@@ -82,7 +82,6 @@ pub fn validate_roots(env: &Env, roots: &Value) -> Result<Value> {
     for value in array {
         let raw = value.as_str().ok_or("Invalid folder")?;
         let requested = paths::expand(raw.trim(), &env.home);
-        // A saved folder may come back spelled another way, as in another case on macOS and Windows.
         let existing = load(env)["roots"].as_array().is_some_and(|roots| {
             roots.iter().filter_map(Value::as_str).any(|root| same_path(&paths::expand(root, &env.home), &requested))
         });
@@ -199,14 +198,7 @@ pub fn validate_connector(env: &Env, raw: &Value) -> Result<Value> {
         link = json!({"kind":"none"});
     } else if kind == "inside" {
         let p = link["path"].as_str().ok_or("Pick a path inside the project")?.trim().trim_end_matches('/');
-        // On Linux the last check adds nothing to the ones before it; on Windows it also catches `..\x`, `\x` and the
-        // drives in `C:\x` and `C:x`.
-        if p.is_empty()
-            || p.len() > 200
-            || p.starts_with('/')
-            || p.split('/').any(|s| s == ".." || s.is_empty())
-            || !stays_below(Path::new(p))
-        {
+        if p.is_empty() || p.len() > 200 || p.starts_with('/') || p.split('/').any(|s| s == ".." || s.is_empty()) {
             return Err("History path must stay inside the project".into());
         }
         link["path"] = json!(p);

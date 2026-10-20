@@ -1,7 +1,4 @@
-use crate::{
-    Result,
-    platform::{self, exited},
-};
+use crate::{Result, platform::exited};
 use std::{
     collections::BTreeSet,
     ffi::{OsStr, OsString},
@@ -15,14 +12,8 @@ use std::{
 
 /// AppRun's bundled libraries belong to Laci, not the host tools it launches.
 /// Return child-only overrides so WebKit keeps the parent process environment.
-/// On macOS the PATH is the one the user's login shell sets up ([`platform::child_path`]).
 pub fn host_env_overrides() -> Vec<(&'static str, Option<OsString>)> {
-    let mut overrides = host_env_overrides_from(|key| std::env::var_os(key));
-    if let Some(path) = platform::child_path() {
-        overrides.retain(|(key, _)| *key != "PATH");
-        overrides.push(("PATH", Some(path)));
-    }
-    overrides
+    host_env_overrides_from(|key| std::env::var_os(key))
 }
 
 fn absolute_path(path: &Path) -> Option<PathBuf> {
@@ -85,11 +76,6 @@ fn host_env_overrides_from(get: impl Fn(&str) -> Option<OsString>) -> Vec<(&'sta
     overrides
 }
 
-/// Windows' CREATE_NO_WINDOW: a console program gets no console window. Laci's window has no console to share, so
-/// each `git` of a scan would flash one.
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
 pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     for (key, value) in host_env_overrides() {
@@ -99,271 +85,14 @@ pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
             command.env_remove(key);
         }
     }
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
     command
 }
 
-/// What starts `program` with `args`, found on the PATH children get ([`platform::program`]): on Windows the file
-/// itself, and node for an npm script; elsewhere the program by name.
-pub fn program(program: &str, args: Vec<OsString>) -> Result<(PathBuf, Vec<OsString>)> {
-    platform::program(program, args, &host_path())
-}
-
-/// [`command`] for `program` with `args`, started as [`program`] says, so Windows' rules for batch files hold for the
-/// child too.
-pub(crate) fn start(program: &str, args: &[impl AsRef<OsStr>]) -> Result<Command> {
-    let (program, args) = self::program(program, args.iter().map(|arg| arg.as_ref().to_owned()).collect())?;
+/// [`command`] for `program` with `args`.
+pub(crate) fn start(program: &str, args: &[impl AsRef<OsStr>]) -> Command {
     let mut command = command(program);
     command.args(args);
-    Ok(command)
-}
-
-/// What cmd.exe can read as part of a command in a batch file's arguments, however they are quoted: quotes, variables
-/// (`%`, and `!` where delayed expansion is on), its escape character, pipes, redirections, the command separator and
-/// line breaks (BatBadBut).
-const BATCH_UNSAFE: [char; 10] = ['"', '%', '!', '^', '&', '|', '<', '>', '\r', '\n'];
-
-/// Fails when an argument in `args` holds something cmd.exe could read as part of a command. Windows starts the batch
-/// file `script` (`.cmd` or `.bat`) through cmd.exe, which reads the arguments again after any quoting Laci can do.
-pub fn batch_args(script: &Path, args: &[OsString]) -> Result<()> {
-    let name = script.file_name().unwrap_or(script.as_os_str()).to_string_lossy();
-    for arg in args {
-        if let Some(found) = arg.to_string_lossy().chars().find(|c| BATCH_UNSAFE.contains(c)) {
-            let what =
-                if matches!(found, '\r' | '\n') { "a line break".to_owned() } else { format!("the character {found}") };
-            return Err(format!(
-                "Laci won't pass {what} to {name}: Windows runs a .cmd or .bat file through cmd.exe, which could read it as part of a command"
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// The script that `shim`, the `.cmd` file npm, pnpm or yarn writes for a program it installs, runs with node: as the
-/// shim names it after its own folder (`%~dp0`). Started as node with the script, Laci's arguments reach the program
-/// as they are, where the shim would put them through cmd.exe ([`batch_args`]). `None` for any other batch file, and
-/// for a shim with lines these don't write, such as a variable set for the program, which node alone would miss.
-pub fn npm_shim(shim: &str) -> Option<String> {
-    // Trimmed, without the leading `@`, in lower case. npm 7 and later write the first eleven; pnpm, yarn and older
-    // npm test for node.exe with `%~dp0`.
-    const KNOWN: [&str; 16] = [
-        "echo off",
-        "goto start",
-        ":find_dp0",
-        "set dp0=%~dp0",
-        "exit /b",
-        ":start",
-        "setlocal",
-        "call :find_dp0",
-        r#"if exist "%dp0%\node.exe" ("#,
-        r#"set "_prog=%dp0%\node.exe""#,
-        r#"set "_prog=node""#,
-        r#"if exist "%~dp0\node.exe" ("#,
-        "set pathext=%pathext:;.js;=;%",
-        ") else (",
-        ")",
-        "if not defined node_path (",
-    ];
-    let mut seen = BTreeSet::new();
-    let mut needs = BTreeSet::new();
-    let mut script: Option<String> = None;
-    for line in shim.lines() {
-        let line = line.trim();
-        let line = line.strip_prefix('@').unwrap_or(line);
-        let lower = line.to_ascii_lowercase();
-        // pnpm's NODE_PATH names where it hoisted modules, which only a package using modules it doesn't declare
-        // needs: node finds a package's own modules without it.
-        if line.is_empty() || (lower.starts_with(r#"set "node_path="#) && lower.ends_with('"')) {
-            continue;
-        }
-        if let Some(known) = KNOWN.iter().find(|known| **known == lower) {
-            seen.insert(*known);
-            continue;
-        }
-        let (program, dir, named) = shim_run(line)?;
-        // Without the lines that set them, cmd.exe would read %_prog% and %dp0% as empty.
-        if program == r#""%_prog%""# {
-            needs.insert(r#"set "_prog=node""#);
-        }
-        if dir == r"%dp0%\" {
-            needs.extend(["set dp0=%~dp0", "call :find_dp0"]);
-        }
-        if *script.get_or_insert_with(|| named.clone()) != named {
-            return None;
-        }
-    }
-    needs.is_subset(&seen).then_some(script?)
-}
-
-/// The program, the folder and the script in a shim's line that starts node on the script with the shim's own
-/// arguments: `node  "%~dp0\cli.js" %*`, or npm's `"%_prog%"  "%dp0%\cli.js" %*` after what keeps cmd.exe from asking
-/// whether to stop.
-fn shim_run(line: &str) -> Option<(&'static str, &'static str, String)> {
-    let mut rest = line;
-    for part in ["endlocal & goto #_undefined_# 2>nul || title %comspec% & ", "set pathext=%pathext:;.js;=;% & "] {
-        rest = strip_prefix_ignoring_case(rest, part).unwrap_or(rest);
-    }
-    let (program, rest) = rest.split_once(' ')?;
-    let program =
-        ["node", r#""%~dp0\node.exe""#, r#""%_prog%""#].into_iter().find(|p| p.eq_ignore_ascii_case(program))?;
-    // Without a space before %*, cmd.exe would join the first argument to the script's name.
-    let path = rest.trim_start().strip_suffix(" %*")?.trim_end().strip_prefix('"')?.strip_suffix('"')?;
-    let (dir, script) =
-        [r"%~dp0\", r"%dp0%\"].into_iter().find_map(|dir| Some((dir, strip_prefix_ignoring_case(path, dir)?)))?;
-    // cmd.exe would read a % in the name as a variable.
-    let plain = !script.is_empty() && !script.contains(['"', '%']) && !script.contains(char::is_control);
-    plain.then(|| (program, dir, script.to_owned()))
-}
-
-fn strip_prefix_ignoring_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
-    let head = text.get(..prefix.len())?;
-    head.eq_ignore_ascii_case(prefix).then(|| &text[prefix.len()..])
-}
-
-/// Marks the PATH in what [`login_shell_path`] reads from the shell, among whatever its startup files print.
-#[cfg(unix)]
-const PATH_MARK: &str = "__laci_path__";
-
-/// What a login shell answered [`login_shell_path`].
-#[cfg(unix)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ShellPath {
-    /// The PATH it sets up.
-    Found(OsString),
-    /// It printed none, or couldn't start: asked again, it would answer the same.
-    Missing,
-    /// It was still running when the time was up, and was stopped.
-    TooSlow,
-}
-
-/// The PATH that `shell`, started as an interactive login shell, sets up: where the user's own programs are found,
-/// which macOS doesn't give an app started from the Dock. One still running after `timeout` is stopped, with whatever
-/// it started.
-#[cfg(unix)]
-pub fn login_shell_path(shell: &Path, timeout: Duration) -> ShellPath {
-    use std::io::{Read, Seek, SeekFrom};
-    let Ok(mut output) = tempfile::tempfile() else { return ShellPath::Missing };
-    let Ok(stdout) = output.try_clone() else { return ShellPath::Missing };
-    // One program the shell starts prints the marks and the PATH, so a shell that shows only what its last command
-    // gives, as nushell does, passes them all on. printenv writes PATH as the shell exports it, also from a shell such
-    // as fish that keeps it as a list. tcsh and csh take -l only on its own, so they are asked as interactive shells.
-    let csh = shell.file_name().is_some_and(|name| name == "tcsh" || name == "csh");
-    let mut command = Command::new(shell);
     command
-        .args(if csh { &["-i", "-c"][..] } else { &["-i", "-l", "-c"][..] })
-        .arg(format!("/bin/sh -c 'echo {PATH_MARK}; /usr/bin/printenv PATH; echo {PATH_MARK}'"))
-        .stdin(Stdio::null())
-        .stdout(stdout)
-        .stderr(Stdio::null());
-    let Ok(mut group) = platform::spawn_group(command) else { return ShellPath::Missing };
-    let started = Instant::now();
-    while !group.exited().unwrap_or(true) {
-        if started.elapsed() >= timeout {
-            group.stop();
-            let _ = group.wait();
-            return ShellPath::TooSlow;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    let _ = group.wait();
-    let mut text = Vec::new();
-    if output.seek(SeekFrom::Start(0)).and_then(|_| output.take(1_000_000).read_to_end(&mut text)).is_err() {
-        return ShellPath::Missing;
-    }
-    marked_path(&text).map_or(ShellPath::Missing, ShellPath::Found)
-}
-
-/// The PATH a login shell sets up, asked in the background. Until the first answer, a start waits for it, but only
-/// until a moment after the first ask; later starts take what is known at once. An answer is kept, and so is a shell
-/// that ended without a PATH. A shell still running at its time limit is stopped and asked again at a later start,
-/// [`LoginPath::TRIES`] times in all, so a slow first start after login doesn't leave it out for the whole session.
-#[cfg(unix)]
-pub struct LoginPath(std::sync::Arc<LoginShell>);
-
-#[cfg(unix)]
-struct LoginShell {
-    shell: PathBuf,
-    /// How long after the first ask a start waits for the first answer.
-    wait: Duration,
-    /// How long the shell may take.
-    limit: Duration,
-    state: Mutex<Asked>,
-    answered: std::sync::Condvar,
-}
-
-#[cfg(unix)]
-#[derive(Default)]
-struct Asked {
-    path: Option<OsString>,
-    /// Asking again would give the same.
-    settled: bool,
-    running: bool,
-    tries: u32,
-    /// Until when a start waits for the first answer.
-    until: Option<Instant>,
-}
-
-#[cfg(unix)]
-impl LoginPath {
-    /// How many times a shell that keeps taking too long is asked.
-    pub const TRIES: u32 = 3;
-
-    pub fn new(shell: PathBuf, wait: Duration, limit: Duration) -> Self {
-        Self(std::sync::Arc::new(LoginShell {
-            shell,
-            wait,
-            limit,
-            state: Mutex::new(Asked::default()),
-            answered: std::sync::Condvar::new(),
-        }))
-    }
-
-    /// The PATH the shell set up, once it has answered.
-    pub fn get(&self) -> Option<OsString> {
-        let login = &self.0;
-        let mut asked = login.state.lock().unwrap_or_else(|e| e.into_inner());
-        if !asked.settled && !asked.running {
-            asked.running = true;
-            asked.tries += 1;
-            asked.until.get_or_insert_with(|| Instant::now() + login.wait);
-            let shared = std::sync::Arc::clone(login);
-            let started = thread::Builder::new().name("laci-login-path".into()).spawn(move || {
-                let answer = login_shell_path(&shared.shell, shared.limit);
-                let mut asked = shared.state.lock().unwrap_or_else(|e| e.into_inner());
-                asked.running = false;
-                match answer {
-                    ShellPath::Found(path) => (asked.path, asked.settled) = (Some(path), true),
-                    ShellPath::Missing => asked.settled = true,
-                    ShellPath::TooSlow => asked.settled = asked.tries >= Self::TRIES,
-                }
-                shared.answered.notify_all();
-            });
-            if started.is_err() {
-                (asked.running, asked.settled) = (false, true);
-            }
-        }
-        let left = asked.until.map_or(Duration::ZERO, |until| until.saturating_duration_since(Instant::now()));
-        if asked.running && !left.is_zero() {
-            asked = login
-                .answered
-                .wait_timeout_while(asked, left, |asked| asked.running)
-                .unwrap_or_else(|e| e.into_inner())
-                .0;
-        }
-        asked.path.clone()
-    }
-}
-
-/// What stands between the first two [`PATH_MARK`]s in `output`.
-#[cfg(unix)]
-fn marked_path(output: &[u8]) -> Option<OsString> {
-    use std::os::unix::ffi::OsStrExt;
-    let mark = PATH_MARK.as_bytes();
-    let find = |text: &[u8]| text.windows(mark.len()).position(|window| window == mark);
-    let rest = &output[find(output)? + mark.len()..];
-    let path = rest[..find(rest)?].trim_ascii();
-    (!path.is_empty()).then(|| OsStr::from_bytes(path).to_owned())
 }
 
 pub(crate) fn host_path() -> OsString {
@@ -417,41 +146,6 @@ pub(crate) fn run_env(
     text(run_env_bytes(program, args, cwd, timeout, env)?)
 }
 
-/// Like [`run_env`], for a program that starts others and waits on them, such as Git over the network. On Windows it
-/// runs in a Job Object ([`platform::spawn_group`]), so running out of time stops everything it started: Git for
-/// Windows' `git.exe` only starts the real Git, which starts ssh, and stopping the first alone would leave the others
-/// running, maybe waiting on a question nobody sees, in a folder Laci then removes. Elsewhere it is [`run_env`].
-pub(crate) fn run_tree(
-    program: &str,
-    args: &[&str],
-    cwd: Option<&Path>,
-    timeout: Duration,
-    env: &[(&str, Option<&str>)],
-) -> Result<String> {
-    #[cfg(windows)]
-    {
-        let (command, output, errors) = prepare(program, args, cwd, env)?;
-        let mut group = platform::spawn_group(command).map_err(|e| format!("Couldn't start {program}: {e}"))?;
-        let started = Instant::now();
-        loop {
-            if group.exited()? {
-                let status = group.wait().map_err(|e| e.to_string())?;
-                return text(outcome(program, status, output, errors)?);
-            }
-            if started.elapsed() >= timeout {
-                group.stop();
-                let _ = group.wait();
-                return Err(format!("{program} took too long"));
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        run_env(program, args, cwd, timeout, env)
-    }
-}
-
 fn text(bytes: Vec<u8>) -> Result<String> {
     let text = String::from_utf8(bytes).map_err(|_| "stream did not contain valid UTF-8".to_owned())?;
     Ok(text.trim_end().into())
@@ -496,7 +190,7 @@ fn prepare(
 ) -> Result<(Command, File, File)> {
     let output = tempfile::tempfile().map_err(|e| e.to_string())?;
     let errors = tempfile::tempfile().map_err(|e| e.to_string())?;
-    let mut command = start(program, args)?;
+    let mut command = start(program, args);
     command
         .stdin(Stdio::null())
         .stdout(output.try_clone().map_err(|e| e.to_string())?)
@@ -529,52 +223,7 @@ fn outcome(program: &str, status: ExitStatus, output: File, errors: File) -> Res
     }
 }
 
-/// Git for Windows' `git.exe` starts the real Git, which starts ssh. This test binary stands in for them, started
-/// again in the part its role names.
-#[cfg(all(test, windows))]
-mod tree {
-    use super::*;
-    use std::os::windows::fs::OpenOptionsExt;
-
-    const TEST: &str = "process::tree::running_out_of_time_stops_what_the_program_started";
-    const ROLE: &str = "LACI_PROCESS_TEST_ROLE";
-    /// The file the program's child holds open, and lets nobody else open, until it is stopped.
-    const HELD: &str = "LACI_PROCESS_TEST_HELD";
-    const ARGS: [&str; 4] = ["--exact", TEST, "--nocapture", "--test-threads=1"];
-
-    #[test]
-    fn running_out_of_time_stops_what_the_program_started() {
-        match std::env::var(ROLE).ok().as_deref() {
-            Some("program") => {
-                let _ = Command::new(std::env::current_exe().unwrap()).args(ARGS).env(ROLE, "child").status();
-                return;
-            }
-            Some("child") => {
-                let path = std::env::var_os(HELD).unwrap();
-                let _held = std::fs::OpenOptions::new().write(true).create_new(true).share_mode(0).open(path).unwrap();
-                thread::sleep(Duration::from_secs(60));
-                return;
-            }
-            _ => {}
-        }
-        let temp = tempfile::tempdir().unwrap();
-        let held = temp.path().join("held");
-        let program = std::env::current_exe().unwrap();
-        let env = [(ROLE, Some("program")), (HELD, held.to_str())];
-        let error = run_tree(program.to_str().unwrap(), &ARGS, None, Duration::from_secs(10), &env).unwrap_err();
-        assert!(error.ends_with("took too long"), "{error}");
-        assert!(held.exists(), "the child ran");
-        // ERROR_SHARING_VIOLATION while the child still runs.
-        let started = Instant::now();
-        while std::fs::File::open(&held).is_err_and(|e| e.raw_os_error() == Some(32)) {
-            assert!(started.elapsed() < Duration::from_secs(20), "the child outlived its program");
-            thread::sleep(Duration::from_millis(50));
-        }
-    }
-}
-
-// AppImage is Linux's, and these paths and lists are written as Unix writes them.
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
@@ -632,7 +281,6 @@ mod tests {
         assert!(overrides(&[("PYTHONHOME", "/tmp/laci/usr"), ("PATH", "/tmp/laci/usr/bin")]).is_empty());
     }
 
-    #[cfg(unix)]
     #[test]
     fn appimage_environment_preserves_non_utf8_host_paths() {
         use std::os::unix::ffi::OsStringExt;
@@ -644,7 +292,6 @@ mod tests {
         assert_eq!(changes, vec![("PATH", Some(OsString::from_vec(b"/home/user/\xff/bin:/usr/bin".to_vec())))]);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn appimage_host_python_starts_with_host_paths() {
         use std::{fs, os::unix::fs::PermissionsExt};

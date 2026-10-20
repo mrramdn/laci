@@ -1,5 +1,5 @@
-//! What Linux and macOS share: the home folder from HOME, settings and cache in the XDG folders, files told apart by
-//! device and inode, the `flock` change lock, renames that never replace, links copied as links, and the programs Laci
+//! What Linux shares with other Unix systems: the home folder from HOME, settings and cache in the XDG folders, files
+//! told apart by device and inode, the `flock` change lock, renames that never replace, links copied as links, and the programs Laci
 //! finds, starts and stops.
 use super::{Dirs, Identity, Stamp};
 use crate::Result;
@@ -36,11 +36,8 @@ pub fn user_dirs(home: &Path) -> Result<Dirs> {
     Ok(dirs)
 }
 
-/// Laci v1's names for the device and the inode.
-pub const IDENTITY_FIELDS: [&str; 2] = ["device", "inode"];
-
 pub fn identity(_path: &Path, meta: &Metadata) -> Result<Identity> {
-    Ok(Identity { volume: meta.dev(), file: meta.ino().into() })
+    Ok(Identity { volume: meta.dev(), file: meta.ino() })
 }
 pub fn change_stamp(_path: &Path, meta: &Metadata) -> Result<Stamp> {
     Ok(stamp(meta))
@@ -50,7 +47,7 @@ pub fn file_change_stamp(_file: &File, meta: &Metadata) -> Result<Stamp> {
 }
 fn stamp(meta: &Metadata) -> Stamp {
     Stamp {
-        identity: Identity { volume: meta.dev(), file: meta.ino().into() },
+        identity: Identity { volume: meta.dev(), file: meta.ino() },
         modified: (meta.mtime(), meta.mtime_nsec()),
         changed: (meta.ctime(), meta.ctime_nsec()),
     }
@@ -147,25 +144,6 @@ pub fn remove_all(path: &Path) -> io::Result<()> {
 
 pub fn copy_link(src: &Path, dest: &Path) -> Result<()> {
     std::os::unix::fs::symlink(fs::read_link(src).map_err(|e| e.to_string())?, dest).map_err(|e| e.to_string())
-}
-
-/// Nothing holds a file here in a way that a moment's wait would end.
-pub fn retry<T>(mut step: impl FnMut() -> io::Result<T>) -> io::Result<T> {
-    step()
-}
-
-pub fn explain(error: &io::Error, _paths: &[&Path]) -> String {
-    error.to_string()
-}
-
-/// A file's mode is set before it is put in place, and no other attribute is kept.
-pub fn keep_attributes(_meta: &Metadata, _dest: &Path) -> Result<()> {
-    Ok(())
-}
-
-/// Links that pnpm makes lead to their target by a relative path, so they move along with the folder.
-pub fn move_notes(_from: &Path, _to: &Path) -> Vec<(&'static str, &'static str)> {
-    Vec::new()
 }
 
 /// O_NOFOLLOW refuses a link, and O_NONBLOCK keeps a FIFO from blocking the open.

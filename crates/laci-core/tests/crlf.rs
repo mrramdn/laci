@@ -42,7 +42,7 @@ fn edited(before: &str, after: &str, edit: impl Fn(&Path)) {
 fn fixture(crlf: bool) -> (support::TempDir, Env, PathBuf) {
     let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
-    // A name at a time, as the scan spells the paths it finds: on Windows a `/` given to `join` stays in the text.
+    // A name at a time, as the scan spells the paths it finds.
     let project = env.home.join("project").join("demo");
     write(&project.join("package.json"), r#"{"name":"demo"}"#);
     write(&project.join(".laci.md"), &ending(LACI_MD, crlf));

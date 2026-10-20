@@ -20,11 +20,8 @@ static GENERIC_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^(docs?|root|app|api|web|frontend|backend|server|client|site|rewrite|main|src)$")
         .expect("generic pattern")
 });
-/// An `_archive` folder in a path. Windows separates names with `\` too.
-static ARCHIVE_PATH: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(if cfg!(windows) { r"[/\\]_archive(?:[/\\]|$)" } else { r"/_archive(?:/|$)" })
-        .expect("archive path pattern")
-});
+/// An `_archive` folder in a path.
+static ARCHIVE_PATH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/_archive(?:/|$)").expect("archive path pattern"));
 
 const CODE: &[&str] = &[
     "package.json",
@@ -141,18 +138,12 @@ fn detect(env: &Env, path: &Path, agent_paths: &BTreeSet<PathBuf>, depth: usize)
     }
     let mut children = Vec::new();
     if depth < 6 {
-        // The system's and apps' own folders are known by name only in home: deeper down, a folder named Library or
-        // shop.app is the user's own.
-        let home = platform::path::same_path(path, &env.home);
         for entry in entries {
             let name = entry.file_name().to_string_lossy().into_owned();
-            // What a file manager hides holds no projects, nor do the system's and apps' own folders, such as
-            // ~/Library and AppData when home is scanned: on macOS, looking inside would also ask for access to
-            // other apps' data. On Linux what is hidden is a dotted name.
+            // What a file manager hides, a dotted name, holds no projects.
             if !entry.file_type().is_ok_and(|t| t.is_dir())
                 || files::HEAVY.contains(&name.as_str())
-                || (home && platform::system_folder(&entry.file_name()))
-                || platform::hidden(&entry.file_name(), entry.metadata().ok().as_ref())
+                || platform::hidden(&entry.file_name())
             {
                 continue;
             }
@@ -845,12 +836,6 @@ fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
                     out.push(issue(code, sev, count(u(g, key), one, many), detail));
                 }
             }
-        } else if n["onlineOnly"] == true {
-            // Git is there, but reading it would download the repository: what isn't committed or pushed isn't known,
-            // and isn't counted as done.
-            let detail = "Laci didn't read its Git state, which would download it, so changes not committed or \
-                          pushed aren't known";
-            out.push(issue("online-only", "low", "Kept only online".into(), Some(detail.into())));
         } else if n["type"] == "code" {
             out.push(issue("no-git", "med", "Not under version control".into(), None));
         }
@@ -1014,9 +999,6 @@ pub fn move_ops(env: &Env, from: &Path, to: &Path, snapshot: &Value) -> Vec<Valu
             }
         }
     }
-    for (label, detail) in platform::move_notes(from, to) {
-        ops.push(json!({"kind":"keep","label":label,"detail":detail}));
-    }
     ops
 }
 
@@ -1080,9 +1062,7 @@ pub fn archive_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
     ops.push(json!({"kind":"write","label":"Write undo journal","to":format!("{}/",paths::tilde(&env.data_dir.join("journal"),&env.home))}));
     let checks: Vec<_> = array(&n["issues"])
         .iter()
-        .filter(|i| {
-            ["no-commits", "no-remote", "dirty", "unpushed", "stash", "online-only"].contains(&string(i, "code"))
-        })
+        .filter(|i| ["no-commits", "no-remote", "dirty", "unpushed", "stash"].contains(&string(i, "code")))
         .cloned()
         .collect();
     Ok(json!({"dest":dest,"checks":checks,"ops":ops}))
@@ -1218,12 +1198,10 @@ fn proposals(env: &Env, snapshot: &Value) -> Vec<Value> {
         out.push(json!({"id":format!("orphan:{id}:{}",cwd.unwrap_or(string(first,"file"))),"category":"orphan","title":format!("{} {} {} for deleted {name}",list.len(),string(c,"name"),if list.len()==1{unit.to_owned()}else{format!("{unit}s")}),"why":format!("{} no longer exists. Last used {}.",cwd.map(|p|paths::tilde(Path::new(p),&env.home)).unwrap_or_else(||"Its folder".into()),string(first,"at").get(..10).unwrap_or("unknown")),"confidence":"med","ops":list.iter().map(|x|json!({"kind":"move","label":"Quarantine (restorable)","from":paths::tilde(Path::new(string(x,"file")),&env.home),"to":paths::tilde(&quarantine.join(id),&env.home)})).collect::<Vec<_>>(),"action":{"type":"quarantine","moves":list.iter().map(|x|json!({"from":x["file"],"to":Path::new(id).join(Path::new(string(x,"file")).strip_prefix(store).unwrap_or_else(|_|Path::new(string(x,"file")).file_name().map(Path::new).unwrap_or(Path::new("history"))))})).collect::<Vec<_>>()}}));
     }
     for n in &nodes {
-        // Work that is not committed or not pushed is dealt with first; Today lists it as at risk. A repository kept
-        // only online may hold such work too: Laci didn't read it.
-        let unfinished = n["onlineOnly"] == true
-            || array(&n["issues"]).iter().any(|i| {
-                i["muted"] != true && matches!(i["code"].as_str(), Some("dirty" | "unpushed" | "diverged" | "stash"))
-            });
+        // Work that is not committed or not pushed is dealt with first; Today lists it as at risk.
+        let unfinished = array(&n["issues"]).iter().any(|i| {
+            i["muted"] != true && matches!(i["code"].as_str(), Some("dirty" | "unpushed" | "diverged" | "stash"))
+        });
         if n["kind"] == "project"
             && n["archived"] != true
             && n["status"]["value"] == "dormant"
@@ -1317,36 +1295,11 @@ mod tests {
         let offered: Vec<_> = proposals(&env, &snapshot).iter().map(|p| string(p, "id").to_owned()).collect();
         assert_eq!(offered, ["archive:a"], "unfinished work is dealt with before archiving");
     }
-    /// A repository a sync app keeps only online is listed without its Git state, which reading would download. What
-    /// wasn't read isn't counted as finished: a check says so, and old files don't make it one to archive, even with
-    /// that check muted, as commits not pushed may be there.
-    #[test]
-    fn a_repository_kept_only_online_is_never_taken_for_finished_work() {
-        let home = tempfile::tempdir().unwrap();
-        let env = Env::for_home(home.path().to_owned());
-        for typ in ["code", "docs"] {
-            let node = json!({"kind":"project","type":typ,"onlineOnly":true,"meta":{},"readme":{},"agents":{"claude":[]},
-                "taskFiles":[]});
-            let found = issues(&env, &node, &json!({}));
-            assert_eq!(found.iter().map(|i| string(i, "code")).collect::<Vec<_>>(), ["online-only"], "{typ}");
-            assert_eq!(found[0]["severity"], "low");
-        }
-        let dormant = |id: &str, online: bool, issues: Value| {
-            json!({"id":id,"label":id,"kind":"project","onlineOnly":online,"status":{"value":"dormant"},
-                "archivePlan":{"dest":"/archive","ops":[]},"issues":issues,"size":{}})
-        };
-        let nodes = json!({"read":dormant("read",false,json!([])),
-            "online":dormant("online",true,json!([{"code":"online-only"}])),
-            "muted":dormant("muted",true,json!([{"code":"online-only","muted":true}]))});
-        let snapshot = json!({"nodes":nodes,"claude":{},"items":{},"orphans":{"claude":[],"items":[]},"connectors":[]});
-        let offered: Vec<_> = proposals(&env, &snapshot).iter().map(|p| string(p, "id").to_owned()).collect();
-        assert_eq!(offered, ["archive:read"], "Git state that wasn't read is no sign of finished work");
-    }
     #[test]
     fn agent_refresh_reuses_metadata_and_discovers_new_agent_only_projects() {
         let home = tempfile::tempdir().unwrap();
         let env = Env::for_home(platform::path::canonical(home.path()).unwrap());
-        // A name at a time, as the scan spells the paths it finds: on Windows a `/` given to `join` stays in the text.
+        // A name at a time, as the scan spells the paths it finds.
         let project = env.home.join("project").join("app");
         write(&project.join("package.json"), "{}");
         write(&project.join("README.md"), "# App\nOriginal metadata.\n");
@@ -1507,20 +1460,5 @@ mod tests {
         let found = issues(&Env::for_home(std::env::temp_dir()), &node, &json!({}));
         let no_remote = found.iter().find(|i| i["code"] == "no-remote").unwrap();
         assert_eq!(no_remote["detail"], "1 commit exists only on this disk");
-    }
-}
-
-#[cfg(all(test, windows))]
-mod windows_paths {
-    use super::ARCHIVE_PATH;
-
-    #[test]
-    fn an_archive_folder_is_found_between_backslashes_too() {
-        assert_eq!(ARCHIVE_PATH.replace_all(r"C:\Users\me\project\_archive\demo", "/"), r"C:\Users\me\project/demo");
-        assert_eq!(ARCHIVE_PATH.replace_all("C:/Users/me/project/_archive/demo", "/"), "C:/Users/me/project/demo");
-        assert_eq!(
-            ARCHIVE_PATH.replace_all(r"C:\Users\me\project\_archived\demo", "/"),
-            r"C:\Users\me\project\_archived\demo"
-        );
     }
 }

@@ -106,7 +106,6 @@ fn equal_size_source_changes_invalidate_ownership_and_reviewed_cleanup() {
 }
 
 // gio is Linux's Trash.
-#[cfg(target_os = "linux")]
 #[test]
 fn all_missing_owners_allow_only_checked_trash_sources() {
     use std::{os::unix::fs::PermissionsExt, process::Command};
@@ -177,7 +176,6 @@ fn bounded_and_malformed_history_never_authorizes_cleanup() {
 }
 
 // Unreadable files are made with Unix modes.
-#[cfg(unix)]
 #[test]
 fn claude_folder_aggregation_propagates_incomplete_and_unreadable_evidence() {
     use std::os::unix::fs::PermissionsExt;
@@ -218,7 +216,6 @@ fn named_folder_without_authoritative_ownership_is_never_cleanup_proof() {
     blocked_in_both_modes(&env, &folder, &snapshot);
 }
 
-#[cfg(unix)]
 #[test]
 fn unreadable_cwd_logs_invalidate_cached_cleanup_permission() {
     use std::os::unix::fs::PermissionsExt;

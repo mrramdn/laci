@@ -950,6 +950,9 @@
         "detail": "Folders: added ~/project · Reports folder: ~/Documents/agent-reports · AI tools: Claude Code on, Codex on",
         "id": "2026-10-08T09-00-00-000Z-1",
         "key": "settings",
+        "say": {
+          "form": "changedSettings"
+        },
         "state": "applied",
         "superseded": false,
         "title": "Changed settings",
@@ -3770,6 +3773,10 @@
             "label": "Rewrite cwd in Claude logs"
           }
         ],
+        "say": {
+          "form": "reconnected",
+          "name": "old-portfolio"
+        },
         "title": "Reconnect 1 session + 1 memory file to old-portfolio",
         "why": "The folder was moved into _archive, but its agent history stayed at the old address. Claude cannot find these at the new address."
       },
@@ -3800,6 +3807,10 @@
             "to": "~/project/clients/acme-store"
           }
         ],
+        "say": {
+          "form": "finishedMoves",
+          "moves": 1
+        },
         "title": "Finish 1 half-done move",
         "why": "These session folders were renamed after a move, but their logs still record the old path. Search, stats and the next move would get it wrong."
       },
@@ -3820,6 +3831,11 @@
             "label": "habit-app"
           }
         ],
+        "say": {
+          "form": "freed",
+          "projects": 1,
+          "size": "440 MB"
+        },
         "title": "Free 440 MB from 1 inactive project",
         "why": "Dependencies and build output in archived or dormant projects. They are deleted for good; a fresh install or build brings them back."
       },

@@ -1270,6 +1270,67 @@ export const activity = {
   },
 };
 
+/**
+ * The sentence for each form of change the engine records with a Log entry since Laci 3.0 (its
+ * "say": the form and its parts, laci-core's service.rs and what it calls), keyed by the form.
+ * Activity hands each the parts it needs. Most say what `activity.changes` says for the same change
+ * found in an older entry's title.
+ */
+const told = activity.changes;
+export const logForms = {
+  undid: told.undidAny,
+  moved: told.moved,
+  archived: told.archived,
+  reconnected: told.reconnected,
+  chatsForGone: { kept: told.setAsideAny, trashed: told.trashedChatsAny },
+  chatsForDeleted: { kept: told.setAside, trashed: told.trashedChats },
+  finishedMoves: told.finishedMoves,
+  freed: told.freed,
+  clearedBuild: told.freedIn,
+  deletedChat: told.deletedChat,
+  deletedChats: told.deletedChats,
+  keptOut: told.keptOut,
+  setStatus: told.status,
+  clearedStatus: told.statusByLaci,
+  setPriority: told.priority,
+  clearedPriority: told.noPriority,
+  setDeadline: told.due,
+  clearedDeadline: told.noDue,
+  setClient: (name: string, client: string) => `Set the client of ${name} to ${client}`,
+  clearedClient: (name: string) => `Removed the client of ${name}`,
+  muted: told.hidWarning,
+  unmuted: told.warnAgain,
+  changedMuted: told.hiddenWarnings,
+  addedStep: told.addedStep,
+  ticked: told.ticked,
+  unticked: told.unticked,
+  editedTodo: told.editedTodo,
+  deletedStep: told.deletedStep,
+  editedNotes: told.notes,
+  addedHistory: told.showsChats,
+  removedHistory: told.hidesChats,
+  addedTool: told.addedTool,
+  removedTool: told.removedTool,
+  closedItem: told.closedItem,
+  reopenedItem: told.openedItem,
+  trashed: told.trashed,
+  dismissed: told.hidSuggestion,
+  suggestedAgain: told.suggestedAgain,
+  backedUp: told.copied,
+  backupUpToDate: told.copyUpToDate,
+  autoBackupOn: told.copyOn,
+  autoBackupOff: told.copyOff,
+  restoredChat: told.putBack,
+  restoredChatAny: told.putBackAny,
+  emptiedKept: told.emptiedKept,
+  removedOldUndo: told.removedOldUndo,
+  removedLaci1: told.removedLaci1,
+  letUse: told.letUse,
+  stoppedUse: told.stoppedUse,
+  created: told.created,
+  changedSettings: told.settings,
+};
+
 /** AI helpers: the chats of every project, the summaries your AI writes, and the AI tools Laci knows. */
 export const aiHelpers = {
   title: "AI helpers",

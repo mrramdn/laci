@@ -531,3 +531,134 @@ export async function theUndoButtonsTheToastAndTheSearchUseThoseWordsToo() {
   search("chats");
   assert.deepEqual(page.shown(), ["x2", "x1"]);
 }
+
+// --- Told from the parts the engine records -----------------------------------------------------------
+
+/** A change Laci 3.0 recorded: its form and parts, under a title Activity no longer has to read. */
+const saying = (id, say, more = {}) => change(id, `Engine title ${id}`, { say, ...more });
+const MOVED_TO_KEPT = [{ kind: "move", label: "Moved", from: "~/.codex/sessions/1.jsonl", to: "~/.local/share/laci/orphans/codex" }];
+const MOVED_TO_TRASH = [{ kind: "delete", label: "Moved to the trash", from: "~/.claude/projects/-home-demo-gone" }];
+
+/** Each form the engine records (laci-core, src-tauri), with parts as it writes them, and its sentence. */
+const FORMS = [
+  [{ form: "moved", name: "kopi-landing" }, "Moved kopi-landing"],
+  [{ form: "archived", name: "habit-app" }, "Archived habit-app"],
+  [{ form: "reconnected", name: "old-portfolio" }, "Reconnected the AI chats of old-portfolio"],
+  [{ form: "chatsForGone" }, "Set aside leftover AI chats", { steps: MOVED_TO_KEPT }],
+  [{ form: "chatsForGone" }, "Moved leftover AI chats to the Trash", { steps: MOVED_TO_TRASH }],
+  [{ form: "chatsForDeleted", name: "habit-app" }, "Set aside the AI chats left from habit-app", { steps: MOVED_TO_KEPT }],
+  [{ form: "chatsForDeleted", name: "habit-app" }, "Moved the AI chats left from habit-app to the Trash", { steps: MOVED_TO_TRASH }],
+  [{ form: "finishedMoves", moves: 2 }, "Finished 2 unfinished moves"],
+  [{ form: "freed", size: "440 MB", projects: 1 }, "Freed 440 MB in 1 project"],
+  [{ form: "clearedBuild", name: "acme-store" }, "Freed up space in acme-store"],
+  [{ form: "deletedChat", title: "Fix the checkout" }, "Deleted the chat “Fix the checkout”"],
+  [{ form: "deletedChats", chats: 3 }, "Deleted 3 chats"],
+  [{ form: "keptOut", files: 2, name: "kopi-landing" }, "Kept 2 files of kopi-landing out of saved versions"],
+  [{ form: "setStatus", name: "kopi-landing", status: "dormant" }, "Set the status of kopi-landing to Inactive"],
+  [{ form: "clearedStatus", name: "kopi-landing" }, "Let Laci set the status of kopi-landing"],
+  [{ form: "setPriority", name: "kopi-landing", priority: "high" }, "Set the priority of kopi-landing to high"],
+  [{ form: "clearedPriority", name: "kopi-landing" }, "Removed the priority of kopi-landing"],
+  [
+    { form: "setDeadline", name: "kopi-landing", deadline: "2026-10-20" },
+    /^Set the due date of kopi-landing to (20 October|October 20)$/,
+  ],
+  [{ form: "clearedDeadline", name: "kopi-landing" }, "Removed the due date of kopi-landing"],
+  [{ form: "setClient", name: "kopi-landing", client: "Kopi Co" }, "Set the client of kopi-landing to Kopi Co"],
+  [{ form: "clearedClient", name: "kopi-landing" }, "Removed the client of kopi-landing"],
+  [{ form: "muted", name: "kopi-landing", check: "no-remote" }, "Hid a warning about kopi-landing"],
+  [{ form: "unmuted", name: "kopi-landing", check: "no-remote" }, "Asked Laci to warn about kopi-landing again"],
+  [{ form: "changedMuted", name: "kopi-landing" }, "Changed the hidden warnings of kopi-landing"],
+  [{ form: "addedStep", name: "kopi-landing" }, "Added a next step to kopi-landing"],
+  [{ form: "ticked", name: "kopi-landing" }, "Ticked a to-do in kopi-landing"],
+  [{ form: "unticked", name: "kopi-landing" }, "Unticked a to-do in kopi-landing"],
+  [{ form: "editedTodo", name: "kopi-landing" }, "Edited a to-do in kopi-landing"],
+  [{ form: "deletedStep", name: "kopi-landing" }, "Deleted a next step from kopi-landing"],
+  [{ form: "editedNotes", name: "kopi-landing" }, "Edited the notes of kopi-landing"],
+  [{ form: "addedHistory", ai: "Codex" }, "Laci shows the chats of Codex"],
+  [{ form: "removedHistory", ai: "Codex" }, "Laci no longer shows the chats of Codex"],
+  [{ form: "addedTool", ai: "My runner" }, "Added My runner"],
+  [{ form: "removedTool", ai: "My runner" }, "Removed My runner"],
+  [{ form: "closedItem", title: "Checkout flow" }, "Closed an item of the summary “Checkout flow”"],
+  [{ form: "reopenedItem", title: "Checkout flow" }, "Opened an item of the summary “Checkout flow” again"],
+  [{ form: "trashed", name: "kopi-landing" }, "Moved kopi-landing to the Trash"],
+  [{ form: "dismissed", title: "Archive habit-app?" }, "Hid a suggestion for 90 days"],
+  [{ form: "suggestedAgain", title: "Archive habit-app?" }, "Brought back a hidden suggestion"],
+  [{ form: "backedUp", files: 3 }, "Copied 3 chat files"],
+  [{ form: "backupUpToDate" }, "The copy of AI chats was up to date"],
+  [{ form: "autoBackupOn" }, "Laci now copies new chats by itself"],
+  [{ form: "autoBackupOff" }, "Laci now copies chats only when you ask"],
+  [{ form: "restoredChat", ai: "Claude Code" }, "Put back a Claude Code chat from Laci’s copy"],
+  [{ form: "restoredChat" }, "Put back a chat from Laci’s copy"],
+  [{ form: "emptiedKept" }, "Emptied Kept for Undo"],
+  [{ form: "removedOldUndo" }, "Removed the old undo records"],
+  [{ form: "removedLaci1" }, "Removed the leftovers of Laci 1"],
+  [{ form: "letUse", ai: "Claude Code" }, "Let Claude Code use Laci"],
+  [{ form: "stoppedUse", ai: "Claude Code" }, "Stopped Claude Code from using Laci"],
+  [{ form: "created", name: "landing-page" }, "Created landing-page"],
+  [{ form: "changedSettings" }, "Changed settings"],
+  [{ form: "undid" }, "Undid a change"],
+];
+
+/** Each sentence on Activity's rows, by entry id. */
+function sentences(entries) {
+  const page = activityPage({ log: { entries } });
+  return (id) => page.row(id).descendants().find((n) => n.type === "span").textContent;
+}
+
+export async function eachFormTheEngineRecordsIsToldWithItsOwnSentence() {
+  const entries = FORMS.map(([say, , more], i) => saying(`f${i}`, say, more));
+  const sentence = sentences(entries);
+  FORMS.forEach(([say, told], i) => {
+    if (told instanceof RegExp) assert.match(sentence(`f${i}`), told, say.form);
+    else assert.equal(sentence(`f${i}`), told, say.form);
+  });
+  // Every form words.ts has a sentence for is one the engine records, and each is told above.
+  const told = new Set(FORMS.map(([say]) => say.form));
+  for (const form of Object.keys(words.logForms).filter((f) => f !== "restoredChatAny"))
+    assert.ok(told.has(form), `${form} is told`);
+  assert.deepEqual([...told].filter((f) => !Object.hasOwn(words.logForms, f)), []);
+}
+
+export async function anUndoNamesTheChangeItUndidFromItsParts() {
+  const sentence = sentences([
+    saying("u1", { form: "undid" }, { undoes: "m1" }),
+    saying("m1", { form: "moved", name: "kopi-landing" }, { journal: "j1", state: "undone" }),
+    saying("u2", { form: "undid" }, { undoes: "j:gone" }),
+  ]);
+  assert.equal(sentence("u1"), "Undid: Moved kopi-landing");
+  assert.equal(sentence("u2"), "Undid a change");
+}
+
+export async function anEntryWithoutPartsItKnowsIsToldFromItsTitleAsBefore() {
+  const sentence = sentences([
+    // A form this window doesn't know yet, or one missing a part, is told from its title.
+    change("n1", "Archive habit-app", { journal: "j1", say: { form: "renamed", name: "habit-app" } }),
+    change("n2", "Status of kopi-landing set to dormant", { key: STATUS, say: { form: "setStatus", name: "kopi-landing" } }),
+    change("n3", "Deleted 3 sessions", { journal: "j3", say: { form: "deletedChats", chats: "3" } }),
+    // A Log written by Laci 2.5 or earlier has no parts at all.
+    change("n4", "Backed up 3 agent history files"),
+    // And a title nothing knows keeps the engine's words.
+    change("n5", "Renamed kopi to kopi-landing", { say: { form: "renamed" } }),
+  ]);
+  assert.equal(sentence("n1"), "Archived habit-app");
+  assert.equal(sentence("n2"), "Set the status of kopi-landing to Inactive");
+  assert.equal(sentence("n3"), "Deleted 3 chats");
+  assert.equal(sentence("n4"), "Copied 3 chat files");
+  assert.equal(sentence("n5"), "Renamed kopi to kopi-landing");
+}
+
+export async function aToldChangeKeepsTheEnginesTitleBehindWhatChanged() {
+  const page = activityPage({
+    log: {
+      entries: [
+        change("w1", "Move kopi-landing → ~/project/clients/kopi-landing", {
+          journal: "j1",
+          canUndo: true,
+          say: { form: "moved", name: "kopi-landing" },
+        }),
+      ],
+    },
+  });
+  assert.equal(page.whatChanged("w1"), "Move kopi-landing → ~/project/clients/kopi-landing");
+  assert.deepEqual(page.filled().map((b) => b.textContent), [said.undo("Moved kopi-landing")]);
+}

@@ -575,6 +575,15 @@ export interface LogEntry {
   superseded?: boolean;
   error?: string;
   steps?: Op[];
+  /**
+   * The change in parts, which Simple tells in its own words: its form, such as "moved", and plain
+   * values (names, titles, counts). Laci 3.0 records it with every entry; older entries lack it.
+   */
+  say?: LogSay;
+}
+export interface LogSay {
+  form: string;
+  [part: string]: string | number | boolean | undefined;
 }
 export interface ActivityLog {
   entries: LogEntry[];

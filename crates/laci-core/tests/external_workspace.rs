@@ -10,6 +10,29 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 
+/// The root of a disk or a share holds the system and everything else there, not a place of projects: it is refused,
+/// whether picked now or kept from before.
+#[test]
+fn a_whole_disk_is_not_a_place_to_scan() {
+    let temp = support::tempdir();
+    let env = Env::for_home(temp.path().join("home"));
+    fs::create_dir_all(&env.home).unwrap();
+    let whole = |disk: &str| {
+        format!("{disk} is a whole disk, and Laci doesn't look through one. Choose the folder where you keep projects.")
+    };
+    let disk = temp.path().ancestors().last().unwrap();
+    let error = config::validate_roots(&env, &json!([disk])).unwrap_err();
+    assert_eq!(error, whole(&disk.display().to_string()));
+    #[cfg(windows)]
+    {
+        // A share's own root, kept while the share is away.
+        let share = r"\\laci-test-server\projects";
+        config::save(&env, &json!({"roots":[share],"presets":[]})).unwrap();
+        assert_eq!(config::validate_roots(&env, &json!([share])).unwrap_err(), whole(&format!(r"{share}\")));
+    }
+    assert_eq!(config::validate_roots(&env, &json!([env.home])).unwrap(), json!(["~"]));
+}
+
 #[test]
 fn external_selection_allows_only_selected_paths_and_rejects_symlink_escapes() {
     let temp = tempfile::tempdir().unwrap();

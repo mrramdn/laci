@@ -1,4 +1,4 @@
-// Tests of the release scripts: node --test scripts/release/
+// Tests of the release scripts: node --test scripts/release/release.test.mjs
 // The fixture is a file signed by `tauri signer sign --app-version 9.9.9-rc.1` with a throwaway key whose private
 // half was deleted; test-updater.key.pub is its public half.
 import assert from "node:assert/strict";

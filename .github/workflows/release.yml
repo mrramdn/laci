@@ -65,7 +65,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: cargo fetch --locked
       - name: Release scripts' tests
-        run: node --test scripts/release/
+        run: node --test scripts/release/release.test.mjs
       - name: Third-party notices are current
         run: node scripts/notices.mjs --check
       - name: Tag, versions, branch and changelog

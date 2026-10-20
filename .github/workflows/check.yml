@@ -82,7 +82,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # The release workflow's version check, notes, updater signature check, latest.json, SHA256SUMS and provenance.
       - name: Release scripts' tests
-        run: node --test scripts/release/
+        run: node --test scripts/release/release.test.mjs
       # The app icons and what the Tauri configs list. Ubuntu 24.04 packages neither resvg nor ImageMagick 7,
       # so the comparison with a fresh render is skipped here; the other checks run.
       - run: node scripts/brand-check.mjs

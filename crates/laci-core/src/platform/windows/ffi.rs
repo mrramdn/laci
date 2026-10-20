@@ -39,16 +39,18 @@ pub fn move_file(src: &Path, dest: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Where Controlled Folder Access is set up: by a policy, which comes first, and in Windows Security.
+const CONTROLLED_FOLDER_ACCESS: [&str; 2] = [
+    r"SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\Controlled Folder Access",
+    r"SOFTWARE\Microsoft\Windows Defender\Windows Defender Exploit Guard\Controlled Folder Access",
+];
+
 /// Whether Controlled Folder Access blocks changes to protected folders, as a policy sets it or else Windows Security:
 /// EnableControlledFolderAccess is 1 then, while 2 only audits. None when neither says, as when the setting can't be
 /// read.
 pub fn controlled_folder_access() -> Option<bool> {
-    const KEYS: [&str; 2] = [
-        r"SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\Controlled Folder Access",
-        r"SOFTWARE\Microsoft\Windows Defender\Windows Defender Exploit Guard\Controlled Folder Access",
-    ];
     let name = wide(Path::new("EnableControlledFolderAccess")).ok()?;
-    KEYS.iter().find_map(|key| {
+    CONTROLLED_FOLDER_ACCESS.iter().find_map(|key| {
         let key = wide(Path::new(key)).ok()?;
         let (mut mode, mut size) = (0u32, size_of::<u32>() as u32);
         // SAFETY: `key` and `name` are NUL-terminated UTF-16 buffers that live until the call returns, which only
@@ -67,6 +69,53 @@ pub fn controlled_folder_access() -> Option<bool> {
         };
         (status == 0).then_some(mode == 1)
     })
+}
+
+/// The folders a policy or Windows Security adds to those Controlled Folder Access protects: the names of the values
+/// under its ProtectedFolders keys. A key that can't be read adds none.
+pub fn protected_folders() -> Vec<std::path::PathBuf> {
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+    use windows_sys::Win32::System::Registry::{HKEY, KEY_QUERY_VALUE, RegCloseKey, RegEnumValueW, RegOpenKeyExW};
+    let mut folders = Vec::new();
+    // The longest name a value can have, 16,383 characters, and its NUL.
+    let mut name = vec![0u16; 16_384];
+    for key in CONTROLLED_FOLDER_ACCESS {
+        let Ok(key) = wide(&Path::new(key).join("ProtectedFolders")) else { continue };
+        let mut handle: HKEY = ptr::null_mut();
+        // SAFETY: `key` is a NUL-terminated UTF-16 buffer that lives until the call returns, which only reads it, and
+        // `handle` is an HKEY that lives until it returns, where the call puts the key it opened.
+        if unsafe { RegOpenKeyExW(HKEY_LOCAL_MACHINE, key.as_ptr(), 0, KEY_QUERY_VALUE, &mut handle) } != 0 {
+            continue;
+        }
+        for index in 0.. {
+            let mut length = name.len() as u32;
+            // SAFETY: `handle` is the key opened above, still open. `name` lives until the call returns and holds
+            // `length` UTF-16 units, the most the call writes, its NUL included; `length` is a u32 that lives until it
+            // returns, where the call puts how many it wrote. Nothing else is asked for, so the other pointers are
+            // null.
+            let status = unsafe {
+                RegEnumValueW(
+                    handle,
+                    index,
+                    name.as_mut_ptr(),
+                    &mut length,
+                    ptr::null(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            };
+            // ERROR_NO_MORE_ITEMS ends the list, and so does any error.
+            if status != 0 {
+                break;
+            }
+            let written = name.get(..length as usize).unwrap_or_default();
+            folders.push(OsString::from_wide(written).into());
+        }
+        // SAFETY: `handle` is the key opened above, closed once here and not used after.
+        unsafe { RegCloseKey(handle) };
+    }
+    folders
 }
 
 /// What Windows records about an open file: when it was last written and last changed, in 100-nanosecond steps since

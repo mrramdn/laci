@@ -186,10 +186,10 @@ pub fn retry<T>(step: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     os::retry(step)
 }
 
-/// What the user is told when changing `path` failed with `error`. On Windows it says what to do, such as closing the
-/// program that has the file open; elsewhere it is the system's message.
-pub fn explain(error: &io::Error, path: &Path) -> String {
-    os::explain(error, path)
+/// What the user is told when a change to `paths`, such as both names of a rename, failed with `error`. On Windows it
+/// says what to do, such as closing the program that has the first of them open; elsewhere it is the system's message.
+pub fn explain(error: &io::Error, paths: &[&Path]) -> String {
+    os::explain(error, paths)
 }
 
 /// What else comes with moving the folder `from` to `to`, for the move's preview, as a label and a detail each: on

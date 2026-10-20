@@ -1,8 +1,8 @@
 //! The Recycle Bin. A delete that wouldn't land there must be refused, never done for good. The shell's own delete,
 //! which the trash crate uses too, deletes an item for good without asking when it can't recycle it: on a network
 //! drive, on a drive whose Recycle Bin is turned off, or when the item is too big for the bin. Here the shell is
-//! asked through IFileOperation, and a check before every item stops any delete that wouldn't recycle. The one
-//! known folder Laci asks the shell for, Local AppData, comes from here too.
+//! asked through IFileOperation, and a check before every item stops any delete that wouldn't recycle. The known
+//! folders Laci asks the shell for, such as Local AppData, come from here too.
 //!
 //! Besides `ffi`, this is the only place for unsafe code, and every unsafe block says why it is sound.
 #![allow(unsafe_code)]
@@ -40,9 +40,13 @@ use windows::{
 /// The user's Local AppData folder as the shell knows it, whatever LOCALAPPDATA says: the folder Tauri keeps
 /// WebView2's data in, and the one the uninstaller clears.
 pub fn local_app_data() -> Result<PathBuf> {
-    // SAFETY: the GUID is a constant that outlives the call, and no token is passed, so the folder is this user's.
-    let folder = unsafe { SHGetKnownFolderPath(&FOLDERID_LocalAppData, KF_FLAG_DEFAULT, None) }
-        .map_err(|e| format!("Couldn't find the Local AppData folder: {e}"))?;
+    known_folder(&FOLDERID_LocalAppData).map_err(|e| format!("Couldn't find the Local AppData folder: {e}"))
+}
+
+/// The user's known folder `id`, as the shell knows it: where it is now, also when OneDrive has moved it.
+pub fn known_folder(id: &GUID) -> windows::core::Result<PathBuf> {
+    // SAFETY: the GUID outlives the call, and no token is passed, so the folder is this user's.
+    let folder = unsafe { SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None) }?;
     // SAFETY: on success the shell gives a NUL-terminated string of its own, read once here.
     let path = PathBuf::from(OsString::from_wide(unsafe { folder.as_wide() }));
     // SAFETY: the shell made the string with CoTaskMemAlloc for the caller to free, and it isn't read after this.

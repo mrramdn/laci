@@ -119,7 +119,7 @@ fn copy_tree_inner(src: &Path, dest: &Path, skip_git: bool) -> Result<()> {
 /// A step of a move or copy that changes `path`, tried again on Windows while another program holds the file for a
 /// moment, and failing with a message that says what to do.
 fn patiently<T>(path: &Path, step: impl FnMut() -> std::io::Result<T>) -> Result<T> {
-    platform::retry(step).map_err(|e| platform::explain(&e, path))
+    platform::retry(step).map_err(|e| platform::explain(&e, &[path]))
 }
 /// Removes a file or a folder with everything in it ([`platform::remove_all`]), read-only files included.
 pub(crate) fn remove(path: &Path) -> Result<()> {
@@ -130,7 +130,8 @@ fn rename(src: &Path, dest: &Path) -> Result<()> {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && renames_case(src, dest) => rename_case(src, dest),
         Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => rename_across(src, dest),
-        Err(e) => Err(platform::explain(&e, src)),
+        // A rename changes both folders: Controlled Folder Access may guard either.
+        Err(e) => Err(platform::explain(&e, &[src, dest])),
     }
 }
 /// A move to another volume: a copy, made in a private sibling of `dest` and published there in one step, and then
@@ -163,7 +164,7 @@ fn rename_across_with(src: &Path, dest: &Path, beside: impl Fn(&Path, &Path) -> 
             format!(
                 "Laci couldn't put {name} back, so it is at {} now: {}",
                 aside.display(),
-                platform::explain(&e, src)
+                platform::explain(&e, &[src])
             )
         })
     };
@@ -171,7 +172,7 @@ fn rename_across_with(src: &Path, dest: &Path, beside: impl Fn(&Path, &Path) -> 
         Ok(()) => put_back().map(|()| true)?,
         // EINVAL: the file system can't rename without replacing, and nothing was renamed.
         Err(e) if cfg!(unix) && e.kind() == std::io::ErrorKind::InvalidInput => false,
-        Err(e) => return Err(platform::explain(&e, src)),
+        Err(e) => return Err(platform::explain(&e, &[src])),
     };
     // The copy keeps read-only files, which the staging folder has to lose too.
     if let Err(error) = copy_tree(src, &payload).and_then(|()| if settable { set_aside() } else { Ok(()) }) {

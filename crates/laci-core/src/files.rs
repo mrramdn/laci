@@ -189,14 +189,14 @@ pub fn replace(path: &Path, contents: &[u8]) -> crate::Result<()> {
         })
     });
     let restored = if readonly { set_readonly(path, true) } else { Ok(()) };
-    persisted.map_err(|e| platform::explain(&e, path))?;
+    persisted.map_err(|e| platform::explain(&e, &[path]))?;
     restored
 }
 /// Only for Windows: elsewhere taking read-only off would let everyone write.
 fn set_readonly(path: &Path, readonly: bool) -> crate::Result<()> {
     let mut permissions = fs::metadata(path).map_err(|e| e.to_string())?.permissions();
     permissions.set_readonly(readonly);
-    fs::set_permissions(path, permissions).map_err(|e| platform::explain(&e, path))
+    fs::set_permissions(path, permissions).map_err(|e| platform::explain(&e, &[path]))
 }
 
 pub fn read_limit(path: &Path, limit: u64) -> Option<String> {

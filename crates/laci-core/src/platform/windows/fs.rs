@@ -1,6 +1,6 @@
 //! Files on Windows: which file a path names and when it changed, the change lock, renames and copies that keep a
 //! file's times, a moment's wait for programs that hold a file, and what Explorer hides or keeps only online.
-use super::{ffi, not_yet};
+use super::{ffi, not_yet, recycle::known_folder};
 use crate::{
     Result,
     platform::{
@@ -10,13 +10,18 @@ use crate::{
 };
 use file_id::FileId;
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::{self, File, FileTimes, Metadata, OpenOptions, TryLockError},
     io,
     os::windows::fs::{FileTimesExt, FileTypeExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
+};
+use windows::Win32::UI::Shell::{
+    FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Favorites, FOLDERID_Music, FOLDERID_Pictures,
+    FOLDERID_PublicDesktop, FOLDERID_PublicDocuments, FOLDERID_PublicMusic, FOLDERID_PublicPictures,
+    FOLDERID_PublicVideos, FOLDERID_Videos,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, FILE_ATTRIBUTE_RECALL_ON_OPEN,
@@ -232,19 +237,71 @@ pub fn retry<T>(mut step: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     }
 }
 
-/// Access stays denied when Controlled Folder Access keeps Laci out of a protected folder, such as Documents, and
-/// otherwise mostly while a program has a file open there.
-pub fn explain(error: &io::Error, path: &Path) -> String {
-    let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
+/// Access stays denied when Controlled Folder Access keeps Laci out of a folder it protects, such as Documents, and
+/// otherwise mostly while a program has a file open there, which is also what keeps a folder from being renamed.
+pub fn explain(error: &io::Error, paths: &[&Path]) -> String {
+    // Read only for the error it can give.
+    let on = error.raw_os_error() == Some(ACCESS_DENIED) && ffi::controlled_folder_access() == Some(true);
+    told(error, paths, if on { protected_folders(ffi::protected_folders()) } else { Some(Vec::new()) }.as_deref())
+}
+
+/// The folders Controlled Folder Access protects besides Windows' own: the user's and the public Documents, Desktop,
+/// Pictures, Videos and Music, and the user's Favorites, where they are now, as OneDrive moves them, and `added`, those
+/// a policy or Windows Security adds, as named there. `None` when one of those can't be told ([`expanded`]).
+fn protected_folders(added: Vec<PathBuf>) -> Option<Vec<PathBuf>> {
+    let added = added.iter().map(|folder| expanded(folder)).collect::<Option<Vec<_>>>()?;
+    let known = [
+        &FOLDERID_Documents,
+        &FOLDERID_Desktop,
+        &FOLDERID_Pictures,
+        &FOLDERID_Videos,
+        &FOLDERID_Music,
+        &FOLDERID_Favorites,
+        &FOLDERID_PublicDocuments,
+        &FOLDERID_PublicDesktop,
+        &FOLDERID_PublicPictures,
+        &FOLDERID_PublicVideos,
+        &FOLDERID_PublicMusic,
+    ];
+    Some(known.into_iter().filter_map(|id| known_folder(id).ok()).chain(added).collect())
+}
+
+/// A folder added to Controlled Folder Access as it reads it for the user: the folder can be named with variables,
+/// such as %USERPROFILE%\source, and each %NAME% stands for that variable's value. `None` while a `%` is left, as of a
+/// variable that isn't set: the folder could then be any.
+fn expanded(folder: &Path) -> Option<PathBuf> {
+    if !folder.as_os_str().as_encoded_bytes().contains(&b'%') {
+        return Some(folder.to_owned());
+    }
+    let (mut rest, mut out) = (folder.to_str()?, OsString::new());
+    while let Some((before, after)) = rest.split_once('%') {
+        let (name, next) = after.split_once('%')?;
+        out.push(before);
+        out.push(std::env::var_os(name).filter(|_| !name.is_empty())?);
+        rest = next;
+    }
+    out.push(rest);
+    Some(out.into())
+}
+
+/// [`explain`] with `protected`, the folders Controlled Folder Access keeps Laci out of: none while it is off, and
+/// `None` when they can't all be told, so that any folder may be one. It is named only for a change that may be in one
+/// of them, and the message names the first of `paths`.
+fn told(error: &io::Error, paths: &[&Path], protected: Option<&[PathBuf]>) -> String {
+    let name =
+        paths.first().map(|path| path.file_name().unwrap_or(path.as_os_str()).to_string_lossy()).unwrap_or_default();
+    let guarded = protected
+        .is_none_or(|protected| paths.iter().any(|path| protected.iter().any(|folder| contains(folder, path))));
     match error.raw_os_error() {
         Some(SHARING_VIOLATION | LOCK_VIOLATION) => {
             format!("{name} is open in another program. Close it and try again.")
         }
-        Some(ACCESS_DENIED) if ffi::controlled_folder_access() == Some(true) => {
-            "Windows Security blocks Laci from changing this folder. Allow Laci in Windows Security › Virus & threat \
-             protection › Ransomware protection."
-                .into()
-        }
+        // Laci may have been allowed already, so the other cause is named too.
+        Some(ACCESS_DENIED) if guarded => format!(
+            "Windows Security may be keeping Laci out of this folder: allow Laci in Windows Security › Virus & threat \
+             protection › Ransomware protection. If {name} is open in another program, close it instead. Then try \
+             again."
+        ),
         Some(ACCESS_DENIED) => {
             format!("Windows denied access to {name}. If it is open in another program, close it and try again.")
         }
@@ -374,5 +431,35 @@ mod tests {
         remove_with(&tree, fat).unwrap();
         assert!(!tree.exists());
         assert!(fs::metadata(outside.join("kept")).unwrap().permissions().readonly());
+    }
+
+    /// With Controlled Folder Access on, access denied is put down to it only in a folder it protects, such as
+    /// Documents or one added as %USERPROFILE%\source\repos, also as where a rename goes. Elsewhere a file open in
+    /// another program is what usually stops a rename, and allowing Laci in Windows Security wouldn't help. A folder
+    /// added with a variable that isn't set could be any, so then both causes are named for every folder.
+    #[test]
+    fn controlled_folder_access_is_named_only_in_the_folders_it_protects() {
+        let denied = io::Error::from_raw_os_error(ACCESS_DENIED);
+        let mut named = ffi::protected_folders();
+        named.push(PathBuf::from(r"%USERPROFILE%\source\repos"));
+        let protected = protected_folders(named).unwrap();
+        let documents = known_folder(&FOLDERID_Documents).unwrap();
+        assert!(protected.contains(&documents), "{protected:?}");
+        let repos = PathBuf::from(std::env::var_os("USERPROFILE").unwrap()).join("source").join("repos");
+        let temp = tempfile::tempdir().unwrap();
+        let (outside, inside, added) = (temp.path().join("app"), documents.join("app"), repos.join("app"));
+        let (outside, inside, added) = (outside.as_path(), inside.as_path(), added.as_path());
+        let open = "If it is open in another program, close it and try again.";
+        let said = told(&denied, &[outside], Some(&protected[..]));
+        assert!(said.ends_with(open), "{said}");
+        for paths in [&[inside][..], &[outside, inside], &[added]] {
+            let said = told(&denied, paths, Some(&protected[..]));
+            assert!(said.contains("Ransomware protection") && said.contains("app is open"), "{said}");
+        }
+        assert!(told(&denied, &[inside], Some(&[][..])).ends_with(open), "Controlled Folder Access is off");
+        let unknown = protected_folders(vec![PathBuf::from(r"%LACI_NOT_SET%\code")]);
+        assert_eq!(unknown, None);
+        let said = told(&denied, &[outside], unknown.as_deref());
+        assert!(said.contains("Ransomware protection") && said.contains("app is open"), "{said}");
     }
 }

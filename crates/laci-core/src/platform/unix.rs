@@ -154,7 +154,7 @@ pub fn retry<T>(mut step: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     step()
 }
 
-pub fn explain(error: &io::Error, _path: &Path) -> String {
+pub fn explain(error: &io::Error, _paths: &[&Path]) -> String {
     error.to_string()
 }
 

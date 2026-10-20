@@ -265,8 +265,8 @@ pub fn program(program: &str, args: Vec<OsString>, path: &OsStr) -> Result<(Path
 }
 
 /// The PATH the programs Laci starts get in place of Laci's own, where that isn't the user's: macOS gives an app
-/// started from the Dock launchd's short one, so there it is the one the user's login shell sets up, taken once.
-/// `None` elsewhere.
+/// started from the Dock launchd's short one, so there it is the one the user's login shell sets up, once the shell
+/// has answered. `None` elsewhere.
 pub fn child_path() -> Option<OsString> {
     #[cfg(target_os = "macos")]
     {

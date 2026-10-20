@@ -120,39 +120,116 @@ fn which_finds_the_first_file_that_can_run_in_path_order() {
     }
 }
 
-/// A fake login shell: it prints what startup files may print around the command it was given, which it runs with
-/// `PATH` set.
+/// A fake login shell: the body finds the command it was given, its last argument, in `$probe`. Shells print what
+/// their startup files print around what the command prints, which a fake shell runs with `PATH` set.
 #[cfg(unix)]
 fn shell(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
-    support::script(&path, &format!("#!/bin/sh\n{body}\n"));
+    support::script(&path, &format!("#!/bin/sh\nfor probe; do :; done\n{body}\n"));
     path
 }
 
 #[cfg(unix)]
 #[test]
 fn the_login_shell_path_is_read_between_what_its_startup_files_print() {
+    use process::ShellPath;
     use std::time::{Duration, Instant};
     let temp = tempfile::tempdir().unwrap();
     let wait = Duration::from_secs(10);
-    // $1 is -ilc, $2 the command.
     let chatty = shell(
         temp.path(),
         "chatty",
-        "echo 'Last login: Mon Oct 19 09:41:00 on ttys000'\nprintf 'no line end'\nPATH='/opt/fake/bin:/usr/bin:/bin' /bin/sh -c \"$2\"\necho 'zsh: done'",
+        "echo 'Last login: Mon Oct 19 09:41:00 on ttys000'\nprintf 'no line end'\nPATH='/opt/fake/bin:/usr/bin:/bin' /bin/sh -c \"$probe\"\necho 'zsh: done'",
     );
-    assert_eq!(process::login_shell_path(&chatty, wait), Some("/opt/fake/bin:/usr/bin:/bin".into()));
+    assert_eq!(process::login_shell_path(&chatty, wait), ShellPath::Found("/opt/fake/bin:/usr/bin:/bin".into()));
     let silent = shell(temp.path(), "silent", "echo 'nothing for you'");
-    assert_eq!(process::login_shell_path(&silent, wait), None);
-    let cut = shell(temp.path(), "cut", "/bin/sh -c \"$2\" | /usr/bin/head -n 2");
-    assert_eq!(process::login_shell_path(&cut, wait), None, "the PATH needs its end mark");
-    let empty = shell(temp.path(), "empty", "PATH= /bin/sh -c \"$2\"");
-    assert_eq!(process::login_shell_path(&empty, wait), None);
-    assert_eq!(process::login_shell_path(&temp.path().join("missing"), wait), None);
+    assert_eq!(process::login_shell_path(&silent, wait), ShellPath::Missing);
+    let cut = shell(temp.path(), "cut", "/bin/sh -c \"$probe\" | /usr/bin/head -n 2");
+    assert_eq!(process::login_shell_path(&cut, wait), ShellPath::Missing, "the PATH needs its end mark");
+    let empty = shell(temp.path(), "empty", "PATH= /bin/sh -c \"$probe\"");
+    assert_eq!(process::login_shell_path(&empty, wait), ShellPath::Missing);
+    assert_eq!(process::login_shell_path(&temp.path().join("missing"), wait), ShellPath::Missing);
     let slow = shell(temp.path(), "slow", "/bin/sleep 30");
     let started = Instant::now();
-    assert_eq!(process::login_shell_path(&slow, Duration::from_millis(300)), None);
+    assert_eq!(process::login_shell_path(&slow, Duration::from_millis(300)), ShellPath::TooSlow);
     assert!(started.elapsed() < Duration::from_secs(5), "a shell that takes too long is stopped");
+}
+
+/// The marks and the PATH come from one program the shell starts, so nushell, which shows only what the last of its
+/// commands gives, passes them all on; and tcsh, which takes -l only on its own, is asked without it.
+#[cfg(unix)]
+#[test]
+fn the_login_shell_path_is_read_from_nushell_and_tcsh_too() {
+    use process::ShellPath;
+    use std::time::Duration;
+    let temp = tempfile::tempdir().unwrap();
+    let wait = Duration::from_secs(10);
+    // Runs only the last of the commands that a `;` outside '…' separates, as nushell shows only what it gives.
+    let nu = shell(
+        temp.path(),
+        "nu",
+        r#"last=$(printf '%s\n' "$probe" | awk '{ q = 0; s = ""; for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); if (c == "\047") q = !q; if (c == ";" && !q) s = ""; else s = s c }; print s }')
+PATH='/opt/nu/bin:/usr/bin:/bin' /bin/sh -c "$last""#,
+    );
+    assert_eq!(process::login_shell_path(&nu, wait), ShellPath::Found("/opt/nu/bin:/usr/bin:/bin".into()));
+    // Refuses -l beside other arguments, as tcsh does, and is found by its name.
+    let dir = temp.path().join("tcsh");
+    fs::create_dir(&dir).unwrap();
+    let tcsh = shell(
+        &dir,
+        "tcsh",
+        r#"for arg; do case "$arg" in -*l*) [ $# -eq 1 ] || { echo "Unknown option: -l" >&2; exit 1; } ;; esac; done
+PATH='/opt/tcsh/bin:/usr/bin:/bin' /bin/sh -c "$probe""#,
+    );
+    assert_eq!(process::login_shell_path(&tcsh, wait), ShellPath::Found("/opt/tcsh/bin:/usr/bin:/bin".into()));
+}
+
+/// A login shell that is slow the first time, as one that loads nvm or conda right after login can be, is asked again
+/// at a later start, so its PATH isn't left out for the whole session; an answer is kept, and so is a shell that
+/// answered without a PATH. Only the first start waits, and only a moment.
+#[cfg(unix)]
+#[test]
+fn a_login_shell_that_took_too_long_is_asked_again_and_an_answer_is_kept() {
+    use process::LoginPath;
+    use std::time::{Duration, Instant};
+    let temp = tempfile::tempdir().unwrap();
+    let (started, slept) = (temp.path().join("started"), temp.path().join("slept"));
+    let starts = || fs::read_to_string(&started).map_or(0, |text| text.lines().count());
+    let slow_once = shell(
+        temp.path(),
+        "slow-once",
+        &format!(
+            "echo started >> '{}'\nif [ ! -e '{slept}' ]; then : > '{slept}'; /bin/sleep 30; fi\nPATH='/opt/fake/bin:/usr/bin' /bin/sh -c \"$probe\"",
+            started.display(),
+            slept = slept.display()
+        ),
+    );
+    let login = LoginPath::new(slow_once, Duration::from_millis(300), Duration::from_secs(1));
+    let asked = Instant::now();
+    assert_eq!(login.get(), None, "the first start takes what is known after a moment");
+    assert!(asked.elapsed() < Duration::from_millis(900), "{:?}", asked.elapsed());
+    let asked = Instant::now();
+    assert_eq!(login.get(), None);
+    assert!(asked.elapsed() < Duration::from_millis(250), "a later start doesn't wait for the slow shell");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let found = loop {
+        if let Some(path) = login.get() {
+            break path;
+        }
+        assert!(Instant::now() < deadline, "the shell was not asked again");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(found, "/opt/fake/bin:/usr/bin");
+    assert_eq!(starts(), 2);
+    assert_eq!(login.get(), Some(found));
+    assert_eq!(starts(), 2, "an answer is kept");
+
+    fs::remove_file(&started).unwrap();
+    let silent = shell(temp.path(), "silent", &format!("echo started >> '{}'", started.display()));
+    let login = LoginPath::new(silent, Duration::from_secs(5), Duration::from_secs(5));
+    assert_eq!(login.get(), None);
+    assert_eq!(login.get(), None);
+    assert_eq!(starts(), 1, "a shell that answers without a PATH isn't asked again");
 }
 
 /// An agent Laci asks for its models, or tells about Laci's MCP server, works in the home Laci reads, also on a demo

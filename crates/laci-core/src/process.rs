@@ -225,35 +225,134 @@ fn strip_prefix_ignoring_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str
 #[cfg(unix)]
 const PATH_MARK: &str = "__laci_path__";
 
-/// The PATH that `shell`, started as an interactive login shell, sets up: where the user's own programs are found,
-/// which macOS doesn't give an app started from the Dock. `None` when the shell prints none; one still running after
-/// `timeout` is stopped, with whatever it started.
+/// What a login shell answered [`login_shell_path`].
 #[cfg(unix)]
-pub fn login_shell_path(shell: &Path, timeout: Duration) -> Option<OsString> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShellPath {
+    /// The PATH it sets up.
+    Found(OsString),
+    /// It printed none, or couldn't start: asked again, it would answer the same.
+    Missing,
+    /// It was still running when the time was up, and was stopped.
+    TooSlow,
+}
+
+/// The PATH that `shell`, started as an interactive login shell, sets up: where the user's own programs are found,
+/// which macOS doesn't give an app started from the Dock. One still running after `timeout` is stopped, with whatever
+/// it started.
+#[cfg(unix)]
+pub fn login_shell_path(shell: &Path, timeout: Duration) -> ShellPath {
     use std::io::{Read, Seek, SeekFrom};
-    let mut output = tempfile::tempfile().ok()?;
+    let Ok(mut output) = tempfile::tempfile() else { return ShellPath::Missing };
+    let Ok(stdout) = output.try_clone() else { return ShellPath::Missing };
+    // One program the shell starts prints the marks and the PATH, so a shell that shows only what its last command
+    // gives, as nushell does, passes them all on. printenv writes PATH as the shell exports it, also from a shell such
+    // as fish that keeps it as a list. tcsh and csh take -l only on its own, so they are asked as interactive shells.
+    let csh = shell.file_name().is_some_and(|name| name == "tcsh" || name == "csh");
     let mut command = Command::new(shell);
-    // printenv writes PATH as the shell exports it, also from a shell such as fish that keeps it as a list.
     command
-        .args(["-ilc", &format!("echo {PATH_MARK}; /usr/bin/printenv PATH; echo {PATH_MARK}")])
+        .args(if csh { &["-i", "-c"][..] } else { &["-i", "-l", "-c"][..] })
+        .arg(format!("/bin/sh -c 'echo {PATH_MARK}; /usr/bin/printenv PATH; echo {PATH_MARK}'"))
         .stdin(Stdio::null())
-        .stdout(output.try_clone().ok()?)
+        .stdout(stdout)
         .stderr(Stdio::null());
-    let mut group = platform::spawn_group(command).ok()?;
+    let Ok(mut group) = platform::spawn_group(command) else { return ShellPath::Missing };
     let started = Instant::now();
     while !group.exited().unwrap_or(true) {
         if started.elapsed() >= timeout {
             group.stop();
             let _ = group.wait();
-            return None;
+            return ShellPath::TooSlow;
         }
         thread::sleep(Duration::from_millis(10));
     }
     let _ = group.wait();
-    output.seek(SeekFrom::Start(0)).ok()?;
     let mut text = Vec::new();
-    output.take(1_000_000).read_to_end(&mut text).ok()?;
-    marked_path(&text)
+    if output.seek(SeekFrom::Start(0)).and_then(|_| output.take(1_000_000).read_to_end(&mut text)).is_err() {
+        return ShellPath::Missing;
+    }
+    marked_path(&text).map_or(ShellPath::Missing, ShellPath::Found)
+}
+
+/// The PATH a login shell sets up, asked in the background. Until the first answer, a start waits for it, but only
+/// until a moment after the first ask; later starts take what is known at once. An answer is kept, and so is a shell
+/// that ended without a PATH. A shell still running at its time limit is stopped and asked again at a later start,
+/// [`LoginPath::TRIES`] times in all, so a slow first start after login doesn't leave it out for the whole session.
+#[cfg(unix)]
+pub struct LoginPath(std::sync::Arc<LoginShell>);
+
+#[cfg(unix)]
+struct LoginShell {
+    shell: PathBuf,
+    /// How long after the first ask a start waits for the first answer.
+    wait: Duration,
+    /// How long the shell may take.
+    limit: Duration,
+    state: Mutex<Asked>,
+    answered: std::sync::Condvar,
+}
+
+#[cfg(unix)]
+#[derive(Default)]
+struct Asked {
+    path: Option<OsString>,
+    /// Asking again would give the same.
+    settled: bool,
+    running: bool,
+    tries: u32,
+    /// Until when a start waits for the first answer.
+    until: Option<Instant>,
+}
+
+#[cfg(unix)]
+impl LoginPath {
+    /// How many times a shell that keeps taking too long is asked.
+    pub const TRIES: u32 = 3;
+
+    pub fn new(shell: PathBuf, wait: Duration, limit: Duration) -> Self {
+        Self(std::sync::Arc::new(LoginShell {
+            shell,
+            wait,
+            limit,
+            state: Mutex::new(Asked::default()),
+            answered: std::sync::Condvar::new(),
+        }))
+    }
+
+    /// The PATH the shell set up, once it has answered.
+    pub fn get(&self) -> Option<OsString> {
+        let login = &self.0;
+        let mut asked = login.state.lock().unwrap_or_else(|e| e.into_inner());
+        if !asked.settled && !asked.running {
+            asked.running = true;
+            asked.tries += 1;
+            asked.until.get_or_insert_with(|| Instant::now() + login.wait);
+            let shared = std::sync::Arc::clone(login);
+            let started = thread::Builder::new().name("laci-login-path".into()).spawn(move || {
+                let answer = login_shell_path(&shared.shell, shared.limit);
+                let mut asked = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                asked.running = false;
+                match answer {
+                    ShellPath::Found(path) => (asked.path, asked.settled) = (Some(path), true),
+                    ShellPath::Missing => asked.settled = true,
+                    ShellPath::TooSlow => asked.settled = asked.tries >= Self::TRIES,
+                }
+                shared.answered.notify_all();
+            });
+            if started.is_err() {
+                (asked.running, asked.settled) = (false, true);
+            }
+        }
+        let left = asked.until.map_or(Duration::ZERO, |until| until.saturating_duration_since(Instant::now()));
+        if asked.running && !left.is_zero() {
+            asked = login
+                .answered
+                .wait_timeout_while(asked, left, |asked| asked.running)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        asked.path.clone()
+    }
 }
 
 /// What stands between the first two [`PATH_MARK`]s in `output`.

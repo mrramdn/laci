@@ -8,7 +8,7 @@ use std::{
     ffi::{OsStr, OsString},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    sync::{LazyLock, Mutex},
+    sync::{LazyLock, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -16,29 +16,43 @@ use std::{
 /// folders the Claude Code installer, Volta and Bun put programs in.
 const KNOWN: [&str; 5] = ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin", "~/.volta/bin", "~/.bun/bin"];
 
-/// Taken the first time a program starts.
-static PATH: LazyLock<OsString> = LazyLock::new(|| merged(SHELL.clone(), std::env::var_os("PATH"), super::home_dir()));
-
-/// The PATH the user's shell sets up, as a terminal gets it, without what [`merged`] adds: the login shell's, or None
-/// when that can't be told. Taken once.
-static SHELL: LazyLock<Option<OsString>> = LazyLock::new(|| {
-    // With a terminal, Laci was started from a shell and has its PATH already. An interactive shell would also take
-    // that terminal over from the program in it, such as the agent that started `laci mcp`.
+/// The login shell, asked in the background when the first program starts. Starts wait for its answer until [`WAIT`]
+/// after that, and the shell has [`LIMIT`], as VS Code gives the same probe ten seconds; one that takes longer is
+/// asked again at a later start ([`process::LoginPath`]). With a terminal, Laci was started from a shell and has its
+/// PATH already; an interactive shell would also take that terminal over from the program in it, such as the agent
+/// that started `laci mcp`.
+static LOGIN: LazyLock<Option<process::LoginPath>> = LazyLock::new(|| {
     if std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty").is_ok() {
-        std::env::var_os("PATH")
-    } else {
-        let shell = std::env::var_os("SHELL").map(PathBuf::from).filter(|shell| shell.is_absolute());
-        process::login_shell_path(&shell.unwrap_or_else(|| "/bin/zsh".into()), Duration::from_secs(3))
+        return None;
     }
+    let shell = std::env::var_os("SHELL").map(PathBuf::from).filter(|shell| shell.is_absolute());
+    Some(process::LoginPath::new(shell.unwrap_or_else(|| "/bin/zsh".into()), WAIT, LIMIT))
 });
+const WAIT: Duration = Duration::from_secs(3);
+const LIMIT: Duration = Duration::from_secs(10);
+
+/// What programs get once the login shell has answered.
+static FOUND: OnceLock<OsString> = OnceLock::new();
+/// What they get until then, and when it can't answer.
+static FALLBACK: LazyLock<OsString> = LazyLock::new(|| merged(None, std::env::var_os("PATH"), super::home_dir()));
 
 pub fn login_path() -> OsString {
-    PATH.clone()
+    if let Some(path) = FOUND.get() {
+        return path.clone();
+    }
+    match LOGIN.as_ref().and_then(process::LoginPath::get) {
+        Some(probed) => FOUND.get_or_init(|| merged(Some(probed), std::env::var_os("PATH"), super::home_dir())).clone(),
+        None => FALLBACK.clone(),
+    }
 }
 
-/// The PATH a terminal gets, where `laci` must be for typing it to work. Empty when it can't be told.
+/// The PATH a terminal gets, where `laci` must be for typing it to work, without what [`merged`] adds: the PATH Laci
+/// was started with when it has a terminal, else the login shell's answer. Empty when it can't be told yet.
 pub fn shell_path() -> OsString {
-    SHELL.clone().unwrap_or_default()
+    match LOGIN.as_ref() {
+        None => std::env::var_os("PATH").unwrap_or_default(),
+        Some(login) => login.get().unwrap_or_default(),
+    }
 }
 
 /// The folders of `probed`, then those of `inherited`, then the [`KNOWN`] ones that exist, each once. A folder named

@@ -10,8 +10,8 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 
 const binary = path.resolve(process.argv[2] || 'target/debug/laci');
-// Laci names folders by their real path. The temporary folder may be reached another way (Windows' short
-// RUNNER~1, macOS's /var link), so the checks below start from its real path too.
+// Laci names folders by their real path. The temporary folder may be reached through a link, so the checks below
+// start from its real path too.
 const home = await realpath(await mkdtemp(path.join(tmpdir(), 'laci-mcp-smoke-')));
 const encode = p => p.replace(/[^A-Za-z0-9]/g, '-');
 const exists = async p => stat(p).then(() => true, () => false);

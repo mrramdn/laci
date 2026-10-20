@@ -11,7 +11,7 @@ body:
     id: os
     attributes:
       label: Operating system and version
-      description: For example Ubuntu 24.04, Fedora 42, Windows 11 or macOS 15.
+      description: For example Ubuntu 24.04, Fedora 42 or Arch Linux.
     validations:
       required: true
   - type: input

@@ -3,20 +3,17 @@
  * 720×560, 840×640, 1200×800 and 1600×1000 (the floors of Simple's tiers). Designs and themes are switched through
  * the window's own controls where it has them, else with the `design` and `theme` requests and a reload.
  *
- * It drives a build with the `e2e` feature over W3C WebDriver:
- * - Linux and Windows through tauri-driver (TAURI_DRIVER, else on PATH). On Windows the msedgedriver it starts must
- *   match the installed WebView2: give it as LACI_NATIVE_DRIVER (check.yml downloads the matching one).
- * - macOS through the WebDriver server inside the app, which this script starts on LACI_WEBDRIVER_PORT (4445).
- * LACI_WINDOW_DRIVER=embedded uses the app's own server on Linux and Windows too. Under tauri-driver that server runs
- * as well, and resizes the window when the native driver can't.
+ * It drives a build with the `e2e` feature over W3C WebDriver, through tauri-driver (TAURI_DRIVER, else on PATH),
+ * whose native driver LACI_NATIVE_DRIVER can name. LACI_WINDOW_DRIVER=embedded uses the WebDriver server inside the
+ * app instead, which this script starts on LACI_WEBDRIVER_PORT (4445). Under tauri-driver that server runs as well, and
+ * resizes the window when the native driver can't.
  *
  *   cargo build -p laci --features custom-protocol,e2e
  *   node scripts/demo.ts "$LACI_HOME"
  *   LACI_HOME=<throwaway home> node scripts/window-smoke.mjs [binary] [screenshot folder]
  *
- * LACI_HOME must be a throwaway home such as the demo's: the script saves the demo's setup in it. On Linux the window's
- * own web storage (the theme and design it paints first) and caches go inside it too, as in native-smoke.sh; on macOS
- * and Windows they are the installed Laci's.
+ * LACI_HOME must be a throwaway home such as the demo's: the script saves the demo's setup in it. The window's own web
+ * storage (the theme and design it paints first) and caches go inside it too, as in native-smoke.sh.
  * The screenshots go to the folder (LACI_SCREENSHOTS, else laci-window-smoke in the temp folder) as
  * <design>-<theme>-<width>x<height>.png, with window-smoke.json listing them and anything worth a look.
  *
@@ -32,20 +29,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const windows = process.platform === "win32";
 const binary = path.resolve(
-  process.argv[2] ??
-    process.env.LACI_BINARY ??
-    path.join(root, "target/debug", windows ? "laci.exe" : "laci"),
+  process.argv[2] ?? process.env.LACI_BINARY ?? path.join(root, "target/debug", "laci"),
 );
 const out = path.resolve(
   process.argv[3] ??
     process.env.LACI_SCREENSHOTS ??
     path.join(tmpdir(), "laci-window-smoke"),
 );
-const mode =
-  process.env.LACI_WINDOW_DRIVER ??
-  (process.platform === "darwin" ? "embedded" : "tauri-driver");
+const mode = process.env.LACI_WINDOW_DRIVER ?? "tauri-driver";
 const embeddedPort = Number(process.env.LACI_WEBDRIVER_PORT ?? 4445);
 /** The WebDriver server inside the e2e build, which tauri-driver's native driver leaves running beside it. */
 const ownServer = `http://127.0.0.1:${embeddedPort}`;
@@ -150,12 +142,12 @@ async function wait(label, condition, timeout = 60_000) {
 
 /**
  * What the app gets on top of this script's environment, also through tauri-driver and the native driver: the port
- * of its own WebDriver server, and on Linux WebKit's storage inside LACI_HOME.
+ * of its own WebDriver server, and WebKit's storage inside LACI_HOME.
  */
 function appEnv() {
   const env = { TAURI_WEBDRIVER_PORT: String(embeddedPort) };
   const home = process.env.LACI_HOME;
-  if (process.platform !== "linux" || !home) return env;
+  if (!home) return env;
   return {
     ...env,
     XDG_DATA_HOME: path.join(home, ".local", "share"),
@@ -167,7 +159,6 @@ function launch(program, args) {
   const child = spawn(program, args, {
     env: { ...process.env, ...appEnv() },
     stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
   });
   const keep = (chunk) => {
     // The end is what explains a failure.
@@ -179,7 +170,7 @@ function launch(program, args) {
   return child;
 }
 
-/** Starts what this OS is driven through and returns the session's capabilities. */
+/** Starts what the window is driven through and returns the session's capabilities. */
 async function startDriver() {
   if (mode === "preview") {
     server = process.env.LACI_WEBDRIVER?.replace(/\/$/, "");

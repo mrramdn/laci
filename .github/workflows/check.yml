@@ -3,15 +3,9 @@ on:
   pull_request:
   push:
     branches: [main]
-  # A manual run can check one OS only (`gh workflow run check.yml --ref <branch> -f os=windows`), so a branch
-  # that changes Windows code waits for Windows alone.
+  # A manual run can leave out the screenshots of the window (`-f window_smoke=false`).
   workflow_dispatch:
     inputs:
-      os:
-        description: Which OS to check
-        type: choice
-        options: [all, linux, windows, macos]
-        default: all
       window_smoke:
         description: Take screenshots of the real window too
         type: boolean
@@ -40,10 +34,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.diff.outputs.code }}
-      linux: ${{ steps.pick.outputs.linux }}
-      windows: ${{ steps.pick.outputs.windows }}
-      macos: ${{ steps.pick.outputs.macos }}
-      smoke: ${{ steps.pick.outputs.smoke }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,33 +53,10 @@ jobs:
             fi
           fi
           echo "code=$code" | tee -a "$GITHUB_OUTPUT"
-      # Which OS jobs run, and the runners window-smoke takes screenshots on: all of them, except in a manual run
-      # that picks one OS or no screenshots.
-      - id: pick
-        env:
-          OS: ${{ inputs.os }}
-          SMOKE: ${{ inputs.window_smoke }}
-        run: |
-          runners=()
-          for os in linux windows macos; do
-            if [ -z "$OS" ] || [ "$OS" = all ] || [ "$OS" = "$os" ]; then
-              echo "$os=true" | tee -a "$GITHUB_OUTPUT"
-              if [ "$SMOKE" != false ]; then
-                case "$os" in
-                  linux) runners+=('"ubuntu-24.04"') ;;
-                  windows) runners+=('"windows-2025"') ;;
-                  macos) runners+=('"macos-26"') ;;
-                esac
-              fi
-            else
-              echo "$os=false" | tee -a "$GITHUB_OUTPUT"
-            fi
-          done
-          echo "smoke=[$(IFS=,; echo "${runners[*]}")]" | tee -a "$GITHUB_OUTPUT"
 
   linux:
     needs: changes
-    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.linux == 'true'
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -119,15 +86,12 @@ jobs:
       - run: pnpm -C ui typecheck
       - run: pnpm -C ui lint
       - run: cargo fmt --all -- --check
-      # The workspace denies unsafe code (Cargo.toml's lints). Only the two Windows modules that call the system's C
-      # API allow it, and each of their unsafe blocks says why it is sound. Another allow, or a crate that stops using
-      # the workspace's lints, fails here.
-      - name: Unsafe code only in the Windows system calls
+      # The workspace denies unsafe code (Cargo.toml's lints), and nothing allows it. An allow, or a crate that stops
+      # using the workspace's lints, fails here.
+      - name: No unsafe code
         run: |
-          found="$(grep -rl unsafe_code --include='*.rs' crates src-tauri | sort)"
-          expected="$(printf '%s\n' crates/laci-core/src/platform/windows/ffi.rs crates/laci-core/src/platform/windows/recycle.rs)"
-          if [ "$found" != "$expected" ]; then
-            echo "::error::Only ffi.rs and recycle.rs may mention unsafe_code; these do:"
+          if found="$(grep -rl unsafe_code crates src-tauri)"; then
+            echo "::error::Only the workspace's Cargo.toml may mention unsafe_code, to deny it; these do too:"
             echo "$found"
             exit 1
           fi
@@ -212,137 +176,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # Windows and macOS only report for now: a failure doesn't fail the run or ci-ok until the repository
-  # variable REQUIRE_CROSS_PLATFORM is "true". While the repository is private they run on main, on manual
-  # runs and on pull requests labelled "cross-platform" (a label added to an open pull request takes effect
-  # on its next push). Once it is public they run on every pull request.
-  windows:
-    needs: changes
-    if: >-
-      needs.changes.outputs.code == 'true' && needs.changes.outputs.windows == 'true' && (
-        github.event_name != 'pull_request' ||
-        !github.event.repository.private ||
-        contains(github.event.pull_request.labels.*.name, 'cross-platform')
-      )
-    runs-on: windows-2025
-    continue-on-error: ${{ vars.REQUIRE_CROSS_PLATFORM != 'true' }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - name: Rust toolchain
-        run: rustup toolchain install --no-self-update
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: ${{ runner.os }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: true
-      - run: pnpm install --frozen-lockfile
-      # tauri-build embeds ui/dist.
-      - run: pnpm -C ui build
-      - run: cargo check --workspace --all-targets --features custom-protocol
-      - run: cargo clippy --workspace --all-targets --features custom-protocol -- -D warnings
-      # The tests must build. A few still fail on Windows until M5's last steps land (the terminal's, for one), so
-      # running them only reports how far they got.
-      - run: cargo test --workspace --features custom-protocol --no-run
-      - name: cargo test (a report until port:P14)
-        run: cargo test --workspace --features custom-protocol --no-fail-fast
-        continue-on-error: true
-        timeout-minutes: 15
-      # Both programs: the window's laci.exe and the console program laci-cli.exe, which the installer ships as
-      # bin\laci.exe.
-      - run: cargo build -p laci --features custom-protocol,console
-      # Agents start the console program as their MCP server on Windows. mcp-smoke checks that the file it is given
-      # exists, so the name ends in .exe.
-      - name: MCP smoke (a report until port:P14)
-        run: node scripts/mcp-smoke.mjs target/debug/laci-cli.exe
-        continue-on-error: true
-        timeout-minutes: 5
-      # The checks that keep Laci off files other programs have open already pass here, and only Windows can run
-      # them, so a failure turns this job red. Last, so the report above still runs when they fail.
-      - name: cargo test (process guards)
-        run: cargo test --workspace --features custom-protocol --test process_guards
-        timeout-minutes: 10
-
-  macos:
-    needs: changes
-    if: >-
-      needs.changes.outputs.code == 'true' && needs.changes.outputs.macos == 'true' && (
-        github.event_name != 'pull_request' ||
-        !github.event.repository.private ||
-        contains(github.event.pull_request.labels.*.name, 'cross-platform')
-      )
-    runs-on: macos-26
-    continue-on-error: ${{ vars.REQUIRE_CROSS_PLATFORM != 'true' }}
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - name: Rust toolchain
-        run: rustup toolchain install --no-self-update
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: ${{ runner.os }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: true
-      - run: pnpm install --frozen-lockfile
-      # tauri-build embeds ui/dist.
-      - run: pnpm -C ui build
-      # TMPDIR: the default one is under /var, a link, and Laci refuses to write through links.
-      - run: cargo check --workspace --all-targets --features custom-protocol
-        env:
-          TMPDIR: ${{ runner.temp }}
-      - run: cargo clippy --workspace --all-targets --features custom-protocol -- -D warnings
-        env:
-          TMPDIR: ${{ runner.temp }}
-      - run: cargo test --workspace --features custom-protocol
-        env:
-          TMPDIR: ${{ runner.temp }}
-      # The console program builds on macOS too, though only Windows ships it; agents there start the app's laci.
-      - run: cargo build -p laci --features custom-protocol,console
-      - name: MCP smoke (a report until port:P14)
-        run: node scripts/mcp-smoke.mjs target/debug/laci
-        continue-on-error: true
-        timeout-minutes: 5
-        env:
-          TMPDIR: ${{ runner.temp }}
-      # People's own temporary files are under /var too, so this shows how far the tests get with macOS's own
-      # TMPDIR. A report until port:P14 makes it count.
-      - name: cargo test with macOS's TMPDIR (a report until port:P14)
-        run: cargo test --workspace --features custom-protocol --no-fail-fast
-        continue-on-error: true
-        timeout-minutes: 15
-
   # Screenshots of the real window (scripts/window-smoke.mjs): both designs, both themes, the four widths of Simple's
-  # tiers, from a build with the WebDriver server (`--features e2e`). Linux and Windows drive it through tauri-driver,
-  # macOS through the server inside the app. It only reports, on every OS: a failure never fails the run. The
-  # screenshots are kept as screenshots-<OS> for 7 days. Gated like the Windows and macOS jobs.
+  # tiers, from a build with the WebDriver server (`--features e2e`), driven through tauri-driver. It only reports: a
+  # failure never fails the run. The screenshots are kept as screenshots-Linux for 7 days. A manual run can leave it
+  # out; on a push or a pull request the input is empty, and it runs.
   window-smoke:
     needs: changes
-    if: >-
-      needs.changes.outputs.code == 'true' && needs.changes.outputs.smoke != '[]' && (
-        github.event_name != 'pull_request' ||
-        !github.event.repository.private ||
-        contains(github.event.pull_request.labels.*.name, 'cross-platform')
-      )
-    strategy:
-      fail-fast: false
-      matrix:
-        # ubuntu-24.04, windows-2025 and macos-26, or fewer in a manual run (see changes).
-        os: ${{ fromJSON(needs.changes.outputs.smoke) }}
-    runs-on: ${{ matrix.os }}
+    if: needs.changes.outputs.code == 'true' && (github.event_name != 'workflow_dispatch' || inputs.window_smoke)
+    runs-on: ubuntu-24.04
     continue-on-error: true
     timeout-minutes: 60
     steps:
@@ -362,49 +203,19 @@ jobs:
           shared-key: ${{ runner.os }}
           save-if: false
       - name: Linux prerequisites
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev patchelf git libglib2.0-bin xdg-utils webkit2gtk-driver xvfb
       - run: pnpm install --frozen-lockfile
       # tauri-build embeds ui/dist.
       - run: pnpm -C ui build
-      # TMPDIR on macOS: the default one is under /var, a link, and Laci refuses to write through links.
       - name: Build with the WebDriver server
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" = macOS ]; then export TMPDIR="$RUNNER_TEMP"; fi
-          cargo build -p laci --features custom-protocol,e2e
+        run: cargo build -p laci --features custom-protocol,e2e
       # The linux job's release guard looks for this name; a build with the plugin must hold it.
       - name: The guard would see the WebDriver server
-        if: runner.os == 'Linux'
         run: grep -qaF wdio-webdriver target/debug/laci
       - name: tauri-driver
-        if: runner.os != 'macOS'
         run: cargo install tauri-driver --locked
-      # msedgedriver has to match the WebView2 runtime the app runs in, which can differ from Edge's. Without a
-      # download, the runner's own one (EDGEWEBDRIVER, for Edge) is the next best.
-      - name: msedgedriver for the installed WebView2
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $client = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-          $version = @("HKLM:\SOFTWARE\WOW6432Node\$client", "HKCU:\Software\$client") |
-            ForEach-Object { (Get-ItemProperty -Path $_ -ErrorAction SilentlyContinue).pv } |
-            Where-Object { $_ } | Select-Object -First 1
-          if (-not $version) { throw 'No WebView2 runtime is installed' }
-          Write-Host "WebView2 $version"
-          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
-          $dir = Join-Path $env:RUNNER_TEMP 'edgedriver'
-          try {
-            Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $zip
-            Expand-Archive $zip -DestinationPath $dir
-            $driver = Join-Path $dir 'msedgedriver.exe'
-          } catch {
-            Write-Warning "No msedgedriver $version to download ($_); using the runner's, made for Edge"
-            $driver = Join-Path $env:EDGEWEBDRIVER 'msedgedriver.exe'
-          }
-          "LACI_NATIVE_DRIVER=$driver" >> $env:GITHUB_ENV
       - name: Window screenshots
         shell: bash
         env:
@@ -413,13 +224,7 @@ jobs:
           LACI_HOME="$(node -p "require('node:path').join(process.env.RUNNER_TEMP, 'laci-window', 'home')")"
           export LACI_HOME
           node scripts/demo.ts "$LACI_HOME"
-          case "$RUNNER_OS" in
-            Linux)
-              xvfb-run -a -s '-screen 0 1920x1200x24' dbus-run-session -- node scripts/window-smoke.mjs target/debug/laci
-              ;;
-            Windows) node scripts/window-smoke.mjs target/debug/laci.exe ;;
-            macOS) TMPDIR="$RUNNER_TEMP" node scripts/window-smoke.mjs target/debug/laci ;;
-          esac
+          xvfb-run -a -s '-screen 0 1920x1200x24' dbus-run-session -- node scripts/window-smoke.mjs target/debug/laci
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -432,25 +237,16 @@ jobs:
   # The one check to require. List every job in needs, except window-smoke, which only reports and can take an hour.
   # A skipped job is fine; a failed or cancelled one is not.
   ci-ok:
-    needs: [changes, linux, windows, macos]
+    needs: [changes, linux]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - env:
           NEEDS: ${{ toJSON(needs) }}
-          REQUIRE_CROSS_PLATFORM: ${{ vars.REQUIRE_CROSS_PLATFORM == 'true' }}
         run: |
           status=0
           while read -r job result; do
-            case "$job" in
-              windows | macos)
-                if [ "$REQUIRE_CROSS_PLATFORM" != true ]; then
-                  echo "$job: $result (not required)"
-                  continue
-                fi
-                ;;
-            esac
             case "$result" in
               success | skipped) echo "$job: $result" ;;
               *)

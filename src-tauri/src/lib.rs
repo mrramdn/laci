@@ -120,8 +120,22 @@ mod tests {
         for shown in ["ls", "doctor", "json", "mcp"] {
             assert!(help.contains(shown), "{help}");
         }
-        // The version reads `laci 3.0.0`; package-smoke reads it.
+        // The version reads `laci 2.5.2`; package-smoke reads it.
         assert_eq!(Cli::command().render_version(), format!("laci {}\n", env!("CARGO_PKG_VERSION")));
+    }
+
+    /// What is built here carries every release in the changelog, so its version is never below the newest one: a
+    /// package from it would otherwise install as a downgrade.
+    #[test]
+    fn the_version_is_at_least_the_newest_release() {
+        let parts = |version: &str| -> Vec<u64> {
+            version.split(['-', '+']).next().unwrap().split('.').map(|part| part.parse().unwrap()).collect()
+        };
+        let newest = include_str!("../../CHANGELOG.md")
+            .lines()
+            .find_map(|line| line.strip_prefix("## [")?.split(']').next().filter(|name| *name != "Unreleased"))
+            .unwrap();
+        assert!(parts(env!("CARGO_PKG_VERSION")) >= parts(newest), "{} < {newest}", env!("CARGO_PKG_VERSION"));
     }
 
     #[test]

@@ -8,6 +8,7 @@ mod process;
 mod recycle;
 mod spawn;
 mod terminal;
+mod user_path;
 
 pub use dirs::{home_dir, user_dirs};
 pub use fs::{
@@ -18,6 +19,7 @@ pub use process::{Group, ensure_idle, exited, pid_alive, processes_in, spawn_gro
 pub use recycle::trash;
 pub use spawn::{open, program, which};
 pub use terminal::{DEFAULT_APPS, KNOWN_APPS, terminal_args, terminal_script_args};
+pub use user_path::edit_user_path;
 
 pub fn host_name() -> Option<String> {
     sysinfo::System::host_name()

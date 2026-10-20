@@ -344,3 +344,151 @@ pub fn terminal_args(
 pub fn terminal_script_args(app: &str, cwd: &Path, cmd: Option<&str>, confirm: bool) -> Result<Vec<String>> {
     os::terminal_script_args(app, cwd, cmd, confirm)
 }
+
+/// Puts the folder `dir` on the user's Path, or takes it off, as Windows keeps the Path in the registry: Laci's
+/// installer puts the console program's folder there with `laci __path add`, and the uninstaller takes it off. Answers
+/// whether the Path changed. Only Windows keeps such a Path; elsewhere this fails.
+pub fn edit_user_path(dir: &Path, add: bool) -> Result<bool> {
+    #[cfg(windows)]
+    {
+        os::edit_user_path(dir, add)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (dir, add);
+        Err("Only Windows keeps a Path for Laci's installer to change".into())
+    }
+}
+
+/// The longest value Windows gives an environment variable, in UTF-16 units.
+const PATH_LIMIT: usize = 32_767;
+
+/// The user's Path, `path` as Windows keeps it, with the folder `dir` added at its end; None when `dir` is on it
+/// already, in any case and with or without a trailing backslash or quotes. Every entry stays as it was written,
+/// %VARIABLES% unexpanded, and a Path that ends in `;`, as Windows' own does, still ends in one, so [`path_without`]
+/// gives back exactly what was there. A folder whose name holds `;`, `"` or `%` is refused: Windows would split it, or
+/// read a variable in it.
+pub fn path_with(path: &str, dir: &str) -> Result<Option<String>> {
+    if dir.is_empty() {
+        return Err("Laci can't put a folder without a name on the Path".into());
+    }
+    if dir.contains([';', '"', '%']) {
+        return Err(format!("Laci can't put {dir} on the Path: a folder there can't hold ; \" or %"));
+    }
+    let same = |entry: &str| {
+        let plain = |text: &str| text.trim().trim_matches('"').trim_end_matches(['\\', '/']).to_lowercase();
+        !entry.trim().is_empty() && plain(entry) == plain(dir)
+    };
+    if path.split(';').any(same) {
+        return Ok(None);
+    }
+    let edited = if path.is_empty() {
+        dir.to_owned()
+    } else if path.ends_with(';') {
+        format!("{path}{dir};")
+    } else {
+        format!("{path};{dir}")
+    };
+    if edited.encode_utf16().count() > PATH_LIMIT {
+        return Err("The user's Path would grow longer than Windows allows, so Laci left it as it was".into());
+    }
+    Ok(Some(edited))
+}
+
+/// `path` without the entries that are exactly `dir`, as [`path_with`] added it; None when there is none. Every other
+/// entry stays as it was written, also one that names the same folder another way, which Laci didn't add.
+pub fn path_without(path: &str, dir: &str) -> Option<String> {
+    let entries: Vec<&str> = path.split(';').collect();
+    let kept: Vec<&str> = entries.iter().copied().filter(|entry| dir.is_empty() || *entry != dir).collect();
+    (kept.len() != entries.len()).then(|| kept.join(";"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LACI: &str = r"C:\Users\me\AppData\Local\Laci\bin";
+
+    #[test]
+    fn the_installer_adds_its_folder_to_the_path_once_and_keeps_the_rest_as_written() {
+        let with = |path: &str| path_with(path, LACI).unwrap();
+        assert_eq!(with(""), Some(LACI.to_owned()), "no Path yet");
+        assert_eq!(with(r"C:\Tools"), Some(format!(r"C:\Tools;{LACI}")));
+        // Windows' own user Path ends in a ;, and keeps ending in one.
+        let windows = r"%USERPROFILE%\AppData\Local\Microsoft\WindowsApps;";
+        assert_eq!(with(windows), Some(format!("{windows}{LACI};")));
+        assert_eq!(with(r"C:\Tools;;D:\bin;"), Some(format!(r"C:\Tools;;D:\bin;{LACI};")));
+        // There already, however it is written.
+        for there in [
+            LACI.to_owned(),
+            format!(r"C:\Tools;{LACI};D:\bin"),
+            format!(r"C:\Tools;{}", LACI.to_uppercase()),
+            format!(r"{}\;C:\Tools", LACI.to_lowercase()),
+            format!(r"C:\Tools;{LACI}\\"),
+            format!(r#"C:\Tools;"{LACI}""#),
+            format!(r"C:\Tools; {LACI} "),
+        ] {
+            assert_eq!(with(&there), None, "{there}");
+        }
+        // %VARIABLES% stay unexpanded, and an entry spelled with one is the user's own.
+        let profile = r"%USERPROFILE%\.cargo\bin;%USERPROFILE%\AppData\Local\Laci\bin;%LOCALAPPDATA%\Programs\x";
+        assert_eq!(with(profile), Some(format!("{profile};{LACI}")));
+        // Windows would split the folder at a ; and read a variable in a %.
+        for refused in ["", r"C:\a;b\bin", r"C:\100%\bin", r#"C:\"x"\bin"#] {
+            assert!(path_with(r"C:\Tools", refused).is_err(), "{refused}");
+        }
+        let long = "x".repeat(PATH_LIMIT - LACI.len() - 1);
+        assert_eq!(path_with(&long, LACI).unwrap().map(|path| path.len()), Some(PATH_LIMIT));
+        assert!(path_with(&format!("{long}x"), LACI).is_err(), "longer than Windows allows");
+        // UTF-16 units count, not bytes: each 雨 is one.
+        assert!(path_with(&"雨".repeat(PATH_LIMIT - LACI.len() - 1), LACI).unwrap().is_some());
+    }
+
+    #[test]
+    fn the_uninstaller_takes_off_only_the_entry_the_installer_added() {
+        let without = |path: &str| path_without(path, LACI);
+        assert_eq!(without(LACI), Some(String::new()));
+        assert_eq!(without(&format!(r"C:\Tools;{LACI}")), Some(r"C:\Tools".to_owned()));
+        assert_eq!(without(&format!(r"{LACI};C:\Tools")), Some(r"C:\Tools".to_owned()));
+        assert_eq!(without(&format!(r"C:\Tools;{LACI};D:\bin;")), Some(r"C:\Tools;D:\bin;".to_owned()));
+        assert_eq!(without(&format!(r"C:\Tools;{LACI};;{LACI}")), Some(r"C:\Tools;".to_owned()), "each copy");
+        assert_eq!(without(""), None);
+        assert_eq!(without(r"C:\Tools;D:\bin"), None);
+        // Another spelling of the folder, or one with a %VARIABLE%, is the user's own and stays.
+        for kept in [
+            format!(r"C:\Tools;{}", LACI.to_uppercase()),
+            format!(r"C:\Tools;{LACI}\"),
+            r"C:\Tools;%USERPROFILE%\AppData\Local\Laci\bin".to_owned(),
+            format!(r"C:\Tools;{LACI}2"),
+        ] {
+            assert_eq!(without(&kept), None, "{kept}");
+        }
+        let profile = format!(r"%USERPROFILE%\.cargo\bin;{LACI};%LOCALAPPDATA%\x");
+        assert_eq!(without(&profile), Some(r"%USERPROFILE%\.cargo\bin;%LOCALAPPDATA%\x".to_owned()));
+        assert_eq!(path_without(r"C:\Tools;;D:\bin", ""), None, "an empty folder names no entry");
+    }
+
+    #[test]
+    fn installing_and_uninstalling_gives_back_the_path_as_it_was() {
+        for path in [
+            "",
+            ";",
+            r"C:\Tools",
+            r"C:\Tools;",
+            r"C:\Tools;;",
+            r";C:\Tools",
+            r"%USERPROFILE%\AppData\Local\Microsoft\WindowsApps;",
+            r"%USERPROFILE%\.cargo\bin;C:\Program Files\Git\cmd",
+        ] {
+            let with = path_with(path, LACI).unwrap().unwrap();
+            assert_eq!(path_without(&with, LACI).as_deref(), Some(path), "{path:?}");
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn only_windows_keeps_a_path_for_the_installer() {
+        assert!(edit_user_path(Path::new("/opt/laci/bin"), true).is_err());
+        assert!(edit_user_path(Path::new("/opt/laci/bin"), false).is_err());
+    }
+}

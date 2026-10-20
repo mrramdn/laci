@@ -255,3 +255,125 @@ pub fn process_program(pid: u32) -> io::Result<Program> {
     name.truncate(length as usize);
     Ok(Program::Known(PathBuf::from(OsString::from_wide(&name))))
 }
+
+use windows_sys::Win32::{
+    Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS, ERROR_UNSUPPORTED_TYPE, LPARAM},
+    System::Registry::{
+        HKEY_CURRENT_USER, REG_EXPAND_SZ, REG_SZ, REG_VALUE_TYPE, RRF_NOEXPAND, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ,
+        RegSetKeyValueW,
+    },
+    UI::WindowsAndMessaging::{HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE},
+};
+
+/// The key under HKEY_CURRENT_USER that holds the user's environment variables.
+pub const ENVIRONMENT: &str = "Environment";
+/// The Path's name in such a key.
+const PATH: &str = "Path";
+
+/// How the registry keeps the user's Path: REG_EXPAND_SZ, whose %VARIABLES% Windows fills in when it builds the
+/// environment, as Windows writes it, or REG_SZ.
+pub type PathKind = REG_VALUE_TYPE;
+/// The kind a Path Laci makes gets.
+pub const EXPANDABLE: PathKind = REG_EXPAND_SZ;
+
+/// The Path in `key`, a key under HKEY_CURRENT_USER ([`ENVIRONMENT`] for the user's), as the registry keeps it: in
+/// UTF-16 without its ending NUL, with its kind; None when there is none. Its %VARIABLES% stay as written. A Path that
+/// isn't text is an error.
+pub fn read_path(key: &str) -> io::Result<Option<(Vec<u16>, PathKind)>> {
+    let (key, name) = (wide(Path::new(key))?, wide(Path::new(PATH))?);
+    // RRF_NOEXPAND, or the call would fill the variables in; text only.
+    let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND;
+    let failed = |status| match status {
+        ERROR_UNSUPPORTED_TYPE => io::Error::new(io::ErrorKind::InvalidData, "it isn't text"),
+        status => io::Error::from_raw_os_error(status as i32),
+    };
+    // A Path that grows between asking its size and reading it is asked for again.
+    for _ in 0..4 {
+        let (mut kind, mut size) = (0, 0u32);
+        // SAFETY: `key` and `name` are NUL-terminated UTF-16 buffers that live until the call returns, which only reads
+        // them. Without a buffer the call writes nothing but the value's kind into `kind` and its size in bytes into
+        // `size`, a REG_VALUE_TYPE and a u32 that live until it returns.
+        let status = unsafe {
+            RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), flags, &mut kind, ptr::null_mut(), &mut size)
+        };
+        match status {
+            ERROR_SUCCESS => {}
+            ERROR_FILE_NOT_FOUND => return Ok(None),
+            status => return Err(failed(status)),
+        }
+        // One more unit, for the ending NUL the call adds to a value stored without one.
+        let mut value = vec![0u16; (size as usize).div_ceil(2) + 1];
+        let mut room =
+            u32::try_from(size_of_val(value.as_slice())).map_err(|_| io::Error::other("The Path is too long"))?;
+        // SAFETY: as above, and `value` lives until the call returns and holds `room` bytes, the most the call writes.
+        // The call puts the bytes it wrote, the ending NUL among them, into `room`.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                name.as_ptr(),
+                flags,
+                &mut kind,
+                value.as_mut_ptr().cast(),
+                &mut room,
+            )
+        };
+        match status {
+            ERROR_SUCCESS => {
+                value.truncate(room as usize / 2);
+                while value.last() == Some(&0) {
+                    value.pop();
+                }
+                return Ok(Some((value, kind)));
+            }
+            ERROR_MORE_DATA => continue,
+            ERROR_FILE_NOT_FOUND => return Ok(None),
+            status => return Err(failed(status)),
+        }
+    }
+    Err(io::Error::other("The Path kept changing while Laci read it"))
+}
+
+/// Writes `value` as the Path in `key`, a key under HKEY_CURRENT_USER, of the kind `kind`: REG_EXPAND_SZ or REG_SZ.
+/// The key is made when it isn't there.
+pub fn write_path(key: &str, value: &str, kind: PathKind) -> io::Result<()> {
+    if ![REG_EXPAND_SZ, REG_SZ].contains(&kind) || value.contains('\0') {
+        return Err(io::Error::from(io::ErrorKind::InvalidInput));
+    }
+    let (key, name) = (wide(Path::new(key))?, wide(Path::new(PATH))?);
+    let data: Vec<u16> = value.encode_utf16().chain(iter::once(0)).collect();
+    let size = u32::try_from(size_of_val(data.as_slice())).map_err(|_| io::Error::other("The Path is too long"))?;
+    // SAFETY: `key`, `name` and `data` are NUL-terminated UTF-16 buffers that live until the call returns, which only
+    // reads them; `size` is `data`'s length in bytes, its NUL included, as REG_SZ and REG_EXPAND_SZ values hold it.
+    let status =
+        unsafe { RegSetKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), kind, data.as_ptr().cast(), size) };
+    if status != ERROR_SUCCESS {
+        return Err(io::Error::from_raw_os_error(status as i32));
+    }
+    Ok(())
+}
+
+/// Tells the running programs, Explorer among them, that the user's environment changed, so the programs they start
+/// from now on get the new Path. Each window gets 5 seconds, and one that hangs is passed over.
+pub fn environment_changed() -> io::Result<()> {
+    let area = wide(Path::new(ENVIRONMENT))?;
+    let mut answer = 0usize;
+    // SAFETY: `area` is a NUL-terminated UTF-16 buffer, the text WM_SETTINGCHANGE takes as its lParam, that lives until
+    // the call returns; Windows copies it for windows of other programs, and the call returns only after each window
+    // has answered, hung or waited out its time. `answer` is a usize that lives until the call returns.
+    let sent = unsafe {
+        SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            0,
+            area.as_ptr() as LPARAM,
+            SMTO_ABORTIFHUNG,
+            5000,
+            &mut answer,
+        )
+    };
+    if sent == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}

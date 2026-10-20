@@ -80,19 +80,69 @@ fn same_program(command: &str, laci: &Path) -> bool {
     let actual = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_owned());
     found.is_some_and(|found| actual(&found) == actual(laci))
 }
-/// A command as it would be typed, for showing and copying. Nothing is ever run from this text.
+/// The shell a command shown for setting MCP up by hand is written for: PowerShell on Windows, which its terminal
+/// opens, and a POSIX shell elsewhere.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shell {
+    Posix,
+    PowerShell,
+}
+const SHELL: Shell = if cfg!(windows) { Shell::PowerShell } else { Shell::Posix };
+
+/// A command as it would be typed in this system's shell, for showing and copying. Nothing is ever run from this text.
 fn typed(program: &str, args: &[String]) -> String {
-    std::iter::once(program)
+    typed_for(SHELL, program, args)
+}
+fn typed_for(shell: Shell, program: &str, args: &[String]) -> String {
+    let line = std::iter::once(program)
         .chain(args.iter().map(String::as_str))
-        .map(|word| {
+        .map(|word| shell_word(shell, word))
+        .collect::<Vec<_>>()
+        .join(" ");
+    // PowerShell takes a quoted first word for text to print; the call operator runs it.
+    if shell == Shell::PowerShell && line.starts_with('\'') { format!("& {line}") } else { line }
+}
+/// One word as `shell` reads it: as it is when nothing in it means anything to the shell, else in single quotes. A
+/// POSIX shell ends a single-quoted word at any `'`, so one is written `'\''`. In PowerShell two quotes stand for one,
+/// and the curly quotes count as quotes too. A plain word there starts with a letter, `_`, `\` or `/`, since one that
+/// starts with a digit or a dot can be read as a number; and one with a leading dash stays plain only as a flag such as
+/// `--scope`: PowerShell may drop a bare `--` before a program sees it, and splits a word such as `-a.b`.
+fn shell_word(shell: Shell, word: &str) -> String {
+    match shell {
+        Shell::Posix => {
             if !word.is_empty() && word.bytes().all(|c| c.is_ascii_alphanumeric() || b"_./:=@%+,-".contains(&c)) {
                 word.to_owned()
             } else {
                 format!("'{}'", word.replace('\'', "'\\''"))
             }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+        }
+        Shell::PowerShell => {
+            let plain = match word.strip_prefix('-') {
+                Some(flag) => {
+                    let name = flag.strip_prefix('-').unwrap_or(flag);
+                    name.starts_with(|c: char| c.is_ascii_alphanumeric())
+                        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                }
+                None => {
+                    word.starts_with(|c: char| c.is_ascii_alphabetic() || "_\\/".contains(c))
+                        && word.chars().all(|c| c.is_ascii_alphanumeric() || "_./\\:-".contains(c))
+                }
+            };
+            if plain {
+                return word.to_owned();
+            }
+            let mut quoted = String::with_capacity(word.len() + 2);
+            quoted.push('\'');
+            for c in word.chars() {
+                if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+                    quoted.push(c);
+                }
+                quoted.push(c);
+            }
+            quoted.push('\'');
+            quoted
+        }
+    }
 }
 fn server(env: &Env) -> Value {
     json!({"command":env.program,"args":["mcp"]})
@@ -376,13 +426,74 @@ mod tests {
         ));
         let found = status(&env, &codex);
         assert_eq!((&found["state"], &found["how"]), (&json!("registered"), &json!("command")));
-        // The program as it would be typed: a Windows path needs quotes.
-        assert_eq!(found["add"], format!("codex mcp add laci -- {} mcp", typed(laci, &[])));
+        // The program as it would be typed in this system's shell.
+        assert_eq!(
+            found["add"],
+            format!("codex mcp add laci {} {} mcp", shell_word(SHELL, "--"), shell_word(SHELL, laci))
+        );
         assert_eq!(found["remove"], "codex mcp remove laci");
         write(format!("[mcp_servers.laci]\ncommand = '{laci}'\nargs = ['mcp']\nenabled = false\n"));
         assert_eq!(status(&env, &codex)["state"], "off");
         write("[mcp_servers.lacinia]\ncommand = \"x\"\n".into());
         assert_eq!(status(&env, &codex)["state"], "missing");
+    }
+    #[test]
+    fn a_command_is_shown_quoted_for_the_shell_of_its_system() {
+        let line = |shell, words: &[&str]| {
+            typed_for(shell, words[0], &words[1..].iter().map(|word| word.to_string()).collect::<Vec<_>>())
+        };
+        let claude = |laci| ["claude", "mcp", "add", "laci", "--scope", "user", "--", laci, "mcp"];
+        // A POSIX shell, as on Linux and macOS.
+        let posix = |words: &[&str]| line(Shell::Posix, words);
+        assert_eq!(
+            posix(&claude("/Applications/Laci.app/Contents/MacOS/laci")),
+            "claude mcp add laci --scope user -- /Applications/Laci.app/Contents/MacOS/laci mcp"
+        );
+        assert_eq!(
+            posix(&["codex", "mcp", "add", "laci", "--", "/Users/o'brien/My Apps/Laci.app/Contents/MacOS/laci", "mcp"]),
+            r"codex mcp add laci -- '/Users/o'\''brien/My Apps/Laci.app/Contents/MacOS/laci' mcp"
+        );
+        assert_eq!(
+            posix(&["/opt/My Agent/agent", "mcp", "remove", "laci", ""]),
+            "'/opt/My Agent/agent' mcp remove laci ''"
+        );
+        // PowerShell, as on Windows: `--` quoted so that it reaches the agent, and two quotes for one.
+        let powershell = |words: &[&str]| line(Shell::PowerShell, words);
+        assert_eq!(
+            powershell(&claude(r"C:\Users\me\AppData\Local\Laci\bin\laci.exe")),
+            r"claude mcp add laci --scope user '--' C:\Users\me\AppData\Local\Laci\bin\laci.exe mcp"
+        );
+        for (program, shown) in [
+            (r"C:\Program Files\Laci\bin\laci.exe", r"'C:\Program Files\Laci\bin\laci.exe'"),
+            (r"C:\Users\O'Brien\Laci\bin\laci.exe", r"'C:\Users\O''Brien\Laci\bin\laci.exe'"),
+            ("C:\\Users\\O\u{2019}Brien\\laci.exe", "'C:\\Users\\O\u{2019}\u{2019}Brien\\laci.exe'"),
+            (r"C:\Users\RUNNER~1\Laci\bin\laci.exe", r"'C:\Users\RUNNER~1\Laci\bin\laci.exe'"),
+            (r"$env:USERPROFILE\laci.exe", r"'$env:USERPROFILE\laci.exe'"),
+            ("D:\\雨\\laci.exe", "'D:\\雨\\laci.exe'"),
+            ("a;b", "'a;b'"),
+            ("-a.b", "'-a.b'"),
+            ("-", "'-'"),
+            ("---", "'---'"),
+            ("", "''"),
+            // PowerShell could read these as numbers: 1kb is 1024 to it.
+            ("1kb", "'1kb'"),
+            (r".\laci.exe", r"'.\laci.exe'"),
+            ("-v", "-v"),
+            ("--a-b", "--a-b"),
+            (r"\\server\tools\laci.exe", r"\\server\tools\laci.exe"),
+            ("/opt/laci", "/opt/laci"),
+        ] {
+            assert_eq!(
+                powershell(&["codex", "mcp", "add", "laci", "--", program, "mcp"]),
+                format!("codex mcp add laci '--' {shown} mcp")
+            );
+        }
+        // A quoted program is run with the call operator; PowerShell would print it otherwise.
+        assert_eq!(
+            powershell(&[r"C:\Program Files\Agent\agent.exe", "mcp", "remove", "laci"]),
+            r"& 'C:\Program Files\Agent\agent.exe' mcp remove laci"
+        );
+        assert_eq!(powershell(&[r"C:\Tools\agent.exe", "mcp"]), r"C:\Tools\agent.exe mcp");
     }
     #[cfg(unix)]
     #[test]

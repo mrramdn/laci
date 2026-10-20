@@ -193,9 +193,10 @@ ask me first."
 anything."
                     .to_owned()
             } else if upstream.is_empty() {
+                // After `--`, Git reads no name the repository chose as an option.
                 format!(
                     "The branch {branch} isn't linked to a branch online yet (no upstream), so push it with: git push \
--u {} {}",
+-u -- {} {}",
                     word(remote),
                     word(branch)
                 )

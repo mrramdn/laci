@@ -480,7 +480,14 @@ fn fix_prompts_carry_the_limits() {
     assert!(
         assistant::fix(&env, &node, "unpushed")
             .unwrap()
-            .contains("(no upstream), so push it with: git push -u origin main")
+            .contains("(no upstream), so push it with: git push -u -- origin main")
+    );
+    // A remote the repository named like an option stays a name.
+    node["git"]["remotes"][0]["name"] = json!("--receive-pack=touch pwned");
+    assert!(
+        assistant::fix(&env, &node, "unpushed")
+            .unwrap()
+            .contains("so push it with: git push -u -- '--receive-pack=touch pwned' main")
     );
     node["git"]["branch"] = json!("");
     assert!(assistant::fix(&env, &node, "unpushed").unwrap().contains("No branch is checked out."));

@@ -1,8 +1,8 @@
 // Simple's rail in a short window whose scrollbars take room, as GTK's classic ones do with
-// GTK_OVERLAY_SCROLLING=0 (ui/src/simple/simple.css), and the preview check that sees it (scripts/ui-preview-check.mjs
-// --scrollbars --overflow). At 720×560 the rail is taller than the window and scrolls. Its scrollbar
-// used to take its room from a rail of a fixed 72 px, until the places' words broke in two and the
-// rail scrolled sideways on every screen, 69 px of content in 61.
+// GTK_OVERLAY_SCROLLING=0 (ui/src/simple/simple.css), and the preview check that sees it
+// (scripts/ui-preview-check.mjs --scrollbars --overflow). At 720×560 the rail is taller than the
+// window and scrolls. Its scrollbar used to take its room from a rail of a fixed 72 px, until the
+// places' words broke in two and the rail scrolled sideways on every screen, 69 px of content in 61.
 // - measureBoxes names a box that scrolls sideways by itself, and leaves code, fields and hidden
 //   boxes alone;
 // - in the preview, the scrollbar widens the rail while it scrolls, so its parts keep their 59 px and

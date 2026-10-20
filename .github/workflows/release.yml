@@ -118,15 +118,6 @@ jobs:
       # AppImage afterwards, in the release environment.
       - name: Build the packages
         run: pnpm build
-      - name: The oldest glibc the binary runs on
-        id: glibc
-        run: |
-          floor="$(objdump -T target/release/laci | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
-          . /etc/os-release
-          runner="ubuntu-$VERSION_ID"
-          echo "floor=${floor#GLIBC_}" >> "$GITHUB_OUTPUT"
-          echo "runner=$runner" >> "$GITHUB_OUTPUT"
-          echo "Built on $runner (image $ImageVersion). laci needs $floor or newer." | tee -a "$GITHUB_STEP_SUMMARY"
       - name: No WebDriver server in release builds
         run: |
           if tree="$(cargo tree --target all -p laci --features custom-protocol -i tauri-plugin-wdio-webdriver 2>&1)" \
@@ -141,6 +132,21 @@ jobs:
           fi
       - name: Validate production packages
         run: node scripts/package-smoke.mjs /tmp/laci-package-proof
+      # The binary's own floor holds for the deb and rpm, which use the system's libraries. The AppImage carries
+      # this runner's WebKitGTK and its other libraries, which can need a newer glibc; the release states the newer.
+      - name: The oldest glibc the packages run on
+        id: glibc
+        run: |
+          floor() { grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1 | sed 's/^GLIBC_//'; }
+          binary="$(objdump -T target/release/laci | floor)"
+          appimage="$(find /tmp/laci-package-proof/appimage/squashfs-root -type f \( -name '*.so*' -o -perm -u+x \) \
+            -exec objdump -T {} + 2> /dev/null | floor)"
+          both="$(printf '%s\n' "$binary" "$appimage" | sort -V | tail -1)"
+          . /etc/os-release
+          echo "floor=$both" >> "$GITHUB_OUTPUT"
+          echo "runner=ubuntu-$VERSION_ID" >> "$GITHUB_OUTPUT"
+          echo "Built on ubuntu-$VERSION_ID (image $ImageVersion). The binary needs glibc $binary or newer, the AppImage with its libraries $appimage." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
       - name: tauri-driver
         run: cargo install tauri-driver --locked
       - name: Native production package regression

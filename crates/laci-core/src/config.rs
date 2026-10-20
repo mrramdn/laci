@@ -68,7 +68,7 @@ pub fn save(env: &Env, c: &Value) -> Result<()> {
     if fs::symlink_metadata(&file).is_ok_and(|meta| !meta.is_symlink() && meta.len() > 0) && read(&file).is_none() {
         return Err(format!(
             "Laci couldn't read your settings in {}, so it won't write over them. Make sure the app that syncs that \
-             folder, such as OneDrive, is running, or fix the file, then try again.",
+             folder is running, or fix the file, then try again.",
             paths::tilde(&file, &env.home)
         ));
     }

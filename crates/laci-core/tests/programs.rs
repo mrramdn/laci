@@ -39,13 +39,13 @@ fn which_finds_the_first_file_that_can_run_in_path_order() {
 }
 
 /// An agent Laci asks for its models, or tells about Laci's MCP server, works in the home Laci reads, also on a demo
-/// home: HOME, and USERPROFILE as some tools read it. Codex reads CODEX_HOME before either, so on a demo home it gets
-/// the demo's .codex there, over one the user set; other agents keep what they inherit.
+/// home: HOME. Codex reads CODEX_HOME before it, so on a demo home it gets the demo's .codex there, over one the user
+/// set; other agents keep what they inherit.
 #[test]
-fn an_agent_started_for_a_demo_home_gets_it_as_home_and_as_userprofile() {
+fn an_agent_started_for_a_demo_home_gets_it_as_home() {
     use laci_core::{launch, mcp_setup, providers};
     use serde_json::json;
-    const TEST: &str = "an_agent_started_for_a_demo_home_gets_it_as_home_and_as_userprofile";
+    const TEST: &str = "an_agent_started_for_a_demo_home_gets_it_as_home";
     if support::role().as_deref() == Some("agents") {
         let home = PathBuf::from(std::env::var_os("LACI_TEST_HOME").unwrap());
         let mut env = Env::for_home(home.clone());
@@ -71,9 +71,7 @@ fn an_agent_started_for_a_demo_home_gets_it_as_home_and_as_userprofile() {
     for program in ["codex", "agy", "agent"] {
         support::script(
             &bin.join(program),
-            &format!(
-                "#!/bin/sh\nprintf '%s %s %s %s\\n' \"$1\" \"$HOME\" \"$USERPROFILE\" \"$CODEX_HOME\" >> \"$HOME/{program}-env\"\n"
-            ),
+            &format!("#!/bin/sh\nprintf '%s %s %s\\n' \"$1\" \"$HOME\" \"$CODEX_HOME\" >> \"$HOME/{program}-env\"\n"),
         );
     }
     let path = std::env::join_paths(
@@ -94,9 +92,9 @@ fn an_agent_started_for_a_demo_home_gets_it_as_home_and_as_userprofile() {
     assert_eq!(
         seen,
         [
-            Some(format!("app-server {h} {h} {c}\nmcp {h} {h} {c}\n", c = codex.display())),
-            Some(format!("models {h} {h} {theirs}\n")),
-            Some(format!("add {h} {h} {theirs}\n")),
+            Some(format!("app-server {h} {c}\nmcp {h} {c}\n", c = codex.display())),
+            Some(format!("models {h} {theirs}\n")),
+            Some(format!("add {h} {theirs}\n")),
         ]
     );
     assert!(codex.is_dir(), "Codex wants its folder to be there");

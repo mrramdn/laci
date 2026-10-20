@@ -78,13 +78,12 @@ pub(crate) fn located(program: &str) -> Option<PathBuf> {
 fn installed(program: &str) -> bool {
     located(program).is_some()
 }
-/// The variables that give `program`, an agent Laci asks something, the home Laci reads, also on a demo home: HOME,
-/// and USERPROFILE as some tools read it. Codex reads CODEX_HOME before either. So on a home that isn't the user's
-/// own, Codex gets that home's .codex, made first since Codex refuses a CODEX_HOME that isn't a folder; on the user's
-/// own home a CODEX_HOME they set stays.
+/// The variables that give `program`, an agent Laci asks something, the home Laci reads, also on a demo home: HOME.
+/// Codex reads CODEX_HOME before it. So on a home that isn't the user's own, Codex gets that home's .codex, made
+/// first since Codex refuses a CODEX_HOME that isn't a folder; on the user's own home a CODEX_HOME they set stays.
 pub(crate) fn agent_home(env: &Env, program: &str) -> Result<Vec<(&'static str, String)>> {
     let home = env.home.to_string_lossy().into_owned();
-    let mut vars = vec![("HOME", home.clone()), ("USERPROFILE", home)];
+    let mut vars = vec![("HOME", home)];
     let own = crate::platform::home_dir().is_some_and(|own| crate::platform::path::same_path(&own, &env.home));
     let codex = Path::new(program).file_stem().is_some_and(|name| name.eq_ignore_ascii_case("codex"));
     if codex && !own {

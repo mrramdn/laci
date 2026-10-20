@@ -880,6 +880,12 @@ impl Service {
             // asks here after a reload.
             "prefs" => Ok(self.prefs()),
             "setup/info" => self.setup_info(),
+            // The `laci` command on macOS: a link in ~/.local/bin to the program inside Laci.app. Elsewhere the
+            // installer sees to it: Windows' puts bin on the Path, and the deb and rpm put laci in /usr/bin.
+            #[cfg(target_os = "macos")]
+            "cli/install" => crate::env::install_cli(&self.env, &platform::shell_path().unwrap_or_default()),
+            #[cfg(not(target_os = "macos"))]
+            "cli/install" => Err("Laci's installer adds the command line tool on this system.".into()),
             "setup/discover" => self.discover_roots(),
             "setup/save" => {
                 let roots = config::validate_roots(&self.env, &b["roots"])?;
@@ -1117,9 +1123,13 @@ impl Service {
             .filter_map(Value::as_str)
             .map(|s| json!(paths::expand(s, &self.env.home)))
             .collect();
-        Ok(
-            json!({"configured":c["roots"].is_array(),"roots":roots,"rootStatus":scan::root_status(&self.env,&c),"archiveDir":c["archiveDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"reportsDir":c["reportsDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"candidates":[],"presets":array(&c["presets"]),"custom":array(&c["custom"]).len(),"apps":self.apps(),"terminalTarget":c["terminalTarget"].as_str().unwrap_or("internal"),"installed":installed_apps(),"git":crate::git::runs()}),
-        )
+        let mut info = json!({"configured":c["roots"].is_array(),"roots":roots,"rootStatus":scan::root_status(&self.env,&c),"archiveDir":c["archiveDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"reportsDir":c["reportsDir"].as_str().filter(|s|!s.is_empty()).map(|s|paths::expand(s,&self.env.home).to_string_lossy().into_owned()).unwrap_or_default(),"candidates":[],"presets":array(&c["presets"]),"custom":array(&c["custom"]).len(),"apps":self.apps(),"terminalTarget":c["terminalTarget"].as_str().unwrap_or("internal"),"installed":installed_apps(),"git":crate::git::runs()});
+        // Only macOS runs Laci from where it was downloaded, and only there does Laci itself install `laci`.
+        if cfg!(target_os = "macos") {
+            info["translocated"] = json!(self.env.translocated());
+            info["cli"] = crate::env::cli_status(&self.env, &platform::shell_path().unwrap_or_default());
+        }
+        Ok(info)
     }
     /// Optional shallow discovery. Opening Settings never walks Home or selects suggestions.
     fn discover_roots(&self) -> Result<Value> {

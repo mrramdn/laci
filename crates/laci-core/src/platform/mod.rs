@@ -264,6 +264,20 @@ pub fn child_path() -> Option<OsString> {
     }
 }
 
+/// The PATH a terminal gets on macOS, the one the user's login shell sets up, without the folders [`child_path`] adds
+/// to it: where the command line tool's folder must be for typing `laci` to work. Empty when the login shell couldn't
+/// tell. `None` elsewhere.
+pub fn shell_path() -> Option<OsString> {
+    #[cfg(target_os = "macos")]
+    {
+        Some(os::shell_path())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
 /// The Git that macOS starts when `path` is the PATH: the first one there, except that the stand-in /usr/bin/git
 /// counts only while `xcode_select -p` names the developer folder Apple's Command Line Tools or Xcode put in place.
 /// Without them it would ask the user to install them, from a scan. [`program`] asks /usr/bin/xcode-select.

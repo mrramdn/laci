@@ -1,4 +1,5 @@
 use crate::platform::{self, Dirs};
+use serde_json::{Value, json};
 use std::{
     ffi::OsStr,
     fs,
@@ -152,6 +153,82 @@ fn unstable(program: &Path) -> bool {
     program.components().any(|part| part.as_os_str() == "AppTranslocation") || program.starts_with("/Volumes")
 }
 
+/// Whether `path` names Laci's program inside a macOS app, an absolute `….app/Contents/MacOS/laci`. The command line
+/// tool's link leads to one, so a link that leads to one is taken for one Laci made.
+#[cfg(unix)]
+fn app_program(path: &Path) -> bool {
+    path.is_absolute()
+        && path.file_name().is_some_and(|name| name == "laci")
+        && path.parent().is_some_and(|dir| dir.ends_with("Contents/MacOS"))
+        && path.ancestors().nth(3).is_some_and(|app| app.extension().is_some_and(|ext| ext == "app"))
+}
+
+/// Where macOS's command line tool goes: ~/.local/bin/laci, a link to the program inside Laci.app. That folder needs
+/// no admin rights, as /usr/local/bin would, and Claude Code's installer puts its program there too.
+pub fn cli_link(home: &Path) -> PathBuf {
+    home.join(".local").join("bin").join("laci")
+}
+
+/// Whether the command line tool's link is there and leads, through any links, to this Laci's program.
+fn cli_installed(env: &Env) -> bool {
+    let link = cli_link(&env.home);
+    let same = match (fs::canonicalize(&link), fs::canonicalize(&env.program)) {
+        (Ok(found), Ok(program)) => found == program,
+        _ => false,
+    };
+    same && fs::symlink_metadata(&link).is_ok_and(|meta| meta.file_type().is_symlink())
+}
+
+/// What setup/info says about the command line tool on macOS: `link`, where it goes; `installed`, whether it leads to
+/// this Laci; `onPath`, whether its folder is on `path`, the PATH the user's login shell sets up
+/// ([`platform::shell_path`]), so typing `laci` in a terminal finds it. Not the PATH Laci's own programs get, which
+/// has ~/.local/bin whenever that folder exists.
+pub fn cli_status(env: &Env, path: &OsStr) -> Value {
+    let link = cli_link(&env.home);
+    let bin = link.parent().unwrap_or(&link);
+    let real = |dir: &Path| fs::canonicalize(dir).ok();
+    let on_path =
+        std::env::split_paths(path).any(|dir| dir == bin || real(&dir).is_some_and(|dir| Some(dir) == real(bin)));
+    json!({"link":link.to_string_lossy(),"installed":cli_installed(env),"onPath":on_path})
+}
+
+/// Makes the command line tool's link, ~/.local/bin/laci, lead to the program inside this Laci's app, and answers as
+/// [`cli_status`] does. A link Laci made to another Laci's program, as a copy that has since moved left it, is
+/// replaced; anything else there stays, and this fails.
+#[cfg(unix)]
+pub fn install_cli(env: &Env, path: &OsStr) -> crate::Result<Value> {
+    if env.translocated() {
+        return Err("Move Laci to Applications first, then install the command line tool.".into());
+    }
+    if !app_program(&env.program) {
+        return Err("Laci can install the command line tool only when it runs from Laci.app.".into());
+    }
+    if cli_installed(env) {
+        return Ok(cli_status(env, path));
+    }
+    let link = cli_link(&env.home);
+    match fs::symlink_metadata(&link) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Couldn't read {}: {error}", link.display())),
+        Ok(meta) if meta.file_type().is_symlink() && fs::read_link(&link).is_ok_and(|to| app_program(&to)) => {}
+        Ok(_) => {
+            return Err(
+                "~/.local/bin/laci is already there and Laci didn't make it. Remove it first, then try again.".into()
+            );
+        }
+    }
+    let bin = link.parent().ok_or("The command line tool has no folder to go in")?;
+    fs::create_dir_all(bin).map_err(|e| format!("Couldn't make {}: {e}", bin.display()))?;
+    // Made beside it under another name, then renamed over it: an older link is replaced in one step, and stays as it
+    // was when the new one can't be made.
+    let made = tempfile::Builder::new()
+        .prefix(".laci-")
+        .make_in(bin, |temp| std::os::unix::fs::symlink(&env.program, temp))
+        .map_err(|e| format!("Couldn't make a link in {}: {e}", bin.display()))?;
+    made.persist(&link).map_err(|e| format!("Couldn't make {}: {}", link.display(), e.error))?;
+    Ok(cli_status(env, path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,5 +335,98 @@ mod tests {
             env.program = PathBuf::from(program);
             assert_eq!(env.translocated(), expected && cfg!(target_os = "macos"), "{program}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_an_app_s_program_is_one_laci_made() {
+        for (path, expected) in [
+            ("/Applications/Laci.app/Contents/MacOS/laci", true),
+            ("/Users/me/Downloads/Laci 2.app/Contents/MacOS/laci", true),
+            ("/Applications/Laci.app/Contents/MacOS/other", false),
+            ("/Applications/Laci/Contents/MacOS/laci", false),
+            ("/Applications/Laci.app/Contents/Resources/laci", false),
+            ("/usr/local/bin/laci", false),
+            ("Laci.app/Contents/MacOS/laci", false),
+        ] {
+            assert_eq!(app_program(Path::new(path)), expected, "{path}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_command_line_tool_is_a_link_laci_makes_and_replaces_but_never_one_it_did_not_make() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let mut env = Env::for_home(root.join("home"));
+        env.program = file(&root.join("Applications").join("Laci.app").join("Contents").join("MacOS").join("laci"));
+        let link = cli_link(&env.home);
+        let bin = link.parent().unwrap().to_owned();
+        let path = std::env::join_paths([Path::new("/usr/bin"), bin.as_path()]).unwrap();
+        let elsewhere = OsStr::new("/usr/bin:/bin");
+
+        // Nothing there yet: ~/.local/bin is made, and the link leads to the program inside Laci.app.
+        let before = cli_status(&env, &path);
+        assert_eq!(before, json!({"link":link.to_string_lossy(),"installed":false,"onPath":true}));
+        assert_eq!(cli_status(&env, elsewhere)["onPath"], false);
+        let made = install_cli(&env, &path).unwrap();
+        assert_eq!(made, json!({"link":link.to_string_lossy(),"installed":true,"onPath":true}));
+        assert_eq!(fs::read_link(&link).unwrap(), env.program);
+        assert!(!fs::read_dir(&bin).unwrap().any(|e| e.unwrap().file_name() != "laci"), "no temporary link is left");
+
+        // Already there: nothing changes.
+        assert_eq!(install_cli(&env, elsewhere).unwrap()["installed"], true);
+        assert_eq!(fs::read_link(&link).unwrap(), env.program);
+        // A folder spelled with a trailing slash on PATH is the same folder.
+        let slashed = format!("/usr/bin:{}/", bin.display());
+        assert_eq!(cli_status(&env, OsStr::new(&slashed))["onPath"], true);
+
+        // A link Laci made to a Laci that has since moved, even one that is gone, is replaced.
+        fs::remove_file(&link).unwrap();
+        symlink("/Users/me/Downloads/Laci.app/Contents/MacOS/laci", &link).unwrap();
+        assert_eq!(cli_status(&env, &path)["installed"], false);
+        assert_eq!(install_cli(&env, &path).unwrap()["installed"], true);
+        assert_eq!(fs::read_link(&link).unwrap(), env.program);
+
+        // Anything else stays as it was: a file, a link to another program, a relative link, a folder.
+        let foreign = "~/.local/bin/laci is already there and Laci didn't make it. Remove it first, then try again.";
+        let refused = |env: &Env| assert_eq!(install_cli(env, &path).unwrap_err(), foreign);
+        fs::remove_file(&link).unwrap();
+        fs::write(&link, "#!/bin/sh\necho mine\n").unwrap();
+        refused(&env);
+        assert_eq!(fs::read_to_string(&link).unwrap(), "#!/bin/sh\necho mine\n");
+        for target in [Path::new("/usr/bin/env"), Path::new("../../Applications/Laci.app/Contents/MacOS/laci")] {
+            fs::remove_file(&link).unwrap();
+            symlink(target, &link).unwrap();
+            refused(&env);
+            assert_eq!(fs::read_link(&link).unwrap(), target);
+        }
+        fs::remove_file(&link).unwrap();
+        fs::create_dir(&link).unwrap();
+        refused(&env);
+        assert!(link.is_dir());
+
+        // A build of Laci isn't the program inside an app, so it has nothing to link to.
+        fs::remove_dir(&link).unwrap();
+        env.program = file(&root.join("laci").join("target").join("debug").join("laci"));
+        assert_eq!(
+            install_cli(&env, &path).unwrap_err(),
+            "Laci can install the command line tool only when it runs from Laci.app."
+        );
+        assert!(fs::symlink_metadata(&link).is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_translocated_laci_installs_no_command_line_tool() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = Env::for_home(fs::canonicalize(temp.path()).unwrap());
+        env.program = PathBuf::from("/Volumes/Laci/Laci.app/Contents/MacOS/laci");
+        assert_eq!(
+            install_cli(&env, OsStr::new("/usr/bin")).unwrap_err(),
+            "Move Laci to Applications first, then install the command line tool."
+        );
+        assert!(fs::symlink_metadata(cli_link(&env.home)).is_err());
     }
 }

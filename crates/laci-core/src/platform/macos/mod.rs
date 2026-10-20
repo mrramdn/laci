@@ -14,7 +14,7 @@ pub use super::unix::{explain, move_notes, open_nofollow, retry};
 pub use dirs::user_dirs;
 pub use files::{hidden_flag, placeholder, system_folder};
 pub use process::{ensure_idle, pid_alive, processes_in};
-pub use programs::{git, login_path, program};
+pub use programs::{git, login_path, program, shell_path};
 pub use terminal::{DEFAULT_APPS, KNOWN_APPS, terminal_args, terminal_script_args};
 pub use trash::{open, trash};
 

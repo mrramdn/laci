@@ -17,20 +17,28 @@ use std::{
 const KNOWN: [&str; 5] = ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin", "~/.volta/bin", "~/.bun/bin"];
 
 /// Taken the first time a program starts.
-static PATH: LazyLock<OsString> = LazyLock::new(|| {
+static PATH: LazyLock<OsString> = LazyLock::new(|| merged(SHELL.clone(), std::env::var_os("PATH"), super::home_dir()));
+
+/// The PATH the user's shell sets up, as a terminal gets it, without what [`merged`] adds: the login shell's, or None
+/// when that can't be told. Taken once.
+static SHELL: LazyLock<Option<OsString>> = LazyLock::new(|| {
     // With a terminal, Laci was started from a shell and has its PATH already. An interactive shell would also take
     // that terminal over from the program in it, such as the agent that started `laci mcp`.
-    let probed = if std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty").is_ok() {
-        None
+    if std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty").is_ok() {
+        std::env::var_os("PATH")
     } else {
         let shell = std::env::var_os("SHELL").map(PathBuf::from).filter(|shell| shell.is_absolute());
         process::login_shell_path(&shell.unwrap_or_else(|| "/bin/zsh".into()), Duration::from_secs(3))
-    };
-    merged(probed, std::env::var_os("PATH"), super::home_dir())
+    }
 });
 
 pub fn login_path() -> OsString {
     PATH.clone()
+}
+
+/// The PATH a terminal gets, where `laci` must be for typing it to work. Empty when it can't be told.
+pub fn shell_path() -> OsString {
+    SHELL.clone().unwrap_or_default()
 }
 
 /// The folders of `probed`, then those of `inherited`, then the [`KNOWN`] ones that exist, each once. A folder named

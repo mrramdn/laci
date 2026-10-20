@@ -39,10 +39,7 @@ fn run(action: Option<Action>, open: fn(Env) -> laci_core::Result<()>) -> laci_c
         Some(Action::Mcp) => mcp::run(Env::from_process()?),
         Some(action) => {
             let mut snapshot = Service::new(Env::from_process()?).rescan()?;
-            // The parts the Log tells an applied suggestion by are the window's; the JSON stays as it was.
-            for proposal in snapshot.get_mut("proposals").and_then(Value::as_array_mut).into_iter().flatten() {
-                proposal.as_object_mut().map(|fields| fields.remove("say"));
-            }
+            unsaid(&mut snapshot);
             let mut out = io::stdout().lock();
             let written = match action {
                 Action::Json => writeln!(out, "{snapshot:#}"),
@@ -92,6 +89,14 @@ fn doctor(s: &Value, out: &mut impl Write) -> io::Result<()> {
     Ok(())
 }
 
+/// Leaves out the parts the Log tells an applied suggestion by ("say"): they are the window's, and `laci json` stays as
+/// it was.
+fn unsaid(snapshot: &mut Value) {
+    for proposal in snapshot.get_mut("proposals").and_then(Value::as_array_mut).into_iter().flatten() {
+        proposal.as_object_mut().map(|fields| fields.remove("say"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,6 +122,18 @@ mod tests {
         }
         // The version reads `laci 3.0.0`; package-smoke reads it.
         assert_eq!(Cli::command().render_version(), format!("laci {}\n", env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn the_json_leaves_out_the_parts_the_log_tells_a_suggestion_by() {
+        let mut snapshot = serde_json::json!({"proposals":[{"id":"space:inactive","title":"Free 1 MB","say":{"form":"freed"}},
+            {"id":"dup:x","title":"x exists in 2 places"}],"nodes":{"/p/a":{"say":"kept"}}});
+        unsaid(&mut snapshot);
+        assert_eq!(
+            snapshot,
+            serde_json::json!({"proposals":[{"id":"space:inactive","title":"Free 1 MB"},{"id":"dup:x","title":"x exists in 2 places"}],
+                "nodes":{"/p/a":{"say":"kept"}}})
+        );
     }
 
     #[test]

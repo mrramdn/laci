@@ -10,8 +10,8 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 
-/// The root of a disk or a share holds the system and everything else there, not a place of projects: it is refused,
-/// whether picked now or kept from before.
+/// The root of a disk or a share holds the system and everything else there, not a place of projects: picking it is
+/// refused. One kept from 2.5, which took it, stays, so the Settings that list it still save.
 #[test]
 fn a_whole_disk_is_not_a_place_to_scan() {
     let temp = support::tempdir();
@@ -24,6 +24,8 @@ fn a_whole_disk_is_not_a_place_to_scan() {
     let error = config::validate_roots(&env, &json!([disk])).unwrap_err();
     assert_eq!(error, whole(&disk.display().to_string()));
     assert_eq!(config::validate_roots(&env, &json!([env.home])).unwrap(), json!(["~"]));
+    config::save(&env, &json!({"roots":[disk],"presets":[]})).unwrap();
+    assert_eq!(config::validate_roots(&env, &json!([disk, env.home])).unwrap(), json!([disk]));
 }
 
 #[test]

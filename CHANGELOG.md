@@ -8,6 +8,10 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 Laci stays Linux-only: Windows and macOS versions won't be made.
 
+### Changed
+
+- The root of the disk (`/`) can no longer be picked as a folder to scan, since it holds the system and everything else. One you picked in 2.5 stays, and Laci keeps looking through it.
+
 ## [2.5.2] - 2026-10-20
 
 A security update for anyone who opens projects they didn't make themselves.

@@ -87,8 +87,9 @@ pub fn validate_roots(env: &Env, roots: &Value) -> Result<Value> {
         });
         // Retaining a selected but disconnected disk must not prevent unrelated settings edits.
         let p = if existing && requested.is_absolute() { requested } else { paths::selected_directory(raw, env)? };
-        // The root of a disk or a share holds the system and everything else there, not a place of projects.
-        if p.parent().is_none() {
+        // The root of a disk or a share holds the system and everything else there, not a place of projects. One kept
+        // from before, as 2.5 took it, stays: Laci still looks through it, and other settings must still save.
+        if !existing && p.parent().is_none() {
             return Err(format!(
                 "{} is a whole disk, and Laci doesn't look through one. Choose the folder where you keep projects.",
                 p.display()

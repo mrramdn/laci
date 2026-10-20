@@ -496,6 +496,7 @@ export function UpdatesOffer() {
         <h2 id={heading}>{firstRun.updatesTitle}</h2>
       </header>
       <p>{firstRun.updatesSends}</p>
+      <p>{firstRun.updatesNoInstall}</p>
       {refusal ? (
         <div role="alert">
           <Callout tone="soon">{refusal}</Callout>

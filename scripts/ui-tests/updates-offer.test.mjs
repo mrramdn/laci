@@ -3,6 +3,7 @@
 // (ui/src/views/today.tsx, beside the card that offers Simple and apart from it) and on Simple's Home
 // (ui/src/simple/updates.tsx, drawn by Home.tsx):
 // - the card shows while `prefs` says `updates: null`, and never once a choice is saved, wherever;
+// - it says what a check sends, and that nothing installs until the user chooses to;
 // - Check daily and Don't check each send one `updates` request with their value, through the update
 //   store as Settings › About & updates does, and the card is gone for good;
 // - a refusal keeps the card, with the desktop's sentence;
@@ -172,6 +173,8 @@ export async function todaysCardAsksOnlyWhileNoChoiceIsSaved() {
   const text = card(asked).textContent;
   assert.ok(text.startsWith(ask.updatesTitle), text);
   assert.ok(text.includes(ask.updatesSends), "what a check sends, in first run's words");
+  assert.match(ask.updatesNoInstall, /installs nothing until you choose/);
+  assert.ok(text.includes(ask.updatesNoInstall), "that nothing installs without a click");
   assert.deepEqual(
     buttons(asked).map((b) => [b.textContent, b.props.className]),
     [
@@ -467,6 +470,7 @@ export async function homesCardAsksOnlyWhileNoChoiceIsSaved() {
   const text = card(page).textContent;
   assert.ok(text.startsWith(ask.updatesTitle), text);
   assert.ok(text.includes(ask.updatesSends));
+  assert.ok(text.includes(ask.updatesNoInstall), "that nothing installs without a click");
   assert.deepEqual(
     buttons(page).map((b) => [b.textContent, b.props["data-kind"]]),
     [

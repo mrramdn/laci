@@ -926,9 +926,13 @@ export const firstRun = {
     off: "Laci won’t look by itself.",
   },
   updatesFailed: "Laci couldn’t save your choice about new versions",
+  /** On that card, under `updatesSends`: what checking does and doesn't do, as `updatesNotes.daily` says it. */
+  updatesNoInstall:
+    "Laci tells you when a new version is ready, and installs nothing until you choose to.",
   /**
    * The card that asks the same question once of a setup from before 3.0, whose config.json has no
-   * choice yet: on Detailed's Today and Simple's Home, under `updatesTitle` and `updatesSends`.
+   * choice yet: on Detailed's Today and Simple's Home, under `updatesTitle`, `updatesSends` and
+   * `updatesNoInstall`.
    */
   updatesAsk: {
     daily: "Check daily",

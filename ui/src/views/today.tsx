@@ -544,6 +544,7 @@ export function UpdatesOffer() {
       <div className="txt">
         <b id={title}>{firstRun.updatesTitle}</b>
         <p>{firstRun.updatesSends}</p>
+        <p>{firstRun.updatesNoInstall}</p>
         {/* The red for words: Settings' red for marks (rp-status bad) is too faint on this grey. */}
         {refusal ? (
           <p role="alert" style={{ color: "var(--red-text)" }}>

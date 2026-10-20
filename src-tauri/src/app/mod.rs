@@ -39,11 +39,15 @@ struct AppState {
     /// The folder picker is open. On Linux it doesn't hold the window, so a second click could open another.
     picking: AtomicBool,
     updates: update::Updates,
+    /// laci.log has the number of watches set up at start (macOS and Windows).
+    watches_logged: AtomicBool,
 }
 type Shared = Arc<AppState>;
 /// While an agent works its log changes every second. Its history is read again at most this often, so a
 /// long session does not keep Laci busy; a new session or a removed one is still read at once.
 const AGENT_SETTLE: Duration = Duration::from_secs(15);
+/// How often Windows sets its watches up again and looks for the project folders again (see `check_topology`).
+const TOPOLOGY_CHECK: Duration = Duration::from_secs(60);
 impl AppState {
     fn notice(&self, v: Value) {
         let _ = self.handle.emit("laci", v);
@@ -141,7 +145,10 @@ impl AppState {
         if let (Some(watch), Some(desired)) = (&self.watches, desired) {
             // Watch enumeration and OS registration never hold the service lock.
             if self.engine.lock().is_ok_and(|e| e.revision == revision) {
-                watch.install(desired);
+                let count = watch.install(desired);
+                if watch::TREES && !self.watches_logged.swap(true, Ordering::AcqRel) {
+                    self.log_watches("start", count);
+                }
             }
             if self.engine.lock().is_ok_and(|e| e.revision != revision) {
                 self.queue.request(Refresh { watches: true, ..Refresh::default() });
@@ -359,6 +366,8 @@ impl AppState {
         }
     }
     fn changed(self: &Arc<Self>, changed: Changes) {
+        // macOS and Windows: the watcher lost events or failed, so what it reported tells only part of what changed.
+        let lost = self.watches.as_ref().is_some_and(Watches::take_lost);
         let (env, snapshot) = {
             let engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
             (engine.service.env.clone(), engine.service.current.clone())
@@ -367,7 +376,10 @@ impl AppState {
             self.queue.request(Refresh::full());
             return;
         };
-        let refresh = watch::refresh_for(&env, &snapshot, &changed);
+        let mut refresh = watch::refresh_for(&env, &snapshot, &changed);
+        if lost {
+            refresh.merge(Refresh::full());
+        }
         if refresh == Refresh::agents() {
             self.read_agents_soon();
         } else {
@@ -381,6 +393,25 @@ impl AppState {
             if changed.paths.iter().any(|p| p.starts_with(&listing)) {
                 self.notice(json!({"type":"ls","path":listing}));
             }
+        }
+    }
+    /// Windows' check every minute. ReadDirectoryChangesW says nothing when more changes at once than its buffer
+    /// holds: notify then reads none of them, or drops the folder's watch for good. So every watch is set up again,
+    /// then the project folders are looked for again, with the agents' history.
+    fn check_topology(&self) {
+        if let Some(watch) = &self.watches {
+            let count = watch.renew();
+            self.log_watches("check", count);
+        }
+        self.queue.request(Refresh { agents: true, watches: true, ..Refresh::default() });
+    }
+    /// How many folders are watched, in laci.log next to the refresh timings.
+    fn log_watches(&self, when: &str, count: watch::Count) {
+        if let Ok(engine) = self.engine.lock() {
+            engine.service.debug(&format!(
+                "watches {when} count={} recursive={} failed={}",
+                count.watches, count.trees, count.failed
+            ));
         }
     }
 }
@@ -537,6 +568,7 @@ pub fn run(env: Env) -> Result<()> {
                 agents_read: Mutex::new((None, false)),
                 picking: AtomicBool::new(false),
                 updates,
+                watches_logged: AtomicBool::new(false),
             });
             app.manage(Arc::clone(&state));
             update::watch(&state);
@@ -583,6 +615,19 @@ pub fn run(env: Env) -> Result<()> {
                     state.refresh(work);
                 }
             });
+            // Windows' watches can miss changes without a word.
+            if cfg!(windows) {
+                let weak = Arc::downgrade(&state);
+                thread::spawn(move || {
+                    loop {
+                        thread::sleep(TOPOLOGY_CHECK);
+                        let Some(state) = weak.upgrade() else {
+                            break;
+                        };
+                        state.check_topology();
+                    }
+                });
+            }
             state.queue.request(Refresh::full());
             Ok(())
         })

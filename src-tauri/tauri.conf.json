@@ -40,10 +40,7 @@
       "endpoints": [
         "https://github.com/mrramdn/laci/releases/latest/download/latest.json"
       ],
-      "requireSignedVersion": true,
-      "windows": {
-        "installMode": "passive"
-      }
+      "requireSignedVersion": true
     }
   }
 }

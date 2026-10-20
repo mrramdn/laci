@@ -115,8 +115,7 @@ pub fn run(env: Env) -> Result<(), String> {
         Ok(())
     })
 }
-/// The project an agent names: by its path, also spelled another way on macOS and Windows ([`Service::node`]), or by
-/// its name or label when only one project has it.
+/// The project an agent names: by its path ([`Service::node`]), or by its name or label when only one project has it.
 fn project(service: &mut Service, raw: &str) -> Result<Value, String> {
     let expanded = paths::expand(raw, &service.env.home).to_string_lossy().into_owned();
     if let Ok(node) = service.node(&expanded) {
@@ -248,8 +247,7 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             let under = match args["project"].as_str().filter(|p| !p.is_empty()) {
                 Some(raw) => Some(match project(service, raw) {
                     Ok(node) => string(&node, "path").to_owned(),
-                    // A moved or deleted project is gone from the scan, while its changes stay in the Log. On Windows
-                    // a path can also start with a drive or a share.
+                    // A moved or deleted project is gone from the scan, while its changes stay in the Log.
                     Err(_) if raw.starts_with('/') || raw.starts_with('~') || Path::new(raw).is_absolute() => {
                         paths::expand(raw, &service.env.home).to_string_lossy().into_owned()
                     }
@@ -534,8 +532,7 @@ enum Tasks {
 /// stack and session lists that project_details gives.
 fn compact(n: &Value, tasks: Tasks) -> Value {
     let mut out = json!({});
-    // `onlineOnly`: a repository a sync app keeps only online, whose Git state Laci doesn't read.
-    for key in ["path", "name", "kind", "type", "archived", "status", "meta", "issues", "lastActivity", "onlineOnly"] {
+    for key in ["path", "name", "kind", "type", "archived", "status", "meta", "issues", "lastActivity"] {
         if !n[key].is_null() {
             out[key] = n[key].clone();
         }
@@ -1386,7 +1383,7 @@ mod tests {
         let home = dir.path().to_path_buf();
         let env = Env::for_home(home.clone());
         let at = |i: usize| format!("2026-10-{:02}T{:02}:00:00.000Z", 1 + i % 28, i % 24);
-        // Spelled as a scan names a project, a name at a time: on Windows with `\` between the names.
+        // Spelled as a scan names a project, a name at a time.
         let project = |i: usize| home.join("project").join(format!("p{i}")).display().to_string();
         let mut log = String::new();
         for i in 0..300 {
@@ -1515,9 +1512,7 @@ mod tests {
         assert!(details["reports"][0].get("projects").is_none());
     }
 
-    /// An agent may name a project by another spelling of its path: as the file system spells it, as through macOS's
-    /// /private or with Windows' long names where the scan has 8.3 short ones, or in another case. Each is the project
-    /// once the file system confirms it; on Linux another case is another folder.
+    /// An agent may name a project as the file system spells its path. Another case is another folder.
     #[test]
     fn a_project_path_in_another_spelling_finds_the_project() {
         let (_dir, mut service, big) = busy_home();
@@ -1525,8 +1520,7 @@ mod tests {
         let canonical = laci_core::platform::path::canonical(Path::new(&big)).unwrap();
         let found = call(&mut service, "project_details", &json!({"project":canonical})).unwrap();
         assert_eq!(found["path"], json!(big));
-        // Each name differs only in case from the file system's own: macOS's /VAR would be the link /var spelled
-        // another way too, which Laci doesn't read as the system's link.
+        // Each name differs only in case from the file system's own.
         let swapped: String = canonical
             .to_string_lossy()
             .chars()

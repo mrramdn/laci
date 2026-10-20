@@ -1,7 +1,7 @@
 //! In-app updates. Only this module talks to the updater: the window asks through the `update/*` requests and keeps
 //! `core:default`. Laci looks for a new version by itself only when config.json says `updates: "daily"`, at most once
-//! a day, and it downloads and installs one only after a click. A copy that a package manager, a script or a portable
-//! folder put in place gets a link to the release instead.
+//! a day, and it downloads and installs one only after a click. A copy that a package manager or a script put in place
+//! gets a link to the release instead.
 use super::{AppState, creation::Creations, state::Engine};
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 use laci_core::{
@@ -14,7 +14,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
     ffi::OsString,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         Arc, Condvar, Mutex, MutexGuard, TryLockError,
         atomic::{AtomicBool, Ordering},
@@ -22,10 +22,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tauri::{
-    Manager,
-    utils::{config::BundleType, platform::bundle_type},
-};
+use tauri::utils::{config::BundleType, platform::bundle_type};
 use tauri_plugin_updater::{Error as UpdaterError, Update, Updater, UpdaterExt};
 
 /// Where each version's notes are, for the link the window shows.
@@ -50,8 +47,8 @@ const LINK_ONLY: &str = "This copy of Laci can't install updates itself. Get the
 pub enum Install {
     /// Laci downloads and installs it after a click.
     Click,
-    /// The window links to the release: a package manager, a script or a portable folder owns this copy, or macOS
-    /// runs it from a place Laci can't replace.
+    /// The window links to the release: a package manager or a script owns this copy, or it runs from a place Laci
+    /// can't replace.
     Notice,
 }
 
@@ -63,7 +60,7 @@ enum Phase {
     Checking,
     Available,
     Downloading,
-    /// Installed, or on Windows downloaded and checked: a restart finishes it.
+    /// Installed: a restart finishes it.
     Ready,
     Error,
 }
@@ -151,8 +148,6 @@ struct Inner {
     progress: Option<u8>,
     error: Option<String>,
     checked_at: Option<String>,
-    /// Windows: the checked installer. It runs at the restart, because it ends Laci.
-    installer: Option<Vec<u8>>,
 }
 
 pub struct Updates {
@@ -323,20 +318,15 @@ impl Updates {
         inner.progress = percent;
         true
     }
-    /// The end of a download: the installer Windows runs at the restart, nothing when it is installed already, or
-    /// why it failed. The version found stays, so the user can try again.
-    fn downloaded(&self, result: std::result::Result<Option<Vec<u8>>, String>) {
+    /// The end of a download: installed, or why it failed. The version found stays, so the user can try again.
+    fn downloaded(&self, result: std::result::Result<(), String>) {
         let mut inner = self.lock();
         inner.progress = None;
         match result {
-            Ok(installer) => {
-                inner.phase = Phase::Ready;
-                inner.installer = installer;
-            }
+            Ok(()) => inner.phase = Phase::Ready,
             Err(error) => {
                 inner.phase = Phase::Error;
                 inner.error = Some(error);
-                inner.installer = None;
             }
         }
     }
@@ -365,31 +355,17 @@ fn due(checked_at: Option<&str>, now: DateTime<Utc>) -> bool {
 /// How this copy gets a new version, from where it runs. Decided once, when Laci starts.
 pub fn install_kind() -> Install {
     let exe = std::env::current_exe().ok();
-    // The portable zip says so in a file next to laci.exe. Checked first: its laci.exe may carry the bundle type
-    // of the installer it was taken from.
-    let portable = exe.as_deref().and_then(Path::parent).is_some_and(|dir| dir.join("PORTABLE").is_file());
     let appimage = exe.as_deref().is_some_and(|exe| {
         runs_from_appimage(exe, std::env::var_os("APPIMAGE").as_deref(), std::env::var_os("APPDIR").as_deref())
     });
-    decide(portable, bundle_type(), exe.as_deref(), appimage)
+    decide(bundle_type(), appimage)
 }
 
 /// A deb or an rpm belongs to the package manager, and a copy with no bundle type was put in place by
-/// install-desktop.sh, a build or the portable zip. An AppImage is replaced through `$APPIMAGE`, so one that runs
-/// unpacked can't be. On macOS only an app inside its own `.app` that macOS didn't move can be replaced: not a
-/// translocated copy, which disappears when Laci quits, nor one on a disk image.
-fn decide(portable: bool, bundle: Option<BundleType>, exe: Option<&Path>, appimage: bool) -> Install {
-    let replaceable_app = |exe: &Path| {
-        exe.parent().is_some_and(|dir| dir.ends_with("Contents/MacOS"))
-            && exe.ancestors().nth(3).is_some_and(|app| app.extension().is_some_and(|e| e == "app"))
-            && !exe.components().any(|part| part.as_os_str() == "AppTranslocation")
-            && !exe.starts_with("/Volumes")
-    };
+/// install-desktop.sh or a build. An AppImage is replaced through `$APPIMAGE`, so one that runs unpacked can't be.
+fn decide(bundle: Option<BundleType>, appimage: bool) -> Install {
     match bundle {
-        _ if portable => Install::Notice,
-        Some(BundleType::Nsis | BundleType::Msi) => Install::Click,
         Some(BundleType::AppImage) if appimage => Install::Click,
-        Some(BundleType::App) if exe.is_some_and(replaceable_app) => Install::Click,
         _ => Install::Notice,
     }
 }
@@ -439,20 +415,14 @@ fn quiet<'a>(engine: &'a Mutex<Engine>, creations: &Creations, wait: Duration) -
 }
 
 /// The plugin's updater with Laci's limits: an answer within 30 s and a download that may not stall for a minute.
-/// `endpoint` replaces the feed of tauri.conf.json. `before_exit` runs on Windows just before the installer starts,
-/// which ends Laci.
+/// `endpoint` replaces the feed of tauri.conf.json.
 fn updater<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     endpoint: Option<tauri::Url>,
-    before_exit: impl Fn() + Send + Sync + 'static,
 ) -> std::result::Result<Updater, String> {
-    let mut builder = handle
-        .updater_builder()
-        .timeout(Duration::from_secs(30))
-        .configure_client(|client| {
-            client.connect_timeout(Duration::from_secs(15)).read_timeout(Duration::from_secs(60))
-        })
-        .on_before_exit(before_exit);
+    let mut builder = handle.updater_builder().timeout(Duration::from_secs(30)).configure_client(|client| {
+        client.connect_timeout(Duration::from_secs(15)).read_timeout(Duration::from_secs(60))
+    });
     if let Some(endpoint) = endpoint {
         builder = builder.endpoints(vec![endpoint]).map_err(|e| e.to_string())?;
     }
@@ -464,23 +434,6 @@ fn look(updater: std::result::Result<Updater, String>) -> Outcome {
     match updater {
         Ok(updater) => outcome(tauri::async_runtime::block_on(updater.check())),
         Err(error) => Outcome::Failed(error),
-    }
-}
-
-/// What Windows runs just before the installer starts and ends Laci: the terminals and the agents in them close, as
-/// at any exit, and the window goes. No creation runs then, nor can one start: the restart holds the engine and
-/// found none (`quiet_engine`). It replaces the plugin's own hook, which clears Tauri's state for good: the plugin
-/// runs this before it knows the installer started, and if it didn't, `restart` shows the window again and Laci
-/// goes on.
-fn before_exit(state: &Arc<AppState>) -> impl Fn() + Send + Sync + 'static {
-    let weak = Arc::downgrade(state);
-    move || {
-        if let Some(state) = weak.upgrade() {
-            state.terminals.close_all();
-            if let Some(window) = state.handle.get_webview_window("main") {
-                let _ = window.hide();
-            }
-        }
     }
 }
 
@@ -567,8 +520,7 @@ fn check(state: &Arc<AppState>, manual: bool) -> Value {
         return updates.status();
     }
     state.notice(updates.event());
-    let found =
-        endpoint(std::env::var_os(ENDPOINT)).and_then(|endpoint| updater(&state.handle, endpoint, before_exit(state)));
+    let found = endpoint(std::env::var_os(ENDPOINT)).and_then(|endpoint| updater(&state.handle, endpoint));
     if let Some(error) = updates.finish(manual, look(found), Utc::now()) {
         debug(state, format!("update check: {error}"));
     }
@@ -578,8 +530,7 @@ fn check(state: &Arc<AppState>, manual: bool) -> Value {
     updates.status()
 }
 
-/// `update/install`: downloads the version found and checks its signature. Linux and macOS install it at once;
-/// Windows keeps the installer for the restart, because it ends Laci.
+/// `update/install`: downloads the version found, checks its signature and installs it.
 fn install(state: &Arc<AppState>) -> Result<Value> {
     let updates = &state.updates;
     // A second click while the download runs changes nothing. A copy that only links is refused below.
@@ -604,7 +555,7 @@ fn install(state: &Arc<AppState>) -> Result<Value> {
             },
             || {},
         ))
-        .and_then(|bytes| if cfg!(windows) { Ok(Some(bytes)) } else { update.install(&bytes).map(|()| None) });
+        .and_then(|bytes| update.install(&bytes));
         if let Some(state) = weak.upgrade() {
             if let Err(error) = &result {
                 debug(&state, format!("update download: {error}"));
@@ -628,34 +579,6 @@ fn restart(state: &AppState) -> Result<Value> {
     }
     let engine = quiet_engine(state)?;
     updates.closing.store(true, Ordering::SeqCst);
-    if cfg!(windows) {
-        // The installer replaces Laci and starts it again. `install` ends this process once the installer runs, so it
-        // returns only when that failed.
-        let ready = {
-            let inner = updates.lock();
-            inner.found.as_ref().and_then(|found| found.update.clone()).zip(inner.installer.clone())
-        };
-        let error = match ready {
-            Some((update, installer)) => match update.install(installer) {
-                Ok(()) => "The installer didn't start. Try the update again.".to_owned(),
-                Err(error) => {
-                    // This thread holds the engine.
-                    engine.service.debug(&format!("update install: {error}"));
-                    install_error(&error)
-                }
-            },
-            None => "Download the update again.".to_owned(),
-        };
-        // `before_exit` may have hidden it.
-        if let Some(window) = state.handle.get_webview_window("main") {
-            let _ = window.show();
-        }
-        updates.closing.store(false, Ordering::SeqCst);
-        drop(engine);
-        updates.downloaded(Err(error.clone()));
-        state.notice(updates.event());
-        return Err(error);
-    }
     drop(engine);
     // A moment for this answer to reach the window. The exit then closes terminals and creations as usual.
     let handle = state.handle.clone();
@@ -673,6 +596,7 @@ mod tests {
     use std::{
         io::{Read, Write},
         net::TcpListener,
+        path::Path,
         sync::mpsc,
     };
     use tauri::test::{MockRuntime, mock_builder, mock_context, noop_assets};
@@ -735,7 +659,7 @@ mod tests {
     }
     /// What Laci learns from a feed, through the plugin and the limits Laci sets on it.
     fn look_at(feed: &str) -> Outcome {
-        look(updater(app_reading(feed).handle(), None, || {}))
+        look(updater(app_reading(feed).handle(), None))
     }
     /// A release of `version` with a build for this computer.
     fn release(version: &str, more: Value) -> String {
@@ -790,40 +714,22 @@ mod tests {
     }
 
     #[test]
-    fn packages_scripts_and_portable_copies_get_a_link_and_the_others_a_button() {
+    fn packages_and_scripts_get_a_link_and_the_appimage_a_button() {
         use BundleType::*;
         use Install::*;
-        let app = "/Applications/Laci.app/Contents/MacOS/laci";
-        let cases: [(bool, Option<BundleType>, &str, bool, Install); 16] = [
-            (false, Some(Deb), "/usr/bin/laci", false, Notice),
-            (false, Some(Rpm), "/usr/bin/laci", false, Notice),
+        let cases: [(Option<BundleType>, bool, Install); 5] = [
+            (Some(Deb), false, Notice),
+            (Some(Rpm), false, Notice),
             // install-desktop.sh, or a build of its own.
-            (false, None, "/home/me/.local/bin/laci", false, Notice),
-            (false, None, "C:/Users/me/AppData/Local/Laci/laci.exe", false, Notice),
-            (true, Some(Nsis), "D:/Tools/Laci/laci.exe", false, Notice),
-            (true, None, "D:/Tools/Laci/laci.exe", false, Notice),
-            (false, Some(Nsis), "C:/Users/me/AppData/Local/Laci/laci.exe", false, Click),
-            (false, Some(Msi), "C:/Program Files/Laci/laci.exe", false, Click),
-            (false, Some(AppImage), "/tmp/.mount_laciAbC/usr/bin/laci", true, Click),
-            (false, Some(AppImage), "/home/me/squashfs-root/usr/bin/laci", false, Notice),
-            (false, Some(App), app, false, Click),
-            (false, Some(App), "/Users/me/Applications/Laci.app/Contents/MacOS/laci", false, Click),
-            (
-                false,
-                Some(App),
-                "/private/var/folders/x/T/AppTranslocation/0F1E/d/Laci.app/Contents/MacOS/laci",
-                false,
-                Notice,
-            ),
-            (false, Some(App), "/Volumes/Laci/Laci.app/Contents/MacOS/laci", false, Notice),
-            (false, Some(App), "/Users/me/laci/target/debug/laci", false, Notice),
-            (false, Some(Dmg), app, false, Notice),
+            (None, false, Notice),
+            // The AppImage Laci runs from, and one unpacked to squashfs-root.
+            (Some(AppImage), true, Click),
+            (Some(AppImage), false, Notice),
         ];
-        for (portable, bundle, exe, appimage, expected) in cases {
-            let case = format!("{bundle:?} {exe}");
-            assert_eq!(decide(portable, bundle, Some(Path::new(exe)), appimage), expected, "{case}");
+        for (bundle, appimage, expected) in cases {
+            let case = format!("{bundle:?} {appimage}");
+            assert_eq!(decide(bundle, appimage), expected, "{case}");
         }
-        assert_eq!(decide(false, Some(App), None, false), Notice);
         // An AppImage replaces itself only when Laci runs from it, never another program's AppImage that started it:
         // laci-core's env.rs tests runs_from_appimage.
         let (_home, notice) = updates(Notice);
@@ -893,7 +799,7 @@ mod tests {
         assert_eq!(shown.len(), NOTES_LIMIT - 1 + "…".len());
         // LACI_UPDATE_ENDPOINT replaces the feed of tauri.conf.json.
         let not_found = tauri::Url::parse(&feed("404 Not Found", "")).unwrap();
-        assert!(matches!(look(updater(app_reading(&newer).handle(), Some(not_found), || {})), Outcome::Latest));
+        assert!(matches!(look(updater(app_reading(&newer).handle(), Some(not_found))), Outcome::Latest));
         let (_home, updates) = updates(Install::Click);
         updates.begin_check();
         updates.finish(false, Outcome::Newer(found), Utc::now());
@@ -968,7 +874,7 @@ mod tests {
         assert_eq!(status["version"], "3.1.0");
         assert!(status.get("progress").is_none());
         updates.lock().phase = Phase::Downloading;
-        updates.downloaded(Ok(None));
+        updates.downloaded(Ok(()));
         assert_eq!(updates.status()["state"], "ready");
         assert!(!updates.begin_check(), "nothing to look for until the restart");
         assert!(refusal(updates.begin_download()).contains("Restart"));
@@ -1059,8 +965,6 @@ mod tests {
         assert!(!config.dangerous_accept_invalid_certs && !config.dangerous_accept_invalid_hostnames);
         let feeds: Vec<_> = config.endpoints.iter().map(tauri::Url::as_str).collect();
         assert_eq!(feeds, ["https://github.com/mrramdn/laci/releases/latest/download/latest.json"]);
-        // Windows shows the installer's progress and needs no click.
-        assert_eq!(config.windows.map(|w| w.install_mode.to_string()).as_deref(), Some("passive"));
         // The public half of the key `tauri signer generate` made: the private one starts with another comment.
         let key = String::from_utf8(STANDARD.decode(&config.pubkey).unwrap()).unwrap();
         assert!(key.starts_with("untrusted comment: minisign public key: "), "not a public key");

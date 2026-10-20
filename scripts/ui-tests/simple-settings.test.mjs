@@ -533,7 +533,7 @@ export async function aboutSaysTheVersionAndWhereToReportAProblem() {
 async function onPreview(body) {
   globalThis.window = { crypto: globalThis.crypto };
   try {
-    load("preview/ipc.ts").installIpc({ design: "simple", theme: "light" });
+    load("preview/ipc.ts").installIpc({ design: "simple", theme: "light", updates: null });
     const invoke = (command, args) => window.__TAURI_INTERNALS__.invoke(command, args);
     await body((name, args = {}) => invoke("request", { name, body: args }), invoke);
   } finally {

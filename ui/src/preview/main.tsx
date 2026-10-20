@@ -1,5 +1,7 @@
 // The window in a browser, without the desktop: `pnpm -C ui dev`, then open /preview.html. It is not
 // part of the build. ?design=detailed|simple and ?theme=light|dark|system say how it looks.
+// ?updates=unset plays a setup from before 3.0, which has no choice about new versions yet, so Today
+// and Home ask; otherwise the choice is saved (daily, or ?updates=off).
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "../styles/index.css";
@@ -34,13 +36,14 @@ const choose = <T extends string>(key: string, allowed: readonly T[]): T => {
 };
 const design = choose<Design>("design", ["detailed", "simple"]);
 const theme = choose<Theme>("theme", ["system", "light", "dark"]);
+const updates = choose("updates", ["daily", "off", "unset"]);
 
 const root = document.documentElement;
 root.dataset.design = design;
 if (theme === "system") delete root.dataset.theme;
 else root.dataset.theme = theme;
 const clock = freezeClock(fixtureNow);
-installIpc({ design, theme });
+installIpc({ design, theme, updates: updates === "unset" ? null : updates });
 window.__preview = { emit: emitEvent, advance: clock.advance };
 
 // The window reads the theme when it loads, so it comes after the settings above.

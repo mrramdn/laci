@@ -937,16 +937,25 @@ const terminals: Record<string, (args: Body) => unknown> = {
 // same one the pretend update starts from.
 terminals["plugin:app|version"] = () => PREVIEW_VERSION;
 
-/** Stands in for the desktop. Call before the window's own code is loaded. */
-export function installIpc(options: { design: Design; theme: Theme }) {
+/**
+ * Stands in for the desktop. Call before the window's own code is loaded. The choice about new
+ * versions is saved, as on any setup but one from before 3.0: `updates: null` plays that one, whose
+ * Today and Home ask once.
+ */
+export function installIpc(options: {
+  design: Design;
+  theme: Theme;
+  updates?: "daily" | "off" | null;
+}) {
   snapshot = clone(fixtures.snapshot);
   log = clone(fixtures.log.entries);
   storage = clone(fixtures.storage);
   mcp = clone(fixtures["agent/mcp"].agents);
   keptOut = new Map();
-  settings = { ...options, updates: null };
+  const { design, theme, updates = "daily" } = options;
+  settings = { design, theme, updates };
   update = {
-    enabled: false,
+    enabled: updates === "daily",
     state: "idle",
     current: PREVIEW_VERSION,
     install: "click",

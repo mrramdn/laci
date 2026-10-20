@@ -51,6 +51,7 @@ export const SCREENS = [
   "archive",
   "delete",
   "clean",
+  "upgrade",
 ];
 /** The first width of each of Simple's tiers, and the window the app opens in. All 900 high. */
 export const SIZES = ["720x900", "840x900", "1200x900", "1440x900", "1600x900"];
@@ -329,6 +330,16 @@ async function simpleMore(page, item) {
 }
 
 /**
+ * Today or Home on a setup from before 3.0, which has no choice about new versions yet, so their
+ * card asks once (?updates=unset). Every other screen has the choice saved.
+ */
+const upgrader = (design) => async (page) => {
+  await page.goto(`${page.url()}&updates=unset`, { timeout: BOOT_MS });
+  await designs[design].home(page).waitFor({ timeout: BOOT_MS });
+  await page.locator('[data-ui="updates-offer"]').waitFor();
+};
+
+/**
  * How each design gets to each screen from the page it draws first. `home` is what shows once the
  * design has drawn at all. A screen's function ends when the screen is up.
  */
@@ -367,6 +378,7 @@ const designs = {
         await page.locator("#insp").getByRole("button", { name: "Delete build output…" }).click();
         await dialogShown(page);
       },
+      upgrade: upgrader("detailed"),
     },
   },
   // The five places, Settings, and a project's Archive, Delete and Free up space sheets through
@@ -407,6 +419,7 @@ const designs = {
         await simpleProject(page, HEAVY);
         await simpleMore(page, "Free up space");
       },
+      upgrade: upgrader("simple"),
     },
   },
 };

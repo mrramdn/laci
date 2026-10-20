@@ -154,6 +154,7 @@ export async function thePreviewOffersAnUpdateDownloadsItAndRestarts() {
     load("preview/ipc.ts").installIpc({
       design: "simple",
       theme: "light",
+      updates: null,
     });
     const events = [];
     const request = (name, body = {}) =>

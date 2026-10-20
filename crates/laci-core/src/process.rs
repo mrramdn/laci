@@ -5,8 +5,9 @@ use crate::{
 use std::{
     collections::BTreeSet,
     ffi::{OsStr, OsString},
+    fs::File,
     path::{Component, Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::{Mutex, MutexGuard},
     thread,
     time::{Duration, Instant},
@@ -314,7 +315,45 @@ pub(crate) fn run_env(
     timeout: Duration,
     env: &[(&str, Option<&str>)],
 ) -> Result<String> {
-    let bytes = run_env_bytes(program, args, cwd, timeout, env)?;
+    text(run_env_bytes(program, args, cwd, timeout, env)?)
+}
+
+/// Like [`run_env`], for a program that starts others and waits on them, such as Git over the network. On Windows it
+/// runs in a Job Object ([`platform::spawn_group`]), so running out of time stops everything it started: Git for
+/// Windows' `git.exe` only starts the real Git, which starts ssh, and stopping the first alone would leave the others
+/// running, maybe waiting on a question nobody sees, in a folder Laci then removes. Elsewhere it is [`run_env`].
+pub(crate) fn run_tree(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    timeout: Duration,
+    env: &[(&str, Option<&str>)],
+) -> Result<String> {
+    #[cfg(windows)]
+    {
+        let (command, output, errors) = prepare(program, args, cwd, env)?;
+        let mut group = platform::spawn_group(command).map_err(|e| format!("Couldn't start {program}: {e}"))?;
+        let started = Instant::now();
+        loop {
+            if group.exited()? {
+                let status = group.wait().map_err(|e| e.to_string())?;
+                return text(outcome(program, status, output, errors)?);
+            }
+            if started.elapsed() >= timeout {
+                group.stop();
+                let _ = group.wait();
+                return Err(format!("{program} took too long"));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        run_env(program, args, cwd, timeout, env)
+    }
+}
+
+fn text(bytes: Vec<u8>) -> Result<String> {
     let text = String::from_utf8(bytes).map_err(|_| "stream did not contain valid UTF-8".to_owned())?;
     Ok(text.trim_end().into())
 }
@@ -327,7 +366,35 @@ pub(crate) fn run_env_bytes(
     timeout: Duration,
     env: &[(&str, Option<&str>)],
 ) -> Result<Vec<u8>> {
-    // Files avoid pipe backpressure and reader threads surviving a child with inherited descriptors.
+    let (mut command, output, errors) = prepare(program, args, cwd, env)?;
+    let mut child = command.spawn().map_err(|e| format!("Couldn't start {program}: {e}"))?;
+    let listed = Listed::new(&child);
+    let started = Instant::now();
+    loop {
+        if exited(&mut child)? {
+            // Forgotten before the pid is freed, so a listed pid never names a newer process.
+            drop(listed);
+            let status = child.wait().map_err(|e| e.to_string())?;
+            return outcome(program, status, output, errors);
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            drop(listed);
+            let _ = child.wait();
+            return Err(format!("{program} took too long"));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The command a helper runs as, with the files its output and its errors go to. Files avoid pipe backpressure and
+/// reader threads surviving a child with inherited descriptors.
+fn prepare(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[(&str, Option<&str>)],
+) -> Result<(Command, File, File)> {
     let output = tempfile::tempfile().map_err(|e| e.to_string())?;
     let errors = tempfile::tempfile().map_err(|e| e.to_string())?;
     let mut command = start(program, args)?;
@@ -346,32 +413,64 @@ pub(crate) fn run_env_bytes(
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
-    let mut child = command.spawn().map_err(|e| format!("Couldn't start {program}: {e}"))?;
-    let listed = Listed::new(&child);
-    let started = Instant::now();
-    loop {
-        if exited(&mut child)? {
-            use std::io::{Read, Seek, SeekFrom};
-            // Forgotten before the pid is freed, so a listed pid never names a newer process.
-            drop(listed);
-            let status = child.wait().map_err(|e| e.to_string())?;
-            let mut file = if status.success() { output } else { errors };
-            file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
-            let mut bytes = Vec::new();
-            file.take(16_000_000).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-            return if status.success() {
-                Ok(bytes)
-            } else {
-                Err(format!("{program} failed: {}", String::from_utf8_lossy(&bytes).trim()))
-            };
+    Ok((command, output, errors))
+}
+
+/// What a helper that ended with `status` wrote, or, when it failed, its errors as the message.
+fn outcome(program: &str, status: ExitStatus, output: File, errors: File) -> Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = if status.success() { output } else { errors };
+    file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(16_000_000).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(bytes)
+    } else {
+        Err(format!("{program} failed: {}", String::from_utf8_lossy(&bytes).trim()))
+    }
+}
+
+/// Git for Windows' `git.exe` starts the real Git, which starts ssh. This test binary stands in for them, started
+/// again in the part its role names.
+#[cfg(all(test, windows))]
+mod tree {
+    use super::*;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const TEST: &str = "process::tree::running_out_of_time_stops_what_the_program_started";
+    const ROLE: &str = "LACI_PROCESS_TEST_ROLE";
+    /// The file the program's child holds open, and lets nobody else open, until it is stopped.
+    const HELD: &str = "LACI_PROCESS_TEST_HELD";
+    const ARGS: [&str; 4] = ["--exact", TEST, "--nocapture", "--test-threads=1"];
+
+    #[test]
+    fn running_out_of_time_stops_what_the_program_started() {
+        match std::env::var(ROLE).ok().as_deref() {
+            Some("program") => {
+                let _ = Command::new(std::env::current_exe().unwrap()).args(ARGS).env(ROLE, "child").status();
+                return;
+            }
+            Some("child") => {
+                let path = std::env::var_os(HELD).unwrap();
+                let _held = std::fs::OpenOptions::new().write(true).create_new(true).share_mode(0).open(path).unwrap();
+                thread::sleep(Duration::from_secs(60));
+                return;
+            }
+            _ => {}
         }
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            drop(listed);
-            let _ = child.wait();
-            return Err(format!("{program} took too long"));
+        let temp = tempfile::tempdir().unwrap();
+        let held = temp.path().join("held");
+        let program = std::env::current_exe().unwrap();
+        let env = [(ROLE, Some("program")), (HELD, held.to_str())];
+        let error = run_tree(program.to_str().unwrap(), &ARGS, None, Duration::from_secs(10), &env).unwrap_err();
+        assert!(error.ends_with("took too long"), "{error}");
+        assert!(held.exists(), "the child ran");
+        // ERROR_SHARING_VIOLATION while the child still runs.
+        let started = Instant::now();
+        while std::fs::File::open(&held).is_err_and(|e| e.raw_os_error() == Some(32)) {
+            assert!(started.elapsed() < Duration::from_secs(20), "the child outlived its program");
+            thread::sleep(Duration::from_millis(50));
         }
-        thread::sleep(Duration::from_millis(10));
     }
 }
 

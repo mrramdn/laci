@@ -74,7 +74,7 @@ pub fn hosts() -> Value {
     })
 }
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    process::run("git", args, Some(dir), Duration::from_secs(60))
+    crate::git::make(dir, args, Duration::from_secs(60))
 }
 /// Questions about the new repository, asked the same guarded way as everywhere else.
 fn git_read(dir: &Path, args: &[&str]) -> Result<String> {
@@ -245,11 +245,13 @@ fn create_unlocked(env: &Env, r: &Value, cancel: &AtomicBool, progress: &dyn Fn(
             let mut github = None;
             if (remote == "github" || remote == "both") && !cancel.load(Ordering::Relaxed) {
                 let dest_s = dest.to_string_lossy();
-                if process::run(
+                // gh pushes with Git, which must ask nothing either.
+                if process::run_tree(
                     "gh",
                     &["repo", "create", name, "--private", "--source", &dest_s, "--remote", "origin", "--push"],
                     None,
                     Duration::from_secs(120),
+                    &crate::git::ENV,
                 )
                 .is_ok()
                 {

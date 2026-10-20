@@ -257,6 +257,102 @@ fn every_git_call_switches_hooks_off_and_windows_allows_long_paths() {
     assert!(calls > 0, "no Git call was traced");
 }
 
+/// The Git that makes a project gets what every scan's Git gets: hooks and the file system monitor switched off, so
+/// nothing the new folder brings along starts a program, and GIT_TERMINAL_PROMPT=0, so it asks nothing. On Windows a
+/// question would wait on a console nobody sees. Git's own trace, in a run of this test, shows what each call got.
+#[test]
+fn the_git_that_makes_a_project_switches_hooks_off_and_asks_nothing() {
+    const TEST: &str = "the_git_that_makes_a_project_switches_hooks_off_and_asks_nothing";
+    if support::role().as_deref() == Some("create") {
+        let home = PathBuf::from(std::env::var_os("LACI_TEST_HOME").unwrap());
+        let request = serde_json::json!({"parent":home,"name":"made","from":"empty","remote":"none"});
+        laci_core::create::create_project(&Env::for_home(home), &request).unwrap();
+        return;
+    }
+    let temp = support::tempdir();
+    let home = temp.path().join("home");
+    fs::create_dir(&home).unwrap();
+    let trace = temp.path().join("trace.json");
+    let run = support::program(TEST, "create")
+        .env("GIT_TRACE2_EVENT", &trace)
+        .env("GIT_TRACE2_ENV_VARS", "GIT_TERMINAL_PROMPT")
+        .env("LACI_TEST_HOME", &home)
+        .env_remove("GIT_TERMINAL_PROMPT")
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}{}", String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
+
+    let hooks = if cfg!(windows) {
+        format!("core.hooksPath={}", platform::user_dirs(Path::new("")).unwrap().config.join("no-git-hooks").display())
+    } else {
+        "core.hooksPath=/dev/null".into()
+    };
+    let events: Vec<Value> =
+        fs::read_to_string(&trace).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    let mut made = Vec::new();
+    for start in events.iter().filter(|event| event["event"] == "start") {
+        let argv: Vec<&str> = start["argv"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        // Laci's own calls, not a Git that Git started.
+        if argv.get(1) != Some(&"--no-pager") {
+            continue;
+        }
+        let settings: Vec<&str> = argv.windows(2).filter(|pair| pair[0] == "-c").map(|pair| pair[1]).collect();
+        assert!(settings.contains(&hooks.as_str()) && settings.contains(&"core.fsmonitor=false"), "{argv:?}");
+        let asks = events.iter().find(|event| {
+            event["sid"] == start["sid"] && event["event"] == "def_param" && event["param"] == "GIT_TERMINAL_PROMPT"
+        });
+        assert_eq!(asks.map(|event| &event["value"]), Some(&Value::from("0")), "{argv:?}");
+        // The command comes after the settings.
+        let mut rest = argv[2..].iter();
+        let command = loop {
+            match rest.next() {
+                Some(&"-c") => {
+                    rest.next();
+                }
+                other => break other,
+            }
+        };
+        made.extend(command.map(|command| command.to_string()));
+    }
+    for command in ["init", "add", "commit"] {
+        assert!(made.iter().any(|made| made == command), "{command} went without them: {made:?}");
+    }
+}
+
+/// gh pushes a new project with Git, which must ask nothing there either. A stand-in gh notes what it was given.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_git_that_github_cli_runs_for_a_new_project_asks_nothing() {
+    const TEST: &str = "the_git_that_github_cli_runs_for_a_new_project_asks_nothing";
+    if support::role().as_deref() == Some("github") {
+        let home = PathBuf::from(std::env::var_os("LACI_TEST_HOME").unwrap());
+        let request = serde_json::json!({"parent":home,"name":"made","from":"empty","remote":"github"});
+        laci_core::create::create_project(&Env::for_home(home), &request).unwrap();
+        return;
+    }
+    let temp = support::tempdir();
+    let (home, bin) = (temp.path().join("home"), temp.path().join("bin"));
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&bin).unwrap();
+    support::script(
+        &bin.join("gh"),
+        "#!/bin/sh\nprintf '%s\\n' \"${GIT_TERMINAL_PROMPT-unset}\" > \"$LACI_TEST_HOME/gh-was-given\"\n",
+    );
+    let path = std::env::join_paths(
+        std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
+    )
+    .unwrap();
+    let mut command = support::program(TEST, "github");
+    command.env("PATH", path).env("LACI_TEST_HOME", &home).env_remove("GIT_TERMINAL_PROMPT");
+    // The first commit, which gh would push, needs a name.
+    for (key, value) in [("NAME", "Test"), ("EMAIL", "test@example.test")] {
+        command.env(format!("GIT_AUTHOR_{key}"), value).env(format!("GIT_COMMITTER_{key}"), value);
+    }
+    let run = command.output().unwrap();
+    assert!(run.status.success(), "{}{}", String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
+    assert_eq!(fs::read_to_string(home.join("gh-was-given")).unwrap(), "0\n");
+}
+
 /// The first run asks to install Git when it doesn't run. A run of this test without Git on PATH must hear so;
 /// macOS isn't asked, as there the login shell's PATH comes back.
 #[test]

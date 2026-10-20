@@ -46,7 +46,7 @@ fn hooks() -> Result<&'static str> {
 const LONG_PATHS: &[&str] = if cfg!(windows) { &["core.longpaths=true"] } else { &[] };
 
 /// A read never fetches missing objects or prompts, and ignores a repository named by the parent process.
-const ENV: [(&str, Option<&str>); 5] = [
+pub(crate) const ENV: [(&str, Option<&str>); 5] = [
     ("GIT_NO_LAZY_FETCH", Some("1")),
     ("GIT_TERMINAL_PROMPT", Some("0")),
     ("GIT_DIR", None),
@@ -103,6 +103,14 @@ pub(crate) fn path(dir: &Path, name: &[u8]) -> PathBuf {
 /// Anything that compares the working tree, such as `status`, needs a [`Repo`].
 pub(crate) fn plain(dir: &Path, args: &[&str], timeout: Duration) -> Result<String> {
     call(dir, &[], args, timeout)
+}
+
+/// Git that makes a project: `clone`, `init`, `add`, `commit`, `remote`, `push`. The settings every call forces hold
+/// here too, so nothing the new folder brings along, such as a template's own repository, starts a program; and Git
+/// asks no question, which on Windows would wait on a console nobody sees. What it starts is stopped with it when it
+/// takes too long ([`process::run_tree`]).
+pub(crate) fn make(dir: &Path, args: &[&str], timeout: Duration) -> Result<String> {
+    process::run_tree("git", &full(&[], args)?, Some(dir), timeout, &ENV)
 }
 
 /// The driver name in `filter.<name>.clean`, `.smudge` or `.process`: commands Git runs on file contents.

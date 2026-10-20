@@ -218,6 +218,8 @@ jobs:
         run: cargo install tauri-driver --locked
       - name: Window screenshots
         shell: bash
+        # A run takes a few minutes. One that hangs ends here instead of at the job's hour.
+        timeout-minutes: 15
         env:
           LACI_SCREENSHOTS: ${{ runner.temp }}/screenshots
         run: |

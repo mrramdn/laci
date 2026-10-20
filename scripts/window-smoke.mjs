@@ -617,4 +617,8 @@ try {
   ).catch(() => {});
   console.log(`${shots.length} screenshots in ${out}`);
 }
-process.exitCode = failure ? 1 : 0;
+// Something still open, such as a socket or a pipe, kept node running after a run that had passed, until CI's
+// limit of an hour ended the job. Say what it is, and end with the result.
+const open = process.getActiveResourcesInfo().filter((kind) => kind !== "TTYWrap");
+if (open.length) console.log(`Still open at the end, closed by exiting: ${open.join(", ")}`);
+process.exit(failure ? 1 : 0);

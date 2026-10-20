@@ -594,8 +594,6 @@ fn clip(text: &str, max: usize) -> String {
         None => text.to_owned(),
     }
 }
-/// A Log entry as an agent reads it: what happened and whether it can be undone, without the stored undo data
-/// (a notes change keeps the whole previous notes there, which made the Log too long to read).
 /// Leaves out the parts the window tells a Log entry by ("say"), from a journal or a Log entry an answer passes
 /// through: an agent reads the title.
 fn unsaid(value: &mut Value) {
@@ -605,6 +603,8 @@ fn unsaid(value: &mut Value) {
         }
     }
 }
+/// A Log entry as an agent reads it: what happened and whether it can be undone, without the stored undo data
+/// (a notes change keeps the whole previous notes there, which made the Log too long to read).
 fn change(e: &Value) -> Value {
     let mut out = json!({});
     for key in ["id", "at", "by", "title", "path", "canUndo", "journal", "undoes", "error"] {

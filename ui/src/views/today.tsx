@@ -1,3 +1,5 @@
+import { useEffect, useId, useState } from "react";
+import { api } from "../api";
 import {
   Icon,
   StatusGlyph,
@@ -8,11 +10,12 @@ import {
   Group,
   Expand,
 } from "../common";
-import { useApp, run, setDesign } from "../store";
+import { useApp, run, setDesign, toast } from "../store";
 import { useNow } from "../clock";
 import { BackupNotice } from "../backup";
 import { LookThumb } from "../looks";
-import { views } from "../words";
+import { useUpdate } from "../update";
+import { detailedSettings, firstRun, views } from "../words";
 import {
   latestReport,
   LOCALE,
@@ -25,7 +28,7 @@ import { DeadlinePill } from "../deadline";
 import { closeReportItem, toggleTodo } from "../actions";
 import { requestResume } from "../session-ui";
 import { askAgent } from "../agent-launch";
-import type { Node, Tab } from "../types";
+import type { Node, Prefs, Tab } from "../types";
 export function Today() {
   // Only what Today shows: news of a scan in progress doesn't draw it again.
   const snapshot = useApp((s) => s.snapshot!);
@@ -56,6 +59,7 @@ export function Today() {
         <div className="body">
           {/* Laci 2 let every folder stay unticked: that upgrade is offered Simple too. */}
           <TrySimple />
+          <UpdatesOffer />
           <div className="empty-box">
             <Icon name="folder" />
             <b>No folders selected yet</b>
@@ -138,6 +142,7 @@ export function Today() {
             </div>
           ))}
         <TrySimple />
+        <UpdatesOffer />
         {deadlines.length ? (
           <Group
             title="Deadlines"
@@ -455,6 +460,108 @@ export function TrySimple() {
         >
           {views.offerNo}
         </button>
+      </div>
+    </div>
+  );
+}
+/**
+ * Whether config.json holds no choice about new versions yet: a setup from before 3.0, or a first run
+ * that was skipped. False until `prefs` says so, and when it can't: Settings asks the same question.
+ * The desktop's news of the update follows every saved choice, so each piece of it reads `prefs`
+ * again until a choice is known: one that first run saved as the window opened, or one made in
+ * Settings. Nothing unsets a choice, so then it stops. Simple's Home asks the same way
+ * (simple/updates.tsx).
+ */
+function useUpdatesUnset() {
+  const [unset, setUnset] = useState<boolean>();
+  const known = unset === false;
+  useEffect(() => {
+    if (known) return;
+    let live = true;
+    const read = () =>
+      void api<Prefs>("prefs").then(
+        (prefs) => {
+          if (live) setUnset(prefs?.updates === null);
+        },
+        () => undefined,
+      );
+    read();
+    const stop = useUpdate.subscribe((now, before) => {
+      if (now.status !== before.status) read();
+    });
+    return () => {
+      live = false;
+      stop();
+    };
+  }, [known]);
+  return unset === true;
+}
+/**
+ * The card that asks someone who set Laci up before 3.0 whether Laci may look for new versions, as
+ * first run asks a new install: beside the card that offers Simple and apart from it, as each goes by
+ * its own choice. Either button saves the choice through the update store, as Settings › About &
+ * updates does, and the card is gone for good; until then Laci doesn't look. The two weigh the same:
+ * it is the user's consent to give.
+ */
+export function UpdatesOffer() {
+  const unset = useUpdatesUnset();
+  const [chosen, setChosen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [refusal, setRefusal] = useState("");
+  const title = useId();
+  if (!unset || chosen) return null;
+  async function choose(updates: "daily" | "off") {
+    if (sending) return;
+    setSending(true);
+    setRefusal("");
+    let saved = false;
+    try {
+      saved = await useUpdate.getState().choose(updates);
+    } catch {
+      // The store keeps what the desktop refused; without that, first run's words say it.
+    } finally {
+      setSending(false);
+    }
+    if (!saved) {
+      setRefusal(useUpdate.getState().refusal ?? firstRun.updatesFailed);
+      return;
+    }
+    setChosen(true);
+    toast(detailedSettings.updatesSaved[updates], firstRun.updatesLater);
+    // The button that had the focus goes with the card: Today takes it.
+    document.getElementById("main")?.focus({ preventScroll: true });
+  }
+  // Busy, not disabled, while the choice is sent: a refusal leaves the focus where it was.
+  return (
+    <div
+      className="callout"
+      role="group"
+      aria-labelledby={title}
+      aria-busy={sending || undefined}
+      data-ui="updates-offer"
+    >
+      <Icon name="refresh-cw" />
+      <div className="txt">
+        <b id={title}>{firstRun.updatesTitle}</b>
+        <p>{firstRun.updatesSends}</p>
+        {/* The red for words: Settings' red for marks (rp-status bad) is too faint on this grey. */}
+        {refusal ? (
+          <p role="alert" style={{ color: "var(--red-text)" }}>
+            {refusal}
+          </p>
+        ) : null}
+      </div>
+      <div className="acts">
+        {(["daily", "off"] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            className="btn sm"
+            onClick={() => void choose(value)}
+          >
+            {firstRun.updatesAsk[value]}
+          </button>
+        ))}
       </div>
     </div>
   );

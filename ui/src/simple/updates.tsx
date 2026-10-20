@@ -1,14 +1,17 @@
 // Simple's update parts: the panel in Settings › Updates and the card on Home. Both read what the
 // update store (ui/src/update.ts) holds, say where the update stands in plain words and offer the one
 // action that fits there: Check now, Install, Restart, or a link to the release page for a copy that a
-// package manager owns. Nothing is installed before a click.
+// package manager owns. Nothing is installed before a click. Home also asks, once, someone who set
+// Laci up before 3.0 whether it may look for new versions at all.
 import { useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, ReactNode } from "react";
+import { api } from "../api";
 import { Icon, restoreFocus } from "../common";
 import { pref, savePref, toast, urlOpen } from "../store";
+import type { Prefs } from "../types";
 import { useUpdate } from "../update";
 import type { UpdateStatus } from "../update";
-import { ago, polish } from "../words";
+import { ago, firstRun, polish, settings } from "../words";
 import { Button, Callout, Disclosure, StatusChip } from "./ui";
 
 const say = polish.updates;
@@ -412,6 +415,99 @@ export function UpdateCard() {
           </Button>
         </div>
       ) : null}
+    </section>
+  );
+}
+
+/**
+ * Whether config.json holds no choice about new versions yet: a setup from before 3.0, or a first run
+ * that was skipped. False until `prefs` says so, and when it can't: Settings asks the same question.
+ * The desktop's news of the update follows every saved choice, so each piece of it reads `prefs`
+ * again until a choice is known: one that first run saved as the window opened, or one made in
+ * Settings. Nothing unsets a choice, so then it stops. Detailed's Today asks the same way
+ * (views/today.tsx). Home may have nothing else that listens to that news, so this starts the store
+ * listening; a page drawn without a window asks nothing, as refreshUpdate.
+ */
+function useUpdatesUnset() {
+  const { status } = useUpdateStatus();
+  const [unset, setUnset] = useState<boolean>();
+  const known = unset === false;
+  useEffect(() => {
+    if (known || typeof document === "undefined") return;
+    let live = true;
+    void api<Prefs>("prefs").then(
+      (prefs) => {
+        if (live) setUnset(prefs?.updates === null);
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [known, status]);
+  return unset === true;
+}
+
+/**
+ * Home's card that asks someone who set Laci up before 3.0 whether Laci may look for new versions, as
+ * first run asks a new install. Either button saves the choice through the update store, as
+ * Detailed's Settings › About & updates does, and the card is gone for good; until then Laci doesn't
+ * look. Both are outlined, as the screen's one filled button is Home's own, and they weigh the same:
+ * it is the user's consent to give.
+ */
+export function UpdatesOffer() {
+  const unset = useUpdatesUnset();
+  const [chosen, setChosen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [refusal, setRefusal] = useState("");
+  const heading = useId();
+  if (!unset || chosen) return null;
+  const choose = async (updates: "daily" | "off") => {
+    if (sending) return;
+    setSending(true);
+    setRefusal("");
+    let saved = false;
+    try {
+      saved = await useUpdate.getState().choose(updates);
+    } catch {
+      // The store keeps what the desktop refused; without that, first run's words say it.
+    } finally {
+      setSending(false);
+    }
+    if (!saved) {
+      setRefusal(useUpdate.getState().refusal ?? firstRun.updatesFailed);
+      return;
+    }
+    setChosen(true);
+    toast(settings.updatesSaved[updates], firstRun.updatesLater);
+    // The button that had the focus goes with the card: the page takes it.
+    restoreFocus(null);
+  };
+  // Busy, not disabled, while the choice is sent: a refusal leaves the focus where it was.
+  return (
+    <section
+      className="s-card"
+      aria-labelledby={heading}
+      aria-busy={sending || undefined}
+      data-ui="updates-offer"
+    >
+      <header className="s-card-head">
+        <Icon name="refresh-cw" />
+        <h2 id={heading}>{firstRun.updatesTitle}</h2>
+      </header>
+      <p>{firstRun.updatesSends}</p>
+      {refusal ? (
+        <div role="alert">
+          <Callout tone="soon">{refusal}</Callout>
+        </div>
+      ) : null}
+      <div className="s-actions">
+        {(["daily", "off"] as const).map((value) => (
+          <Button key={value} kind="outline" small onClick={() => void choose(value)}>
+            {firstRun.updatesAsk[value]}
+          </Button>
+        ))}
+      </div>
     </section>
   );
 }

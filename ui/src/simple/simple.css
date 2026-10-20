@@ -999,6 +999,11 @@
   .s-home-grid > * + * {
     margin-top: 32px;
   }
+  /* A card below an empty Home is as wide as what it sits under. */
+  .s-home > .s-card {
+    max-width: 480px;
+    margin: 32px auto 0;
+  }
   .s-hero {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

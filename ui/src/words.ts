@@ -926,6 +926,16 @@ export const firstRun = {
     off: "Laci won’t look by itself.",
   },
   updatesFailed: "Laci couldn’t save your choice about new versions",
+  /**
+   * The card that asks the same question once of a setup from before 3.0, whose config.json has no
+   * choice yet: on Detailed's Today and Simple's Home, under `updatesTitle` and `updatesSends`.
+   */
+  updatesAsk: {
+    daily: "Check daily",
+    off: "Don’t check",
+  },
+  /** After a choice on that card, below what Settings says once a choice is saved. */
+  updatesLater: "You can change it in Settings.",
   installTitle: (program: string) => `Install ${program}`,
   installBody: (program: string) =>
     `Laci reads the saved versions of your projects with ${program}, a free program that isn’t on this computer yet.`,

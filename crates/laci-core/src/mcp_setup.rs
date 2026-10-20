@@ -176,14 +176,20 @@ pub fn status(env: &Env, provider: &Provider) -> Value {
             entry["args"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(str::to_owned)).collect();
         status["current"] = json!(typed(entry["command"].as_str().unwrap_or("?"), &args));
     }
+    // What sets Laci up by hand is left out while its program won't stay ([`Env::fleeting`]): `apply` refuses it too.
+    let lasting = env.fleeting().is_none();
     if recipe.add.is_empty() {
         // Shown so the same lines can be put in by hand.
         let nested = recipe.key.rsplit('.').fold(json!({SERVER:server(env)}), |inner, part| json!({part:inner}));
         status["how"] = json!("file");
-        status["snippet"] = json!(serde_json::to_string_pretty(&nested).unwrap_or_default());
+        if lasting {
+            status["snippet"] = json!(serde_json::to_string_pretty(&nested).unwrap_or_default());
+        }
     } else {
         status["how"] = json!("command");
-        status["add"] = json!(typed(&provider.command, &providers::fill(&recipe.add, "laci", &laci)));
+        if lasting {
+            status["add"] = json!(typed(&provider.command, &providers::fill(&recipe.add, "laci", &laci)));
+        }
         status["remove"] = json!(typed(&provider.command, &recipe.remove));
     }
     status
@@ -248,6 +254,12 @@ pub fn apply(env: &Env, provider: &Provider, remove: bool) -> Result<Value> {
     let file = paths::home_path(&recipe.file, env)?;
     if !env.program.is_absolute() {
         return Err("Laci could not tell where its own program is installed".into());
+    }
+    // macOS runs a downloaded Laci from a copy it removes when Laci quits, or from the disk image, and an AppImage
+    // runs from a folder that goes with it: an agent told to start that program would find nothing later. Taking the
+    // server off needs no program and still works.
+    if !remove && let Some(why) = env.fleeting() {
+        return Err(why.into());
     }
     let before = status(env, provider);
     if remove && before["state"] == "missing" {
@@ -494,6 +506,54 @@ mod tests {
             r"& 'C:\Program Files\Agent\agent.exe' mcp remove laci"
         );
         assert_eq!(powershell(&[r"C:\Tools\agent.exe", "mcp"]), r"C:\Tools\agent.exe mcp");
+    }
+    #[test]
+    fn a_program_that_is_gone_once_laci_quits_is_never_offered_to_an_agent() {
+        let home = tempfile::tempdir().unwrap();
+        let mut env = env(home.path());
+        let by_file = tool(&env, json!({"file":"~/.tool/mcp.json"}));
+        let by_command = tool(&env, json!({"file":"~/.agent/mcp.json","add":"add {laci} mcp","remove":"remove"}));
+        let file = home.path().join(".tool/mcp.json");
+        let moved = "Move Laci to Applications first, then connect it again.";
+        let unpacked = "Laci can't tell which AppImage file it runs from, and the folder it runs in is gone once it \
+                        quits. Start Laci from its AppImage file, then connect it again.";
+        let (mac, linux) = (cfg!(target_os = "macos"), cfg!(target_os = "linux"));
+        for (program, refused) in [
+            // macOS: the copy it made of a download, or a disk image.
+            ("/Volumes/Laci/Laci.app/Contents/MacOS/laci", mac.then_some(moved)),
+            ("/private/var/folders/x/T/AppTranslocation/0F1E/d/Laci.app/Contents/MacOS/laci", mac.then_some(moved)),
+            // Linux: the folder an AppImage runs from, when Laci couldn't make sure which AppImage that is.
+            ("/tmp/.mount_LaciAbC/usr/bin/laci", linux.then_some(unpacked)),
+            ("/tmp/appimage_extracted_9f2/usr/bin/laci", linux.then_some(unpacked)),
+            ("/opt/Laci/usr/bin/laci", None),
+        ] {
+            env.program = PathBuf::from(program);
+            assert_eq!(env.fleeting(), refused, "{program}");
+            // Nothing to set it up by hand either; taking it off is still shown.
+            let (shown, typed) = (status(&env, &by_file), status(&env, &by_command));
+            assert_eq!(
+                (shown["snippet"].is_string(), typed["add"].is_string()),
+                (refused.is_none(), refused.is_none())
+            );
+            assert_eq!(typed["remove"], "tool remove", "{program}");
+            let added = apply(&env, &by_file, false);
+            if let Some(why) = refused {
+                assert_eq!(added.unwrap_err(), why);
+                assert!(!file.exists(), "nothing was written");
+            } else {
+                // Elsewhere such a path is like any other.
+                assert!(added.err().is_none_or(|error| !error.contains("connect it again")), "{program}");
+                let _ = fs::remove_file(&file);
+            }
+        }
+        // Taking the server off needs no program that lasts. (On Windows a path without a drive is no program at all.)
+        if cfg!(unix) {
+            env.program = PathBuf::from("/Volumes/Laci/Laci.app/Contents/MacOS/laci");
+            let entry = json!({"command":"/Applications/Laci.app/Contents/MacOS/laci","args":["mcp"]});
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(&file, json!({"mcpServers":{"laci":entry}}).to_string()).unwrap();
+            assert_eq!(apply(&env, &by_file, true).unwrap()["status"]["state"], "missing");
+        }
     }
     #[cfg(unix)]
     #[test]

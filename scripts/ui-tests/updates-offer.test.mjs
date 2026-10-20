@@ -135,6 +135,9 @@ async function today({
       react: page.react,
       "../api": { api: d.api, errorText },
       "../update": d.update,
+      // What updates-unset.ts, beside api.ts and update.ts, asks.
+      "./api": { api: d.api, errorText },
+      "./update": d.update,
       "../store": {
         useApp: app,
         run: noop,
@@ -454,6 +457,9 @@ async function homeCard({ prefs = prefsWith(null), refusal, unreadAfter, inWindo
         urlOpen: noop,
       },
       "../update": d.update,
+      // What updates-unset.ts, beside api.ts and update.ts, asks.
+      "./api": { api: d.api, errorText },
+      "./update": d.update,
       "./ui": simpleBlocks(),
     },
     inWindow ? { document: { documentElement: { dataset: { os: "linux" } } } } : {},
@@ -575,6 +581,9 @@ async function home({ roots } = {}) {
         urlOpen: noop,
       },
       "../update": d.update,
+      // What updates-unset.ts, beside api.ts and update.ts, asks.
+      "./api": { api: d.api, errorText },
+      "./update": d.update,
       "./act": {
         addProjectFolder: noop,
         aiName: () => "Claude Code",

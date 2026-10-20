@@ -5,12 +5,11 @@
 // Laci up before 3.0 whether it may look for new versions at all.
 import { useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, ReactNode } from "react";
-import { api } from "../api";
 import { Icon, restoreFocus } from "../common";
 import { pref, savePref, toast, urlOpen } from "../store";
-import type { Prefs } from "../types";
 import { useUpdate } from "../update";
 import type { UpdateStatus } from "../update";
+import { useUpdatesUnset } from "../updates-unset";
 import { ago, firstRun, polish, settings } from "../words";
 import { Button, Callout, Disclosure, StatusChip } from "./ui";
 
@@ -420,35 +419,6 @@ export function UpdateCard() {
 }
 
 /**
- * Whether config.json holds no choice about new versions yet: a setup from before 3.0, or a first run
- * that was skipped. False until `prefs` says so, and when it can't: Settings asks the same question.
- * The desktop's news of the update follows every saved choice, so each piece of it reads `prefs`
- * again until a choice is known: one that first run saved as the window opened, or one made in
- * Settings. Nothing unsets a choice, so then it stops. Detailed's Today asks the same way
- * (views/today.tsx). Home may have nothing else that listens to that news, so this starts the store
- * listening; a page drawn without a window asks nothing, as refreshUpdate.
- */
-function useUpdatesUnset() {
-  const { status } = useUpdateStatus();
-  const [unset, setUnset] = useState<boolean>();
-  const known = unset === false;
-  useEffect(() => {
-    if (known || typeof document === "undefined") return;
-    let live = true;
-    void api<Prefs>("prefs").then(
-      (prefs) => {
-        if (live) setUnset(prefs?.updates === null);
-      },
-      () => undefined,
-    );
-    return () => {
-      live = false;
-    };
-  }, [known, status]);
-  return unset === true;
-}
-
-/**
  * Home's card that asks someone who set Laci up before 3.0 whether Laci may look for new versions, as
  * first run asks a new install. Either button saves the choice through the update store, as
  * Detailed's Settings › About & updates does, and the card is gone for good; until then Laci doesn't
@@ -456,6 +426,8 @@ function useUpdatesUnset() {
  * it is the user's consent to give.
  */
 export function UpdatesOffer() {
+  // Home may have nothing else that listens to the desktop's news of the update: this starts it.
+  useUpdateStatus();
   const unset = useUpdatesUnset();
   const [chosen, setChosen] = useState(false);
   const [sending, setSending] = useState(false);

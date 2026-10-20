@@ -1,5 +1,4 @@
-import { useEffect, useId, useState } from "react";
-import { api } from "../api";
+import { useId, useState } from "react";
 import {
   Icon,
   StatusGlyph,
@@ -15,6 +14,7 @@ import { useNow } from "../clock";
 import { BackupNotice } from "../backup";
 import { LookThumb } from "../looks";
 import { useUpdate } from "../update";
+import { useUpdatesUnset } from "../updates-unset";
 import { detailedSettings, firstRun, views } from "../words";
 import {
   latestReport,
@@ -28,7 +28,7 @@ import { DeadlinePill } from "../deadline";
 import { closeReportItem, toggleTodo } from "../actions";
 import { requestResume } from "../session-ui";
 import { askAgent } from "../agent-launch";
-import type { Node, Prefs, Tab } from "../types";
+import type { Node, Tab } from "../types";
 export function Today() {
   // Only what Today shows: news of a scan in progress doesn't draw it again.
   const snapshot = useApp((s) => s.snapshot!);
@@ -463,38 +463,6 @@ export function TrySimple() {
       </div>
     </div>
   );
-}
-/**
- * Whether config.json holds no choice about new versions yet: a setup from before 3.0, or a first run
- * that was skipped. False until `prefs` says so, and when it can't: Settings asks the same question.
- * The desktop's news of the update follows every saved choice, so each piece of it reads `prefs`
- * again until a choice is known: one that first run saved as the window opened, or one made in
- * Settings. Nothing unsets a choice, so then it stops. Simple's Home asks the same way
- * (simple/updates.tsx).
- */
-function useUpdatesUnset() {
-  const [unset, setUnset] = useState<boolean>();
-  const known = unset === false;
-  useEffect(() => {
-    if (known) return;
-    let live = true;
-    const read = () =>
-      void api<Prefs>("prefs").then(
-        (prefs) => {
-          if (live) setUnset(prefs?.updates === null);
-        },
-        () => undefined,
-      );
-    read();
-    const stop = useUpdate.subscribe((now, before) => {
-      if (now.status !== before.status) read();
-    });
-    return () => {
-      live = false;
-      stop();
-    };
-  }, [known]);
-  return unset === true;
 }
 /**
  * The card that asks someone who set Laci up before 3.0 whether Laci may look for new versions, as

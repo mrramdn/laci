@@ -148,12 +148,12 @@ fn every_git_call_switches_hooks_off() {
     assert!(calls > 0, "no Git call was traced");
 }
 
-/// The Git that makes a project gets what every scan's Git gets: hooks and the file system monitor switched off, so
-/// nothing the new folder brings along starts a program, and GIT_TERMINAL_PROMPT=0, so it asks nothing. Git's own
-/// trace, in a run of this test, shows what each call got.
+/// The Git that makes a project gets what every scan's Git gets but the hooks: the file system monitor switched off,
+/// and GIT_TERMINAL_PROMPT=0, so it asks nothing. The repository is the one Laci just made, so its hooks are the
+/// user's own and stay on. Git's own trace, in a run of this test, shows what each call got.
 #[test]
-fn the_git_that_makes_a_project_switches_hooks_off_and_asks_nothing() {
-    const TEST: &str = "the_git_that_makes_a_project_switches_hooks_off_and_asks_nothing";
+fn the_git_that_makes_a_project_keeps_its_hooks_and_asks_nothing() {
+    const TEST: &str = "the_git_that_makes_a_project_keeps_its_hooks_and_asks_nothing";
     if support::role().as_deref() == Some("create") {
         let home = PathBuf::from(std::env::var_os("LACI_TEST_HOME").unwrap());
         let request = serde_json::json!({"parent":home,"name":"made","from":"empty","remote":"none"});
@@ -184,7 +184,7 @@ fn the_git_that_makes_a_project_switches_hooks_off_and_asks_nothing() {
             continue;
         }
         let settings: Vec<&str> = argv.windows(2).filter(|pair| pair[0] == "-c").map(|pair| pair[1]).collect();
-        assert!(settings.contains(&hooks) && settings.contains(&"core.fsmonitor=false"), "{argv:?}");
+        assert!(settings.contains(&"core.fsmonitor=false"), "{argv:?}");
         let asks = events.iter().find(|event| {
             event["sid"] == start["sid"] && event["event"] == "def_param" && event["param"] == "GIT_TERMINAL_PROMPT"
         });
@@ -199,11 +199,75 @@ fn the_git_that_makes_a_project_switches_hooks_off_and_asks_nothing() {
                 other => break other,
             }
         };
+        // What makes the repository keeps its hooks; a question about it, as everywhere else, goes without.
+        let making = command.is_some_and(|command| ["init", "add", "commit"].contains(command));
+        assert_eq!(settings.contains(&hooks), !making, "{argv:?}");
         made.extend(command.map(|command| command.to_string()));
     }
     for command in ["init", "add", "commit"] {
         assert!(made.iter().any(|made| made == command), "{command} went without them: {made:?}");
     }
+}
+
+/// A project made from a template whose files Git LFS tracks gets the hook Git LFS puts in a new repository, and its
+/// first push uploads those files, as with 2.5.2. A stand-in glab makes the GitLab repository a bare one on the disk.
+/// Without Git LFS on PATH there is nothing to check.
+#[test]
+fn a_new_projects_first_push_uploads_its_git_lfs_files() {
+    const TEST: &str = "a_new_projects_first_push_uploads_its_git_lfs_files";
+    if support::role().as_deref() == Some("lfs") {
+        let home = PathBuf::from(std::env::var_os("LACI_TEST_HOME").unwrap());
+        let env = Env::for_home(home.clone());
+        let template = home.join("template");
+        laci_core::create::add_template(&env, template.to_str().unwrap()).unwrap();
+        let request =
+            serde_json::json!({"parent":home,"name":"made","from":"template","template":template,"remote":"gitlab"});
+        let made = laci_core::create::create_project(&env, &request).unwrap();
+        assert_eq!(made["warnings"], serde_json::json!([]));
+        assert!(home.join("made/.git/hooks/pre-push").is_file(), "Git LFS put no pre-push hook in the new repository");
+        return;
+    }
+    if std::process::Command::new("git-lfs").arg("version").output().is_err() {
+        eprintln!("Git LFS isn't installed: nothing to check");
+        return;
+    }
+    let temp = support::tempdir();
+    let (home, bin, remotes) = (temp.path().join("home"), temp.path().join("bin"), temp.path().join("remotes"));
+    let template = home.join("template");
+    for dir in [&template, &bin, &remotes] {
+        fs::create_dir_all(dir).unwrap();
+    }
+    fs::write(template.join(".gitattributes"), "*.psd filter=lfs diff=lfs merge=lfs -text\n").unwrap();
+    fs::write(template.join("cover.psd"), [7u8; 2048]).unwrap();
+    // What `git lfs install` writes, and a name for the first commit.
+    let global = temp.path().join("gitconfig");
+    fs::write(
+        &global,
+        "[filter \"lfs\"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\tprocess = git-lfs filter-process\n\trequired = true\n[user]\n\tname = Test\n\temail = test@example.test\n",
+    )
+    .unwrap();
+    let bare = std::process::Command::new("git").args(["init", "-q", "--bare"]).arg(remotes.join("made.git")).output();
+    assert!(bare.unwrap().status.success());
+    support::script(
+        &bin.join("glab"),
+        "#!/bin/sh\nif [ \"$1\" = api ]; then printf '{\"web_url\":\"%s\"}' \"$LACI_TEST_REMOTES\"; fi\n",
+    );
+    let path = std::env::join_paths(
+        std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
+    )
+    .unwrap();
+    let run = support::program(TEST, "lfs")
+        .env("PATH", path)
+        .env("HOME", &home)
+        .env("GIT_CONFIG_GLOBAL", &global)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("LACI_TEST_HOME", &home)
+        .env("LACI_TEST_REMOTES", &remotes)
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}{}", String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
+    let uploaded = fs::read_dir(remotes.join("made.git/lfs/objects")).is_ok();
+    assert!(uploaded, "the first push left the Git LFS files behind");
 }
 
 /// gh pushes a new project with Git, which must ask nothing there either. A stand-in gh notes what it was given.

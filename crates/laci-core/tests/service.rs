@@ -104,6 +104,23 @@ fn unknown_session_script_fix_and_connector_requests_do_not_change_history() {
     assert!(cmd.unwrap().contains("'safe'"));
     assert_eq!(shell_quote("a' && b"), "'a'\\'' && b'");
 }
+/// The push that a branch without an upstream gets names the remote and the branch the repository chose: after
+/// `--end-of-options`, Git can't read one as an option, such as `--receive-pack`, which names a program to run, and the
+/// branch is a full ref.
+#[test]
+fn the_push_of_a_new_branch_never_reads_a_name_as_an_option() {
+    let (_temp, env, project) = fixture();
+    let mut service = Service::new(env);
+    let node = |remote: &str, branch: &str| {
+        json!({"name":"demo","path":project,"issues":[{"code":"unpushed"}],
+            "git":{"upstream":"","branch":branch,"remotes":[{"name":remote}]}})
+    };
+    let (cmd, run, _) = service.action(&node("origin", "main"), "fix", "unpushed").unwrap();
+    assert_eq!(cmd.as_deref(), Some("git push -u --end-of-options 'origin' 'refs/heads/main'"));
+    assert!(!run, "the terminal shows it before it runs");
+    let (cmd, _, _) = service.action(&node("--receive-pack=touch pwned", "--force"), "fix", "unpushed").unwrap();
+    assert_eq!(cmd.as_deref(), Some("git push -u --end-of-options '--receive-pack=touch pwned' 'refs/heads/--force'"));
+}
 #[test]
 fn a_script_whose_name_begins_with_a_dash_is_not_started() {
     let (_temp, env, project) = fixture();

@@ -247,3 +247,14 @@ fn local_backups_cannot_borrow_pack_or_loose_object_subdirectories() {
         assert!(dir.join("README.md").exists());
     }
 }
+
+/// The repository names its remotes. One named like an option, such as `--push`, is still the remote whose live refs
+/// back the project up: Git never reads it as an option.
+#[test]
+fn a_remote_named_like_an_option_is_still_the_backup() {
+    let (_home, env, dir, node) = fixture();
+    git(&dir, &["remote", "rename", "origin", "--", "--push"]);
+    let plan = deletion::plan(&env, &node).unwrap();
+    assert_eq!(plan["allowed"], true, "{plan}");
+    assert_eq!(plan["checks"][0]["title"], "Local Git refs verified on --push");
+}

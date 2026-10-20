@@ -64,7 +64,7 @@ pub(crate) fn check_archive_destination(env: &Env, dest: &Path) -> Result<()> {
     paths::workspace_path(&dest.to_string_lossy(), env)?;
     let cfg = config::load(env);
     // Scan roots are deduplicated, but a nested archive selection has its own identity.
-    for root in paths::workspace_roots(env).into_iter().filter(|root| dest.starts_with(root)) {
+    for root in paths::workspace_roots(env).into_iter().filter(|root| paths::within(dest, root)) {
         check_root_identity(&root, &cfg)?;
     }
     Ok(())

@@ -11,6 +11,7 @@ mod terminal;
 mod user_path;
 
 pub use dirs::{home_dir, user_dirs};
+pub use ffi::start_detached;
 pub use fs::{
     IDENTITY_FIELDS, Lock, change_stamp, copy_link, file_change_stamp, identity, lock, preserve, rename_noreplace,
 };

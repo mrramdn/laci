@@ -377,3 +377,53 @@ pub fn environment_changed() -> io::Result<()> {
     }
     Ok(())
 }
+
+use windows_sys::Win32::System::Threading::{
+    CREATE_NEW_PROCESS_GROUP, CreateProcessW, DETACHED_PROCESS, PROCESS_INFORMATION, STARTUPINFOW,
+};
+
+/// See [`crate::platform::start_detached`]; `args` are plain words already. std's Command can't do this: it always
+/// lets a new process inherit every handle of this one's that may be inherited, among them the pipes a caller gave
+/// this one for its output, which the new process would then hold open as long as it runs.
+pub fn start_detached(program: &Path, args: &[&str], dir: &Path) -> io::Result<()> {
+    let (application, dir) = (wide(program)?, wide(dir)?);
+    // The program in quotes, which no Windows path holds, then the words.
+    let mut line: Vec<u16> = iter::once(u16::from(b'"'))
+        .chain(program.as_os_str().encode_wide())
+        .chain(iter::once(u16::from(b'"')))
+        .chain(args.iter().flat_map(|arg| iter::once(u16::from(b' ')).chain(arg.encode_utf16())))
+        .chain(iter::once(0))
+        .collect();
+    let startup = STARTUPINFOW {
+        cb: u32::try_from(size_of::<STARTUPINFOW>()).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?,
+        ..Default::default()
+    };
+    let mut started = PROCESS_INFORMATION::default();
+    // SAFETY: `application` and `dir` are NUL-terminated UTF-16 buffers that live until the call returns, which only
+    // reads them; `line` is one too, and mutable, as the call may write inside it. No security attributes and no
+    // environment of its own: it gets this process's. bInheritHandles is FALSE, so the new process gets no handle of
+    // this one's, and `startup` gives it none either (dwFlags 0). DETACHED_PROCESS: no console, neither this one's nor
+    // a new one; CREATE_NEW_PROCESS_GROUP: Ctrl+C here doesn't reach it. `startup` is a STARTUPINFOW whose size `cb`
+    // gives, and `started` a PROCESS_INFORMATION; both live until the call returns, which fills in only `started`.
+    let created = unsafe {
+        CreateProcessW(
+            application.as_ptr(),
+            line.as_mut_ptr(),
+            ptr::null(),
+            ptr::null(),
+            0,
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            ptr::null(),
+            dir.as_ptr(),
+            &startup,
+            &mut started,
+        )
+    };
+    if created == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: CreateProcessW opened both handles for this process alone, and nothing else has them: each is owned here
+    // once, and closed when dropped. Laci doesn't wait for the process, and closing them doesn't end it.
+    drop(unsafe { (OwnedHandle::from_raw_handle(started.hProcess), OwnedHandle::from_raw_handle(started.hThread)) });
+    Ok(())
+}

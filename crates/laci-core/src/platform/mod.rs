@@ -359,6 +359,28 @@ pub fn terminal_script_args(app: &str, cwd: &Path, cmd: Option<&str>, confirm: b
     os::terminal_script_args(app, cwd, cmd, confirm)
 }
 
+/// Starts `program` with the plain words `args` (no spaces or quotes), working in `dir`, in a process group of its own
+/// so that Ctrl+C here doesn't reach it, and returns without waiting for it. It gets nothing of this process's input
+/// and output, so a caller that reads everything this process prints, as an agent's shell reads a command's output,
+/// is done once this process exits, however long that program runs. On Windows it gets none of this process's handles
+/// at all, nor a console; elsewhere its input and output are /dev/null.
+pub fn start_detached(program: &Path, args: &[&str], dir: &Path) -> io::Result<()> {
+    if args.iter().any(|arg| arg.is_empty() || arg.contains(|c: char| c == '"' || c.is_whitespace())) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "An argument there must be a plain word"));
+    }
+    #[cfg(windows)]
+    {
+        os::start_detached(program, args, dir)
+    }
+    #[cfg(unix)]
+    {
+        use std::{os::unix::process::CommandExt, process::Stdio};
+        let mut command = Command::new(program);
+        command.args(args).current_dir(dir).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        command.process_group(0).spawn().map(drop)
+    }
+}
+
 /// Puts the folder `dir` on the user's Path, or takes it off, as Windows keeps the Path in the registry: Laci's
 /// installer puts the console program's folder there with `laci __path add`, and the uninstaller takes it off. Answers
 /// whether the Path changed. Only Windows keeps such a Path; elsewhere this fails.

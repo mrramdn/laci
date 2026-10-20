@@ -7,15 +7,31 @@ rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
 license.workspace = true
+# `cargo run` and `tauri dev` start the window's program, also when the console program is built too.
+default-run = "laci"
 
 [lints]
 workspace = true
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+# The console program, laci-cli, which Windows' installer ships as bin\laci.exe: the `laci` people and agents run
+# there, since the window's program has no console. tauri-cli leaves out a program whose features are off, so the
+# Linux and macOS packages stay as they are.
+console = []
 # A WebDriver server inside the app for scripts/window-smoke.mjs. Test builds only: anyone on this computer could
 # drive a window that has it.
 e2e = ["dep:tauri-plugin-wdio-webdriver"]
+
+# The window's program. Without a command it opens the window; src/lib.rs answers the commands of both programs.
+[[bin]]
+name = "laci"
+path = "src/main.rs"
+
+[[bin]]
+name = "laci-cli"
+path = "src/bin/laci-cli.rs"
+required-features = ["console"]
 
 [build-dependencies]
 tauri-build.workspace = true

@@ -6,6 +6,8 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+Laci stays Linux-only: Windows and macOS versions won't be made.
+
 ## [2.5.2] - 2026-10-20
 
 A security update for anyone who opens projects they didn't make themselves.

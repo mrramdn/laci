@@ -2016,7 +2016,7 @@ export const polish = {
     neverChecked: "Laci hasn’t looked for a new version yet.",
     checkNow: "Check now",
     checkAgain: "Check again",
-    readyToInstall: (version: string) => `Version ${version} is ready to install.`,
+    /** Found and not yet downloaded: "ready" waits for the download, as Detailed's words do. */
     isAvailable: (version: string) => `Version ${version} is available.`,
     released: (when: string) => `Released ${when}.`,
     whatsNew: (version: string) => `What’s new in ${version}`,
@@ -2057,7 +2057,9 @@ export const polish = {
   },
   /** Home's card, which says it once for a version and then leaves it to Settings. */
   card: {
-    title: "A new version of Laci is ready",
+    /** Until the new version is downloaded it is available; once it is, it is ready. */
+    title: "A new version of Laci is available",
+    titleReady: "A new version of Laci is ready",
     canInstall: (version: string) => `Version ${version} can be installed now.`,
     notNow: "Not now",
     hidden: (version: string) =>

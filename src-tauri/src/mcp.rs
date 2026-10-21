@@ -1576,7 +1576,8 @@ mod tests {
         report["byProject"][other.as_str()] = json!({"open":["Slides for p1"],"openCount":1});
         let id = string(report, "id").to_owned();
         let found = call(&mut service, "open_items", &json!({"project":big,"kind":"report"})).unwrap();
-        let listed: Vec<(&str, &str)> = array(&found["items"])
+        let items = array(&found["items"]);
+        let listed: Vec<(&str, &str)> = items
             .iter()
             .filter(|i| i["report"] == id.as_str())
             .map(|i| (string(i, "item"), string(i, "text")))

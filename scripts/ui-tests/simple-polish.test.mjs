@@ -321,7 +321,7 @@ const disclosure = (page) =>
  * the test's own. The browser's storage is `storage`; `inWindow` false draws it as the page tests do
  * in Node, where there is no document.
  */
-function updatesPage(part, { storage = newStorage(), inWindow = true } = {}) {
+function updatesPage(part, { storage = newStorage(), inWindow = true, props = null, document } = {}) {
   const page = standIn();
   const d = desktop();
   const session = startWindow({ storage });
@@ -343,9 +343,9 @@ function updatesPage(part, { storage = newStorage(), inWindow = true } = {}) {
       "../readme": markdown,
       "./ui": simpleBlocks({ Disclosure: disclosure(page) }),
     },
-    inWindow ? { document: { documentElement: { dataset: {} } } } : {},
+    inWindow ? { document: document ?? { documentElement: { dataset: {} } } } : {},
   );
-  page.mount(createElement(updates[part]));
+  page.mount(createElement(updates[part], props));
   return {
     ...page,
     d,
@@ -664,6 +664,51 @@ export async function theCardIsOnHomeOnlyWhileUpdatesAreOnAndOneIsWaiting() {
   }
 }
 
+export async function theSidebarsFootTellsOfAVersionFoundHoweverItWasFound() {
+  const opened = [];
+  const shown = [];
+  const panel = {
+    scrollIntoView: (options) => shown.push(["scroll", options]),
+    focus: (options) => shown.push(["focus", options]),
+  };
+  const document = {
+    documentElement: { dataset: {} },
+    getElementById: (id) => (id === "simple-update-status" ? panel : null),
+  };
+  const page = updatesPage("UpdatePlace", { props: { onOpen: () => opened.push("settings") }, document });
+  const place = () => page.find((n) => n.props["data-ui"] === "update-place");
+  await page.looks(status("idle", { checkedAt: CHECKED, enabled: false }));
+  assert.ok(!place(), "nothing is known");
+  for (const next of [status("checking", { enabled: false }), status("error", { error: "Offline", enabled: false })]) {
+    await page.told(next);
+    assert.ok(!place(), next.state);
+  }
+  // Check now found it while Laci doesn't look by itself: the foot tells of it all the same.
+  for (const [next, state] of [
+    [status("available", { ...NEW, enabled: false }), "available"],
+    [status("available", { ...NEW, install: "notice" }), "available"],
+    [status("downloading", { ...NEW, progress: 40, enabled: false }), "downloading"],
+    [status("error", { ...NEW, error: "The download stopped.", enabled: false }), "available"],
+    [status("ready", { ...NEW, enabled: false }), "ready"],
+  ]) {
+    await page.told(next);
+    assert.equal(place()?.textContent, say.foot[state], state);
+    assert.equal(place().props.title, say.footNote[state]("3.0.1"));
+    assert.equal(place().props["aria-label"], `${say.foot[state]}. ${say.footNote[state]("3.0.1")}`);
+  }
+  // It leads to Settings › Updates, and brings where the update stands into view.
+  page.act(() => place().props.onClick());
+  assert.deepEqual(opened, ["settings"]);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(shown, [
+    ["scroll", { block: "center" }],
+    ["focus", { preventScroll: true }],
+  ]);
+  // Restarted into the new version: nothing to tell.
+  await page.told(status("idle", { current: "3.0.1", enabled: false }));
+  assert.ok(!place());
+}
+
 export async function theCardHasOneButtonForTheNextStepAndNotNow() {
   const page = updatesPage("UpdateCard");
   await page.looks(status("available", NEW));
@@ -854,6 +899,18 @@ export async function settingsShowsThePanelAboveTheChoiceAndAsksAgainWhenItIsMad
     [["updates", { updates: "daily" }]],
   );
   assert.deepEqual(d.names(), ["update/status", "update/status"], "asked again once it was saved");
+  // Not looking points to Check now only while the panel shows it: a version found has Install there.
+  const offNote = () =>
+    page.find((n) => n.type === "label" && n.textContent.startsWith(words.settings.updateChoices.off)).textContent;
+  assert.match(offNote(), /Use Check now to look once\./);
+  d.emit(status("available", { ...NEW, notes: undefined, enabled: false }));
+  await page.settle();
+  assert.ok(!updates.descendants().some((n) => n.type === "button" && n.textContent === say.checkNow));
+  assert.doesNotMatch(offNote(), /Check now/);
+  assert.match(offNote(), new RegExp(words.settings.updateNoteOffFound));
+  d.emit(status("idle", { checkedAt: CHECKED, enabled: false }));
+  await page.settle();
+  assert.match(offNote(), /Use Check now to look once\./);
 }
 
 export async function homeKeepsTheCardFirstInItsSideColumnAndTheOneFilledButtonIsStillOne() {

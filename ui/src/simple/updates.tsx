@@ -116,17 +116,74 @@ export function refreshUpdate() {
   if (typeof document !== "undefined") void useUpdate.getState().refresh();
 }
 
-/** What the update store holds, drawn again when it changes. The first look asks where the update stands. */
-function useUpdateStatus() {
+/**
+ * What the update store holds, drawn again when it changes. The first look asks where the update
+ * stands, unless `ask` is false: a part beside another one that asks.
+ */
+function useUpdateStatus(ask = true) {
   const [held, setHeld] = useState(() => useUpdate.getState());
   useEffect(() => {
     const stop = useUpdate.subscribe((state) => setHeld(state));
     // Whatever came between the first draw and now.
     setHeld(useUpdate.getState());
-    refreshUpdate();
+    if (ask) refreshUpdate();
     return stop;
-  }, []);
+  }, [ask]);
   return held;
+}
+
+/**
+ * Whether the panel offers Check now, for the words beside the choice not to look, which point to it
+ * only while it is there: a version found has Install or Restart in its place. The panel asks.
+ */
+export function useCheckNowShown() {
+  const { status, refusal } = useUpdateStatus(false);
+  return actionOf(stepOf(status, refusal !== null), status)?.label === say.checkNow;
+}
+
+/** Where Settings › Updates says where the update stands, for the sidebar's foot to lead to. */
+const PANEL_ID = "simple-update-status";
+/** Brings Settings › Updates into view once Settings has drawn it. */
+function showPanel() {
+  let tries = 0;
+  const look = () => {
+    const panel = document.getElementById(PANEL_ID);
+    if (panel) {
+      panel.scrollIntoView({ block: "center" });
+      panel.focus({ preventScroll: true });
+    } else if (++tries < 40) setTimeout(look, 50);
+  };
+  setTimeout(look, 0);
+}
+
+/**
+ * At the foot of the sidebar, above Settings, while a new version is known, whether the daily look
+ * or Check now found it: available, on its way, or installed and waiting for a restart, as Detailed's
+ * badge says it. It leads to Settings › Updates, which shows what to do about it.
+ */
+export function UpdatePlace({ onOpen }: { onOpen: () => void }) {
+  const { status } = useUpdateStatus();
+  if (!status?.version || status.state === "idle") return null;
+  const state =
+    status.state === "ready" || status.state === "downloading" ? status.state : "available";
+  const note = say.footNote[state](status.version);
+  return (
+    <button
+      type="button"
+      className="s-place"
+      data-ui="update-place"
+      data-state={state}
+      title={note}
+      aria-label={`${say.foot[state]}. ${note}`}
+      onClick={() => {
+        onOpen();
+        showPanel();
+      }}
+    >
+      <Icon name={state === "ready" ? "refresh-cw" : "cloud-download"} />
+      <span>{say.foot[state]}</span>
+    </button>
+  );
 }
 
 /**
@@ -298,7 +355,7 @@ export function UpdatePanel() {
     <div className="s-set-group">
       <div data-ui="update-panel" data-step={step}>
         {/* One region the words come and go in, so each step is read out once it is there. */}
-        <div ref={anchor} tabIndex={-1} role="status">
+        <div ref={anchor} id={PANEL_ID} tabIndex={-1} role="status">
           <Line step={step} status={status} />
           {detail ? <p className="s-quiet">{detail}</p> : null}
           {refusal && step !== "unread" && refusal !== detail ? (

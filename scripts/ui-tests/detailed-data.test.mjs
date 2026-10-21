@@ -431,7 +431,7 @@ export async function aCheckLeavesAnUndoInPlace() {
   assert.equal(app.state().toast.undo, "j1");
 }
 
-export async function theBadgeShowsOnlyANewVersionLaciFoundByItself() {
+export async function theBadgeShowsANewVersionHoweverItWasFound() {
   // The desktop hasn't answered: no badge.
   const app = sidebar();
   await app.page.settle();
@@ -441,10 +441,13 @@ export async function theBadgeShowsOnlyANewVersionLaciFoundByItself() {
     return app.page.find((n) => n.props["data-ui"] === "update-badge");
   };
   assert.equal(badge(null), undefined);
-  // Updates off, or nothing new: no badge.
+  // Nothing new: no badge.
   assert.equal(badge(status("idle")), undefined);
-  assert.equal(badge(found("available", { enabled: false })), undefined);
+  assert.equal(badge(status("idle", { enabled: false })), undefined);
   assert.equal(badge(status("error", { error: "Offline" })), undefined);
+  // Check now found it while Laci doesn't look by itself: the foot still tells of it.
+  assert.match(badge(found("available", { enabled: false })).textContent, /^Update available3\.0\.1$/);
+  assert.match(badge(found("ready", { enabled: false })).textContent, /^Update ready3\.0\.1$/);
   const available = badge(found("available"));
   assert.match(available.textContent, /^Update available3\.0\.1$/);
   assert.equal(available.props.title, words.update.badgeNote.available("3.0.1"));
@@ -455,6 +458,20 @@ export async function theBadgeShowsOnlyANewVersionLaciFoundByItself() {
   // A look that runs again while one is available keeps the badge, as does a download that failed.
   assert.ok(badge(found("checking")));
   assert.ok(badge(found("error", { error: "The download stopped." })));
+}
+
+export async function theFootSaysTheScanIsOfTheProjectsBesideTheUpdate() {
+  const app = sidebar({ update: found("available") });
+  await app.page.settle();
+  const scanButton = () =>
+    app.page.find((n) => n.type === "button" && n.props.onClick && /Last full scan/.test(n.props.title ?? ""));
+  // The scan's status never reads as if Laci were up to date while a new version is on offer.
+  assert.ok(app.page.find((n) => n.props["data-ui"] === "update-badge"));
+  assert.equal(scanButton().textContent, words.scan.checked);
+  assert.doesNotMatch(scanButton().textContent, /up to date/i);
+  app.page.act(() => app.store.useApp.setState({ busy: true }));
+  assert.equal(scanButton().textContent, words.scan.checking);
+  assert.deepEqual(words.scan, { checked: "Projects checked", checking: "Checking projects…", failed: "Scan failed" });
 }
 
 export async function theBadgeFollowsTheDesktopsNews() {

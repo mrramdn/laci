@@ -27,6 +27,7 @@ import { SettingsPage } from "./SettingsPage";
 import { dayOf, urgentCount } from "./model";
 import { readNotNow, useSimple } from "./state";
 import { MoreMenu } from "./ui";
+import { UpdatePlace } from "./updates";
 
 const TerminalPanel = lazy(() => import("../TerminalPanel"));
 /** The terminal, whose pane gets its name as soon as its code is in. */
@@ -225,6 +226,7 @@ function Nav({ view }: { view: View }) {
         })}
       </ul>
       <div className="s-navfoot">
+        <UpdatePlace onOpen={() => navigate("settings")} />
         <button
           type="button"
           className="s-place"

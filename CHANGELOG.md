@@ -57,6 +57,10 @@ Laci stays Linux-only: Windows and macOS versions won't be made.
 - **Automatic history backups run while the window stays open**, also when nothing changes on disk.
 - **A move or Undo to another drive checks first that the project can leave its folder.** A source that can't be removed now stops the move before anything is copied. Before, it was copied first, and a half-deleted source beside the copy blocked the rollback and every later Undo.
 - **Making a project never waits on a hidden password prompt.** The Git and `gh` that make it ask nothing, so a clone or push that needs a login fails with Git's message instead of waiting unseen until it timed out.
+- **A new version found before a restart is still offered after it.** Laci said "No newer version was found" after a restart, although its last check had found one. Settings now shows that version with *Install*, which reads GitHub again for the download.
+- **The foot of the sidebar says "Projects checked" for its scan of the project folders**, not "Up to date", which read as if Laci itself were current. A new version that *Check now* found shows there too, also when Laci doesn't look by itself, in both designs.
+- **Detailed's update button says "Downloading…" while the download runs**, and "Installing…" only once it is in.
+- **Simple's "Don't look for new versions" stops pointing to *Check now* while an update is found**, since *Install* or *Restart* is in its place.
 
 ### Security
 

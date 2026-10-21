@@ -9,7 +9,7 @@ import { useNow } from "../clock";
 import { Icon } from "../common";
 import { bytes, cap, deadlineInfo, providerName, tilde, within } from "../helpers";
 import { useHealth, useNotesDraft } from "../hooks";
-import { activityModel, chatsModel } from "../selectors";
+import { activityModel } from "../selectors";
 import { requestResume } from "../session-ui";
 import {
   copyText,
@@ -50,6 +50,7 @@ import {
   fixable,
   hiddenIssues,
   issueCount,
+  projectChats,
   safetyIssues,
   toneOf,
 } from "./model";
@@ -612,18 +613,15 @@ function TodoRow({ n, t }: { n: Node; t: Node["tasks"][number] }) {
 
 function ChatsCard({ n, snapshot }: { n: Node; snapshot: Snapshot }) {
   const now = useNow();
-  const model = chatsModel(snapshot, {}, now);
-  const mine = model.groups.find((group) => group.node?.id === n.id)?.items ?? [];
-  // Quick chats fold away behind the others; when there are only quick ones, they show.
-  const long = mine.filter((c) => !c.short);
-  const shown = long.length ? long : mine;
-  const quick = long.length ? mine.length - long.length : 0;
+  // Quick chats fold away behind the others; when there are only quick ones, they show. The line
+  // under the list says how many it leaves out, so the page and the card's count agree.
+  const { shown, more, quick, total } = projectChats(snapshot, n, now);
   return (
     <Card
       title={said.chats.title}
       icon="message-square"
       footer={
-        mine.length ? (
+        total ? (
           <button
             type="button"
             className="s-link"
@@ -637,11 +635,13 @@ function ChatsCard({ n, snapshot }: { n: Node; snapshot: Snapshot }) {
       {shown.length ? (
         <>
           <ul className="s-chats">
-            {shown.slice(0, 3).map((c) => (
+            {shown.map((c) => (
               <ChatRow key={c.session.file} c={c} n={n} snapshot={snapshot} />
             ))}
           </ul>
-          {quick ? <p className="s-quiet">{said.chats.quick(quick)}</p> : null}
+          {more || quick ? (
+            <p className="s-quiet">{said.chats.rest(more, quick)}</p>
+          ) : null}
         </>
       ) : (
         <EmptyState

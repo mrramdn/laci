@@ -298,6 +298,23 @@ export async function reportsAreFoundByTheirProjectsPath() {
     "POSIX keeps its case",
   );
   assert.equal(helpers.latestReport(data, "/work/app").id, "posix.md");
+  // A report on two projects: each sees only the items about it.
+  const both = {
+    ...report("both.md", ["/work/app", "/work/infra"]),
+    date: "2026-10-02",
+    open: ["Slides for the app", "infra has no remote"],
+    openCount: 2,
+    byProject: {
+      "/work/app": { open: ["Slides for the app"], openCount: 1 },
+      "/work/infra": { open: ["infra has no remote"], openCount: 1 },
+    },
+  };
+  const two = { reports: [both, ...data.reports] };
+  const ofInfra = helpers.latestReport(two, "/work/infra");
+  assert.equal(ofInfra.id, "both.md");
+  assert.deepEqual([ofInfra.open, ofInfra.openCount], [["infra has no remote"], 1]);
+  assert.deepEqual(helpers.latestReport(two, "/work/app").open, ["Slides for the app"]);
+  assert.deepEqual(helpers.reportById(two, "both.md").open, both.open, "the report itself keeps every item");
 }
 
 // ── The store's copy ──────────────────────────────────────────────────────────────────────────────

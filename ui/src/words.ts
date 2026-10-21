@@ -85,9 +85,10 @@ export const shell = {
   detailedSwitch: "Switch to Detailed view",
   theme: "Theme",
   themes: { system: "Like the system", light: "Light", dark: "Dark" },
-  upToDate: "Up to date",
-  checking: "Checking…",
-  checkFailed: "Couldn’t check",
+  /** The check of the project folders, at the foot of the sidebar and of Home: never of Laci's version. */
+  upToDate: "Projects checked",
+  checking: "Checking projects…",
+  checkFailed: "Couldn’t check projects",
   checkAgain: (status: string) =>
     `${status}. Check your project folders again`,
   checkedAt: (when: string) =>
@@ -417,7 +418,9 @@ export const project = {
     by: (ai: string, when: string) => `${ai}, ${when}`,
     messages: (n: number) => count(n, "message"),
     files: (n: number) => `${count(n, "file")} changed`,
-    quick: (n: number) => `and ${count(n, "quick chat")}`,
+    /** What the list leaves out: the chats past the first few, and the quick ones. */
+    rest: (more: number, quick: number) =>
+      `and ${[more ? count(more, "more chat") : "", quick ? count(quick, "quick chat") : ""].filter(Boolean).join(" and ")}`,
     continue: "Continue",
     continueFor: (title: string) => `Continue: ${title}`,
     read: "Read",
@@ -1714,6 +1717,8 @@ export const settings = {
       "Laci tells you when a new version is ready, and installs nothing until you choose to.",
     off: "Laci won’t look by itself. Use Check now to look once.",
   },
+  /** The same note while a version found has Install or Restart where Check now was. */
+  updateNoteOffFound: "Laci won’t look by itself.",
   updatesUnset: "You haven’t chosen yet, so Laci doesn’t look.",
   updatesPrivacy:
     "A check only asks GitHub which version is newest: like any visit to a website it shows your internet address, and it sends nothing about your projects.",
@@ -1855,6 +1860,12 @@ export const dialogs = {
  * names (FIX_LABEL in helpers.ts); what they open says it plainly.
  */
 export const detailedData = {
+  /** The scan of the project folders, at the foot of the sidebar beside the update's badge. */
+  scan: {
+    checked: "Projects checked",
+    checking: "Checking projects…",
+    failed: "Couldn’t check projects",
+  },
   update: {
     /** The badge: what it says beside the new version, or beside how much of it has arrived. */
     badge: {
@@ -1963,6 +1974,7 @@ export const detailedSettings = {
   check: "Check now",
   checking: "Checking…",
   install: "Install",
+  downloadingButton: "Downloading…",
   installing: "Installing…",
   restart: "Restart",
   releasePage: "Open the release page",
@@ -2020,6 +2032,21 @@ export const polish = {
       "Restart Laci to finish the update. Restarting closes the terminals in Laci, and the AI chats running in them.",
     restart: "Restart Laci",
     failed: "Laci couldn’t finish the update.",
+    /** At the foot of the sidebar while a new version is known, in the words of Detailed's badge. */
+    foot: {
+      available: "Update available",
+      downloading: "Downloading update",
+      ready: "Update ready",
+    },
+    /** What that place says when it is pointed at, and to a screen reader after its words. */
+    footNote: {
+      available: (version: string) =>
+        `Version ${version} is available. Settings shows how to get it.`,
+      downloading: (version: string) =>
+        `Laci is downloading version ${version}. Settings shows how far it is.`,
+      ready: (version: string) =>
+        `Version ${version} is installed. Restart Laci from Settings to use it.`,
+    },
     // The release notes come from the web: pictures wait to be asked for, and only web and mail
     // links open.
     picturesHidden: (n: number) =>

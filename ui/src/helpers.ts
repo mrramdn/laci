@@ -298,6 +298,30 @@ export function counted(id: string, snapshot: Snapshot) {
     )
   );
 }
+const chatsByNode = new WeakMap<Snapshot, Map<string, Conversation[]>>();
+/**
+ * A project's AI chats, as every list of chats shows them: the conversations of all sessions, each
+ * in the project its newest session is in. A subagent's log is part of the chat that started it,
+ * so a subagent that worked in another project is no chat of that project. Worked out once a scan.
+ */
+export function chatsOf(node: Node, snapshot: Snapshot): Conversation[] {
+  let byNode = chatsByNode.get(snapshot);
+  if (!byNode) {
+    const owners = new Map<string, string>();
+    for (const [id, sessions] of indexSessions(snapshot).byNode)
+      for (const session of sessions) owners.set(sessionKey(session), id);
+    byNode = new Map();
+    for (const c of conversations(allSessions(snapshot))) {
+      const id = owners.get(sessionKey(c.session));
+      if (!id) continue;
+      const list = byNode.get(id);
+      if (list) list.push(c);
+      else byNode.set(id, [c]);
+    }
+    chatsByNode.set(snapshot, byNode);
+  }
+  return byNode.get(node.id) ?? [];
+}
 const agentCounts = new WeakMap<Snapshot, WeakMap<Node, number>>();
 /**
  * A project's conversations, and the agent history Laci has no session for. Worked out once for
@@ -309,7 +333,7 @@ export function agentCount(node: Node, snapshot: Snapshot) {
   let count = counts.get(node);
   if (count === undefined) {
     count =
-      conversations(sessionsOf(node, snapshot)).length +
+      chatsOf(node, snapshot).length +
       node.agents.items.filter(
         (id) =>
           counted(id, snapshot) &&
@@ -663,10 +687,19 @@ export const reportsOfProject = (
   snapshot: Snapshot | null | undefined,
   path: string,
 ) => indexReports(snapshot).byProject.get(path) ?? NO_REPORTS;
-export const latestReport = (
+/**
+ * The project's newest report, with only the open items about that project: a report on several projects says
+ * which project each item is about.
+ */
+export function latestReport(
   snapshot: Snapshot | null | undefined,
   path: string,
-): Report | undefined => reportsOfProject(snapshot, path)[0];
+): Report | undefined {
+  const report = reportsOfProject(snapshot, path)[0];
+  if (!report?.byProject) return report;
+  const own = report.byProject[path] ?? { open: [], openCount: 0 };
+  return { ...report, open: own.open, openCount: own.openCount };
+}
 /** The session ids one conversation went by: its newest session and those it continued. */
 export const conversationIds = (c: Conversation) => [
   c.session.sessionId,

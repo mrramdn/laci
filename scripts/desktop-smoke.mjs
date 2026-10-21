@@ -4532,7 +4532,7 @@ try {
             async () => !(await api("status")).busy,
           );
           await wait("sidebar reports the completed scan", () =>
-            textContains(".sb-foot button", "Up to date"),
+            textContains(".sb-foot button", "Projects checked"),
           );
         },
       );

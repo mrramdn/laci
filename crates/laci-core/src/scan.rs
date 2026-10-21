@@ -10,7 +10,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 
-use crate::{Result, agents, config, env::Env, files, paths, platform, readers};
+use crate::{Result, agents, config, env::Env, files, paths, platform, progress::Step, readers};
 
 static DOCS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^(readme|notes?|handoff|todo|tasks)[\w.-]*\.md$").expect("docs pattern"));
@@ -228,8 +228,14 @@ pub fn scan(env: &Env) -> Result<Value> {
     let roots = roots(env, &cfg);
     let on = agents::connectors(env, &cfg);
     let history = agents::read_all(env, &on);
-    let found = available_roots(env, &cfg).iter().filter_map(|r| detect(env, r, &history.paths, 0)).collect();
+    let found = find(env, &cfg, &history.paths);
     build(env, cfg["roots"].is_array(), roots, on, history, found, started)
+}
+
+fn find(env: &Env, cfg: &Value, agent_paths: &BTreeSet<PathBuf>) -> Vec<Found> {
+    env.progress.start(Step::Folders, 0, 0);
+    let _done = env.progress.until_done();
+    available_roots(env, cfg).iter().filter_map(|r| detect(env, r, agent_paths, 0)).collect()
 }
 
 fn build(
@@ -249,14 +255,17 @@ fn build(
     }
     // Bound subprocess and disk concurrency, even on hosts reporting many CPU cores.
     let pool = rayon::ThreadPoolBuilder::new().num_threads(6).build().map_err(|e| e.to_string())?;
+    env.progress.start(Step::Projects, blanks.len() as u64, 0);
+    let done = env.progress.until_done();
     let enriched: Vec<_> = pool.install(|| {
         blanks
             .into_par_iter()
             .filter_map(|blank| {
                 let path = Path::new(blank["path"].as_str()?);
-                let mut n =
-                    if blank["kind"] == "folder" { readers::folder(env, path) } else { readers::project(env, path) }
-                        .ok()?;
+                let read =
+                    if blank["kind"] == "folder" { readers::folder(env, path) } else { readers::project(env, path) };
+                env.progress.advance(0);
+                let mut n = read.ok()?;
                 for key in ["kind", "type", "parent", "children", "archived"] {
                     if !blank[key].is_null() {
                         n[key] = blank[key].clone();
@@ -277,6 +286,7 @@ fn build(
             })
             .collect()
     });
+    drop(done);
     let mut nodes: BTreeMap<String, Value> =
         enriched.into_iter().filter_map(|n| Some((n["id"].as_str()?.to_owned(), n))).collect();
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
@@ -323,7 +333,7 @@ pub fn refresh_agents(env: &Env, snapshot: &mut Value) -> Result<bool> {
     let roots = roots(env, &cfg);
     let on = agents::connectors(env, &cfg);
     let mut history = agents::read_all(env, &on);
-    let found: Vec<_> = available_roots(env, &cfg).iter().filter_map(|r| detect(env, r, &history.paths, 0)).collect();
+    let found = find(env, &cfg, &history.paths);
     let mut graph = Vec::new();
     let archive_dir = configured_archive(env, &cfg);
     for node in &found {

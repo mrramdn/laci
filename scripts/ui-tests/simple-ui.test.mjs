@@ -549,6 +549,10 @@ function simpleWindow(patch = {}) {
       "./model": { dayOf: () => "2026-10-08", urgentCount: () => 0 },
       "./state": { readNotNow: () => new Set(), useSimple: page.store({ notNow: 0 }) },
       "./ui": { MoreMenu: nothing },
+      "./updates": {
+        UpdatePlace: ({ onOpen }) =>
+          createElement("button", { "data-ui": "update-place", onClick: onOpen }, "Update ready"),
+      },
     },
     { document: page.document, HTMLElement: Host },
   );
@@ -561,6 +565,28 @@ function simpleWindow(patch = {}) {
     press: (key) =>
       page.document.fire("keydown", keyEvent(key, new Host(page, "div"))),
   };
+}
+
+export async function theSidebarsFootSaysTheProjectsWereCheckedAndLeadsToAnUpdate() {
+  const shell = load("words.ts").shell;
+  const foot = (patch) => {
+    const window = simpleWindow(patch);
+    const scan = window.find((n) => n.props.className === "s-place s-scan");
+    return { window, scan };
+  };
+  // The scan's status is about the project folders, never about Laci's own version.
+  const { window, scan } = foot();
+  assert.equal(scan.textContent, "Projects checked");
+  assert.equal(foot({ busy: true }).scan.textContent, "Checking projects…");
+  assert.equal(foot({ error: "Disk gone" }).scan.textContent, "Couldn’t check projects");
+  assert.equal(shell.upToDate, "Projects checked");
+  // A new version that is known sits at the top of the foot, above Settings, and leads there.
+  const navfoot = window.find((n) => n.props.className === "s-navfoot");
+  const kids = navfoot.children.filter((n) => n instanceof Host);
+  assert.equal(kids[0].props["data-ui"], "update-place");
+  assert.equal(kids[1].props["data-view"], "settings");
+  window.act(() => kids[0].props.onClick());
+  assert.deepEqual(window.navigated, ["settings"]);
 }
 
 export async function theSimpleWindowWaitsWhileASheetIsOpen() {

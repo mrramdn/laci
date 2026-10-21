@@ -23,7 +23,7 @@ use std::{
 pub const LIMIT: usize = 1_000;
 const MAX_BYTES: u64 = 2_000_000;
 const ENTRIES: usize = 20_000;
-const CACHE: &str = "reports-v2.json";
+const CACHE: &str = "reports-v3.json";
 /// Open items a report shows in the snapshot.
 const OPEN_ITEMS: usize = 8;
 /// Open items the parse cache keeps per report, so each can be closed on its own.
@@ -241,14 +241,15 @@ pub fn parse(name: &str, text: &str, modified: &str) -> Value {
                 fields.push((c[1].trim().to_lowercase(), c[2].trim().to_owned()));
             } else if continued && let Some((_, value)) = fields.last_mut() {
                 // Indented lines continue the field above; a nested bullet is one more entry in it.
-                let (separator, text) = match BULLET.captures(line) {
-                    Some(b) => ("; ", b.get(2).map_or("", |m| m.as_str()).trim()),
-                    None => (" ", line.trim()),
-                };
-                if !value.is_empty() {
-                    value.push_str(separator);
+                match BULLET.captures(line) {
+                    Some(b) => add_entry(value, b.get(2).map_or("", |m| m.as_str()).trim()),
+                    None => {
+                        if !value.is_empty() {
+                            value.push(' ');
+                        }
+                        value.push_str(line.trim());
+                    }
                 }
-                value.push_str(text);
             } else if fields.last().is_some_and(|(key, _)| !key.is_empty()) {
                 // A blank or unindented line ends the field.
                 fields.push((String::new(), String::new()));
@@ -481,6 +482,18 @@ fn first_paragraph(lines: &[&str]) -> String {
     readers::strip_md(&text.join(" "))
 }
 
+/// Adds a nested bullet to the entry above it, after "; ". A label ("**Next:**") or an entry that already ends in
+/// punctuation is followed by a space alone, so the text reads "Next: a; b", never "Next:; a;; b".
+fn add_entry(text: &mut String, entry: &str) {
+    let end = text.trim_end_matches(|c: char| c.is_whitespace() || "*_`".contains(c)).chars().last();
+    if end.is_some_and(|c| ":;,.!?".contains(c)) {
+        text.push(' ');
+    } else if end.is_some() {
+        text.push_str("; ");
+    }
+    text.push_str(entry);
+}
+
 /// One entry per bullet or numbered line; indented lines belong to the entry above. A section without a
 /// list counts each paragraph as one entry.
 fn open_items(lines: &[&str]) -> Vec<String> {
@@ -504,10 +517,7 @@ fn open_items(lines: &[&str]) -> Vec<String> {
                 paragraph = false;
             }
             Some(b) => match current.as_mut() {
-                Some(item) => {
-                    item.push_str("; ");
-                    item.push_str(&CHECKBOX.replace(b[2].trim(), ""));
-                }
+                Some(item) => add_entry(item, &CHECKBOX.replace(b[2].trim(), "")),
                 None => current = Some(CHECKBOX.replace(b[2].trim(), "").into_owned()),
             },
             None => match current.as_mut() {
@@ -569,24 +579,87 @@ impl Linker {
     /// A report names projects by path, by the folder its session started in, and through its session
     /// ids. The last survives a project that Laci moved: moves rewrite the paths in session logs.
     fn link(&self, env: &Env, facts: &Value) -> Vec<String> {
-        let named = facts["projectPaths"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .chain(facts["sessionPaths"].as_array().into_iter().flatten())
-            .filter_map(Value::as_str)
-            .map(|raw| paths::expand(raw, &env.home))
-            .filter(|p| p.is_absolute());
-        let worked = facts["sessions"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .flat_map(|id| self.sessions.get(id).into_iter().flatten().cloned());
-        let linked: BTreeSet<String> =
-            named.chain(worked).filter_map(|p| self.project(&p)).map(|p| p.to_string_lossy().into_owned()).collect();
+        let mut linked = self.projects_of(env, &facts["projectPaths"]);
+        linked.extend(self.worked_in(env, facts));
         linked.into_iter().collect()
     }
+    /// The projects that hold the paths in `list`.
+    fn projects_of(&self, env: &Env, list: &Value) -> BTreeSet<String> {
+        list.as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(|raw| paths::expand(raw, &env.home))
+            .filter(|p| p.is_absolute())
+            .filter_map(|p| self.project(&p))
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect()
+    }
+    /// The projects the report's sessions worked in: the folder its header names for them, and where they ran.
+    fn worked_in(&self, env: &Env, facts: &Value) -> BTreeSet<String> {
+        let mut worked = self.projects_of(env, &facts["sessionPaths"]);
+        worked.extend(
+            facts["sessions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .flat_map(|id| self.sessions.get(id).into_iter().flatten())
+                .filter_map(|p| self.project(p))
+                .map(|p| p.to_string_lossy().into_owned()),
+        );
+        worked
+    }
+    /// For a report linked to several projects, the open items about each: those that name a project are about
+    /// it, and the rest are about the one project the report's sessions worked in. Where they worked in none or in
+    /// several, an item that names no project is about none of them.
+    fn items_by_project(&self, env: &Env, facts: &Value, projects: &[String], items: &[String]) -> Value {
+        let worked: Vec<&String> = {
+            let worked = self.worked_in(env, facts);
+            projects.iter().filter(|p| worked.contains(*p)).collect()
+        };
+        let mut by: serde_json::Map<String, Value> =
+            projects.iter().map(|p| (p.clone(), json!({"open":[],"openCount":0}))).collect();
+        for item in items {
+            let named: Vec<&String> = projects
+                .iter()
+                .filter(|p| Path::new(p).file_name().is_some_and(|name| names(item, &name.to_string_lossy())))
+                .collect();
+            let about = if !named.is_empty() {
+                named
+            } else if worked.len() == 1 {
+                worked.clone()
+            } else {
+                Vec::new()
+            };
+            for project in about {
+                let entry = &mut by[project.as_str()];
+                if let Some(open) = entry["open"].as_array_mut().filter(|open| open.len() < OPEN_ITEMS) {
+                    open.push(json!(item));
+                }
+                entry["openCount"] = json!(entry["openCount"].as_u64().unwrap_or(0) + 1);
+            }
+        }
+        Value::Object(by)
+    }
+}
+
+/// Whether `text` names a project called `name`, as a word or the end of a path: "ubunkii-infra" and
+/// "~/project/ubunkii-infra/nginx" name ubunkii-infra, but "infra" alone, "cloud.mrramdn.com" (for mrramdn.com) and
+/// "lacing" (for laci) don't.
+fn names(text: &str, name: &str) -> bool {
+    let (text, name) = (text.to_lowercase(), name.to_lowercase());
+    if name.chars().count() < 2 {
+        return false;
+    }
+    let part = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
+    text.match_indices(&name).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let mut after = text[at + name.len()..].chars();
+        let next = after.next();
+        !before.is_some_and(|c| part(c) || c == '.')
+            && !next.is_some_and(|c| part(c) || (c == '.' && after.next().is_some_and(char::is_alphanumeric)))
+    })
 }
 
 /// Puts the reports folder's state and its reports into a snapshot, linked to the snapshot's projects and
@@ -626,6 +699,9 @@ pub fn attach(env: &Env, snapshot: &mut Value) {
             let items: Vec<String> =
                 listed.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
             let (open, done) = still_open(&items, &closed[c.name.as_str()]);
+            let projects = linker.link(env, &facts);
+            // Which project each item is about, so a project shows only its own.
+            let by_project = (projects.len() > 1).then(|| linker.items_by_project(env, &facts, &projects, &open));
             let mut report = json!({
                 "id": c.name,
                 "file": c.path,
@@ -634,10 +710,13 @@ pub fn attach(env: &Env, snapshot: &mut Value) {
                 "modified": c.modified,
                 "bytes": c.bytes,
                 "sessions": facts["sessions"],
-                "projects": linker.link(env, &facts),
+                "projects": projects,
                 "open": open.into_iter().take(OPEN_ITEMS).collect::<Vec<_>>(),
                 "openCount": (facts["openCount"].as_u64().unwrap_or(0) as usize).saturating_sub(done),
             });
+            if let Some(by_project) = by_project {
+                report["byProject"] = by_project;
+            }
             if done > 0 {
                 report["closedCount"] = json!(done);
                 // In the report's order, so a closed item can be opened again by its number.
@@ -981,6 +1060,54 @@ mod tests {
         let facts = parse("x.md", text, MODIFIED);
         assert_eq!(facts["summary"], "How a report looks.");
         assert_eq!(facts["open"], json!(["The real item"]));
+    }
+
+    #[test]
+    fn nested_items_under_a_label_read_as_one_sentence() {
+        let text = "## Open\n- **rifkii:**\n  - merges of the open PRs;\n  - one real test message, answered from Gmail;\n  \
+            - the Umami login.\n- **Next:**\n  - the review results for #42\n  - Bing import.\n- Ship it\n  - with notes\n";
+        assert_eq!(
+            parse("t.md", text, MODIFIED)["open"],
+            json!([
+                "rifkii: merges of the open PRs; one real test message, answered from Gmail; the Umami login.",
+                "Next: the review results for #42; Bing import.",
+                "Ship it; with notes"
+            ])
+        );
+        let header = "# T\n\n- **Projects:**\n  - ~/project/a (main);\n  - ~/project/b\n";
+        assert_eq!(parse("t.md", header, MODIFIED)["scope"], "~/project/a (main); ~/project/b");
+    }
+
+    #[test]
+    fn an_item_belongs_to_the_project_it_names_or_to_where_the_session_worked() {
+        let env = Env::for_home(PathBuf::from("/h"));
+        let (uts, infra, site) = ("/h/tugas/pre-uts", "/h/project/ubunkii-infra", "/h/project/mrramdn.com");
+        let mut nodes = json!({});
+        for path in [uts, infra, site] {
+            nodes[path] = json!({"kind":"project","path":path});
+        }
+        let linker = Linker::new(&env, &json!({"nodes":nodes,"sessions":[],"items":{}}));
+        let facts = json!({"projectPaths":[uts, infra],"sessionPaths":[uts],"sessions":[]});
+        let projects = linker.link(&env, &facts);
+        let items = [
+            "Team data: README team table and roles are placeholders.",
+            "Database changes after UTS: no backup cron for /srv/kumpul yet.",
+            "ubunkii-infra still has no remote.",
+        ]
+        .map(str::to_owned);
+        let by = linker.items_by_project(&env, &facts, &projects, &items);
+        assert_eq!(by[uts], json!({"open":[items[0], items[1]],"openCount":2}));
+        assert_eq!(by[infra], json!({"open":[items[2]],"openCount":1}));
+        // Started above both projects, the session tells nothing: an item that names neither is about neither.
+        let facts = json!({"projectPaths":[site, infra],"sessionPaths":["/h/project"],"sessions":[]});
+        let projects = linker.link(&env, &facts);
+        let items = ["Next: cloud.mrramdn.com OG; nginx rate limit", "mrramdn.com contact card", "Bing import"]
+            .map(str::to_owned);
+        let by = linker.items_by_project(&env, &facts, &projects, &items);
+        assert_eq!(by[site], json!({"open":[items[1]],"openCount":1}));
+        assert_eq!(by[infra], json!({"open":[],"openCount":0}));
+        assert!(names("see ~/project/ubunkii-infra/nginx.", "ubunkii-infra"));
+        assert!(names("Laci 3.0 is out", "laci") && !names("lacing", "laci") && !names("ubunkii-infra", "infra"));
     }
 
     #[test]

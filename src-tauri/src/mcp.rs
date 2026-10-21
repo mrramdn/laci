@@ -866,19 +866,22 @@ fn open_items(service: &mut Service, args: &Value) -> Result<Value, String> {
             if only.as_deref().is_some_and(|p| !projects.iter().any(|x| x.as_str() == Some(p))) {
                 continue;
             }
+            // For one project, a report on several lists only the items about that project.
+            let own = only.as_deref().map(|p| &r["byProject"][p]).filter(|own| own.is_object());
+            let about = |text: &Value| own.is_none_or(|own| array(&own["open"]).contains(text));
             let mut listed = false;
             for (i, text) in array(&r["open"]).iter().enumerate() {
-                if !fits(&format!("{} {}", text.as_str().unwrap_or(""), string(&r, "title"))) {
+                if !about(text) || !fits(&format!("{} {}", text.as_str().unwrap_or(""), string(&r, "title"))) {
                     continue;
                 }
-                // A string, as close_report_item takes it.
+                // A string, as close_report_item takes it: its number among all the report's items.
                 items.push(json!({"kind":"report","report":r["id"],"item":(i + 1).to_string(),"text":text}));
                 listed = true;
             }
             // A report lists its first open items. Words can't match the rest, unless the title alone holds them all.
-            let shown = array(&r["open"]).len() as u64;
+            let shown = array(&r["open"]).iter().filter(|text| about(text)).count() as u64;
             let hidden = if words.is_empty() || fits(string(&r, "title")) {
-                r["openCount"].as_u64().unwrap_or(0).saturating_sub(shown)
+                own.map_or(&r["openCount"], |own| &own["openCount"]).as_u64().unwrap_or(0).saturating_sub(shown)
             } else {
                 0
             };
@@ -1558,6 +1561,29 @@ mod tests {
         if let Ok(found) = found {
             assert_eq!(found["path"], json!(big));
         }
+    }
+
+    #[test]
+    fn a_project_lists_only_the_report_items_about_it() {
+        let (_dir, mut service, big) = busy_home();
+        let snapshot = service.current.as_mut().unwrap();
+        let other = snapshot["reports"][0]["projects"][1].as_str().unwrap().to_owned();
+        let report = &mut snapshot["reports"][0];
+        report["open"] = json!(["Slides for p1", "p0 has no remote"]);
+        report["openCount"] = json!(3);
+        report["byProject"] = json!({});
+        report["byProject"][big.as_str()] = json!({"open":["p0 has no remote"],"openCount":2});
+        report["byProject"][other.as_str()] = json!({"open":["Slides for p1"],"openCount":1});
+        let id = string(report, "id").to_owned();
+        let found = call(&mut service, "open_items", &json!({"project":big,"kind":"report"})).unwrap();
+        let items = array(&found["items"]);
+        let listed: Vec<(&str, &str)> = items
+            .iter()
+            .filter(|i| i["report"] == id.as_str())
+            .map(|i| (string(i, "item"), string(i, "text")))
+            .collect();
+        assert_eq!(listed, [("2", "p0 has no remote")], "numbered as in the report");
+        assert_eq!(found["reports"][&id]["hidden"], 1);
     }
 
     #[test]

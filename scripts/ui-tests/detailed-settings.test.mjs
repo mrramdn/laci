@@ -427,7 +427,7 @@ export async function theOneButtonFollowsTheUpdateAndKeepsItsPlace() {
   assert.equal(p.asked("update/install").length, 1);
   await p.emit(status("downloading", { ...FOUND, progress: 40 }));
   assert.equal(part(p, "update-status").textContent, said.downloading("3.0.1", 40));
-  assert.equal(action(p).textContent, said.installing);
+  assert.equal(action(p).textContent, said.downloadingButton, "it downloads; it installs once that is done");
   assert.equal(action(p).props["aria-busy"], true);
   // A click while it works does nothing.
   p.act(() => action(p).props.onClick());
@@ -662,10 +662,13 @@ export async function updateViewSaysWhereItStandsInWords() {
   assert.deepEqual(view("downloading", { ...FOUND, progress: 40 }), {
     line: "Downloading version 3.0.1… 40%",
     bad: false,
-    action: action("install", said.installing, true),
+    action: action("install", "Downloading…", true),
     hint: "",
   });
   assert.equal(view("downloading", FOUND).line, "Downloading version 3.0.1…");
+  assert.deepEqual(view("downloading", FOUND).action, action("install", "Downloading…", true));
+  // The whole download is in: the install that follows takes a moment.
+  assert.deepEqual(view("downloading", { ...FOUND, progress: 100 }).action, action("install", said.installing, true));
   assert.deepEqual(view("ready", FOUND), {
     line: "Version 3.0.1 is ready. Restart Laci to finish.",
     bad: false,

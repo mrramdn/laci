@@ -232,7 +232,11 @@ export function Sidebar() {
             <span className="live-dot" />
           )}
           <span>
-            {error ? "Scan failed" : updating ? "Updating…" : "Up to date"}
+            {error
+              ? detailedData.scan.failed
+              : updating
+                ? detailedData.scan.checking
+                : detailedData.scan.checked}
           </span>
         </button>
         <div className="sb-row">
@@ -308,14 +312,13 @@ export function DesignToggle() {
   );
 }
 /**
- * At the foot of the sidebar while there is a new version to get, when Laci looks for one by itself
- * (updates: "daily"): available, on its way, or installed and waiting for a restart. In the narrow
- * rail its version becomes a dot. Settings shows what to do about it.
+ * At the foot of the sidebar while there is a new version to get, whether the daily look or Check now
+ * found it: available, on its way, or installed and waiting for a restart. In the narrow rail its
+ * version becomes a dot. Settings shows what to do about it.
  */
 function UpdateBadge({ onOpen }: { onOpen: () => void }) {
   const update = useUpdateStatus();
-  if (!update?.enabled || !update.version || update.state === "idle")
-    return null;
+  if (!update?.version || update.state === "idle") return null;
   const said = detailedData.update;
   const state =
     update.state === "ready" || update.state === "downloading"

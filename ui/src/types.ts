@@ -456,6 +456,11 @@ export interface Report {
   open: string[];
   /** All entries under that heading, less the closed ones. */
   openCount: number;
+  /**
+   * With more than one project: the open entries about each, by path. An entry is about the projects it names, else
+   * the one its sessions worked in, else none.
+   */
+  byProject?: Record<string, { open: string[]; openCount: number }>;
   /** Entries the user closed in Laci; the report itself is unchanged. */
   closedCount?: number;
   /** Those entries, in the report's order. */

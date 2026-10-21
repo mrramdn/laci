@@ -58,6 +58,8 @@ Laci stays Linux-only: Windows and macOS versions won't be made.
 - **A move or Undo to another drive checks first that the project can leave its folder.** A source that can't be removed now stops the move before anything is copied. Before, it was copied first, and a half-deleted source beside the copy blocked the rollback and every later Undo.
 - **Making a project never waits on a hidden password prompt.** The Git and `gh` that make it ask nothing, so a clone or push that needs a login fails with Git's message instead of waiting unseen until it timed out.
 - **A project's summary from its README is its whole first paragraph.** A paragraph wrapped over several lines gave only its first line, and a long one was cut in the middle of a word. Now the lines are joined, and a summary that is too long ends after a whole word with "…".
+- **Report items with a list under a label read as one sentence**, such as "Next: the review; the fonts", instead of "Next:; the review;; the fonts".
+- **A report about several projects shows each project only its own items** on Home, Today and in MCP's `open_items`. An item belongs to the project it names, or else to the project its session worked in; the report itself still lists every item.
 
 ### Security
 

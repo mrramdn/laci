@@ -663,10 +663,19 @@ export const reportsOfProject = (
   snapshot: Snapshot | null | undefined,
   path: string,
 ) => indexReports(snapshot).byProject.get(path) ?? NO_REPORTS;
-export const latestReport = (
+/**
+ * The project's newest report, with only the open items about that project: a report on several projects says
+ * which project each item is about.
+ */
+export function latestReport(
   snapshot: Snapshot | null | undefined,
   path: string,
-): Report | undefined => reportsOfProject(snapshot, path)[0];
+): Report | undefined {
+  const report = reportsOfProject(snapshot, path)[0];
+  if (!report?.byProject) return report;
+  const own = report.byProject[path] ?? { open: [], openCount: 0 };
+  return { ...report, open: own.open, openCount: own.openCount };
+}
 /** The session ids one conversation went by: its newest session and those it continued. */
 export const conversationIds = (c: Conversation) => [
   c.session.sessionId,

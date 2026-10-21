@@ -85,16 +85,17 @@ test("versions: set writes every file, and only Laci's own entries of Cargo.lock
     copyFileSync(path.join(root, file), path.join(dir, file));
   }
   const lockBefore = readFileSync(path.join(dir, "Cargo.lock"), "utf8").split("\n");
-  setVersion("3.0.0-rc.1", dir);
-  assert.equal(currentVersion(dir), "3.0.0-rc.1");
+  // A version the checkout never holds, so the files change whatever version it is at.
+  setVersion("9.9.9-rc.1", dir);
+  assert.equal(currentVersion(dir), "9.9.9-rc.1");
   const lockAfter = readFileSync(path.join(dir, "Cargo.lock"), "utf8").split("\n");
   assert.equal(lockAfter.length, lockBefore.length);
   const changed = lockAfter.filter((line, i) => line !== lockBefore[i]);
-  assert.deepEqual(changed, ['version = "3.0.0-rc.1"', 'version = "3.0.0-rc.1"']);
+  assert.deepEqual(changed, ['version = "9.9.9-rc.1"', 'version = "9.9.9-rc.1"']);
   // A file left behind is named.
   const pkg = path.join(dir, "ui/package.json");
-  writeFileSync(pkg, readFileSync(pkg, "utf8").replace("3.0.0-rc.1", "3.0.0-rc.0"));
-  assert.throws(() => currentVersion(dir), /ui\/package.json: 3.0.0-rc.0/);
+  writeFileSync(pkg, readFileSync(pkg, "utf8").replace("9.9.9-rc.1", "9.9.9-rc.0"));
+  assert.throws(() => currentVersion(dir), /ui\/package.json: 9.9.9-rc.0/);
   assert.throws(() => setVersion("3.0", dir), /not a version/);
 });
 

@@ -204,7 +204,9 @@ fn busy_processes_with_names_or_folders_that_are_not_utf8_still_prevent_changes(
     // The kernel keeps 15 bytes of a program's name, so this one is cut inside the "é".
     let sleep = String::from_utf8(Command::new("which").arg("sleep").output().unwrap().stdout).unwrap();
     let renamed = temp.path().join("aaaaaaaaaaaaaaé");
-    fs::copy(sleep.trim(), &renamed).unwrap();
+    // cp writes the copy, not this process: a file this process has open for writing goes along into every program
+    // another test thread starts meanwhile, and Linux won't start it then ("Text file busy"), as in support::script.
+    assert!(Command::new("cp").arg(sleep.trim()).arg(&renamed).status().unwrap().success());
     let mut child = Command::new(&renamed).arg("30").current_dir(&from).spawn().unwrap();
     assert!(refused(&mut child).unwrap_err().contains("In use"));
     assert!(from.is_dir());

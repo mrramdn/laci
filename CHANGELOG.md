@@ -10,6 +10,8 @@ Laci 3.0: Simple, a second design for people new to Git and coding agents, a new
 
 Laci stays Linux-only: Windows and macOS versions won't be made.
 
+**From Laci 2**, download 3.0 by hand once: Laci 2 can't update itself. If you use the AppImage, replace the old file, then set up the agents that use Laci again (*Fix…* on the Agents page, or *Use this Laci…* in Simple's AI helpers › Tools), since they still start the old file.
+
 ### Added
 
 - **Simple, a new design.** The same projects, AI chats, to-dos and Undo, in a calmer layout with plain words: "saved version" for a commit, "upload" for a push, and each Git word named in Help. Its places are Home, Projects, AI helpers, Clean up and Activity, with Settings and Help at the foot of the sidebar.
@@ -35,6 +37,8 @@ Laci stays Linux-only: Windows and macOS versions won't be made.
 
 ### Changed
 
+- **Laci runs on Ubuntu 22.04 and the systems built on it**, such as Linux Mint 21, Zorin OS 17 and Pop!_OS 22.04, and on Debian 12. The packages are now built on Ubuntu 22.04 and need glibc 2.35; 2.5 needed 2.39.
+- **Releases say where they come from.** Each one carries `SHA256SUMS`, `provenance.json` and a build attestation for every file. [Verify a download](RELEASING.md#verify-a-download) shows how to check them.
 - **Detailed's text is at least 12 px.** Labels, counts, key hints, column heads and paths drew at 10 to 11.5 px.
 - **The window can be as small as 720 × 560**, and both designs fit it. In Detailed, from 880 px wide down, a project's details open as a sheet over the list, and filter bars wrap instead of sliding out of view.
 - **The first window fits the screen**, also on Wayland, and opens centred.

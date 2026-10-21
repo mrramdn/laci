@@ -11,7 +11,7 @@ laci shows every folder like a file manager, and for each project it adds its gi
   <img alt="Simple's Home: the one project that needs you most, the others that need you, what's next and where you left off" src="docs/screenshots/simple-light.png">
 </picture>
 
-> Status: 3.0, for Linux on x86-64. Rust + Tauri 2, with a React interface. See the [changelog](CHANGELOG.md).
+> Status: 3.0, for Linux on x86-64, in testing. Until 3.0.0 is out, its release candidates are pre-releases on the [releases page](https://github.com/mrramdn/laci/releases), and the latest release is 2.5.2. Rust + Tauri 2, with a React interface. See the [changelog](CHANGELOG.md).
 
 ## Contents
 
@@ -69,7 +69,7 @@ Laci runs on Linux. Windows and macOS versions won't be made: porting is complex
 
 ### Requirements
 
-- Linux on x86-64, with WebKitGTK 4.1.
+- Linux on x86-64, with WebKitGTK 4.1 and glibc 2.35 or newer: Ubuntu 22.04, Linux Mint 21, Zorin OS 17, Pop!_OS 22.04, Debian 12, a current Fedora, or anything newer.
 - `git`.
 - `gio` (from GLib), for moving things to the Trash.
 - `xdg-open` (from xdg-utils), for opening files and links.
@@ -84,7 +84,7 @@ Every release is on the [releases page](https://github.com/mrramdn/laci/releases
 
 | File | For | Updates |
 | --- | --- | --- |
-| `laci_<version>_amd64.AppImage` | Any Linux; nothing to install | Laci updates it itself, after asking you |
+| `laci_<version>_amd64.AppImage` | Any of the Linux systems above; nothing to install | Laci updates it itself, after asking you |
 | `laci_<version>_amd64.deb` | Ubuntu, Debian, Linux Mint, Pop!_OS | Download the new deb from the releases page |
 | `laci-<version>-1.x86_64.rpm` | Fedora and others that use dnf | Download the new rpm from the releases page |
 
@@ -114,7 +114,18 @@ sudo dnf install ./laci-*.x86_64.rpm     # Fedora
 
 Laci then appears with your other apps, and the `laci` command is installed for the [CLI](#cli) and [MCP](#agents-mcp). For a new version, download the new file and install it the same way: apt and dnf replace the old one. Laci tells you when one is out, with a link to its page, if you let it look.
 
+A release candidate (a version like `3.0.0-rc.2`) is the exception: apt and dnf take it for newer than the final `3.0.0`. Remove it first with `sudo apt remove laci` or `sudo dnf remove laci`, then install the final version. Your settings and data stay.
+
 To remove Laci, run `sudo apt remove laci` or `sudo dnf remove laci`, or delete the AppImage. Your settings and Laci's own data stay in `~/.config/laci` and `~/.local/share/laci` (see [Configuration](#configuration)).
+
+### From Laci 2
+
+Laci 2 can't update itself, so download 3.0 by hand once. From then on the AppImage updates itself.
+
+- **AppImage:** put the 3.0 AppImage where the old one was, make it executable, and delete the old file. AI agents you let use Laci under Laci 2 still start the old file, so set them up again: in Detailed, press *Fix…* beside *Points elsewhere* on the Agents page; in Simple, open AI helpers › Tools and choose *Use this Laci…*.
+- **deb or rpm:** install the new package as above. It replaces Laci 2, and agents keep starting the `laci` command.
+
+Your settings, the Log and everything else Laci keeps stay as they are.
 
 ### The first launch
 

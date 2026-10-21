@@ -8,8 +8,8 @@ Laci is released for Linux x86-64 from a tag. Pushing a tag `v<version>` starts 
 | --- | --- |
 | `laci_<version>_amd64.AppImage` | The app in one file. It can update itself from inside Laci. |
 | `laci_<version>_amd64.AppImage.sig` | The updater's signature of the AppImage, made with the key in the `release` environment. |
-| `laci_<version>_amd64.deb` | For Debian, Ubuntu and Mint. apt updates it. Laci only links to the release page. |
-| `laci-<version>-1.x86_64.rpm` | For Fedora and openSUSE. dnf or zypper updates it. Laci only links to the release page. |
+| `laci_<version>_amd64.deb` | For Debian, Ubuntu and Mint, installed with `apt install ./<file>`. A new version is downloaded from the release page and installed the same way; Laci only links to it. |
+| `laci-<version>-1.x86_64.rpm` | For Fedora, installed with `dnf install ./<file>`. Its dependencies have Fedora's names, so it is not for openSUSE. A new version is downloaded from the release page and installed the same way; Laci only links to it. |
 | `latest.json` | The updater feed: the version, the notes and the AppImage's address and signature. |
 | `provenance.json` | Where the packages come from: the commit, the tag, the run, the build's runner and glibc floor, the checks that passed and each file's SHA-256. |
 | `SHA256SUMS` | The SHA-256 of every other asset, for `sha256sum -c`. |
@@ -23,11 +23,12 @@ The packages are built on Ubuntu 22.04. They need glibc 2.35 or newer: Ubuntu 22
    - The tagged commit is on `main` or on a `release/*` branch.
    - `CHANGELOG.md` has the notes. A final version `X.Y.Z` needs `## [X.Y.Z] - YYYY-MM-DD`. A pre-release `X.Y.Z-rc.N` takes `## [X.Y.Z]` if there is one, and otherwise `## [Unreleased]`.
    - `THIRD_PARTY_NOTICES.md` is current (`node scripts/notices.mjs --check`).
-2. **build** runs `pnpm build` on Ubuntu 22.04 and reports the glibc floor. It checks that the WebDriver server is not in the build, and it runs `scripts/package-smoke.mjs` and the packaged AppImage's native regression, as `check.yml` does. Release runs use no caches.
-3. **sign** waits for rifkii's approval of the `release` environment. Only this job can read the updater key. It installs the Tauri CLI from the lockfile without running any package's scripts, then runs `tauri signer sign --app-version <version>` on the AppImage. Then it checks the signature against the public key in `src-tauri/tauri.conf.json`, the key every installed Laci uses to check updates.
-4. **finalize** writes `latest.json` and reads it the way the updater does. Every download it names must be among the assets, and its signature must verify under the app's key for the announced version. Then it writes `provenance.json` and `SHA256SUMS` and runs `sha256sum -c`.
-5. **attest** makes a build provenance attestation for every asset.
-6. **draft** creates the draft release, titled `Laci <version>`, with the CHANGELOG section as its notes. A version with a `-` is marked as a pre-release.
+2. **build** runs `pnpm build` on Ubuntu 22.04 and reports the glibc floor. It checks that the WebDriver server is not in the build, runs `scripts/package-smoke.mjs` and uploads the packages. Only then does it install `tauri-driver` (an exact version from crates.io, the one tool outside the lockfiles) and run the packaged AppImage's native regression, as `check.yml` does, so nothing installed for testing can change the files that get signed. Release runs use no caches.
+3. **install** installs the deb with apt on Ubuntu 22.04 and the rpm with dnf on Fedora, with the dependencies they name, and runs `laci --version` from each.
+4. **sign** waits for rifkii's approval of the `release` environment. Only this job can read the updater key. It installs the Tauri CLI from the lockfile without running any package's scripts, then runs `tauri signer sign --app-version <version>` on the AppImage. Then it checks the signature against the public key in `src-tauri/tauri.conf.json`, the key every installed Laci uses to check updates.
+5. **finalize** writes `latest.json` and reads it the way the updater does. Every download it names must be among the assets, and its signature must verify under the app's key for the announced version. Then it writes `provenance.json` and `SHA256SUMS` and runs `sha256sum -c`.
+6. **attest** makes a build provenance attestation for every asset.
+7. **draft** creates the draft release, titled `Laci <version>`, with the CHANGELOG section as its notes. A version with a `-` is marked as a pre-release.
 
 `bundle.createUpdaterArtifacts` stays off: `tauri.conf.json` doesn't turn it on, and the build doesn't either. With it on, the whole build would need the key, which means every crate's build script and every npm package would run next to it. Signing afterwards in a small job of its own gives the same signature: the same CLI, with the version in the signed comment, which is what `requireSignedVersion` checks.
 
@@ -60,6 +61,8 @@ The example is `3.0.0-rc.1`. For a final version, use `3.0.0`.
    node scripts/release/notes.mjs 3.0.0-rc.1
    ```
 
+   For a final version, also check the README's Status line, which names the latest release while release candidates are out.
+
 3. **Check the notices** if the lockfiles changed since the last release: `node scripts/notices.mjs --check`, or `pnpm notices` to write them again.
 
 4. **Open a pull request** with `Cargo.toml`, `Cargo.lock`, `package.json`, `ui/package.json`, `CHANGELOG.md` and any notices. Wait for CI. Optionally, run a dry run on the branch (`gh workflow run release.yml --ref release-3.0.0-rc.1`). Then merge it.
@@ -81,7 +84,8 @@ The example is `3.0.0-rc.1`. For a final version, use `3.0.0`.
 
 8. **Publish** under Releases → the draft → Edit → Publish release:
    - A release candidate stays a pre-release, and is never the latest release.
-   - A final version is published with "Set as the latest release" checked. From then on every installed final Laci finds it.
+   - A final version on the newest line (from `main`) is published with "Set as the latest release" checked. From then on every installed final Laci finds it.
+   - A final version from an older line's `release/*` branch, such as a 2.5.x fix after 3.0.0, is published with "Set as the latest release" **unchecked**. Checked, it would take over `releases/latest`, and every newer Laci would read its feed (or none), find nothing newer and say nothing. If it happens anyway, mark the newest release as the latest again: `gh release edit v<newest> --latest`.
 
    Once published, the release can't change.
 
@@ -102,6 +106,8 @@ Every release, final or candidate, carries a `latest.json` for its own assets. I
 
 - **A final version only ever sees final versions.** Release candidates are pre-releases, so `latest` never points at one. Laci also refuses a pre-release on a final version, whatever a feed says (`src-tauri/src/app/update.rs`). This guards against a release candidate marked as the latest release by mistake.
 - **A release candidate is offered the final version that follows it** (3.0.0 is newer than 3.0.0-rc.2). Before the first final version with a feed, `latest` is 2.5.2, which has no `latest.json`. That feed answers 404, and Laci says nothing.
+- **The latest release is the newest line's.** A fix for an older line, published from a `release/*` branch, must not be marked as the latest (step 8). Installed copies would read its feed, which is older or missing, so none would be offered an update until the newest release is marked as the latest again, and nothing would show an error.
+- **The deb and rpm of a release candidate rank above the final version.** Tauri writes the version as it is, and both dpkg and rpm sort `3.0.0-rc.2` after `3.0.0` (dpkg reads `rc.2` as a Debian revision; rpm counts it as more segments). To both, installing 3.0.0 over a candidate is a downgrade: apt asks first (and `apt-get install -y` refuses it without `--allow-downgrades`), and dnf lists it under Downgrading. Testers of a deb or rpm candidate remove it first (`sudo apt remove laci` or `sudo dnf remove laci`; settings and data stay), then install the final version. A release candidate's notes say so. Candidates among themselves (rc.1 to rc.2) and the AppImage are not affected.
 - **A release candidate is not offered the next candidate by itself.** A tester points it at the next candidate's feed with `LACI_UPDATE_ENDPOINT`, which must be an https address. Everything after that is the real update path:
   1. The feed is read the same way.
   2. The AppImage is downloaded from the release.
@@ -123,12 +129,12 @@ The tradeoff: a release-candidate channel that updates by itself would need a fe
      ~/Applications/laci_3.0.0-rc.1_amd64.AppImage
    ```
 
-4. In Settings → Updates, choose **Check now**. Laci should offer version 3.0.0-rc.2 with its notes and date. Choose **Install**, then **Restart**.
+4. In Settings → Updates (Simple) or Settings → About & updates (Detailed), choose **Check now**. In Detailed, <kbd>Ctrl</kbd> <kbd>K</kbd> → *Check for updates* does the same. Laci should offer version 3.0.0-rc.2 with its notes and date. Choose **Install**, then **Restart**.
 5. Check that the update took. The AppImage file keeps its name, but `~/Applications/laci_3.0.0-rc.1_amd64.AppImage --version` now prints `laci 3.0.0-rc.2`.
 6. The refusals:
    - rc.2 started with rc.1's feed offers nothing, because it is older.
    - rc.2 started without the variable offers nothing.
-   - An installed deb or rpm of rc.1, given rc.2's feed, shows a link to the release page instead of Install.
+   - An installed deb or rpm of rc.1, given rc.2's feed, shows a link to the release page instead of Install. (Going from a candidate's deb or rpm to the final version needs the candidate removed first; see above.)
 
 ## Verify a download
 
@@ -139,13 +145,21 @@ gh release download v3.0.0 -R mrramdn/laci     # every asset; or download them f
 sha256sum -c SHA256SUMS --ignore-missing      # each file you have must say OK
 ```
 
-Each asset has a build provenance attestation. It proves that the file was built by this repository's Release workflow, from the tagged commit:
+Published releases are immutable, and GitHub attests the release itself. This is the check that a file is the one that was released:
 
 ```sh
-gh attestation verify laci_3.0.0_amd64.AppImage -R mrramdn/laci
+gh release verify v3.0.0 -R mrramdn/laci                                       # the release and its assets
+gh release verify-asset v3.0.0 laci_3.0.0_amd64.AppImage -R mrramdn/laci       # this file is one of them
 ```
 
-Published releases are immutable, and GitHub attests the release itself too. `gh release verify v3.0.0 -R mrramdn/laci` checks that attestation. `gh release verify-asset v3.0.0 laci_3.0.0_amd64.AppImage -R mrramdn/laci` checks that a file is the one in the release.
+Each asset also has a build provenance attestation, made by the Release workflow before the draft. Check that it was made by `release.yml` for the tag, not by another workflow or branch of the repository:
+
+```sh
+gh attestation verify laci_3.0.0_amd64.AppImage -R mrramdn/laci \
+  --signer-workflow mrramdn/laci/.github/workflows/release.yml --source-ref refs/tags/v3.0.0
+```
+
+It proves where a file was built, not that it was published: a run whose draft was rejected, or whose tag was deleted and pushed again, leaves attestations under the same tag name. `provenance.json` names the commit; `--source-digest <commit>` pins that too.
 
 The updater signature can be checked from a checkout of this repository:
 

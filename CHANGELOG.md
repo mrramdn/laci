@@ -60,6 +60,10 @@ Laci stays Linux-only: Windows and macOS versions won't be made.
 - **A project's summary from its README is its whole first paragraph.** A paragraph wrapped over several lines gave only its first line, and a long one was cut in the middle of a word. Now the lines are joined, and a summary that is too long ends after a whole word with "…".
 - **Report items with a list under a label read as one sentence**, such as "Next: the review; the fonts", instead of "Next:; the review;; the fonts".
 - **A report about several projects shows each project only its own items** on Home, Today and in MCP's `open_items`. An item belongs to the project it names, or else to the project its session worked in; the report itself still lists every item.
+- **A new version found before a restart is still offered after it.** Laci said "No newer version was found" after a restart, although its last check had found one. Settings now shows that version with *Install*, which reads GitHub again for the download.
+- **The foot of the sidebar says "Projects checked" for its scan of the project folders**, not "Up to date", which read as if Laci itself were current. A new version that *Check now* found shows there too, also when Laci doesn't look by itself, in both designs.
+- **Detailed's update button says "Downloading…" while the download runs**, and "Installing…" only once it is in.
+- **Simple's "Don't look for new versions" stops pointing to *Check now* while an update is found**, since *Install* or *Restart* is in its place.
 
 ### Security
 

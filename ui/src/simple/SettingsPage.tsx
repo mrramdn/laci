@@ -50,7 +50,7 @@ import {
 } from "./model";
 import type { SettingsDraft, UpdateChoice } from "./model";
 import { Button, Callout, Card, Info, StatusChip } from "./ui";
-import { refreshUpdate, UpdatePanel } from "./updates";
+import { refreshUpdate, UpdatePanel, useCheckNowShown } from "./updates";
 
 /** A change to the draft, as a value or from the draft as it is then. */
 type Edit = (change: SetStateAction<SettingsDraft>) => void;
@@ -690,6 +690,8 @@ function UpdatesCard({
   prefs: Prefs | null;
   onPrefs: (prefs: Prefs) => void;
 }) {
+  // "Use Check now" only while the panel above shows it.
+  const checkNow = useCheckNowShown();
   const choose = (updates: UpdateChoice) =>
     void run(async () => {
       onPrefs(await api<Prefs>("updates", { updates }));
@@ -708,7 +710,8 @@ function UpdatesCard({
         options={UPDATE_CHOICES.map((value) => ({
           value,
           label: said.updateChoices[value],
-          note: said.updateNotes[value],
+          note:
+            value === "off" && !checkNow ? said.updateNoteOffFound : said.updateNotes[value],
         }))}
         onChange={choose}
       >

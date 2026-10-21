@@ -933,7 +933,13 @@ export function updateView(
       return {
         line: said.downloading(version, status.progress),
         bad: false,
-        action: { kind: "install", label: said.installing, busy: true },
+        // The download ends at 100%; the install that follows is quick.
+        action: {
+          kind: "install",
+          label:
+            status.progress === 100 ? said.installing : said.downloadingButton,
+          busy: true,
+        },
         hint: "",
       };
     case "ready":

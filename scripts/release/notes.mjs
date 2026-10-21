@@ -54,14 +54,28 @@ export function releaseNotes(changelog, version) {
   return section;
 }
 
-/** The text of the GitHub release: the notes, then where the packages come from and how to check them. */
-export function releaseBody(notes, { runUrl, runner, glibc }) {
+/**
+ * The text of the GitHub release: the notes, then where the packages come from and how to check them. A release
+ * candidate also says how its deb or rpm gives way to the final version: apt and dnf rank X.Y.Z-rc.N above X.Y.Z, so
+ * installing the final over it is a downgrade to them.
+ */
+export function releaseBody(notes, { version, runUrl, runner, glibc }) {
+  const parsed = parseVersion(version);
+  const core = parsed?.prerelease ? parsed.core : null;
+  const candidate = core
+    ? [
+        `**The deb or rpm of a release candidate:** apt and dnf take ${version} for newer than ${core}. ` +
+          `Before installing ${core}, remove this one with \`sudo apt remove laci\` or \`sudo dnf remove laci\`. ` +
+          "Your settings and Laci's data stay. The AppImage updates itself.",
+        "",
+      ]
+    : [];
   const built = [
     `Built and checked by [GitHub Actions](${runUrl}) on ${runner}`,
     glibc ? `, for Linux x86-64 with glibc ${glibc} or newer` : "",
     ". To check a download, see [Verify a download](https://github.com/mrramdn/laci/blob/main/RELEASING.md#verify-a-download).",
   ].join("");
-  return `${notes.trim()}\n\n---\n\n${built}\n`;
+  return `${notes.trim()}\n\n---\n\n${[...candidate, built].join("\n")}\n`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

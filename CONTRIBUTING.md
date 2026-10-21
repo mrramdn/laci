@@ -25,7 +25,7 @@ In the first terminal, build the native binary, create a demo home and start the
 node scripts/demo.ts /tmp/laci-demo
 pnpm -C ui build
 cargo build -p laci --features custom-protocol
-cargo install tauri-driver --locked
+cargo install tauri-driver --locked --version 2.1.0
 LACI_HOME=/tmp/laci-demo tauri-driver
 ```
 

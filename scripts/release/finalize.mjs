@@ -88,7 +88,7 @@ export function finalize(options, { changelog, now = new Date() }) {
 
   writeFileSync(
     path.join(out, "notes.md"),
-    releaseBody(section.body, { runUrl: options.runUrl, runner: options.runner, glibc: options.glibc }),
+    releaseBody(section.body, { version, runUrl: options.runUrl, runner: options.runner, glibc: options.glibc }),
   );
   log.push(`notes.md: from "${section.heading}"`);
   return log;

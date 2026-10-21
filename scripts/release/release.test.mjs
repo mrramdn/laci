@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { checkLatestJson, checkSums, downloadBase, latestJson, packageNames, sha256sums } from "./assets.mjs";
 import { finalize } from "./finalize.mjs";
 import { parsePublicKey, parseSignature, shippedPublicKey, verifyUpdate } from "./minisign.mjs";
-import { releaseNotes, sections } from "./notes.mjs";
+import { releaseBody, releaseNotes, sections } from "./notes.mjs";
 import { verify } from "./verify.mjs";
 import { currentVersion, parseTag, parseVersion, readVersions, root, setVersion } from "./version.mjs";
 
@@ -104,6 +104,17 @@ test("notes: a final version needs its dated section", () => {
   assert.throws(() => releaseNotes(CHANGELOG, "2.5.3"), /needs a section/);
   assert.throws(() => releaseNotes(CHANGELOG, "2.5.0"), /the date must be YYYY-MM-DD/);
   assert.throws(() => releaseNotes(CHANGELOG, "2.5.1"), /needs a section/);
+});
+
+test("notes: a release candidate's text tells deb and rpm users to remove it before the final", () => {
+  const where = { runUrl: "https://github.com/mrramdn/laci/actions/runs/1", runner: "ubuntu-22.04", glibc: "2.35" };
+  const candidate = releaseBody("Coming next.", { ...where, version: "3.0.0-rc.2" });
+  assert.match(candidate, /apt and dnf take 3\.0\.0-rc\.2 for newer than 3\.0\.0\./);
+  assert.match(candidate, /Before installing 3\.0\.0, remove this one with `sudo apt remove laci` or `sudo dnf remove laci`/);
+  assert.match(candidate, /\n\nBuilt and checked by/);
+  const final = releaseBody("Done.", { ...where, version: "3.0.0" });
+  assert.doesNotMatch(final, /apt remove/);
+  assert.match(final, /^Done\.\n\n---\n\nBuilt and checked by/);
 });
 
 test("notes: a pre-release takes its version's section, or Unreleased", () => {
@@ -258,6 +269,7 @@ test("finalize: a dry run writes every asset, checked", () => {
   assert.equal(prov.dryRun, true);
   assert.equal(prov.sourceTag, null);
   assert.equal(prov.glibc, "2.35");
+  assert.match(prov.checks.packageInstall, /^passed \(the deb with apt on Ubuntu 22\.04, the rpm with dnf on Fedora\)$/);
   assert.deepEqual(Object.keys(prov.sha256), [
     "laci-9.9.9-rc.1-1.x86_64.rpm",
     "laci_9.9.9-rc.1_amd64.AppImage",
@@ -266,7 +278,7 @@ test("finalize: a dry run writes every asset, checked", () => {
     "latest.json",
   ]);
   assert.equal(checkSums(path.join(out, "assets"), read("SHA256SUMS")).length, 6);
-  assert.match(readFileSync(path.join(out, "notes.md"), "utf8"), /^Coming next\.\n\n---\n\nBuilt and checked by/);
+  assert.match(readFileSync(path.join(out, "notes.md"), "utf8"), /^Coming next\.\n\n---\n\n\*\*The deb or rpm of a release candidate:\*\*.*\n\nBuilt and checked by/);
   assert.ok(log.some((line) => line.startsWith("latest.json linux-x86_64-appimage")));
 });
 

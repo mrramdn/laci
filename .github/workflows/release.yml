@@ -149,8 +149,23 @@ jobs:
           echo "runner=ubuntu-$VERSION_ID" >> "$GITHUB_OUTPUT"
           echo "Built on ubuntu-$VERSION_ID (image $ImageVersion). The binary needs glibc $binary or newer, the AppImage with its libraries $appimage." \
             | tee -a "$GITHUB_STEP_SUMMARY"
+      # The packages the sign job signs are uploaded here, before anything is installed only for testing them: nothing
+      # that runs after this step can change them.
+      - name: Gather the packages
+        run: |
+          mkdir -p "$RUNNER_TEMP/packages"
+          cp target/release/bundle/appimage/*.AppImage target/release/bundle/deb/*.deb target/release/bundle/rpm/*.rpm \
+            "$RUNNER_TEMP/packages/"
+          ls -l "$RUNNER_TEMP/packages"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages
+          path: ${{ runner.temp }}/packages
+          if-no-files-found: error
+          retention-days: 7
+      # A tool from crates.io, outside the lockfiles: an exact version, which the run installs after the upload above.
       - name: tauri-driver
-        run: cargo install tauri-driver --locked
+        run: cargo install tauri-driver --locked --version 2.1.0
       - name: Native production package regression
         env:
           LACI_SMOKE_DIAGNOSTICS: ${{ runner.temp }}/laci-smoke-diagnostics
@@ -170,24 +185,43 @@ jobs:
           path: ${{ runner.temp }}/laci-smoke-diagnostics
           if-no-files-found: ignore
           retention-days: 14
-      - name: Gather the packages
-        run: |
-          mkdir -p "$RUNNER_TEMP/packages"
-          cp target/release/bundle/appimage/*.AppImage target/release/bundle/deb/*.deb target/release/bundle/rpm/*.rpm \
-            "$RUNNER_TEMP/packages/"
-          ls -l "$RUNNER_TEMP/packages"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+
+  # The deb installed by apt on Ubuntu 22.04 and the rpm by dnf on Fedora, each with the dependencies it names, then
+  # `laci --version` from each. A runner of its own, without the build's files.
+  install:
+    needs: [verify, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: packages
           path: ${{ runner.temp }}/packages
-          if-no-files-found: error
-          retention-days: 7
+      - name: The deb with apt
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$RUNNER_TEMP/packages/laci_${VERSION}_amd64.deb"
+          test "$(laci --version)" = "laci $VERSION"
+          echo "apt on ubuntu-22.04: $(laci --version)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: The rpm with dnf
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          docker run --rm -e VERSION -v "$RUNNER_TEMP/packages:/packages:ro" fedora:latest bash -euc '
+            dnf install -y "/packages/laci-${VERSION}-1.x86_64.rpm"
+            test "$(laci --version)" = "laci $VERSION"
+            echo "dnf on $(cat /etc/fedora-release): $(laci --version)"
+          ' | tee /dev/stderr | tail -1 >> "$GITHUB_STEP_SUMMARY"
 
   # The updater's signature of the AppImage, with the key in the release environment, which rifkii approves. The job
   # runs nothing from the build: only the Tauri CLI of the lockfile, installed without any package's scripts. The key
   # reaches that one step and no file.
   sign:
-    needs: [verify, build]
+    needs: [verify, build, install]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -233,7 +267,7 @@ jobs:
 
   # The dry run's sign job: the same command, with a throwaway key and password made here, never stored.
   sign-dry-run:
-    needs: [verify, build]
+    needs: [verify, build, install]
     if: ${{ !(github.event_name == 'push' && github.ref_type == 'tag') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15

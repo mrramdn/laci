@@ -111,6 +111,7 @@ export function provenance({ version, commit, tag, dryRun, runner, glibc, runUrl
       noWebDriverServer: "passed",
       packageValidation: "passed",
       nativeProductionPackageRegression: "passed",
+      packageInstall: "passed (the deb with apt on Ubuntu 22.04, the rpm with dnf on Fedora)",
       updaterSignature: `passed (key ${keyId}${dryRun ? ", a throwaway key of this dry run" : ""}, version ${version})`,
       latestJson: "passed",
     },

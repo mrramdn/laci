@@ -119,7 +119,7 @@ jobs:
         env:
           LACI_SMOKE_DIAGNOSTICS: ${{ runner.temp }}/laci-smoke-diagnostics
         run: |
-          cargo install tauri-driver --locked
+          cargo install tauri-driver --locked --version 2.1.0
           # GIO compares the source filesystem with the real HOME when choosing Trash.
           laci_fixture_dir="$(mktemp -d "$HOME/laci-desktop-qa.XXXXXX")"
           trap 'rm -rf "$laci_fixture_dir"' EXIT
@@ -234,7 +234,7 @@ jobs:
       - name: The guard would see the WebDriver server
         run: grep -qaF wdio-webdriver target/debug/laci
       - name: tauri-driver
-        run: cargo install tauri-driver --locked
+        run: cargo install tauri-driver --locked --version 2.1.0
       - name: Window screenshots
         shell: bash
         # A run takes a few minutes. One that hangs ends here instead of at the job's hour.

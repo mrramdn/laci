@@ -167,18 +167,23 @@ pub struct Updates {
 }
 
 impl Updates {
+    /// Takes back what the last look learned: when it was, and the version it found. That version stays on offer
+    /// only while this is the copy that looked; once another version runs, the look told of a copy that is gone.
     pub fn new(env: &Env, current: String, install: Install) -> Self {
         let cache = env.cache_dir.join("updates.json");
-        let checked_at = files::text(&cache)
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .and_then(|saved| saved["checkedAt"].as_str().map(str::to_owned))
-            .filter(|at| DateTime::parse_from_rfc3339(at).is_ok());
+        let saved = files::text(&cache).and_then(|text| serde_json::from_str::<Value>(&text).ok()).unwrap_or_default();
+        let text = |key: &str| saved[key].as_str().map(str::to_owned);
+        let checked_at = text("checkedAt").filter(|at| DateTime::parse_from_rfc3339(at).is_ok());
+        let found = text("version")
+            .filter(|version| checked_at.is_some() && saved["current"] == current.as_str() && *version != current)
+            .map(|version| Found { version, notes: text("notes"), date: text("date"), update: None });
+        let phase = if found.is_some() { Phase::Available } else { Phase::Idle };
         Self {
             env: env.clone(),
             cache,
             current,
             install,
-            inner: Mutex::new(Inner { checked_at, ..Inner::default() }),
+            inner: Mutex::new(Inner { phase, found, checked_at, ..Inner::default() }),
             checking: Mutex::new(None),
             wake: Arc::new((Mutex::new(false), Condvar::new())),
             closing: AtomicBool::new(false),
@@ -275,8 +280,15 @@ impl Updates {
         if looked {
             let at = now.to_rfc3339_opts(SecondsFormat::Secs, true);
             inner.checked_at = Some(at.clone());
+            // What this look learned, so that a restart says it as it is: the version found, or that there was none.
+            let mut saved = json!({"checkedAt":at,"current":self.current});
+            if let Some(found) = &inner.found {
+                saved["version"] = json!(found.version);
+                saved["notes"] = json!(found.notes);
+                saved["date"] = json!(found.date);
+            }
             drop(inner);
-            let saved = format!("{}\n", json!({"checkedAt":at}));
+            let saved = format!("{saved}\n");
             if let Err(error) =
                 files::private_dir(&self.env.cache_dir).and_then(|()| files::replace(&self.cache, saved.as_bytes()))
             {
@@ -285,6 +297,10 @@ impl Updates {
             }
         }
         logged
+    }
+    /// A version found before Laci restarted: it is known, but what downloads it is not.
+    fn restored(&self) -> bool {
+        self.lock().found.as_ref().is_some_and(|found| found.update.is_none())
     }
     /// Starts downloading the version found: the update, or None when its download already runs.
     fn begin_download(&self) -> Result<Option<Update>> {
@@ -547,6 +563,14 @@ fn install(state: &Arc<AppState>) -> Result<Value> {
     if updates.install == Install::Click && updates.lock().phase != Phase::Downloading {
         drop(quiet_engine(state)?);
     }
+    // A version found before a restart: the feed is read again for what downloads it. When that look found nothing,
+    // or failed, the status says so, and nothing starts.
+    if updates.install == Install::Click && updates.lock().phase != Phase::Downloading && updates.restored() {
+        check(state, true);
+        if updates.restored() || updates.lock().found.is_none() {
+            return Ok(json!({"started":false}));
+        }
+    }
     let Some(update) = updates.begin_download()? else {
         return Ok(json!({"started":true}));
     };
@@ -729,6 +753,39 @@ mod tests {
         assert!(!restarted.wants_check(now + TimeDelta::hours(23)));
         // The look leaves nothing in the Log.
         assert!(laci_core::activity::read_log(&updates.env, 10).is_empty());
+    }
+
+    #[test]
+    fn a_restart_says_what_the_last_look_found() {
+        let (_home, updates) = updates(Install::Click);
+        let now = at("2026-10-18T12:00:00Z");
+        let found = Found {
+            version: "3.1.0".into(),
+            notes: Some("### Fixed".into()),
+            date: Some("2026-10-18T10:00:00Z".into()),
+            update: None,
+        };
+        updates.begin_check();
+        updates.finish(true, Outcome::Newer(Box::new(found)), now);
+        let restarted = Updates::new(&updates.env, "3.0.0".into(), Install::Click);
+        assert_eq!(restarted.status(), updates.status());
+        assert_eq!(restarted.status()["state"], "available");
+        assert!(restarted.restored(), "what downloads it is read again before an install");
+        // Once the new version runs, the version found is no news, and a look that found nothing stays nothing.
+        let updated = Updates::new(&updates.env, "3.1.0".into(), Install::Click);
+        let status = updated.status();
+        assert_eq!(status["state"], "idle");
+        assert!(status.get("version").is_none() && status.get("notes").is_none(), "{status}");
+        assert_eq!(status["checkedAt"], "2026-10-18T12:00:00Z");
+        updates.begin_check();
+        updates.finish(true, Outcome::Latest, now);
+        let status = Updates::new(&updates.env, "3.0.0".into(), Install::Click).status();
+        assert_eq!(status["state"], "idle");
+        assert!(status.get("version").is_none(), "{status}");
+        // A cache from before this kept only the time of the look.
+        std::fs::write(&updates.cache, r#"{"checkedAt":"2026-10-18T12:00:00Z"}"#).unwrap();
+        let status = Updates::new(&updates.env, "3.0.0".into(), Install::Click).status();
+        assert_eq!((status["state"].as_str(), status.get("version")), (Some("idle"), None));
     }
 
     #[test]

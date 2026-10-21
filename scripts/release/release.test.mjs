@@ -331,3 +331,38 @@ test("verify: the tag, the files, the branch and the notes must agree", () => {
   assert.deepEqual([rc.version, rc.prerelease], ["3.0.0-rc.1", true]);
   assert.throws(() => verify({ ...base, dryRun: true, version: "3.0", files: () => "2.5.2" }), /not a version/);
 });
+
+// On a tag run sign-dry-run is skipped, and on a dry run sign is. GitHub skips a job whose needs lead back to a skipped
+// job unless its condition names what it waits for (rc.1's first tag run skipped attest and draft that way).
+test("workflow: the jobs after the signing name the results they wait for", () => {
+  const text = readFileSync(path.join(root, ".github/workflows/release.yml"), "utf8");
+  const jobs = {};
+  let job = null;
+  let inJobs = false;
+  for (const line of text.split("\n")) {
+    if (/^jobs:\s*$/.test(line)) {
+      inJobs = true;
+      continue;
+    }
+    if (!inJobs) continue;
+    const head = /^ {2}([a-z][\w-]*):\s*$/.exec(line);
+    if (head) {
+      job = jobs[head[1]] = { needs: [], if: "" };
+      continue;
+    }
+    const needs = job && /^ {4}needs:\s*(.+)$/.exec(line);
+    if (needs) job.needs = needs[1].replace(/[[\]]/g, "").split(",").map((n) => n.trim()).filter(Boolean);
+    const condition = job && /^ {4}if:\s*(.+)$/.exec(line);
+    if (condition) job.if = condition[1];
+  }
+  const reaches = (name, target, seen = new Set()) =>
+    (jobs[name]?.needs ?? []).some((n) => n === target || (!seen.has(n) && seen.add(n) && reaches(n, target, seen)));
+  const later = Object.keys(jobs).filter((name) => reaches(name, "sign") || reaches(name, "sign-dry-run"));
+  for (const name of ["finalize", "attest", "draft"]) assert.ok(later.includes(name), name);
+  for (const name of later) {
+    assert.match(jobs[name].if, /!cancelled\(\)/, `${name} is skipped along with the signing job that doesn't run`);
+    for (const need of jobs[name].needs.filter((n) => !["verify", "sign", "sign-dry-run"].includes(n))) {
+      assert.ok(jobs[name].if.includes(`needs.${need}.result == 'success'`), `${name} must wait for ${need} to succeed`);
+    }
+  }
+});

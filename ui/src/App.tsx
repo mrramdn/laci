@@ -6,7 +6,9 @@ import { Settings } from "./settings";
 import { Dialogs } from "./dialogs";
 import { Palette } from "./palette";
 import { Overlays } from "./overlays";
-import type { Design } from "./types";
+import { api } from "./api";
+import { bootSay } from "./boot";
+import type { Design, RefreshStatus, ScanProgress } from "./types";
 /**
  * A design's window, in a chunk of its own: loaded the first time it is needed, and drawn at once
  * after that. Not React.lazy: that shows its fallback on the first render even when the code is
@@ -51,10 +53,12 @@ function useShell(design: Design) {
 function Boot() {
   // A scan that failed before there was anything to show. Later failures are a toast.
   const error = useApp((s) => (s.snapshot ? null : s.error));
+  const progress = useScanProgress(!error);
+  const say = bootSay(progress);
   return (
     <div className="boot">
       <div>
-        <b>{error ? "Scan failed" : "Looking for your projects…"}</b>
+        <b>{error ? "Scan failed" : say.title}</b>
         {error ? (
           <>
             <p>{error}</p>
@@ -62,10 +66,37 @@ function Boot() {
               Try again
             </button>
           </>
-        ) : null}
+        ) : (
+          <>
+            {say.detail ? <p aria-live="polite">{say.detail}</p> : null}
+            {say.note ? <p>{say.note}</p> : null}
+          </>
+        )}
       </div>
     </div>
   );
+}
+/** How far the running scan has come, asked for each second while `on`. */
+function useScanProgress(on: boolean) {
+  const [progress, setProgress] = useState<ScanProgress | null>(null);
+  useEffect(() => {
+    if (!on) return;
+    let live = true;
+    const ask = () =>
+      api<RefreshStatus>("status").then(
+        (status) => {
+          if (live) setProgress(status.progress ?? null);
+        },
+        () => {},
+      );
+    void ask();
+    const timer = setInterval(() => void ask(), 1000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [on]);
+  return progress;
 }
 export default function App() {
   useLaciSync();

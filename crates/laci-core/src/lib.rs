@@ -15,6 +15,7 @@ mod orphan;
 pub mod paths;
 pub mod platform;
 pub mod process;
+pub mod progress;
 pub mod providers;
 pub mod readers;
 pub mod reports;

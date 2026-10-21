@@ -50,7 +50,8 @@ impl AppState {
     }
     fn status(&self) -> Value {
         let engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
-        json!({"type":"status","busy":self.queue.busy(),"revision":engine.revision,"historyPending":engine.history_pending})
+        // How far a running scan has come: the window shows it while the first scan runs.
+        json!({"type":"status","busy":self.queue.busy(),"revision":engine.revision,"historyPending":engine.history_pending,"progress":engine.service.env.progress.to_json()})
     }
     fn snapshot(&self) -> Result<Value> {
         if let Some(snapshot) = self.engine.lock().map_err(|e| e.to_string())?.snapshot() {

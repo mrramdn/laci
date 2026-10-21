@@ -16,6 +16,8 @@ pub struct Env {
     pub app_overrides: std::collections::HashMap<&'static str, String>,
     /// The installed Laci program: what an agent is told to run as its MCP server (see `program_for`).
     pub program: PathBuf,
+    /// How far the running scan has come, shared by every clone.
+    pub progress: crate::progress::Progress,
 }
 
 impl Env {
@@ -27,6 +29,7 @@ impl Env {
             cache_dir: cache,
             app_overrides: Default::default(),
             program: PathBuf::from("laci"),
+            progress: Default::default(),
             home,
         }
     }

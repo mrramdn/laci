@@ -46,6 +46,7 @@ Laci stays Linux-only: Windows and macOS versions won't be made.
 - **When your AI is asked to fix something**, its prompt asks it to show each command first, and never to force a push, rewrite history or delete a branch.
 - **Detailed starts faster** and draws less while a scan runs: Markdown loads when a README or report first opens, and each view draws again only when what it shows changes.
 - The root of the disk (`/`) can no longer be picked as a folder to scan, since it holds the system and everything else. One you picked in 2.5 stays, and Laci keeps looking through it.
+- **Simple's colours now come from Laci's mark**: teak and coconut milk for buttons, links and the chosen place instead of teal, and a calm leaf green for "Safe".
 - **MCP:** `tidy_suggestions` answers a page at a time (30 by default) and lists only the first operations of each suggestion. `apply_suggestion` without `confirm` lists all of them, a page at a time: for a group of 500 history files it answered with 330,000 characters.
 
 ### Fixed
@@ -66,6 +67,8 @@ Laci stays Linux-only: Windows and macOS versions won't be made.
 - **Simple's "Don't look for new versions" stops pointing to *Check now* while an update is found**, since *Install* or *Restart* is in its place.
 - **The first open after installing, or after the cache is cleared, is faster and says what it is doing.** Laci reads your AI chat history once at the start, which took minutes on a big history with only "Looking for your projects…" on screen. It now reads several chat files at a time, and the window says which step it is on and how far it has come, such as "120 of 2400 files · 900 MB of 4.4 GB".
 - **A project's card and its page count the same AI chats.** The card counted chats that the page didn't list: the ones past the first three, and an AI helper's side tasks that worked in that project for a chat in another one. The page now ends with "and 2 more chats and 3 quick chats", and side tasks count only with the chat that started them.
+- **Detailed's folder list keeps its Summary readable when the list is narrow**, such as in a 1440 px window with the side panel open, where it was cut to one letter. The list now drops Stack, then Size, then Summary and Agents as it gets narrower, instead of squeezing them.
+- **Simple says a new version "is available" until it is downloaded**, as Detailed does. It said "is ready to install" before the download, which read as if it were already downloaded; "ready" now means downloaded.
 
 ### Security
 

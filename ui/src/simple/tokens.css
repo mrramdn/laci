@@ -1,8 +1,10 @@
 /* Simple's colours, type, shape, depth and motion (design-research §3.5). They apply only while
    <html data-design="simple">, so Detailed keeps its own. This sheet is small and loads with the first
    one, inside @layer simple; Simple's layout and its font load with its window.
-   Teal is the brand and means "safe". Amber and red are for problems only, always with an icon and
-   words. Turmeric belongs to the mark and is never used here.
+   The accent comes from Laci's mark (docs/brand/README.md): jati (teak) and santan (coconut milk) for
+   buttons, links, focus and the chosen place. "Safe" has a calm leaf green of its own (daun), and
+   amber and red are for problems only, always with an icon and words. Turmeric (kunyit) belongs to
+   the mark and to the illustrations (--art-*), and is never an interface accent or a status colour.
    scripts/contrast-check.mjs reads the colours below, so keep each one a plain #rrggbb.
    The dark blocks use :where() so they weigh the same as the light one, and the contrast block that
    comes last wins in either theme. */
@@ -17,12 +19,15 @@
   --ink: #26211c;
   --ink-2: #5e554b;
   --ink-3: #71675c;
-  --brand: #0e7268;
-  --brand-fill: #0e7268;
-  --brand-hover: #0b5d55;
-  --on-brand: #ffffff;
-  --brand-soft: #e2f1ee;
-  --brand-ink: #0a5a52;
+  --brand: #6b4423;
+  --brand-fill: #3b2a1e;
+  --brand-hover: #2a1d14;
+  --on-brand: #fff5df;
+  --brand-soft: #f1e6d3;
+  --brand-ink: #3b2a1e;
+  --safe-soft: #e8f0e4;
+  --safe-text: #2f6b3f;
+  --safe-icon: #2f6b3f;
   --attention-soft: #fff1d6;
   --attention-text: #8a4b00;
   --attention-icon: #b26200;
@@ -30,6 +35,9 @@
   --risk-text: #a12a1f;
   --risk-icon: #c2362a;
   --sand: #e9dcc8;
+  --art-line: #3b2a1e;
+  --art-accent: #ffd34e;
+  --art-paper: #fff5df;
   --scrim: rgba(24, 21, 18, 0.4);
   --shadow-card: 0 1px 2px rgba(38, 33, 28, 0.06);
   --shadow-menu: 0 8px 24px -4px rgba(38, 33, 28, 0.14);
@@ -61,7 +69,7 @@
   --space-12: 48px;
   --space-16: 64px;
 
-  /* Focus: 2 px of brand, 2 px away from the control. */
+  /* Focus: 2 px of brand (the link colour), 2 px away from the control. */
   --focus-width: 2px;
   --focus-offset: 2px;
 
@@ -87,9 +95,9 @@
   --accent-soft: var(--brand-soft);
   --accent-hover: var(--brand-hover);
   --on-accent: var(--on-brand);
-  --green: var(--brand);
-  --green-soft: var(--brand-soft);
-  --green-text: var(--brand-ink);
+  --green: var(--safe-icon);
+  --green-soft: var(--safe-soft);
+  --green-text: var(--safe-text);
   --amber: var(--attention-icon);
   --amber-soft: var(--attention-soft);
   --amber-text: var(--attention-text);
@@ -114,12 +122,15 @@
     --ink: #f2ede6;
     --ink-2: #bdb3a7;
     --ink-3: #a0968a;
-    --brand: #3cc4b4;
-    --brand-fill: #2bb3a3;
-    --brand-hover: #3cc4b4;
-    --on-brand: #0b1f1c;
-    --brand-soft: #133a35;
-    --brand-ink: #7fddd1;
+    --brand: #ebd3a6;
+    --brand-fill: #f2e2c4;
+    --brand-hover: #f8ebd3;
+    --on-brand: #231d17;
+    --brand-soft: #2c2219;
+    --brand-ink: #f2e2c4;
+    --safe-soft: #1d2a20;
+    --safe-text: #8cc79a;
+    --safe-icon: #8cc79a;
     --attention-soft: #3a2a10;
     --attention-text: #f4b860;
     --attention-icon: #e9a23b;
@@ -127,6 +138,9 @@
     --risk-text: #ff8f80;
     --risk-icon: #f26b5b;
     --sand: #3b332a;
+    --art-line: #ffc83d;
+    --art-accent: #4a3818;
+    --art-paper: #2c2219;
     --scrim: rgba(8, 6, 4, 0.6);
     --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-menu: 0 8px 24px -4px rgba(0, 0, 0, 0.5);
@@ -145,12 +159,15 @@
   --ink: #f2ede6;
   --ink-2: #bdb3a7;
   --ink-3: #a0968a;
-  --brand: #3cc4b4;
-  --brand-fill: #2bb3a3;
-  --brand-hover: #3cc4b4;
-  --on-brand: #0b1f1c;
-  --brand-soft: #133a35;
-  --brand-ink: #7fddd1;
+  --brand: #ebd3a6;
+  --brand-fill: #f2e2c4;
+  --brand-hover: #f8ebd3;
+  --on-brand: #231d17;
+  --brand-soft: #2c2219;
+  --brand-ink: #f2e2c4;
+  --safe-soft: #1d2a20;
+  --safe-text: #8cc79a;
+  --safe-icon: #8cc79a;
   --attention-soft: #3a2a10;
   --attention-text: #f4b860;
   --attention-icon: #e9a23b;
@@ -158,6 +175,9 @@
   --risk-text: #ff8f80;
   --risk-icon: #f26b5b;
   --sand: #3b332a;
+  --art-line: #ffc83d;
+  --art-accent: #4a3818;
+  --art-paper: #2c2219;
   --scrim: rgba(8, 6, 4, 0.6);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-menu: 0 8px 24px -4px rgba(0, 0, 0, 0.5);

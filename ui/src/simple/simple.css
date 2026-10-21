@@ -258,7 +258,7 @@
     height: 10px;
     margin: 6px;
     border-radius: 50%;
-    background: var(--brand);
+    background: var(--safe-icon);
     flex: none;
   }
   .s-dot-bad {
@@ -520,8 +520,11 @@
     flex: none;
   }
   .s-tone-safe.s-chip {
-    background: var(--brand-soft);
-    color: var(--brand-ink);
+    background: var(--safe-soft);
+    color: var(--safe-text);
+  }
+  .s-tone-safe.s-chip .i {
+    color: var(--safe-icon);
   }
   .s-tone-soon.s-chip {
     background: var(--attention-soft);
@@ -559,8 +562,11 @@
     margin-top: 1px;
   }
   .s-tone-safe.s-callout {
-    background: var(--brand-soft);
-    color: var(--brand-ink);
+    background: var(--safe-soft);
+    color: var(--safe-text);
+  }
+  .s-tone-safe.s-callout .i {
+    color: var(--safe-icon);
   }
   .s-tone-soon.s-callout {
     background: var(--attention-soft);
@@ -679,7 +685,8 @@
     height: 90px;
   }
 
-  /* The illustrations take their two tones from the theme. */
+  /* The illustrations take their tones from the theme: the mark's jati, kunyit and santan in light,
+     and its kunyit on malam in dark. */
   .s-art {
     display: block;
     flex: none;
@@ -700,13 +707,13 @@
     stroke: var(--sand);
   }
   .s-art .a-ink {
-    stroke: var(--brand);
+    stroke: var(--art-line);
   }
   .s-art .a-soft {
-    fill: var(--brand-soft);
+    fill: var(--art-accent);
   }
   .s-art .a-paper {
-    fill: var(--surface);
+    fill: var(--art-paper);
   }
 
   /* --- Show details, ⋯ menus, ⓘ ----------------------------------------------------------------- */
@@ -1039,6 +1046,9 @@
     border-radius: var(--radius-card);
     background: var(--surface);
     box-shadow: var(--shadow-card);
+  }
+  .s-hero.s-tone-safe {
+    border-left-color: var(--safe-icon);
   }
   .s-hero.s-tone-act {
     border-left-color: var(--risk-icon);
@@ -1993,7 +2003,7 @@
   :root[data-design="simple"] .pal-item > span:first-of-type {
     font-size: 15px;
   }
-  /* The chosen row: a teal edge on the hover colour, which keeps the grey text beside it readable. */
+  /* The chosen row: an edge of brand on the hover colour, which keeps the grey text beside it readable. */
   :root[data-design="simple"] .pal-item[aria-selected="true"] {
     background: var(--hover);
     box-shadow: inset 3px 0 0 var(--brand);

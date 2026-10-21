@@ -22,10 +22,11 @@
     --lk-line: #e6ded2;
     --lk-ink: #4a4239;
     --lk-text: #c9bfb2;
-    --lk-brand: #0e7268;
-    --lk-soft: #d3ebe6;
+    --lk-brand: #3b2a1e;
+    --lk-soft: #ebddc4;
     --lk-sand: #e9dcc8;
     --lk-chip: #fbe4b8;
+    --lk-ok: #d5e6cf;
   }
   .look-thumb.detailed {
     --lk-canvas: #ffffff;
@@ -49,10 +50,11 @@
       --lk-line: #39322b;
       --lk-ink: #d9d1c6;
       --lk-text: #5c534a;
-      --lk-brand: #2bb3a3;
-      --lk-soft: #1b4a44;
+      --lk-brand: #f2e2c4;
+      --lk-soft: #33281d;
       --lk-sand: #3b332a;
       --lk-chip: #4a3716;
+      --lk-ok: #2a3d2e;
     }
     :root:where(:not([data-theme="light"])) .look-thumb.detailed {
       --lk-canvas: #09090b;
@@ -76,10 +78,11 @@
     --lk-line: #39322b;
     --lk-ink: #d9d1c6;
     --lk-text: #5c534a;
-    --lk-brand: #2bb3a3;
-    --lk-soft: #1b4a44;
+    --lk-brand: #f2e2c4;
+    --lk-soft: #33281d;
     --lk-sand: #3b332a;
     --lk-chip: #4a3716;
+    --lk-ok: #2a3d2e;
   }
   :root:where([data-theme="dark"]) .look-thumb.detailed {
     --lk-canvas: #09090b;
@@ -506,7 +509,7 @@
     padding: 12px 14px;
   }
   /* The notes in Simple's tones: what is missing is amber, with its words, as "Soon" is; the rest is
-     said plainly, since teal means safe. More contrast outlines them, as it does Simple's own. */
+     said plainly, since leaf green means safe. More contrast outlines them, as it does Simple's own. */
   :root[data-design="simple"] .setup-note {
     border-color: transparent;
     background: var(--sunken);

@@ -212,7 +212,7 @@ function Working({ children }: { children: ReactNode }) {
   );
 }
 
-/** Teal, as everything that is fine in Simple, in the same size as the page's other lines. */
+/** The fill of Simple's buttons, in the same size as the page's other lines. */
 const BAR: CSSProperties = { width: "100%", accentColor: "var(--brand-fill)" };
 
 /**
@@ -302,7 +302,6 @@ function Line({ step, status }: { step: UpdateStep; status: UpdateStatus | null 
         </p>
       );
     case "found":
-      return <Callout tone="fyi">{say.readyToInstall(version)}</Callout>;
     case "link":
       return <Callout tone="fyi">{say.isAvailable(version)}</Callout>;
     case "restart":
@@ -398,7 +397,7 @@ const CARD_STEPS: readonly UpdateStep[] = ["found", "link", "downloading", "rest
 const hiddenKey = (version: string) => `update-hidden:${version}`;
 
 /**
- * Home's quiet card: a new version is ready, with its one button. It is there only while Laci looks
+ * Home's quiet card: a new version is available, or ready once downloaded, with its one button. It is there only while Laci looks
  * for new versions by itself (Settings has everything else) and until the user says Not now, which
  * holds for that version alone. pref and savePref keep every read and write of the browser's storage
  * in a try and catch; without storage the card goes when the user says Not now, and comes back
@@ -437,7 +436,7 @@ export function UpdateCard() {
     >
       <header className="s-card-head">
         <Icon name="cloud-download" />
-        <h2 id={heading}>{polish.card.title}</h2>
+        <h2 id={heading}>{step === "restart" ? polish.card.titleReady : polish.card.title}</h2>
       </header>
       <div ref={anchor} tabIndex={-1} role="status">
         {step === "found" ? <p>{polish.card.canInstall(version)}</p> : null}

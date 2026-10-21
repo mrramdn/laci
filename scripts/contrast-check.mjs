@@ -2,7 +2,7 @@
 // interface and for icons.
 //
 // Simple's colours are read from its tokens (ui/src/simple/tokens.css), light and dark, and checked in
-// the pairs of design-research §3.5 of the 3.0 plan, each with the contrast that research measured. A
+// the pairs of design-research §3.5 of the 3.0 plan, each with the contrast it was chosen with. A
 // Simple pair under its minimum fails the run, as do a colour the pairs need that the tokens lack and
 // two dark blocks that disagree. Detailed's colours are read from its stylesheet, light and dark, and
 // only reported: they stay as they are, so a pair under its minimum is listed and not failed.
@@ -176,8 +176,10 @@ const T = MIN.text;
 const U = MIN.ui;
 /**
  * The pairs that must hold: a foreground, a background, the minimum, what the colour is for, and the
- * ratio the research measured for it as `[light, dark]` where it gave one. The decorative colours
- * (`line`, `sand`) have no minimum and are left out.
+ * ratio the palette was chosen with as `[light, dark]` where it gave one: design-research §3.5 for the
+ * neutrals and the problem colours, and the colours of Laci's mark ("Jati & santan") for the accent
+ * and the leaf green of "Safe". The decorative colours (`line`, `sand`, `art-*`) have no minimum and
+ * are left out.
  */
 export const SIMPLE_PAIRS = [
   ["ink", "canvas", T, "body text"],
@@ -191,12 +193,16 @@ export const SIMPLE_PAIRS = [
   ["ink-3", "canvas", T, "meta text"],
   ["ink-3", "surface", T, "meta text", [5.53, 5.69]],
   ["ink-3", "sunken", T, "meta text", [4.79]],
-  ["on-brand", "brand-fill", T, "filled button label", [5.79, 6.58]],
-  ["on-brand", "brand-hover", T, "filled button label, hovered", [7.75]],
-  ["brand", "canvas", T, "links"],
-  ["brand", "surface", T, "links", [5.79, 7.68]],
+  ["on-brand", "brand-fill", T, "filled button label", [12.61, 13.06]],
+  ["on-brand", "brand-hover", T, "filled button label, hovered", [15.08, 14.14]],
+  ["brand", "canvas", T, "links", [8.0, 12.46]],
+  ["brand", "surface", T, "links", [8.48, 11.35]],
   ["brand", "sunken", T, "links"],
-  ["brand-ink", "brand-soft", T, "Safe chip, selected place", [6.95, 7.82]],
+  ["brand", "hover", T, "a row's name pointed at"],
+  ["brand", "brand-soft", T, "Back pointed at"],
+  ["brand-ink", "brand-soft", T, "selected place, pressed filter", [11.06, 12.18]],
+  ["safe-text", "safe-soft", T, "Safe chip", [5.46, 7.65]],
+  ["safe-text", "surface", T, "Safe text"],
   ["attention-text", "attention-soft", T, "Soon chip", [6.09, 7.82]],
   ["attention-text", "surface", T, "Soon text"],
   ["risk-text", "risk-soft", T, "Act now chip", [6.23, 6.99]],
@@ -205,8 +211,12 @@ export const SIMPLE_PAIRS = [
   ["line-strong", "canvas", U, "input borders"],
   ["brand", "canvas", U, "focus ring"],
   ["brand", "surface", U, "focus ring"],
+  ["brand", "brand-soft", U, "focus ring on the selected place"],
   ["brand-fill", "canvas", U, "filled button edge"],
   ["brand-fill", "surface", U, "filled button edge"],
+  ["safe-icon", "surface", U, "Safe icon, Home's edge"],
+  ["safe-icon", "canvas", U, "the up-to-date dot"],
+  ["safe-icon", "safe-soft", U, "Safe icon on its chip"],
   ["attention-icon", "surface", U, "Soon icon", [4.53, 7.64]],
   ["attention-icon", "attention-soft", U, "Soon icon on its chip"],
   ["risk-icon", "surface", U, "Act now icon", [5.45, 5.54]],

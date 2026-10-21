@@ -454,7 +454,7 @@ export async function theSettingsPanelTellsWhereTheUpdateStandsStepByStep() {
 
   // A new version: what it is, when it came out, and the one button.
   await page.told(status("available", { ...NEW, checkedAt: CHECKED }));
-  assert.match(page.text(), new RegExp(say.readyToInstall("3.0.1")));
+  assert.match(page.text(), new RegExp(say.isAvailable("3.0.1")));
   assert.match(page.text(), new RegExp(say.released("3 days ago")));
   assert.deepEqual(page.buttons(), [say.whatsNew("3.0.1"), say.install("3.0.1")]);
   page.act(() => page.button(say.install("3.0.1")).props.onClick());
@@ -660,7 +660,22 @@ export async function theCardIsOnHomeOnlyWhileUpdatesAreOnAndOneIsWaiting() {
   ]) {
     await page.told(next);
     assert.equal(theCard(page)?.props["data-step"], step, step);
-    assert.match(page.text(), new RegExp(card.title));
+    assert.match(page.text(), new RegExp(step === "restart" ? card.titleReady : card.title));
+  }
+}
+
+export async function aVersionFoundIsAvailableAndOnlyReadyOnceItIsDownloaded() {
+  // Found and not downloaded, as after a restart that kept the version found: Detailed says it is
+  // available, and so does Simple, in the panel and on Home's card. "Ready" waits for the download.
+  for (const part of ["UpdatePanel", "UpdateCard"]) {
+    const page = updatesPage(part);
+    await page.looks(status("available", NEW));
+    assert.doesNotMatch(page.text(), /ready/i, part);
+    assert.match(page.text(), /Version 3\.0\.1 is available|A new version of Laci is available/, part);
+    await page.told(status("downloading", { ...NEW, progress: 50 }));
+    assert.doesNotMatch(page.text(), /ready/i, `${part}, downloading`);
+    await page.told(status("ready", NEW));
+    assert.match(page.text(), /is ready/, `${part}, downloaded`);
   }
 }
 

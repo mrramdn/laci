@@ -37,7 +37,7 @@ export async function theFormulaGivesWcagsEndpoints() {
 
 export async function colourWritingsAreRead() {
   assert.deepEqual(parseColor("#fff"), [255, 255, 255, 1]);
-  assert.deepEqual(parseColor("#0E7268"), [14, 114, 104, 1]);
+  assert.deepEqual(parseColor("#3B2A1E"), [59, 42, 30, 1]);
   assert.deepEqual(parseColor("rgba(255, 255, 255, 0.08)"), [255, 255, 255, 0.08]);
   assert.deepEqual(parseColor("rgb(0 0 0 / 50%)"), [0, 0, 0, 0.5]);
   assert.equal(parseColor("var(--x)"), null);

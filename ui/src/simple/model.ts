@@ -38,7 +38,7 @@ import type {
   TerminalTarget,
 } from "../types";
 
-/** How a status reads: safe (teal), soon (amber), act now (red) or good to know. */
+/** How a status reads: safe (leaf green), soon (amber), act now (red) or good to know. */
 export type Tone = "safe" | "soon" | "act" | "fyi";
 
 export const toneOf = (severity: Severity): Tone =>

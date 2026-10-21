@@ -1,4 +1,4 @@
-// ui/src/simple/art: Simple's eight illustrations stay small, two-toned through the theme's tokens,
+// ui/src/simple/art: Simple's eight illustrations stay small, coloured through the theme's tokens,
 // and safe to draw inline.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -15,10 +15,10 @@ const NAMES = [
   "went-wrong",
 ];
 const svg = (name) => readFileSync(new URL(`${name}.svg`, dir), "utf8");
-/** The classes that take a colour from the theme: brand teal and sand, and their paper and tint. */
+/** The classes that take a colour from the theme: the line, sand, and the paper and accent fills. */
 const TONES = new Set(["a-sand", "a-sand-line", "a-ink", "a-soft", "a-paper"]);
-/** What a viewer outside the app shows: the light theme's tokens. */
-const FALLBACKS = new Set(["#E9DCC8", "#0E7268", "#E2F1EE", "#FFFFFF", "none"]);
+/** What a viewer outside the app shows: the light theme's tokens, from Laci's mark. */
+const FALLBACKS = new Set(["#E9DCC8", "#3B2A1E", "#FFD34E", "#FFF5DF", "none"]);
 
 export async function thereAreEightAndEachIsSmall() {
   const files = readdirSync(dir).filter((file) => file.endsWith(".svg"));

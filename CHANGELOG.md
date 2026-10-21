@@ -46,6 +46,7 @@ Laci stays Linux-only: Windows and macOS versions won't be made.
 - **When your AI is asked to fix something**, its prompt asks it to show each command first, and never to force a push, rewrite history or delete a branch.
 - **Detailed starts faster** and draws less while a scan runs: Markdown loads when a README or report first opens, and each view draws again only when what it shows changes.
 - The root of the disk (`/`) can no longer be picked as a folder to scan, since it holds the system and everything else. One you picked in 2.5 stays, and Laci keeps looking through it.
+- **Simple's colours now come from Laci's mark**: teak and coconut milk for buttons, links and the chosen place instead of teal, and a calm leaf green for "Safe".
 - **MCP:** `tidy_suggestions` answers a page at a time (30 by default) and lists only the first operations of each suggestion. `apply_suggestion` without `confirm` lists all of them, a page at a time: for a group of 500 history files it answered with 330,000 characters.
 
 ### Fixed

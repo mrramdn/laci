@@ -61,7 +61,7 @@ function SimpleArt() {
       {[60, 65, 70].map((y) => (
         <rect key={y} className="lk-text" x="129" y={y} width="21" height="2" rx="1" />
       ))}
-      <rect className="lk-soft" x="129" y="78" width="14" height="6" rx="3" />
+      <rect className="lk-ok" x="129" y="78" width="14" height="6" rx="3" />
     </>
   );
 }

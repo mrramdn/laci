@@ -22,6 +22,19 @@ Named for Indonesian things: *kunyit* is turmeric, *jati* is teak, *santan* is c
 - Never put santan directly on kunyit (1.5:1) or kunyit text on white (1.6:1).
 - Jati on the plate is 7.0:1 at its lightest; santan on the opening is 17.7:1.
 
+### In Simple
+
+Simple's accent comes from the mark ("Jati & santan"). `ui/src/simple/tokens.css` holds the values, and `scripts/contrast-check.mjs` checks them.
+
+| Use | Light | Dark |
+| --- | --- | --- |
+| Filled button | santan `#FFF5DF` on jati `#3B2A1E` (12.6:1) | malam `#231D17` on `#F2E2C4` (13.1:1) |
+| Links, underlined, and the focus ring | `#6B4423` (8.0:1 on the page `#FBF8F3`) | `#EBD3A6` (12.5:1 on `#181512`) |
+| The chosen place | jati on `#F1E6D3` (11.1:1) | `#F2E2C4` on `#2C2219` (12.2:1) |
+| Safe, leaf green (*daun*) | `#2F6B3F` on `#E8F0E4` (5.5:1) | `#8CC79A` on `#1D2A20` (7.7:1) |
+
+Kunyit stays out of the interface there too. Simple's illustrations, which only decorate, may use all four: jati lines, kunyit and santan fills in light, kunyit lines on malam in dark.
+
 ## Files
 
 Everything in `src/` is written by `scripts/brand-icons.mjs` from one description of the glyph. Change the script, not the files.

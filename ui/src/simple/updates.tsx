@@ -212,7 +212,7 @@ function Working({ children }: { children: ReactNode }) {
   );
 }
 
-/** Teal, as everything that is fine in Simple, in the same size as the page's other lines. */
+/** The fill of Simple's buttons, in the same size as the page's other lines. */
 const BAR: CSSProperties = { width: "100%", accentColor: "var(--brand-fill)" };
 
 /**

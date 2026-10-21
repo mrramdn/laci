@@ -11,7 +11,7 @@ laci shows every folder like a file manager, and for each project it adds its gi
   <img alt="Simple's Home: the one project that needs you most, the others that need you, what's next and where you left off" src="docs/screenshots/simple-light.png">
 </picture>
 
-> Status: 3.0, for Linux on x86-64, in testing. Until 3.0.0 is out, its release candidates are pre-releases on the [releases page](https://github.com/mrramdn/laci/releases), and the latest release is 2.5.2. Rust + Tauri 2, with a React interface. See the [changelog](CHANGELOG.md).
+> Status: 3.0.0 is the [latest release](https://github.com/mrramdn/laci/releases/latest), for Linux on x86-64. Rust + Tauri 2, with a React interface. See the [changelog](CHANGELOG.md).
 
 ## Contents
 
@@ -114,7 +114,7 @@ sudo dnf install ./laci-*.x86_64.rpm     # Fedora
 
 Laci then appears with your other apps, and the `laci` command is installed for the [CLI](#cli) and [MCP](#agents-mcp). For a new version, download the new file and install it the same way: apt and dnf replace the old one. Laci tells you when one is out, with a link to its page, if you let it look.
 
-A release candidate (a version like `3.0.0-rc.2`) is the exception: apt and dnf take it for newer than the final `3.0.0`. Remove it first with `sudo apt remove laci` or `sudo dnf remove laci`, then install the final version. Your settings and data stay.
+A release candidate (a version like `3.0.0-rc.2`) is the exception: apt and dnf take it for newer than the final `3.0.0`. If you installed one, remove it first with `sudo apt remove laci` or `sudo dnf remove laci`, then install the final version. Your settings and data stay.
 
 To remove Laci, run `sudo apt remove laci` or `sudo dnf remove laci`, or delete the AppImage. Your settings and Laci's own data stay in `~/.config/laci` and `~/.local/share/laci` (see [Configuration](#configuration)).
 
@@ -664,12 +664,6 @@ LACI_HOME=/tmp/laci-demo pnpm dev
 `LACI_HOME` changes only the locations laci reads and writes. It leaves your shell's `HOME` and XDG variables alone. See [CONTRIBUTING.md](CONTRIBUTING.md) for native window checks and demo scan benchmarks, and [architecture](docs/ARCHITECTURE.md) for the engine and disk contracts.
 
 ## Roadmap
-
-Next:
-
-- **3.0.0.** Release candidates come first: 3.0.0-rc.1, then rc.2, which also tries the in-app update from rc.1. Then 3.0.0.
-
-Later:
 
 - Broader live agent orchestration
 - File operations in the browser: copy, rename, individual-file delete, preview

@@ -1862,7 +1862,7 @@ export const detailedData = {
   scan: {
     checked: "Projects checked",
     checking: "Checking projects…",
-    failed: "Scan failed",
+    failed: "Couldn’t check projects",
   },
   update: {
     /** The badge: what it says beside the new version, or beside how much of it has arrived. */

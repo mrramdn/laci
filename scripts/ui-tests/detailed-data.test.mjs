@@ -471,7 +471,7 @@ export async function theFootSaysTheScanIsOfTheProjectsBesideTheUpdate() {
   assert.doesNotMatch(scanButton().textContent, /up to date/i);
   app.page.act(() => app.store.useApp.setState({ busy: true }));
   assert.equal(scanButton().textContent, words.scan.checking);
-  assert.deepEqual(words.scan, { checked: "Projects checked", checking: "Checking projects…", failed: "Scan failed" });
+  assert.deepEqual(words.scan, { checked: "Projects checked", checking: "Checking projects…", failed: "Couldn’t check projects" });
 }
 
 export async function theBadgeFollowsTheDesktopsNews() {

@@ -416,13 +416,23 @@ fn quiet<'a>(engine: &'a Mutex<Engine>, creations: &Creations, wait: Duration) -
 
 /// The plugin's updater with Laci's limits: an answer within 30 s and a download that may not stall for a minute.
 /// `endpoint` replaces the feed of tauri.conf.json.
+///
+/// Only a newer version is an update, and a release candidate only for a copy that is one itself. GitHub's latest
+/// release is never a pre-release, but one marked as the latest by mistake, or a test feed, must still not reach a
+/// final version. A release candidate is offered the next one and the final version after it.
 fn updater<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     endpoint: Option<tauri::Url>,
 ) -> std::result::Result<Updater, String> {
-    let mut builder = handle.updater_builder().timeout(Duration::from_secs(30)).configure_client(|client| {
-        client.connect_timeout(Duration::from_secs(15)).read_timeout(Duration::from_secs(60))
-    });
+    let mut builder = handle
+        .updater_builder()
+        .timeout(Duration::from_secs(30))
+        .configure_client(|client| {
+            client.connect_timeout(Duration::from_secs(15)).read_timeout(Duration::from_secs(60))
+        })
+        .version_comparator(|current, release| {
+            release.version > current && (release.version.pre.is_empty() || !current.pre.is_empty())
+        });
     if let Some(endpoint) = endpoint {
         builder = builder.endpoints(vec![endpoint]).map_err(|e| e.to_string())?;
     }
@@ -647,19 +657,27 @@ mod tests {
         let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         format!("http://127.0.0.1:{port}/latest.json")
     }
-    /// The real updater of an app at version 0.1.0 on Tauri's mock runtime, reading `feed`. Plain http is allowed
-    /// here only, for the feeds above.
-    fn app_reading(feed: &str) -> tauri::App<MockRuntime> {
+    /// The real updater of an app at `version` on Tauri's mock runtime, reading `feed`. Plain http is allowed here
+    /// only, for the feeds above.
+    fn app_at(version: &str, feed: &str) -> tauri::App<MockRuntime> {
         let mut context = mock_context(noop_assets());
+        context.package_info_mut().version = version.parse().unwrap();
         context.config_mut().plugins.0.insert(
             "updater".into(),
             json!({"pubkey":"unused: nothing is downloaded","endpoints":[feed],"dangerousInsecureTransportProtocol":true}),
         );
         mock_builder().plugin(tauri_plugin_updater::Builder::new().build()).build(context).unwrap()
     }
+    fn app_reading(feed: &str) -> tauri::App<MockRuntime> {
+        app_at("0.1.0", feed)
+    }
     /// What Laci learns from a feed, through the plugin and the limits Laci sets on it.
     fn look_at(feed: &str) -> Outcome {
         look(updater(app_reading(feed).handle(), None))
+    }
+    /// What a copy of `version` learns from a feed.
+    fn look_from(version: &str, feed: &str) -> Outcome {
+        look(updater(app_at(version, feed).handle(), None))
     }
     /// A release of `version` with a build for this computer.
     fn release(version: &str, more: Value) -> String {
@@ -784,6 +802,24 @@ mod tests {
         for feed in quiet {
             assert!(matches!(look_at(&feed), Outcome::Latest), "{feed}");
         }
+    }
+
+    #[test]
+    fn a_release_candidate_reaches_release_candidates_only() {
+        let offered = |current: &str, version: &str| {
+            matches!(look_from(current, &feed("200 OK", &release(version, json!({})))), Outcome::Newer(_))
+        };
+        // A final version stays on final versions, even when its feed offers a newer release candidate.
+        assert!(!offered("3.0.0", "3.1.0-rc.1"));
+        assert!(!offered("3.0.0", "4.0.0-rc.1"));
+        assert!(offered("3.0.0", "3.0.1"));
+        // A release candidate gets the next one and the final version after it, never an older one or itself.
+        assert!(offered("3.0.0-rc.1", "3.0.0-rc.2"));
+        assert!(offered("3.0.0-rc.2", "3.0.0"));
+        assert!(offered("3.0.0-rc.2", "3.1.0-rc.1"));
+        assert!(!offered("3.0.0-rc.2", "3.0.0-rc.1"));
+        assert!(!offered("3.0.0-rc.2", "3.0.0-rc.2"));
+        assert!(!offered("3.0.0", "3.0.0-rc.2"));
     }
 
     #[test]

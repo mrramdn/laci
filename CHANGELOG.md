@@ -6,11 +6,61 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+Laci 3.0: Simple, a second design for people new to Git and coding agents, a new mark, and updates the AppImage installs itself after asking.
+
 Laci stays Linux-only: Windows and macOS versions won't be made.
+
+**From Laci 2**, download 3.0 by hand once: Laci 2 can't update itself. If you use the AppImage, replace the old file, then set up the agents that use Laci again (*Fix…* on the Agents page, or *Use this Laci…* in Simple's AI helpers › Tools), since they still start the old file.
+
+### Added
+
+- **Simple, a new design.** The same projects, AI chats, to-dos and Undo, in a calmer layout with plain words: "saved version" for a commit, "upload" for a push, and each Git word named in Help. Its places are Home, Projects, AI helpers, Clean up and Activity, with Settings and Help at the foot of the sidebar.
+  - **Home** puts the one project that needs you most on top, with its fix and *Ask Claude Code to do it* (or your own AI), then the others that need you, what's next, what's coming up and where you left off.
+  - **A project's page** starts with *Is it safe?*: each problem in plain words, the button that fixes it, and a way to ask your AI to do it.
+  - **Clean up** shows one suggestion at a time and what each will change, with the space Laci itself uses.
+  - **Activity** says each change in a plain sentence, such as "Reconnected the AI chats of shop", with *What changed* for the details, *By me* and *By AI* filters, and Undo on each row.
+  - **AI helpers** has your chats, the summaries your agents write, and the tools: which AI tools Laci shows, and *Let it use Laci* to set up MCP.
+  - **Archive, Delete and Free up space** have their own sheets. Archive is offered before Delete. Delete lists the files only this computer has and asks you to type the project's name before they go. Whatever can't be undone waits 5 seconds, with Cancel.
+- **New installs open in Simple.** If you used Laci 2, Detailed stays your design, and a card on Today offers Simple once.
+- **Switch designs at any time**: in Settings › Appearance, with the *Simple | Detailed* toggle at the foot of the sidebar, or with Ctrl K. The change shows at once and is saved as `design` in config.json.
+- **The first-run screen** welcomes you, says what this computer still needs (such as Git), and ends with two questions: whether Laci may look for new versions once a day, and how it should look.
+- **The open-drawer mark.** Laci has a new icon, an open drawer on turmeric, in the sidebar, on the first-run screen, as the window icon and in the packages, with scalable and symbolic versions for the app menu.
+- **Updates from inside Laci.** If you allow it, Laci asks GitHub once a day whether there is a new version. Nothing is downloaded or installed until you click.
+  - The AppImage installs the new version itself: *Install* downloads it, checks Laci's signature and replaces the AppImage, and *Restart* finishes it. A download without the signature is refused.
+  - The deb, the rpm and copies you built get a link to the release page instead.
+  - Detailed shows a new version at the foot of the sidebar and in Settings › About & updates, and Ctrl K offers *Check for updates*, *Install update* and *Restart to update*. Simple shows it on Home and in Settings › Updates.
+  - A check shows GitHub your IP address, as any website visit does, and sends nothing about your projects.
+- **Laci asks once.** If you used Laci 2, or skipped the first-run screen, a card on Today (Detailed) or Home (Simple) asks whether Laci may look for new versions, with *Check daily* and *Don't check*. Change it later in Settings, or with `"updates": "daily"` or `"off"` in config.json.
+- **Secrets stay off the internet.** Before a first commit, a new remote or a push, both designs look for files that look like passwords or keys, such as `.env`, by their names only. *Keep these out* adds them to `.gitignore`, with Undo.
+- **Choose…** beside every folder field in Detailed opens the system's folder picker: Settings, the first-run screen, the Archive dialog, New project and a local template.
+- **Help** in both designs: how Laci keeps your work safe, the words it uses (with the Git word behind each), and the keyboard shortcuts.
 
 ### Changed
 
+- **Laci runs on Ubuntu 22.04 and the systems built on it**, such as Linux Mint 21, Zorin OS 17 and Pop!_OS 22.04, and on Debian 12. The packages are now built on Ubuntu 22.04 and need glibc 2.35; 2.5 needed 2.39.
+- **Releases say where they come from.** Each one carries `SHA256SUMS`, `provenance.json` and a build attestation for every file. [Verify a download](https://github.com/mrramdn/laci/blob/main/RELEASING.md#verify-a-download) shows how to check them.
+- **Detailed's text is at least 12 px.** Labels, counts, key hints, column heads and paths drew at 10 to 11.5 px.
+- **The window can be as small as 720 × 560**, and both designs fit it. In Detailed, from 880 px wide down, a project's details open as a sheet over the list, and filter bars wrap instead of sliding out of view.
+- **The first window fits the screen**, also on Wayland, and opens centred.
+- **Dates follow the language of your system** instead of always British English.
+- **When your AI is asked to fix something**, its prompt asks it to show each command first, and never to force a push, rewrite history or delete a branch.
+- **Detailed starts faster** and draws less while a scan runs: Markdown loads when a README or report first opens, and each view draws again only when what it shows changes.
 - The root of the disk (`/`) can no longer be picked as a folder to scan, since it holds the system and everything else. One you picked in 2.5 stays, and Laci keeps looking through it.
+- **MCP:** `tidy_suggestions` answers a page at a time (30 by default) and lists only the first operations of each suggestion. `apply_suggestion` without `confirm` lists all of them, a page at a time: for a group of 500 history files it answered with 330,000 characters.
+
+### Fixed
+
+- **Settings that can't be read are never written over.** If config.json was broken, or a sync app hadn't downloaded it yet, the next save in Settings replaced it with the defaults. Laci now refuses and says what to do.
+- **A double click on a report item, or a click on a list that changed meanwhile, closed the next item.** Both designs now name the item by its text, so a repeated click changes nothing and shows no error. Hiding a Tidy suggestion twice no longer ends on an error either.
+- **`.laci.md` keeps its fields.** A value with ` --- ` in it, such as `summary: v1 --- v2`, ended the frontmatter early, so the next edit moved the fields after it into the body. A file that starts with a byte order mark got a second frontmatter block.
+- **CRLF files stay CRLF.** Editing a `.laci.md` or to-do file with Windows line endings added a second frontmatter block and mixed in LF lines.
+- **Automatic history backups run while the window stays open**, also when nothing changes on disk.
+- **A move or Undo to another drive checks first that the project can leave its folder.** A source that can't be removed now stops the move before anything is copied. Before, it was copied first, and a half-deleted source beside the copy blocked the rollback and every later Undo.
+- **Making a project never waits on a hidden password prompt.** The Git and `gh` that make it ask nothing, so a clone or push that needs a login fails with Git's message instead of waiting unseen until it timed out.
+
+### Security
+
+- **The check for programs using a folder is stricter.** Before Laci moves, archives or trashes a folder, it makes sure no program is working in it. A program with a long name in another script, such as Cyrillic, could hide from that check, so the folder could be moved under it. A folder whose name isn't valid UTF-8 made the check fail, which refused every later change until Laci restarted. And when `/proc` can't be read, Laci now refuses the change instead of taking the folder as free.
 
 ## [2.5.2] - 2026-10-20
 

@@ -80,6 +80,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev patchelf git libglib2.0-bin xdg-utils webkit2gtk-driver xvfb rpm libarchive-tools
       - run: pnpm install --frozen-lockfile
+      # The release workflow's version check, notes, updater signature check, latest.json, SHA256SUMS and provenance.
+      - name: Release scripts' tests
+        run: node --test scripts/release/release.test.mjs
       # The app icons and what the Tauri configs list. Ubuntu 24.04 packages neither resvg nor ImageMagick 7,
       # so the comparison with a fresh render is skipped here; the other checks run.
       - run: node scripts/brand-check.mjs
@@ -116,7 +119,7 @@ jobs:
         env:
           LACI_SMOKE_DIAGNOSTICS: ${{ runner.temp }}/laci-smoke-diagnostics
         run: |
-          cargo install tauri-driver --locked
+          cargo install tauri-driver --locked --version 2.1.0
           # GIO compares the source filesystem with the real HOME when choosing Trash.
           laci_fixture_dir="$(mktemp -d "$HOME/laci-desktop-qa.XXXXXX")"
           trap 'rm -rf "$laci_fixture_dir"' EXIT
@@ -231,7 +234,7 @@ jobs:
       - name: The guard would see the WebDriver server
         run: grep -qaF wdio-webdriver target/debug/laci
       - name: tauri-driver
-        run: cargo install tauri-driver --locked
+        run: cargo install tauri-driver --locked --version 2.1.0
       - name: Window screenshots
         shell: bash
         # A run takes a few minutes. One that hangs ends here instead of at the job's hour.

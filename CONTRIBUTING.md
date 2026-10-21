@@ -25,7 +25,7 @@ In the first terminal, build the native binary, create a demo home and start the
 node scripts/demo.ts /tmp/laci-demo
 pnpm -C ui build
 cargo build -p laci --features custom-protocol
-cargo install tauri-driver --locked
+cargo install tauri-driver --locked --version 2.1.0
 LACI_HOME=/tmp/laci-demo tauri-driver
 ```
 
@@ -75,7 +75,7 @@ Cold runs clear laci's caches, without flushing the operating system's page cach
 
 ## Packages
 
-`pnpm build` bundles AppImage, Debian and RPM packages in `target/release/bundle/`. Inspect and run the packages before distributing them. Building packages does not publish a release. The CI workflow validates source and uploads local build artifacts.
+`pnpm build` bundles AppImage, Debian and RPM packages in `target/release/bundle/`. Inspect and run the packages before distributing them. Building packages does not publish a release. The CI workflow validates source and uploads local build artifacts. Releases are built from a tag by the Release workflow, on Ubuntu 22.04; [RELEASING.md](RELEASING.md) has the steps and how to verify a download.
 
 Run `node scripts/package-smoke.mjs` after building. It extracts all three archives, checks version, embedded UI assets, build identity, launcher and icons, then exercises isolated CLI and MCP operations. Pass an output directory as the first argument to retain extracted packages for native testing. Extraction and execution do not verify package-manager installation. Local packages depend on the build host's libraries; use the Ubuntu CI artifacts for the distribution baseline.
 

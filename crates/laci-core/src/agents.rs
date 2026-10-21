@@ -195,6 +195,91 @@ impl Cache {
     fn grown(&mut self, kind: &str, path: &Path, read: impl FnOnce(Option<&Value>) -> Value) -> Value {
         let key = format!("{kind}:{}", path.display());
         self.seen.insert(key.clone());
+        let stamp = Stamp::of(path);
+        if let Some(facts) = self.fresh(&key, &stamp) {
+            return facts.clone();
+        }
+        let facts = read(self.values.get(&key).map(|previous| &previous["facts"]));
+        self.insert(key, stamp, facts.clone());
+        facts
+    }
+    /// The facts kept for `key`, when its file is still as `stamp` says.
+    fn fresh(&self, key: &str, stamp: &Stamp) -> Option<&Value> {
+        let previous = self.values.get(key)?;
+        (previous["size"] == stamp.size
+            && previous["modified"] == stamp.modified
+            && previous["changed"] == stamp.changed)
+            .then(|| &previous["facts"])
+    }
+    fn insert(&mut self, key: String, stamp: Stamp, facts: Value) {
+        if self.values.len() >= 20_000 {
+            self.values.clear();
+        }
+        let Stamp { size, modified, changed } = stamp;
+        self.values.insert(key, json!({"size":size,"modified":modified,"changed":changed,"facts":facts}));
+        self.changed = true;
+    }
+    /// Reads, several at a time, the logs whose kept facts are out of date, so the `grown` calls that
+    /// follow find them kept. A first scan reads gigabytes of logs; one at a time took minutes. `progress`
+    /// counts the logs and bytes as they are read. What is read, and what it finds, is what `grown`
+    /// would read and find.
+    fn warm(&mut self, jobs: Vec<Job>, progress: &crate::progress::Progress) {
+        let stale: Vec<_> = jobs
+            .into_iter()
+            .filter_map(|job| {
+                let key = format!("{}:{}", job.kind, job.path.display());
+                let stamp = Stamp::of(&job.path);
+                if self.fresh(&key, &stamp).is_some() {
+                    return None;
+                }
+                let previous = self.values.get(&key).map(|previous| previous["facts"].clone());
+                // A log that only grew is read from where the last read stopped, and one pass reads at most PASS_BYTES.
+                let done = previous.as_ref().and_then(|p| p["_read"]["offset"].as_u64()).unwrap_or(0);
+                let work = stamp.size.saturating_sub(done.min(stamp.size)).min(PASS_BYTES);
+                Some((key, stamp, job, previous, work))
+            })
+            .collect();
+        progress.start(crate::progress::Step::History, stale.len() as u64, stale.iter().map(|s| s.4).sum());
+        let _done = progress.until_done();
+        let read = |(key, stamp, job, previous, work): (String, Stamp, Job, Option<Value>, u64)| {
+            let facts = job.reader.read(&job.path, previous.as_ref());
+            progress.advance(work);
+            (key, stamp, facts)
+        };
+        let threads = std::thread::available_parallelism().map_or(2, |n| n.get()).clamp(1, 4);
+        let read: Vec<_> = match rayon::ThreadPoolBuilder::new().num_threads(threads).build() {
+            Ok(pool) => {
+                use rayon::prelude::*;
+                pool.install(|| stale.into_par_iter().map(read).collect())
+            }
+            Err(_) => stale.into_iter().map(read).collect(),
+        };
+        for (key, stamp, facts) in read {
+            self.insert(key, stamp, facts);
+        }
+    }
+    /// Writes only when a file was read again or one is gone, so a quiet pass leaves the disk alone.
+    pub(crate) fn save(mut self, env: &Env) {
+        let before = self.values.len();
+        self.values.retain(|k, _| self.seen.contains(k));
+        if !self.changed && self.values.len() == before && env.cache_dir.join(self.file).is_file() {
+            return;
+        }
+        if let Ok(text) = serde_json::to_vec(&self.values) {
+            let _ = files::private_dir(&env.cache_dir);
+            let _ = files::replace(&env.cache_dir.join(self.file), &text);
+        }
+    }
+}
+
+/// What tells a file changed: its size, mtime, and ctime with the inode.
+struct Stamp {
+    size: u64,
+    modified: String,
+    changed: String,
+}
+impl Stamp {
+    fn of(path: &Path) -> Self {
         let meta = fs::metadata(path).ok();
         let size = meta.as_ref().map_or(0, |m| m.len());
         let modified = meta
@@ -211,31 +296,26 @@ impl Cache {
             .and_then(|m| platform::change_stamp(path, m).ok())
             .map(|stamp| format!("{}:{}:{}", stamp.changed.0, stamp.changed.1, stamp.identity.file))
             .unwrap_or_default();
-        if let Some(previous) = self.values.get(&key)
-            && previous["size"] == size
-            && previous["modified"] == modified
-            && previous["changed"] == changed
-        {
-            return previous["facts"].clone();
-        }
-        let facts = read(self.values.get(&key).map(|previous| &previous["facts"]));
-        if self.values.len() >= 20_000 {
-            self.values.clear();
-        }
-        self.values.insert(key, json!({"size":size,"modified":modified,"changed":changed,"facts":facts}));
-        self.changed = true;
-        facts
+        Self { size, modified, changed }
     }
-    /// Writes only when a file was read again or one is gone, so a quiet pass leaves the disk alone.
-    pub(crate) fn save(mut self, env: &Env) {
-        let before = self.values.len();
-        self.values.retain(|k, _| self.seen.contains(k));
-        if !self.changed && self.values.len() == before && env.cache_dir.join(self.file).is_file() {
-            return;
-        }
-        if let Ok(text) = serde_json::to_vec(&self.values) {
-            let _ = files::private_dir(&env.cache_dir);
-            let _ = files::replace(&env.cache_dir.join(self.file), &text);
+}
+/// A log `read_all` reads: the cache kind it is kept under, and how it is read.
+struct Job {
+    kind: String,
+    path: PathBuf,
+    reader: Reader,
+}
+enum Reader {
+    /// A Claude Code or Codex session, by its provider.
+    Session(String),
+    /// Any other log that names folders in this field.
+    Log(String),
+}
+impl Reader {
+    fn read(&self, path: &Path, previous: Option<&Value>) -> Value {
+        match self {
+            Self::Session(provider) => session_facts_from(path, provider, previous),
+            Self::Log(field) => log_facts(path, field, false),
         }
     }
 }
@@ -773,6 +853,52 @@ fn regular_files(env: &Env, dir: &Path, ext: &str) -> Vec<PathBuf> {
         .collect()
 }
 
+/// A session log in Claude Code's project folder `dir`, not one of its memory files.
+fn claude_log(dir: &Path, path: &Path) -> bool {
+    let relative = path.strip_prefix(dir).unwrap_or(path);
+    !relative.components().any(|c| c.as_os_str() == "memory") && path.extension().is_some_and(|e| e == "jsonl")
+}
+
+/// The logs `read_all` reads, as `claude_dirs`, the `cwd` stores and `read_backup` find them.
+fn jobs(env: &Env, on: &[Value]) -> Vec<Job> {
+    let mut jobs = Vec::new();
+    let root = env.home.join(".claude/projects");
+    if on.iter().any(|c| c["provider"] == "claude" || c["id"] == "claude") && safe(env, &root) {
+        for entry in files::entries(&root) {
+            let dir = entry.path();
+            if !entry.file_type().is_ok_and(|t| t.is_dir()) || !safe(env, &dir) {
+                continue;
+            }
+            for f in walkdir::WalkDir::new(&dir).follow_links(false).into_iter().take(20_000).flatten() {
+                if f.file_type().is_file() && claude_log(&dir, f.path()) {
+                    jobs.push(Job {
+                        kind: "claude".into(),
+                        path: f.into_path(),
+                        reader: Reader::Session("claude".into()),
+                    });
+                }
+            }
+        }
+    }
+    for c in on.iter().filter(|c| c["id"] != "claude" && c["provider"] != "claude" && c["link"]["kind"] == "cwd") {
+        let Some(id) = c["id"].as_str() else { continue };
+        let Some(raw) = c["link"]["dir"].as_str() else { continue };
+        let dir = paths::expand(raw, &env.home);
+        let field = c["link"]["field"].as_str().unwrap_or("cwd");
+        for path in regular_files(env, &dir, c["link"]["ext"].as_str().unwrap_or(".jsonl")) {
+            let reader = cwd_reader(c["provider"].as_str().unwrap_or(id), field);
+            jobs.push(Job { kind: format!("cwd:{id}:{field}"), path, reader });
+        }
+    }
+    for (_, provider, file, _) in backup_files(env, on) {
+        jobs.push(Job { kind: format!("backup:{provider}"), path: file, reader: Reader::Session(provider) });
+    }
+    jobs
+}
+fn cwd_reader(provider: &str, field: &str) -> Reader {
+    if provider == "codex" { Reader::Session("codex".into()) } else { Reader::Log(field.into()) }
+}
+
 fn claude_dirs(env: &Env, cache: &mut Cache) -> BTreeMap<String, Value> {
     let root = env.home.join(".claude/projects");
     let mut out = BTreeMap::new();
@@ -814,10 +940,7 @@ fn claude_dirs(env: &Env, cache: &mut Cache) -> BTreeMap<String, Value> {
                 continue;
             };
             bytes += meta.len();
-            let relative = f.path().strip_prefix(&dir).unwrap_or(f.path());
-            if relative.components().any(|c| c.as_os_str() == "memory")
-                || f.path().extension().is_none_or(|e| e != "jsonl")
-            {
+            if !claude_log(&dir, f.path()) {
                 continue;
             }
 
@@ -918,6 +1041,27 @@ fn read_antigravity(env: &Env, dir: &Path, connector: &str, cache: &mut Cache, o
 /// Sessions Laci's backup still holds although their tool has deleted them. They cannot be resumed
 /// from there, only read and put back.
 fn read_backup(env: &Env, on: &[Value], cache: &mut Cache, out: &mut AgentData) {
+    for (id, provider, file, original) in backup_files(env, on) {
+        let kept = env.data_dir.join("history").join(&id);
+        let Ok(relative) = file.strip_prefix(&kept) else { continue };
+        let provider = provider.as_str();
+        let facts =
+            cache.grown(&format!("backup:{provider}"), &file, |previous| session_facts_from(&file, provider, previous));
+        let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+        let mut session = normalized_session(provider, &file, &facts, (provider == "claude").then_some(&*stem));
+        session["id"] = json!(format!("backup:{id}:{}", relative.display()));
+        session["connector"] = json!(id);
+        session["backup"] = json!(true);
+        session["restoreTo"] = json!(original);
+        session["resumeCapability"] = json!("history-only");
+        session["at"] = session["updatedAt"].clone();
+        session["bytes"] = json!(fs::metadata(&file).map_or(0, |m| m.len()));
+        out.sessions.push(session);
+    }
+}
+/// The backed-up logs whose session is gone from its tool: `(connector, provider, file, where it was)`.
+fn backup_files(env: &Env, on: &[Value]) -> Vec<(String, String, PathBuf, PathBuf)> {
+    let mut out = Vec::new();
     for c in on {
         let (Some(id), Some(store)) = (c["id"].as_str(), c["link"]["dir"].as_str()) else { continue };
         let provider = c["provider"].as_str().unwrap_or(id);
@@ -937,20 +1081,10 @@ fn read_backup(env: &Env, on: &[Value], cache: &mut Cache, out: &mut AgentData) 
             if fs::symlink_metadata(&original).is_ok() {
                 continue;
             }
-            let facts = cache
-                .grown(&format!("backup:{provider}"), &file, |previous| session_facts_from(&file, provider, previous));
-            let stem = file.file_stem().unwrap_or_default().to_string_lossy();
-            let mut session = normalized_session(provider, &file, &facts, (provider == "claude").then_some(&*stem));
-            session["id"] = json!(format!("backup:{id}:{}", relative.display()));
-            session["connector"] = json!(id);
-            session["backup"] = json!(true);
-            session["restoreTo"] = json!(original);
-            session["resumeCapability"] = json!("history-only");
-            session["at"] = session["updatedAt"].clone();
-            session["bytes"] = json!(fs::metadata(&file).map_or(0, |m| m.len()));
-            out.sessions.push(session);
+            out.push((id.to_owned(), provider.to_owned(), file, original));
         }
     }
+    out
 }
 
 /// The sessions the user keeps: cleanup never offers or deletes them. Keyed by agent and session id, so
@@ -988,6 +1122,7 @@ pub fn keep(env: &Env, sessions: &[Value], on: bool) -> crate::Result<usize> {
 
 pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
     let mut cache = Cache::load(env);
+    cache.warm(jobs(env, on), &env.progress);
     let mut out = AgentData::default();
     if on.iter().any(|c| c["provider"] == "claude" || c["id"] == "claude") {
         out.claude = claude_dirs(env, &mut cache);
@@ -1014,14 +1149,10 @@ pub fn read_all(env: &Env, on: &[Value]) -> AgentData {
                 } else {
                     json!({})
                 };
+                let reader = cwd_reader(provider, field);
                 for file in regular_files(env, &dir, link["ext"].as_str().unwrap_or(".jsonl")) {
-                    let facts = cache.grown(&format!("cwd:{id}:{field}"), &file, |previous| {
-                        if provider == "codex" {
-                            session_facts_from(&file, "codex", previous)
-                        } else {
-                            log_facts(&file, field, false)
-                        }
-                    });
+                    let facts =
+                        cache.grown(&format!("cwd:{id}:{field}"), &file, |previous| reader.read(&file, previous));
                     let key = format!("{id}:{}", file.strip_prefix(&dir).unwrap_or(&file).display());
                     let mut item = json!({"id":key,"connector":id,"file":file,"at":files::modified(&file),"bytes":fs::metadata(&file).map_or(0,|m|m.len()),"lines":facts["lines"],"cwds":facts["cwds"],"ownershipComplete":facts["ownershipComplete"]});
                     if let Some(cwd) = facts["cwd"].as_str() {
@@ -1292,6 +1423,51 @@ mod tests {
         assert_eq!((facts["prompts"].clone(), facts["filesChanged"].clone()), (json!(1), json!(2)));
         assert_eq!(facts["lastReply"], "Added it.");
         assert_eq!(facts["model"], "gpt-6");
+    }
+    #[test]
+    fn a_first_scan_reads_the_logs_together_and_finds_what_one_at_a_time_would() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::for_home(home.path().to_owned());
+        let root = env.home.join(".claude/projects").join(paths::enc(env.home.to_str().unwrap()));
+        let mut logs = Vec::new();
+        for i in 0..6 {
+            let id = format!("12345678-1234-1234-1234-12345678900{i}");
+            let log = root.join(format!("{id}.jsonl"));
+            put(
+                &log,
+                &[
+                    json!({"type":"user","sessionId":id,"cwd":env.home,"timestamp":format!("2026-10-0{}T10:00:00Z", i + 1),"message":{"role":"user","content":format!("Task number {i}")}}),
+                ],
+            );
+            logs.push(log);
+        }
+        let child = root.join(format!("{ID}/subagents/agent-a.jsonl"));
+        put(&child, &[json!({"type":"user","sessionId":ID,"cwd":env.home,"message":{"role":"user","content":"Look"}})]);
+        logs.push(child);
+        put(&root.join("memory/notes.jsonl"), &[json!({"not":"a log"})]);
+        let codex = env.home.join(".codex/sessions/2026/10/one.jsonl");
+        put(&codex, &[json!({"type":"session_meta","payload":{"id":CHILD,"cwd":env.home}})]);
+        logs.push(codex);
+        let on = connectors(&env, &json!({"presets":["claude","codex"]}));
+
+        let mut listed: Vec<_> = jobs(&env, &on).into_iter().map(|job| job.path).collect();
+        listed.sort();
+        logs.sort();
+        assert_eq!(listed, logs, "every log the readers read, and no memory file");
+
+        let mut cache = Cache::load(&env);
+        let progress = crate::progress::Progress::default();
+        cache.warm(jobs(&env, &on), &progress);
+        assert!(progress.to_json().is_null(), "the step ends once the logs are read");
+        for job in jobs(&env, &on) {
+            let key = format!("{}:{}", job.kind, job.path.display());
+            let kept = cache.fresh(&key, &Stamp::of(&job.path)).expect("read ahead").clone();
+            assert_eq!(kept, job.reader.read(&job.path, None), "{key}");
+        }
+        // What `grown` then hands out is what was read ahead, without reading again.
+        let path = &logs[0];
+        let facts = cache.grown("claude", path, |_| panic!("read again"));
+        assert_eq!(facts["firstPrompt"], session_facts_from(path, "claude", None)["firstPrompt"]);
     }
     #[test]
     fn a_log_that_only_grew_is_read_from_where_the_last_read_stopped() {

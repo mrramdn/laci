@@ -608,6 +608,18 @@ export interface RefreshStatus {
   busy: boolean;
   revision?: number;
   historyPending?: boolean;
+  /** How far the running scan has come; null when none runs. */
+  progress?: ScanProgress | null;
+}
+/** A scan's step, as crates/laci-core/src/progress.rs counts it. */
+export interface ScanProgress {
+  /** Agent logs that changed since the last scan, then the folders, then each project and folder found. */
+  step: "history" | "folders" | "projects";
+  done: number;
+  total: number;
+  /** For agent logs: how much of them is read. */
+  bytes: number;
+  totalBytes: number;
 }
 export interface NewInfo {
   templates: string[];

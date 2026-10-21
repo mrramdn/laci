@@ -390,21 +390,52 @@ pub fn health(dir: &Path) -> Value {
     }
     out
 }
+/// Whether a trimmed line ends the paragraph above it: a blank line, a heading, a list, a quote, a table, HTML, a
+/// picture, a rule or a heading's underline.
+fn ends_paragraph(s: &str) -> bool {
+    s.is_empty()
+        || s.starts_with(['#', '>', '|', '<', '!'])
+        || re!(r"^(?:[-*+]|\d+[.)])\s").is_match(s)
+        || re!(r"^(?:=+|-+|\*+|_+)$").is_match(&s.replace(' ', ""))
+}
+/// `text` in at most `max` characters. A longer one is cut after the last whole word that fits and ends with "…".
+pub(crate) fn shorten(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let room: String = text.chars().take(max.saturating_sub(1)).collect();
+    let whole = text.chars().nth(room.chars().count()).is_some_and(char::is_whitespace);
+    // A single word longer than the room is cut where the room ends.
+    let cut = if whole { &room[..] } else { room.rfind(char::is_whitespace).map_or(&room[..], |at| &room[..at]) };
+    let cut = cut.trim_end_matches(|c: char| c.is_whitespace() || ",;:.—–-".contains(c));
+    format!("{cut}…")
+}
 fn readme(dir: &Path) -> Option<Value> {
     let file = files::entries(dir)
         .into_iter()
         .find(|e| re!(r"(?i)^readme(?:\.(md|markdown|txt|rst))?$").is_match(&e.file_name().to_string_lossy()))?;
     let raw = files::text(&file.path())?;
     let mut title = String::new();
-    let mut tagline = String::new();
+    // The first paragraph of text, all its lines: a README wraps its lines by hand as often as not.
+    let mut paragraph: Vec<&str> = Vec::new();
+    let mut ended = false;
     let mut sections = Vec::new();
     let mut fence = Fence::default();
     let mut started = false;
     for line in raw.lines() {
         if fence.skip(line) {
+            ended |= !paragraph.is_empty();
             continue;
         }
         let s = line.trim();
+        if !paragraph.is_empty() && !ended {
+            if ends_paragraph(s) {
+                ended = true;
+            } else {
+                paragraph.push(s);
+                continue;
+            }
+        }
         if let Some(t) = s.strip_prefix("# ") {
             if title.is_empty() {
                 title = strip_md(t);
@@ -415,14 +446,15 @@ fn readme(dir: &Path) -> Option<Value> {
         if let Some(t) = s.strip_prefix("## ") {
             sections.push(strip_md(t));
         }
-        if tagline.is_empty()
+        if paragraph.is_empty()
             && (started || title.is_empty())
             && !s.is_empty()
             && !s.starts_with(['#', '!', '[', '<', '|', '-', '*'])
         {
-            tagline = strip_md(s).chars().take(280).collect();
+            paragraph.push(s);
         }
     }
+    let tagline = shorten(&strip_md(&paragraph.join("\n")), 280);
     let links: Vec<_> = re!(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
         .captures_iter(&raw)
         .filter(|c| !re!(r"badge|shields|\.(png|svg|jpg)").is_match(&c[2]))
@@ -817,6 +849,32 @@ mod tests {
         .unwrap();
         let readme = super::readme(dir.path()).unwrap();
         assert_eq!(readme["template"], true);
+    }
+    #[test]
+    fn the_summary_is_the_whole_first_paragraph_cut_at_a_word() {
+        let dir = tempfile::tempdir().unwrap();
+        let readme = |text: &str| {
+            std::fs::write(dir.path().join("README.md"), text).unwrap();
+            super::readme(dir.path()).unwrap()["tagline"].as_str().unwrap().to_owned()
+        };
+        assert_eq!(
+            readme(
+                "# cloud\n\n[![ci](https://x/badge.svg)](https://x)\n\nSource for cloud.mrramdn.com, the infrastructure site of\n[the owner](https://mrramdn.com), built with Astro.\n\n- a list\n"
+            ),
+            "Source for cloud.mrramdn.com, the infrastructure site of the owner, built with Astro."
+        );
+        assert_eq!(
+            readme("Frontend untuk site — creative agency &\nstudio.\n## Setup\nmore\n"),
+            "Frontend untuk site — creative agency & studio."
+        );
+        assert_eq!(readme("# T\n\nFirst line\n- a list item\n"), "First line");
+        let long = format!("{} When you move or archive a project, its history moves with it.", "word ".repeat(50));
+        let cut = readme(&format!("# T\n\n{long}\n"));
+        assert_eq!(cut.chars().count(), 277);
+        assert!(cut.ends_with(" word When you move or archive a…"), "{cut}");
+        assert_eq!(super::shorten("short", 280), "short");
+        assert_eq!(super::shorten(&"x".repeat(300), 10), format!("{}…", "x".repeat(9)));
+        assert_eq!(super::shorten("one two, three", 10), "one two…");
     }
     #[test]
     fn a_checkbox_with_nothing_to_do_is_not_a_task() {

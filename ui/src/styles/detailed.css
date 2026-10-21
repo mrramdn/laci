@@ -1176,6 +1176,32 @@ kbd {
   display: flex;
   justify-content: flex-end;
 }
+/* The folder's list gives up columns by its own width, not the window's: with the side panel open
+   a 1440 px window left Summary 20 px ("S…"). Summary keeps 160 px or more. Below 960 px Stack goes
+   (as below a 1240 px window), below 780 px Size goes, and below 700 px Summary and Agents go too and
+   Name takes the room, as below an 880 px window. A list 960 px or wider is as it was. */
+.folder-list {
+  container: folder-list / inline-size;
+}
+@container folder-list (width < 960px) {
+  .c-stack {
+    display: none;
+  }
+}
+@container folder-list (width < 780px) {
+  .c-size {
+    display: none;
+  }
+}
+@container folder-list (width < 700px) {
+  .c-sum,
+  .c-ai {
+    display: none;
+  }
+  .c-name {
+    flex: 1;
+  }
+}
 .c-name .nm {
   font-weight: 500;
   overflow: hidden;

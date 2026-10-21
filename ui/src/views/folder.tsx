@@ -380,7 +380,7 @@ export function Folder() {
           {cap(scopeText)}
         </span>
       </div>
-      <div className="body" role="grid" aria-label="Folder contents">
+      <div className="body folder-list" role="grid" aria-label="Folder contents">
         <div className="cols" role="row">
           {(
             [

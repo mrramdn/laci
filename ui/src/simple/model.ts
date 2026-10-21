@@ -570,6 +570,26 @@ export interface HelperChats {
 }
 
 /**
+ * A project's AI chats as its page lists them and its card counts them, so the two agree: the first
+ * few of the longer ones, how many more there are, and the quick ones folded into one line. When
+ * there are only quick ones, they are listed. `total` is every chat.
+ */
+export function projectChats(snapshot: Snapshot, node: Node, now = Date.now()) {
+  const mine =
+    chatsModel(snapshot, {}, now).groups.find((g) => g.node?.id === node.id)?.items ?? [];
+  const long = mine.filter((c) => !c.short);
+  const list = long.length ? long : mine;
+  return {
+    shown: list.slice(0, PAGE_CHATS),
+    more: Math.max(0, list.length - PAGE_CHATS),
+    quick: long.length ? mine.length - long.length : 0,
+    total: mine.length,
+  };
+}
+/** How many chats a project's page lists before "and 2 more chats". */
+export const PAGE_CHATS = 3;
+
+/**
  * AI helpers › Chats: the chats of every project, by project, through chatsModel (its search) and
  * Simple's filters. Quick chats fold into one line in each project.
  */

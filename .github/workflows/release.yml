@@ -376,7 +376,9 @@ jobs:
   # A build provenance attestation for every asset: gh attestation verify <file> -R mrramdn/laci.
   attest:
     needs: [verify, finalize]
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    # On a tag, sign-dry-run is always skipped, and GitHub skips every job whose needs lead back to a skipped one
+    # unless its condition says otherwise. So this job and the draft name the results they wait for.
+    if: ${{ !cancelled() && needs.finalize.result == 'success' && github.event_name == 'push' && github.ref_type == 'tag' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -395,7 +397,7 @@ jobs:
   # The draft, marked as a pre-release when the version has a "-". rifkii publishes it.
   draft:
     needs: [verify, finalize, attest]
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    if: ${{ !cancelled() && needs.finalize.result == 'success' && needs.attest.result == 'success' && github.event_name == 'push' && github.ref_type == 'tag' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

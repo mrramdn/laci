@@ -417,7 +417,9 @@ export const project = {
     by: (ai: string, when: string) => `${ai}, ${when}`,
     messages: (n: number) => count(n, "message"),
     files: (n: number) => `${count(n, "file")} changed`,
-    quick: (n: number) => `and ${count(n, "quick chat")}`,
+    /** What the list leaves out: the chats past the first few, and the quick ones. */
+    rest: (more: number, quick: number) =>
+      `and ${[more ? count(more, "more chat") : "", quick ? count(quick, "quick chat") : ""].filter(Boolean).join(" and ")}`,
     continue: "Continue",
     continueFor: (title: string) => `Continue: ${title}`,
     read: "Read",

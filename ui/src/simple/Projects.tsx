@@ -3,7 +3,7 @@
 import { useId, useMemo } from "react";
 import { useNow } from "../clock";
 import { Icon } from "../common";
-import { agentCount, deadlineInfo } from "../helpers";
+import { deadlineInfo } from "../helpers";
 import { external, goToProject, useApp } from "../store";
 import type { Node, Snapshot } from "../types";
 import { ago, blocks, projects as said } from "../words";
@@ -13,6 +13,7 @@ import {
   PROJECT_FILTERS,
   PROJECT_SORTS,
   projectFolders,
+  projectChats,
   projectsModel,
 } from "./model";
 import { setSort, useSimple } from "./state";
@@ -145,7 +146,7 @@ export function Projects() {
 function ProjectCard({ n, snapshot, now }: { n: Node; snapshot: Snapshot; now: Date }) {
   const apps = useApp((s) => s.apps);
   const due = deadlineInfo(n.meta.deadline, now);
-  const chats = agentCount(n, snapshot);
+  const chats = projectChats(snapshot, n, now.getTime()).total;
   const priority = said.priority[n.meta.priority ?? ""];
   const title = useId();
   return (

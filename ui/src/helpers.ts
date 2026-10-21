@@ -298,6 +298,30 @@ export function counted(id: string, snapshot: Snapshot) {
     )
   );
 }
+const chatsByNode = new WeakMap<Snapshot, Map<string, Conversation[]>>();
+/**
+ * A project's AI chats, as every list of chats shows them: the conversations of all sessions, each
+ * in the project its newest session is in. A subagent's log is part of the chat that started it,
+ * so a subagent that worked in another project is no chat of that project. Worked out once a scan.
+ */
+export function chatsOf(node: Node, snapshot: Snapshot): Conversation[] {
+  let byNode = chatsByNode.get(snapshot);
+  if (!byNode) {
+    const owners = new Map<string, string>();
+    for (const [id, sessions] of indexSessions(snapshot).byNode)
+      for (const session of sessions) owners.set(sessionKey(session), id);
+    byNode = new Map();
+    for (const c of conversations(allSessions(snapshot))) {
+      const id = owners.get(sessionKey(c.session));
+      if (!id) continue;
+      const list = byNode.get(id);
+      if (list) list.push(c);
+      else byNode.set(id, [c]);
+    }
+    chatsByNode.set(snapshot, byNode);
+  }
+  return byNode.get(node.id) ?? [];
+}
 const agentCounts = new WeakMap<Snapshot, WeakMap<Node, number>>();
 /**
  * A project's conversations, and the agent history Laci has no session for. Worked out once for
@@ -309,7 +333,7 @@ export function agentCount(node: Node, snapshot: Snapshot) {
   let count = counts.get(node);
   if (count === undefined) {
     count =
-      conversations(sessionsOf(node, snapshot)).length +
+      chatsOf(node, snapshot).length +
       node.agents.items.filter(
         (id) =>
           counted(id, snapshot) &&

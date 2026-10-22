@@ -905,14 +905,18 @@ fn undo_copy_move(env: &Env, id: &str, file: PathBuf, settled: &mut Option<Value
         .and_then(|()| crate::backup::mark(&from))
         .and_then(|()| shift(&mut tx, &to, &from, &roots, &mut moved));
     if let Err(error) = undone {
-        if point_copy(env, &to).and_then(|()| shift_back(&mut tx, &to, &from, &roots, &moved)).is_ok() {
-            tx.save()?;
-            crate::backup::end_moving(env)?;
-        } else {
-            // The next backup finishes it, the way the setting points.
-            let _ = tx.save();
-        }
-        return Err(error);
+        return match point_copy(env, &to).and_then(|()| shift_back(&mut tx, &to, &from, &roots, &moved)) {
+            Ok(()) => {
+                tx.save()?;
+                crate::backup::end_moving(env)?;
+                Err(error)
+            }
+            Err(rollback) => {
+                // The next backup finishes it, the way the setting points, once what stopped it is put right.
+                let _ = tx.save();
+                Err(format!("{error} · rollback failed: {rollback}"))
+            }
+        };
     }
     tx.journal["state"] = json!("undone");
     tx.save()?;
@@ -1511,15 +1515,17 @@ fn move_copy_into(env: &Env, from: &Path, to: &Path, shown: &str, own: bool) -> 
     if let Err(error) = point_copy(env, to).and_then(|()| shift(&mut tx, from, to, &roots, &mut moved)) {
         let back = point_copy(env, from).and_then(|()| shift_back(&mut tx, from, to, &roots, &moved));
         tx.journal["state"] = json!(if back.is_ok() { "undone" } else { "failed" });
-        tx.journal["error"] = json!(match &back {
-            Ok(()) => error.clone(),
+        // A rollback that stopped says why, so what stands in its way can be put right.
+        let told = match &back {
+            Ok(()) => error,
             Err(rollback) => format!("{error} · rollback failed: {rollback}"),
-        });
+        };
+        tx.journal["error"] = json!(told);
         // One whose rollback failed is finished by the next backup, the way the setting points.
         if tx.save().is_ok() && back.is_ok() {
             crate::backup::end_moving(env)?;
         }
-        return Err(error);
+        return Err(told);
     }
     tx.journal["state"] = json!("applied");
     tx.save()?;
@@ -1576,12 +1582,24 @@ fn shift(tx: &mut Tx<'_>, from: &Path, to: &Path, roots: &Value, moved: &mut Vec
     }
     Ok(())
 }
-/// Moves what [`shift`] moved from `from` into `to` back, the last first.
+/// Moves what [`shift`] moved from `from` into `to` back, the last first. One that is in both folders was copied to
+/// another drive whose file system can't rename without replacing, as NFS, sshfs or 9p, and its source couldn't be
+/// deleted afterwards ([`across`]): only the user can tell which half is complete, so it stops there and names both.
 fn shift_back(tx: &mut Tx<'_>, from: &Path, to: &Path, roots: &Value, moved: &[std::ffi::OsString]) -> Result<()> {
     for name in moved.iter().rev() {
         let (there, back) = (to.join(name), from.join(name));
-        if exists(&there) && !exists(&back) {
-            tx.move_copy(&there, &back, roots)?;
+        match (exists(&there), exists(&back)) {
+            (true, false) => tx.move_copy(&there, &back, roots)?,
+            (true, true) => {
+                return Err(format!(
+                    "{} is both in {} and in {}, so Laci stopped: keep the one that is complete, remove the other, \
+                     and back up again.",
+                    name.to_string_lossy(),
+                    paths::tilde(to, &tx.env.home),
+                    paths::tilde(from, &tx.env.home)
+                ));
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -2142,6 +2160,32 @@ mod tests {
         fs::write(&file, saved).unwrap();
         assert_eq!(settle_copy(&env).unwrap().expect("the move is finished")["state"], "applied");
         assert!(holds(&to, "claude") && holds(&to, "codex"));
+    }
+
+    /// A move of the copy that is put back stops at a folder of it that is in both places, as a move to sshfs leaves one
+    /// whose source it couldn't delete after its copy was published, and names both folders: it isn't counted as put
+    /// back, so the copy isn't left whole in the folder the setting no longer names.
+    #[test]
+    fn putting_a_move_of_the_copy_back_stops_at_a_part_that_is_in_both_folders() {
+        let (_temp, env, disk) = copy_home();
+        let (from, to) = copy_of(&env, &disk, &["claude", "codex"]);
+        let roots = json!([crate::backup::journal_root(&from).unwrap(), crate::backup::journal_root(&to).unwrap()]);
+        let mut tx = Tx::new(&env, "Moved the copy of AI chats", Value::Null).unwrap();
+        // `codex` moved first; `claude` was copied in full, and then its source couldn't be deleted.
+        fs::rename(from.join("codex"), to.join("codex")).unwrap();
+        copy_tree(&from.join("claude"), &to.join("claude")).unwrap();
+        let moved = ["codex", "claude"].map(std::ffi::OsString::from);
+        let error = shift_back(&mut tx, &from, &to, &roots, &moved).unwrap_err();
+        let both =
+            format!("claude is both in {} and in {}, so Laci stopped", to.display(), paths::tilde(&from, &env.home));
+        assert!(error.starts_with(&both), "{error}");
+        assert!(holds(&from, "claude") && holds(&to, "claude"), "neither half is removed");
+        assert!(holds(&to, "codex") && !from.join("codex").exists(), "nothing after it moved back");
+        // Without such a part, as on ext4, everything moves back.
+        fs::remove_dir_all(to.join("claude")).unwrap();
+        shift_back(&mut tx, &from, &to, &roots, &moved).unwrap();
+        assert!(holds(&from, "claude") && holds(&from, "codex"));
+        assert!(!to.join("claude").exists() && !to.join("codex").exists());
     }
 
     /// An Undo of a move of the copy that is refused changes nothing, so backups go on. Settings changed since, as the

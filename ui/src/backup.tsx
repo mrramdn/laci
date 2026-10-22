@@ -112,15 +112,22 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
   const change = useRef<HTMLButtonElement>(null);
   const question = useRef<HTMLDivElement>(null);
   const open = asking !== null;
-  const wasOpen = useRef(false);
-  // The question takes the focus when it opens, and gives it back to Change… when it closes.
-  useEffect(() => {
-    if (open) question.current?.focus();
-    else if (wasOpen.current) change.current?.focus();
-    wasOpen.current = open;
-  }, [open]);
   const fresh = Boolean(state.error);
   const moving = working === said.backupMoving;
+  const busy = moving || historyPending;
+  const wasOpen = useRef(false);
+  const giveBack = useRef(false);
+  // The question takes the focus when it opens, and gives it back to Change… when it closes, as soon as Change… can
+  // take it: after a move it is disabled until history is read again. Not if the focus went somewhere meanwhile.
+  useEffect(() => {
+    if (open) question.current?.focus();
+    giveBack.current = open ? false : giveBack.current || wasOpen.current;
+    wasOpen.current = open;
+    if (!giveBack.current || busy) return;
+    giveBack.current = false;
+    const at = document.activeElement;
+    if (!at || at === document.body) change.current?.focus();
+  }, [open, busy]);
   const where = (dir: string) => (dir ? tilde(dir, home) : said.backupFolderDefault);
   const note = fresh ? said.backupFreshNote : said.backupMoveNote;
   const ask = (dir: string) => {
@@ -165,14 +172,14 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
           name={said.backupFolderChangeName}
           title={said.backupFolderTitle}
           defaultPath={state.chosen && state.dest ? state.dest : "~"}
-          disabled={moving || historyPending}
+          disabled={busy}
           onPick={ask}
         />
         {state.chosen ? (
           <button
             type="button"
             className="btn"
-            disabled={moving || historyPending}
+            disabled={busy}
             onClick={() => ask("")}
           >
             {said.backupFolderDefaultButton}

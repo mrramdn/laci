@@ -57,6 +57,8 @@ export class Host {
     return this.page.query(selector, this);
   }
   focus() {
+    // As in a browser, a disabled control doesn't take the focus.
+    if (this.props.disabled) return;
     this.page.document.activeElement = this;
     this.page.document.fire("focusin", { target: this });
   }

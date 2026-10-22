@@ -4,7 +4,7 @@
 // chats needs "Select" first, or a chat's own sheet. Each change goes through the requests Detailed
 // sends.
 import "./ai-helpers.css";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent, RefObject } from "react";
 import { create } from "zustand";
 import { closeReportItem } from "../actions";
@@ -899,17 +899,24 @@ function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
   const [error, setError] = useState("");
   const change = useRef<HTMLButtonElement>(null);
   const question = useRef<HTMLDivElement>(null);
+  const told = useId();
   const open = asking !== null;
-  const wasOpen = useRef(false);
-  // The question takes the focus when it opens, and gives it back to Change… when it closes.
-  useEffect(() => {
-    if (open) question.current?.focus();
-    else if (wasOpen.current) change.current?.focus();
-    wasOpen.current = open;
-  }, [open]);
   const fresh = Boolean(backup.error);
   const moving = working === said.copyMoving;
   const busy = moving || historyPending;
+  const wasOpen = useRef(false);
+  const giveBack = useRef(false);
+  // The question takes the focus when it opens, and gives it back to Change… when it closes, as soon as Change… can
+  // take it: after a move it is disabled until history is read again. Not if the focus went somewhere meanwhile.
+  useEffect(() => {
+    if (open) question.current?.focus();
+    giveBack.current = open ? false : giveBack.current || wasOpen.current;
+    wasOpen.current = open;
+    if (!giveBack.current || busy) return;
+    giveBack.current = false;
+    const at = document.activeElement;
+    if (!at || at === document.body) change.current?.focus();
+  }, [open, busy]);
   const where = (dir: string) => (dir ? tilde(dir, home) : said.copyPlaceOwnName);
   const note = fresh ? said.copyFreshNote : said.copyMoveNote;
   const ask = (dir: string) => {
@@ -951,8 +958,8 @@ function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
         <span className="s-quiet">{said.copyPlaceNote}</span>
       </p>
       {asking !== null ? (
-        <div ref={question} role="group" aria-label={act} tabIndex={-1}>
-          <p>
+        <div ref={question} role="group" aria-label={act} aria-describedby={told} tabIndex={-1}>
+          <p id={told}>
             {asked(asking)} {note}
           </p>
           <div className="s-actions">

@@ -503,6 +503,8 @@ function helpersPage({ view = "agents", snapshot = scan(), replies = {}, mcp = {
           ? reply(body)
           : (reply ?? { dest: dir ? dir : "~/.local/share/laci/history", moved: true });
       toasts.push([words.said(answer), words.note]);
+      // As the store takes in the change: history is read again, and Change… waits for it.
+      app.setState({ historyPending: true });
       return true;
     },
     openCopy: (dest) => void navigated.push(`copy:${dest}`),
@@ -1035,11 +1037,19 @@ export async function aCopyLaciCantReachIsNotMovedButANewOneCanStart() {
   assert.equal(button(said.copyMove), undefined);
   const group = page.find((n) => n.props.role === "group" && n.props["aria-label"] === said.copyFresh);
   assert.equal(page.document.activeElement, group);
+  // What it says is what a screen reader tells with the group.
+  const told = page.find((n) => n.props.id === group.props["aria-describedby"]);
+  assert.ok(told.textContent.includes(said.copyFreshAsk("/mnt/archive/ai-chats")), told.textContent);
+  assert.ok(told.textContent.includes(said.copyFreshNote), told.textContent);
   page.act(() => button(said.copyFresh).props.onClick());
   await page.settle();
   assert.deepEqual(page.asked("backup/move").at(-1), ["backup/move", { dir: "/mnt/archive/ai-chats", fresh: true }]);
   assert.deepEqual(page.toasts.at(-1), [said.copyKept("/mnt/archive/ai-chats"), said.copyFreshNote]);
-  // Answered, the focus goes back to Change….
+  // Answered, the focus goes back to Change… once history is read again and Change… can take it.
+  assert.equal(button(said.copyPlaceChange).props.disabled, true);
+  assert.notEqual(page.document.activeElement, button(said.copyPlaceChange));
+  page.app.setState({ historyPending: false });
+  await page.settle();
   assert.equal(page.document.activeElement, button(said.copyPlaceChange));
 }
 

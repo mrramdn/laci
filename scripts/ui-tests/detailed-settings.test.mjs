@@ -55,10 +55,11 @@ const FOUND = {
 /** The system's folder picker as a button that says what it was asked for and hands over `box.picked`. */
 function chooser(box) {
   return {
-    ChooseFolder: ({ label, name, title, defaultPath, disabled, onPick }) =>
+    ChooseFolder: ({ ref, label, name, title, defaultPath, disabled, onPick }) =>
       createElement(
         "button",
         {
+          ref,
           type: "button",
           "aria-label": name,
           "data-picker": title,
@@ -201,6 +202,8 @@ async function settingsPage({
           try {
             const answer = await api("backup/move", fresh ? { dir, fresh } : { dir });
             toasts.push([words.said(answer), words.note]);
+            // As the store takes in the change: history is read again, and Change… waits for it.
+            app.setState({ historyPending: true });
             return true;
           } catch (error) {
             onError(error);
@@ -321,6 +324,13 @@ export async function aHistoryBackupLaciCantReachIsNotMovedButANewOneCanStart() 
   await p.done();
   assert.deepEqual(p.asked("backup/move").at(-1), ["backup/move", { dir: `${HOME}/ai-chats`, fresh: true }]);
   assert.deepEqual(p.toasts.at(-1), [said.backupKept(`${HOME}/ai-chats`), said.backupFreshNote]);
+  // Answered, the focus goes back to Change… once history is read again and Change… can take it.
+  const change = () => picker(p, said.backupFolderTitle);
+  assert.equal(change().props.disabled, true);
+  assert.notEqual(p.document.activeElement, change());
+  p.app.setState({ historyPending: false });
+  await p.settle();
+  assert.equal(p.document.activeElement, change());
 }
 
 export async function aChooseButtonSitsBesideEachFolderFieldOfSettings() {

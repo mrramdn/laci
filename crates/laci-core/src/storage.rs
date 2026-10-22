@@ -78,13 +78,16 @@ pub fn report(env: &Env) -> Result<Value> {
         json!({"id":"journal","label":"Change journal and Log","about":"What Undo needs to know about each change.","bytes":size("journal") + fs::metadata(env.data_dir.join("activity.jsonl")).map_or(0, |m| m.len()),"free":0}),
         json!({"id":"cache","label":"Scan cache","about":"Rebuilt by the next scan.","bytes":files::size(&env.cache_dir),"free":0}),
     ];
-    let total: u64 = parts.iter().map(|p| p["bytes"].as_u64().unwrap_or(0)).sum();
+    // A copy of AI chats kept in a folder of the user's choice, often on another drive, isn't in the data folder.
+    let total: u64 = parts.iter().filter(|p| p["elsewhere"] != true).map(|p| p["bytes"].as_u64().unwrap_or(0)).sum();
     Ok(json!({"parts":parts,"total":total,"dir":paths::tilde(&env.data_dir,&env.home)}))
 }
 
-/// The copy of AI chats, wherever it is kept: `dir` says where, and `error` why it can't be reached now.
+/// The copy of AI chats, wherever it is kept: `dir` says where, `error` why it can't be reached now, and `elsewhere`
+/// that it is in a folder the user chose, outside the data folder, so it isn't part of the data folder's total.
 fn copy_part(env: &Env) -> Value {
     let mut part = json!({"id":"history","label":"Agent history backup","about":"Packed copies of your agents' sessions, so a tool that deletes old logs cannot lose them. It can be kept in any folder, also on another drive. Nothing is removed from it.","bytes":0,"free":0});
+    part["elsewhere"] = json!(crate::backup::chosen(env, &crate::config::load(env)).is_some());
     match crate::backup::dir(env) {
         Ok(dir) => {
             part["bytes"] = json!(files::size(&dir));

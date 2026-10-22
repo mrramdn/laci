@@ -26,6 +26,19 @@ fn legacy_catalog(env: &Env) -> Vec<Value> {
         json!({"id":"aider","name":"Aider","link":{"kind":"inside","path":".aider.chat.history.md"}}),
     ]
 }
+/// The ids of every connector Laci knows: built in, from before, and the user's own in `cfg`. The copy of AI chats
+/// keeps each agent's files under its id.
+pub(crate) fn known_ids(env: &Env, cfg: &Value) -> Vec<String> {
+    let mut ids: Vec<String> = catalog(env)
+        .into_iter()
+        .chain(legacy_catalog(env))
+        .chain(connectors(env, cfg))
+        .filter_map(|c| c["id"].as_str().map(str::to_owned))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
 fn same_store(a: &Value, b: &Value) -> bool {
     match (a["link"]["dir"].as_str(), b["link"]["dir"].as_str()) {
         (Some(a), Some(b)) => {
@@ -967,7 +980,7 @@ fn jobs(env: &Env, on: &[Value]) -> Vec<Job> {
             jobs.push(Job { kind: format!("cwd:{id}:{field}"), path, reader });
         }
     }
-    for (_, provider, file, _) in backup_files(env, on) {
+    for (_, provider, file, ..) in backup_files(env, on) {
         jobs.push(Job { kind: format!("backup:{provider}"), path: file, reader: Reader::Session(provider) });
     }
     jobs
@@ -1118,8 +1131,7 @@ fn read_antigravity(env: &Env, dir: &Path, connector: &str, cache: &mut Cache, o
 /// Sessions Laci's backup still holds although their tool has deleted them. They cannot be resumed
 /// from there, only read and put back.
 fn read_backup(env: &Env, on: &[Value], cache: &mut Cache, out: &mut AgentData) {
-    let Ok(copy) = crate::backup::dir(env) else { return };
-    for (id, provider, file, original) in backup_files(env, on) {
+    for (id, provider, file, original, copy) in backup_files(env, on) {
         let kept = copy.join(&id);
         // The session is named by the log it holds, whether that is packed yet or not.
         let log = crate::backup::original(&file);
@@ -1139,13 +1151,21 @@ fn read_backup(env: &Env, on: &[Value], cache: &mut Cache, out: &mut AgentData) 
         out.sessions.push(session);
     }
 }
-/// The backed-up logs whose session is gone from its tool: `(connector, provider, file, where it was)`. A log is
-/// `<relative>.jsonl.zst` in the copy, or `<relative>.jsonl` until a backup run packs it; where both are there, the
-/// packed one is the newer copy.
-fn backup_files(env: &Env, on: &[Value]) -> Vec<(String, String, PathBuf, PathBuf)> {
-    let mut out = Vec::new();
+/// A backed-up log whose session is gone from its tool: `(connector, provider, file, where it was, copy folder)`.
+type BackupFile = (String, String, PathBuf, PathBuf, PathBuf);
+/// The backed-up logs whose session is gone from its tool. A log is `<relative>.jsonl.zst` in the copy, or
+/// `<relative>.jsonl` until a backup run packs it; where both are there, the packed one is the newer copy. Until a
+/// move of the copy that stopped part-way is finished, part of it is still in the folder it was moving from, and is
+/// listed from there.
+fn backup_files(env: &Env, on: &[Value]) -> Vec<BackupFile> {
+    let mut out: Vec<BackupFile> = Vec::new();
     // A copy whose folder isn't there now, as on a drive that isn't connected, lists nothing.
-    let Ok(copy) = crate::backup::dir(env) else { return out };
+    for copy in crate::backup::dirs(env) {
+        backup_files_in(env, on, &copy, &mut out);
+    }
+    out
+}
+fn backup_files_in(env: &Env, on: &[Value], copy: &Path, out: &mut Vec<BackupFile>) {
     for c in on {
         let (Some(id), Some(store)) = (c["id"].as_str(), c["link"]["dir"].as_str()) else { continue };
         let provider = c["provider"].as_str().unwrap_or(id);
@@ -1156,7 +1176,7 @@ fn backup_files(env: &Env, on: &[Value]) -> Vec<(String, String, PathBuf, PathBu
         let store = paths::expand(store, &env.home);
         let kept = copy.join(id);
         let mut logs: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
-        for file in copied_logs(&copy, &kept) {
+        for file in copied_logs(copy, &kept) {
             let log = crate::backup::original(&file);
             if crate::backup::is_packed(&file) || !logs.contains_key(&log) {
                 logs.insert(log, file);
@@ -1172,10 +1192,9 @@ fn backup_files(env: &Env, on: &[Value]) -> Vec<(String, String, PathBuf, PathBu
             if fs::symlink_metadata(&original).is_ok() {
                 continue;
             }
-            out.push((id.to_owned(), provider.to_owned(), file, original));
+            out.push((id.to_owned(), provider.to_owned(), file, original, copy.to_owned()));
         }
     }
-    out
 }
 /// The chat logs in `dir`, a folder of the copy of AI chats at `root`: packed or still plain. The copy may be
 /// outside home, so each must stay inside it, with no link on the way; what a run that stopped left is skipped.

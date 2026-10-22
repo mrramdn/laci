@@ -116,20 +116,24 @@ fn a_backup_removes_only_what_a_run_that_stopped_left_in_the_copy() {
     let chat = kept.join("chat.jsonl.zst");
     fs::create_dir_all(&kept).unwrap();
     fs::write(&chat, zstd::stream::encode_all(&b"a chat\n"[..], 3).unwrap()).unwrap();
-    // What runs that stopped left: the old writer's temporary file, Laci's own, and a move from another drive.
+    // What runs that stopped left: the old writer's temporary file and Laci's own.
     write(&kept.join(".tmpYmKbQv"), "half a log");
     write(&kept.join("2026/.laci-copy-a1b2C3"), "half a copy");
-    write(&kept.join(".laci-move-Ab12Cd/payload/chat.jsonl.zst"), "half a moved copy");
-    // What a move set aside is its source, and a file Laci doesn't know is the user's.
+    // What a move copied into or set aside can be the only copy of a chat once its source is gone, and a file
+    // Laci doesn't know is the user's.
+    write(&kept.join(".laci-move-Ab12Cd/payload/chat.jsonl.zst"), "a moved copy");
     write(&kept.join(".laci-move-1f2e-3/chat.jsonl.zst"), "set aside");
     write(&kept.join("notes.txt"), "mine");
+    // Outside the folders of the agents Laci knows, nothing is touched either.
+    write(&env.data_dir.join("history/elsewhere/.tmpQwErTy"), "not a copy");
     // Outside the copy, nothing is touched.
     write(&store.join(".tmpAbCdEf"), "not Laci's");
 
     ops::backup_history(&env, &codex(&store)).unwrap();
     assert!(!kept.join(".tmpYmKbQv").exists());
     assert!(!kept.join("2026/.laci-copy-a1b2C3").exists());
-    assert!(!kept.join(".laci-move-Ab12Cd").exists());
+    assert_eq!(fs::read_to_string(kept.join(".laci-move-Ab12Cd/payload/chat.jsonl.zst")).unwrap(), "a moved copy");
+    assert!(env.data_dir.join("history/elsewhere/.tmpQwErTy").exists());
     assert_eq!(unpacked(&chat), "a chat\n");
     assert_eq!(fs::read_to_string(kept.join(".laci-move-1f2e-3/chat.jsonl.zst")).unwrap(), "set aside");
     assert_eq!(fs::read_to_string(kept.join("notes.txt")).unwrap(), "mine");
@@ -198,8 +202,16 @@ fn the_copy_moves_to_a_folder_outside_home_and_undo_moves_it_back() {
     assert_eq!(moved["dest"], json!(chosen));
     let title = format!("Moved the copy of AI chats to {}", chosen.display());
     assert_eq!(moved["journal"]["title"], json!(title));
+    assert_eq!(moved["moved"], true);
     let entry = journal_entry(&env, &moved["journal"]);
-    assert_eq!(entry["say"], json!({"form":"movedCopy","dir":chosen}));
+    assert_eq!(entry["say"], json!({"form":"movedCopy","dir":chosen,"own":false}));
+    // The copy is no longer part of what the data folder holds.
+    let storage = laci_core::storage::report(&env).unwrap();
+    let part = storage["parts"].as_array().unwrap().iter().find(|p| p["id"] == "history").unwrap().clone();
+    assert_eq!((&part["dir"], &part["elsewhere"]), (&json!(chosen), &json!(true)));
+    assert!(part["bytes"].as_u64().unwrap() > 0);
+    let parts: u64 = storage["parts"].as_array().unwrap().iter().map(|p| p["bytes"].as_u64().unwrap()).sum();
+    assert_eq!(storage["total"].as_u64().unwrap(), parts - part["bytes"].as_u64().unwrap());
     let after = backup::packed(&chosen.join("claude").join(relative));
     assert!(after.is_file() && !before.exists());
     assert!(backup::marked(&chosen) && backup::marked(&default), "each folder keeps its own marker");
@@ -250,8 +262,10 @@ fn an_empty_copy_switches_to_a_folder_that_holds_a_copy_laci_made() {
     let earlier = disk.join("ai-chats");
     write(&backup::packed(&earlier.join("claude/-x/a.jsonl")), "packed elsewhere");
     write(&earlier.join(backup::MARKER), "a copy Laci made");
-    let moved = ops::move_backup(&env, earlier.to_str().unwrap()).unwrap();
+    let moved = ops::move_backup(&env, earlier.to_str().unwrap(), false).unwrap();
     assert!(moved["journal"]["entries"].as_array().unwrap().iter().all(|e| e["kind"] != "move"), "nothing moves");
+    assert_eq!((&moved["moved"], &moved["bytes"]), (&json!(false), &json!(0)));
+    assert_eq!(moved["journal"]["say"]["form"], "keptCopyIn");
     assert_eq!(config::load(&env)["backupDir"], json!(earlier));
     assert_eq!(backup::dir(&env).unwrap(), earlier);
     // Saving other settings keeps what Laci knows of the folder.
@@ -262,12 +276,15 @@ fn an_empty_copy_switches_to_a_folder_that_holds_a_copy_laci_made() {
     assert_eq!(config::load(&env)["rootIdentities"][earlier.to_str().unwrap()], identity);
     assert_eq!(config::load(&env)["backupDir"], json!(earlier));
     // Back to the default, which Laci makes: the copy moves with it.
-    ops::move_backup(&env, "").unwrap();
+    assert_eq!(
+        ops::move_backup(&env, "", false).unwrap()["journal"]["say"],
+        json!({"form":"movedCopy","dir":"~/.local/share/laci/history","own":true})
+    );
     assert_eq!(config::load(&env)["backupDir"], "");
     let back = env.data_dir.join("history");
     assert_eq!(fs::read_to_string(backup::packed(&back.join("claude/-x/a.jsonl"))).unwrap(), "packed elsewhere");
     assert!(!earlier.join("claude").exists() && backup::marked(&back));
-    assert!(ops::move_backup(&env, back.to_str().unwrap()).unwrap_err().contains("already"));
+    assert!(ops::move_backup(&env, back.to_str().unwrap(), false).unwrap_err().contains("already"));
 }
 
 #[test]
@@ -291,7 +308,7 @@ fn a_folder_that_cant_hold_the_copy_is_refused() {
         (disk.join("missing").to_string_lossy().into_owned(), "existing folder"),
     ];
     for (dir, why) in refusals {
-        let refused = ops::move_backup(&env, &dir).unwrap_err();
+        let refused = ops::move_backup(&env, &dir, false).unwrap_err();
         assert!(refused.contains(why), "{dir}: {refused}");
     }
     assert_eq!(config::load(&env)["backupDir"], Value::Null, "no refusal changed the setting");
@@ -306,7 +323,7 @@ fn a_chosen_folder_that_is_gone_or_another_one_now_takes_no_copy() {
     write(&store.join("session.jsonl"), "a log\n");
     let chosen = disk.join("ai-chats");
     fs::create_dir(&chosen).unwrap();
-    ops::move_backup(&env, chosen.to_str().unwrap()).unwrap();
+    ops::move_backup(&env, chosen.to_str().unwrap(), false).unwrap();
 
     // The drive isn't connected: nothing is made where the folder was.
     let away = disk.join("unplugged");
@@ -354,4 +371,126 @@ fn the_folder_of_the_copy_is_no_project_and_the_project_around_it_stays_put() {
     let refused = service.request("move", &json!({"id":other.to_str().unwrap(),"destination":into})).unwrap_err();
     assert!(refused.contains("inside Laci's copy of AI chats"), "{refused}");
     assert!(project.join("package.json").is_file() && other.join("package.json").is_file() && !into.exists());
+}
+
+#[test]
+fn a_folder_for_the_copy_that_was_never_chosen_takes_nothing_and_loses_nothing() {
+    let (_temp, env, disk) = home();
+    let store = env.home.join(".codex/sessions");
+    write(&store.join("session.jsonl"), "a log\n");
+    // config.json edited by hand, or by another program: home itself, and a folder of the user's files.
+    let theirs = disk.join("archive");
+    write(&theirs.join("codex/notes.md"), "the user's notes\n");
+    write(&theirs.join("codex/.tmpAbCdEf"), "the user's file\n");
+    for (dir, why) in [(env.home.clone(), "isn't the one Laci knows"), (theirs.clone(), "isn't the one Laci knows")] {
+        config::save(&env, &json!({"presets":["codex"],"backupDir":dir})).unwrap();
+        let refused = ops::backup_history(&env, &codex(&store)).unwrap_err();
+        assert!(refused.contains(why), "{refused}");
+        assert!(backup::dir(&env).is_err());
+    }
+    // Known by its identity, as when its drive was recorded for another setting, it is still no copy Laci made.
+    let identity = |dir: &Path| {
+        let meta = fs::metadata(dir).unwrap();
+        json!({"device":std::os::unix::fs::MetadataExt::dev(&meta),"inode":std::os::unix::fs::MetadataExt::ino(&meta)})
+    };
+    let mut identities = json!({});
+    identities[theirs.to_str().unwrap()] = identity(&theirs);
+    identities[env.home.to_str().unwrap()] = identity(&env.home);
+    config::save(&env, &json!({"presets":["codex"],"backupDir":theirs,"rootIdentities":identities})).unwrap();
+    let refused = ops::backup_history(&env, &codex(&store)).unwrap_err();
+    assert!(refused.contains("doesn't hold a copy Laci made"), "{refused}");
+    config::save(&env, &json!({"presets":["codex"],"backupDir":"~","rootIdentities":identities})).unwrap();
+    let refused = ops::backup_history(&env, &codex(&store)).unwrap_err();
+    assert!(refused.contains("not your home folder"), "{refused}");
+    // Nothing was packed, removed or marked.
+    assert_eq!(fs::read_to_string(theirs.join("codex/notes.md")).unwrap(), "the user's notes\n");
+    assert!(theirs.join("codex/.tmpAbCdEf").is_file() && !theirs.join("codex/notes.md.zst").exists());
+    assert!(!backup::marked(&theirs) && !backup::marked(&env.home));
+    assert!(!theirs.join("codex/session.jsonl.zst").exists() && !env.home.join("codex").exists());
+}
+
+#[test]
+fn a_copy_that_cant_be_reached_moves_only_once_the_drive_is_back_or_a_new_copy_starts() {
+    let (_temp, env, disk) = home();
+    let store = env.home.join(".codex/sessions");
+    write(&store.join("session.jsonl"), "a log\n");
+    let chosen = disk.join("ai-chats");
+    fs::create_dir(&chosen).unwrap();
+    ops::move_backup(&env, chosen.to_str().unwrap(), false).unwrap();
+    ops::backup_history(&env, &codex(&store)).unwrap();
+    let away = disk.join("unplugged");
+    fs::rename(&chosen, &away).unwrap();
+
+    // Moving it now would leave the chats on the drive that isn't there: refused, and nothing changes.
+    let refused = ops::move_backup(&env, "", false).unwrap_err();
+    assert!(refused.starts_with("Connect the drive first, so Laci can move the copy."), "{refused}");
+    assert_eq!(config::load(&env)["backupDir"], json!(chosen));
+    // Asked for, a new copy starts in Laci's own folder: nothing moves, and the old one stays on its drive.
+    let fresh = ops::move_backup(&env, "", true).unwrap();
+    assert_eq!((&fresh["moved"], &fresh["bytes"]), (&json!(false), &json!(0)));
+    assert_eq!(fresh["journal"]["say"]["form"], "keptCopyIn");
+    assert_eq!(config::load(&env)["backupDir"], "");
+    assert!(backup::packed(&away.join("codex/session.jsonl")).is_file());
+    assert_eq!(ops::backup_history(&env, &codex(&store)).unwrap()["copied"], 1);
+    assert!(backup::packed(&env.data_dir.join("history/codex/session.jsonl")).is_file());
+}
+
+#[test]
+fn undo_moves_nothing_outside_the_copy_whatever_its_journal_says() {
+    let (_temp, env, disk) = home();
+    let outside = disk.join("someone/else.txt");
+    write(&outside, "not Laci's\n");
+    let journal = env.data_dir.join("journal/edited.json");
+    let root = |dir: &Path| {
+        let meta = fs::metadata(dir).unwrap();
+        json!({"path":dir,"device":std::os::unix::fs::MetadataExt::dev(&meta),"inode":std::os::unix::fs::MetadataExt::ino(&meta)})
+    };
+    let elsewhere = disk.join("moved.txt");
+    for entry in [
+        // A folder recorded as a copy that is none.
+        json!({"kind":"move","scope":"copy","roots":[root(&disk)],"from":outside,"to":elsewhere,"token":"1-1"}),
+        // The scope of a copy on another kind of entry.
+        json!({"kind":"file","scope":"copy","roots":[root(&disk)],"path":outside,"existed":false}),
+    ] {
+        write(&journal, &json!({"id":"edited","state":"applied","entries":[entry]}).to_string());
+        assert!(ops::undo(&env, "edited").is_err());
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "not Laci's\n");
+    }
+}
+
+#[test]
+fn a_plain_copy_longer_than_its_packed_one_takes_its_place() {
+    let (_temp, env, _) = home();
+    let store = env.home.join(".codex/sessions");
+    fs::create_dir_all(&store).unwrap();
+    let kept = env.data_dir.join("history/codex");
+    // A Laci before 3.1 wrote the plain copy after a later one had packed a shorter log.
+    write(&kept.join("grown.jsonl"), "first line\nsecond line\n");
+    fs::write(kept.join("grown.jsonl.zst"), zstd::bulk::compress(b"first line\n", 3).unwrap()).unwrap();
+    ops::backup_history(&env, &codex(&store)).unwrap();
+    assert_eq!(unpacked(&kept.join("grown.jsonl.zst")), "first line\nsecond line\n");
+    assert!(!kept.join("grown.jsonl").exists());
+}
+
+#[test]
+fn laci_backup_copies_without_a_scan_and_tells_the_log_only_when_it_copied() {
+    let (_temp, env, disk) = home();
+    let project = claude(&env);
+    session(&env, &project, ID, "Fix the login page");
+    let said = laci_core::service::backup_now(&env, "cli").unwrap();
+    assert!(said.starts_with("Copied 1 file · 1 session kept · "), "{said}");
+    assert!(said.ends_with(" in ~/.local/share/laci/history"), "{said}");
+    let entry = &activity::read_log(&env, 10)[0];
+    assert_eq!((&entry["by"], &entry["say"]), (&json!("cli"), &json!({"form":"backedUp","files":1})));
+    // Nothing new: nothing is told.
+    let said = laci_core::service::backup_now(&env, "cli").unwrap();
+    assert!(said.starts_with("Copied 0 files · "), "{said}");
+    assert_eq!(activity::read_log(&env, 10).len(), 1);
+    // A copy folder that can't be used is the error the command exits with.
+    let chosen = disk.join("ai-chats");
+    fs::create_dir(&chosen).unwrap();
+    ops::move_backup(&env, chosen.to_str().unwrap(), false).unwrap();
+    fs::rename(&chosen, disk.join("unplugged")).unwrap();
+    let refused = laci_core::service::backup_now(&env, "cli").unwrap_err();
+    assert!(refused.contains("isn't there"), "{refused}");
 }

@@ -6,7 +6,10 @@ use crate::{
     Result, config,
     env::Env,
     files, ops, paths,
-    platform::{self, path::stays_below},
+    platform::{
+        self,
+        path::{same_path, stays_below},
+    },
     sidecar,
 };
 use serde_json::{Value, json};
@@ -22,8 +25,11 @@ const MARKER_TEXT: &str = "This folder holds Laci's copy of your AI chats. Each 
 back from Laci, or unpack it with `zstd -d`.\n";
 /// How the temporary files of a copy start, so a later run can tell those that a run which stopped left behind.
 const TEMP: &str = ".laci-copy-";
-/// How a move to another drive names the folder it copies into, beside where the copy goes (`ops::rename_across`).
-const MOVE: &str = ".laci-move-";
+/// How a move to another drive names what it sets aside and the folder it copies into (`ops::rename_across`).
+pub(crate) const MOVE: &str = ".laci-move-";
+/// The file in Laci's data folder that names the journal of a move of the copy while it runs, so that a move or an
+/// Undo of one that stopped part-way is finished before the copy is used again (`ops::settle_copy`).
+const MOVING: &str = "copy-move.json";
 /// zstd's level 3 makes chat logs about five times smaller, at well over 100 MB a second.
 const LEVEL: i32 = 3;
 /// The longest zstd frame header: what [`content_size`] reads.
@@ -37,13 +43,34 @@ pub fn chosen(env: &Env, cfg: &Value) -> Option<PathBuf> {
 }
 
 /// Where the copy is, checked: `<data dir>/history`, or the chosen folder, which must still be there as the folder
-/// that was chosen, reached without a link.
+/// that was chosen, reached without a link, and hold the marker of a copy Laci made.
 pub fn dir(env: &Env) -> Result<PathBuf> {
     let cfg = config::load(env);
     match chosen(env, &cfg) {
         None => ops::data(env, "history"),
-        Some(dir) => check(&dir, &cfg).map(|()| dir),
+        Some(dir) => check(env, &dir, &cfg).map(|()| dir),
     }
+}
+
+/// [`dir`], and while a move of the copy that stopped part-way isn't finished yet, the other folder that holds part
+/// of it. Listing, putting back and deleting look in both.
+pub(crate) fn dirs(env: &Env) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = dir(env).ok().into_iter().collect();
+    if let Some((journal, _)) = moving(env) {
+        let halves = &journal["copyMove"];
+        for key in ["from", "to"] {
+            let Some(half) = halves[key].as_str() else { continue };
+            if out.iter().any(|dir| same_path(dir, Path::new(half))) {
+                continue;
+            }
+            if let Ok(Some(half)) = journal_path(env, half, &halves["roots"])
+                && half.is_dir()
+            {
+                out.push(half);
+            }
+        }
+    }
+    out
 }
 
 /// [`dir`], made ready for a run: the default folder is made when it is missing (a chosen one never is), and the
@@ -57,33 +84,44 @@ pub(crate) fn ready(env: &Env) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Whether the chosen folder `dir` can hold the copy now, by the rules of `scan::check_root_identity`.
-fn check(dir: &Path, cfg: &Value) -> Result<()> {
-    let shown = dir.display();
+/// Whether the chosen folder `dir` can hold the copy now. It must be the folder that was chosen, by the rules of
+/// `scan::check_root_identity` and with its identity on record, and a copy Laci made, with the marker at its top.
+/// config.json can be edited by hand, so the rules a chosen folder must meet are asked again too.
+fn check(env: &Env, dir: &Path, cfg: &Value) -> Result<()> {
+    let shown = paths::tilde(dir, &env.home);
     if !dir.is_absolute() {
         return Err(format!(
-            "The folder for the copy of AI chats isn't a full path: {shown}. Choose it again in Settings."
+            "The folder for the copy of AI chats isn't a full path: {shown}. Choose the folder for the copy again."
         ));
     }
     if !fs::metadata(dir).is_ok_and(|meta| meta.is_dir()) {
         return Err(format!(
-            "The folder for the copy of AI chats isn't there: {shown}. Connect its drive, or choose another folder in \
-             Settings."
+            "The folder for the copy of AI chats isn't there: {shown}. Connect its drive, or choose another folder \
+             for the copy."
         ));
     }
     if sidecar::plain_path(dir).is_err() {
         return Err(format!(
-            "The folder for the copy of AI chats is reached through a link: {shown}. Choose the folder itself in \
-             Settings."
+            "The folder for the copy of AI chats is reached through a link: {shown}. Choose the folder itself for \
+             the copy."
         ));
     }
     // An empty mount point, where the drive isn't connected, is another folder than the one chosen.
-    crate::scan::check_root_identity(dir, cfg).map_err(|_| {
-        format!(
-            "The folder for the copy of AI chats isn't the one Laci knows: {shown}. Connect its drive, or choose the \
-             folder again in Settings."
-        )
-    })
+    let known = cfg["rootIdentities"].get(dir.to_string_lossy().as_ref()).is_some();
+    if !known || crate::scan::check_root_identity(dir, cfg).is_err() {
+        return Err(format!(
+            "The folder for the copy of AI chats isn't the one Laci knows: {shown}. Connect its drive, or choose \
+             the folder for the copy again."
+        ));
+    }
+    config::backup_dir_refusal(env, dir, cfg).map_err(|why| format!("{why} ({shown})"))?;
+    if !marked(dir) {
+        return Err(format!(
+            "The folder for the copy of AI chats doesn't hold a copy Laci made: {shown}. Choose the folder for the \
+             copy again."
+        ));
+    }
+    Ok(())
 }
 
 /// Whether `path` is the copy folder `root` or inside it, with no link and no `..` on the way.
@@ -94,13 +132,19 @@ pub(crate) fn inside(root: &Path, path: &Path) -> bool {
         && sidecar::plain_path(path).is_ok()
 }
 
-/// Writes the marker into `dir`, unless it is there.
+/// Writes the marker into `dir`, unless it is there, and makes sure it is on the disk.
 pub(crate) fn mark(dir: &Path) -> Result<()> {
     let marker = dir.join(MARKER);
-    if fs::symlink_metadata(&marker).is_ok() {
-        return Ok(());
+    if fs::symlink_metadata(&marker).is_err() {
+        files::replace(&marker, MARKER_TEXT.as_bytes())?;
     }
-    files::replace(&marker, MARKER_TEXT.as_bytes())
+    sync_dir(dir)
+}
+
+/// Writes to the disk what the folder `dir` lists, as a rename into it or out of it, so that a power cut can't undo
+/// it while what comes after it is on the disk.
+pub(crate) fn sync_dir(dir: &Path) -> Result<()> {
+    File::open(dir).and_then(|folder| folder.sync_all()).map_err(|e| format!("{}: {e}", dir.display()))
 }
 
 /// Whether `dir` holds a copy Laci made: its top has the marker.
@@ -108,7 +152,8 @@ pub fn marked(dir: &Path) -> bool {
     fs::symlink_metadata(dir.join(MARKER)).is_ok_and(|meta| meta.is_file())
 }
 
-/// Whether the copy at `dir` holds no chat: nothing but its marker and what runs that stopped part-way left.
+/// Whether the copy at `dir` holds no chat: nothing but its marker and the temporary files of runs that stopped
+/// part-way. What a move set aside or copied into (`.laci-move-…`) can be the only copy of a chat, so it counts.
 pub(crate) fn empty(dir: &Path) -> bool {
     files::entries(dir).iter().all(|e| {
         let name = e.file_name().to_string_lossy().into_owned();
@@ -170,18 +215,25 @@ fn write_packed(mut input: impl Read, len: u64, out: &mut File) -> io::Result<bo
     Ok(true)
 }
 
-/// Packs the first `len` bytes of `src`, its length when it was listed, into `target`, through a temporary file beside
-/// it that takes its place once it is complete and on the disk. False when `src` holds fewer bytes by now: `target`
-/// then stays as it was.
-pub(crate) fn pack(src: &Path, len: u64, target: &Path) -> Result<bool> {
-    let input = File::open(src).map_err(|e| e.to_string())?;
-    let mut temp = temp_in(target.parent().ok_or("Missing folder")?)?;
-    if !write_packed(input.take(len), len, temp.as_file_mut()).map_err(|e| e.to_string())? {
-        return Ok(false);
+/// Packs `src` into `target`, through a temporary file beside it that takes its place once it is complete and on the
+/// disk, and gives what `src` was as it was opened. Its length is taken from the file that is read, so a file its
+/// tool replaced meanwhile is packed whole, as it is now. `None` when it got shorter while it was read, or isn't a
+/// file: `target` then stays as it was.
+pub(crate) fn pack(src: &Path, target: &Path) -> Result<Option<fs::Metadata>> {
+    let input = platform::open_nofollow(src).map_err(|e| e.to_string())?;
+    let meta = input.metadata().map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Ok(None);
+    }
+    let folder = target.parent().ok_or("Missing folder")?;
+    let mut temp = temp_in(folder)?;
+    if !write_packed(input.take(meta.len()), meta.len(), temp.as_file_mut()).map_err(|e| e.to_string())? {
+        return Ok(None);
     }
     temp.as_file().sync_all().map_err(|e| e.to_string())?;
     temp.persist(target).map_err(|e| e.error.to_string())?;
-    Ok(true)
+    sync_dir(folder)?;
+    Ok(Some(meta))
 }
 
 /// Writes the chat log the copy's file `src` holds to `target`, which must not exist, through a temporary file
@@ -238,11 +290,24 @@ pub(crate) fn count(root: &Path) -> (u64, u64, u64) {
     (sessions, kept, total)
 }
 
+/// The folders of the copy at `root` that Laci writes: one per connector it knows, `<root>/<connector id>`. Only
+/// these are ever packed or tidied, never anything else in the folder.
+fn connector_dirs(env: &Env, root: &Path) -> Vec<PathBuf> {
+    crate::agents::known_ids(env, &config::load(env))
+        .into_iter()
+        .filter(|id| !id.is_empty() && !id.starts_with('.') && !id.contains(['/', '\\']))
+        .map(|id| root.join(id))
+        .filter(|dir| fs::symlink_metadata(dir).is_ok_and(|meta| meta.is_dir()) && inside(root, dir))
+        .collect()
+}
+
 /// Packs each plain file the copy at `root` still holds, as copies before Laci 3.1 kept them, into `<file>.zst`. The
 /// packed file is checked byte for byte before the plain one goes. One that can't be packed stays as it is, and
 /// laci.log says why: the run goes on.
 pub(crate) fn convert(env: &Env, root: &Path) {
-    let plain: Vec<PathBuf> = kept_files(root)
+    let plain: Vec<PathBuf> = connector_dirs(env, root)
+        .iter()
+        .flat_map(|dir| kept_files(dir.as_path()))
         .map(walkdir::DirEntry::into_path)
         .filter(|path| path.extension().is_some_and(|ext| KINDS.iter().any(|kind| ext == *kind)))
         .collect();
@@ -254,15 +319,23 @@ pub(crate) fn convert(env: &Env, root: &Path) {
 }
 fn convert_one(plain: &Path, target: &Path) -> Result<()> {
     sidecar::plain_path(plain)?;
-    match fs::symlink_metadata(target) {
-        // The packed file is the newer copy: it was made since, by a run that copied the chat again.
-        Ok(meta) if meta.is_file() => return fs::remove_file(plain).map_err(|e| e.to_string()),
-        Ok(_) => return Err(format!("{} is in the way", target.display())),
-        Err(_) => {}
-    }
     let meta = fs::metadata(plain).map_err(|e| e.to_string())?;
+    let folder = target.parent().ok_or("Missing folder")?;
+    let replace = match fs::symlink_metadata(target) {
+        // A run since copied the chat again, packed: that copy is the newer one unless it records that it holds
+        // less, as when a Laci before 3.1 copied a log that had grown since into the plain file.
+        Ok(packed) if packed.is_file() => {
+            if !content_size(target).is_some_and(|size| size < meta.len()) {
+                fs::remove_file(plain).map_err(|e| e.to_string())?;
+                return sync_dir(folder);
+            }
+            true
+        }
+        Ok(_) => return Err(format!("{} is in the way", target.display())),
+        Err(_) => false,
+    };
     let input = File::open(plain).map_err(|e| e.to_string())?;
-    let mut temp = temp_in(target.parent().ok_or("Missing folder")?)?;
+    let mut temp = temp_in(folder)?;
     if !write_packed(input.take(meta.len()), meta.len(), temp.as_file_mut()).map_err(|e| e.to_string())? {
         return Err("it got shorter while Laci packed it".into());
     }
@@ -270,51 +343,48 @@ fn convert_one(plain: &Path, target: &Path) -> Result<()> {
     if !same(plain, temp.path()).map_err(|e| e.to_string())? {
         return Err("its packed copy doesn't unpack to the same bytes".into());
     }
-    temp.persist_noclobber(target).map_err(|e| e.error.to_string())?;
+    if replace {
+        temp.persist(target).map_err(|e| e.error.to_string())?;
+    } else {
+        temp.persist_noclobber(target).map_err(|e| e.error.to_string())?;
+    }
     platform::preserve(&meta, target)?;
-    fs::remove_file(plain).map_err(|e| e.to_string())
+    // The packed file is on the disk before the plain one goes.
+    sync_dir(folder)?;
+    fs::remove_file(plain).map_err(|e| e.to_string())?;
+    sync_dir(folder)
 }
 
-/// Removes, inside the copy at `root` only, what runs that stopped part-way left: Laci's own temporary files
-/// (`.laci-copy-…`), those of the way it wrote before 3.1 (`.tmp` and six letters or digits), and the folders a move
-/// from another drive copies into (`.laci-move-` and six letters or digits). Only a run, under the change lock,
-/// writes these, so none of them is in use; the source of a move that stopped is still where it was. What a move
-/// set aside under another `.laci-move-…` name is a source, and stays.
-pub(crate) fn remove_leftovers(root: &Path) {
+/// Removes, inside the copy's connector folders at `root` only, the temporary files of runs that stopped part-way:
+/// Laci's own (`.laci-copy-…`) and those of the way it wrote before 3.1 (`.tmp` and six letters or digits). Only a
+/// run, under the change lock, writes these, so none of them is in use. Folders a move set aside or copied into
+/// (`.laci-move-…`) stay: one can hold the only copy of a chat, and finishing that move puts it right.
+pub(crate) fn remove_leftovers(env: &Env, root: &Path) {
     let mut found = Vec::new();
-    let mut walk = walkdir::WalkDir::new(root).follow_links(false).into_iter();
-    while let Some(entry) = walk.next() {
-        let Ok(entry) = entry else { continue };
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if entry.depth() == 0 {
-            continue;
-        }
-        if entry.file_type().is_dir() && staged(&name) {
-            walk.skip_current_dir();
-            found.push(entry.into_path());
-        } else if entry.file_type().is_file() && (name.starts_with(TEMP) || old_temp(&name)) {
-            found.push(entry.into_path());
+    for dir in connector_dirs(env, root) {
+        let mut walk = walkdir::WalkDir::new(&dir).follow_links(false).into_iter();
+        while let Some(entry) = walk.next() {
+            let Ok(entry) = entry else { continue };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if entry.depth() > 0 && entry.file_type().is_dir() && name.starts_with(MOVE) {
+                walk.skip_current_dir();
+            } else if entry.file_type().is_file() && leftover(&name) {
+                found.push(entry.into_path());
+            }
         }
     }
     for path in found {
-        let _ = platform::remove_all(&path);
+        let _ = fs::remove_file(&path);
     }
 }
-/// Whether a name at the top of the copy is something a run that stopped part-way left, not a chat.
+/// Whether a file's name is that of a temporary file a run that stopped part-way left, not a chat.
 fn leftover(name: &str) -> bool {
-    name.starts_with(TEMP) || old_temp(name) || staged(name)
+    name.starts_with(TEMP) || old_temp(name)
 }
-/// `prefix` and the six letters or digits the `tempfile` crate adds to a name it makes up.
-fn made_up(name: &str, prefix: &str) -> bool {
-    name.strip_prefix(prefix).is_some_and(|rest| rest.len() == 6 && rest.bytes().all(|b| b.is_ascii_alphanumeric()))
-}
-/// A temporary file of the way the copy was written before 3.1.
+/// A temporary file of the way the copy was written before 3.1: `.tmp` and the six letters or digits the `tempfile`
+/// crate adds.
 fn old_temp(name: &str) -> bool {
-    made_up(name, ".tmp")
-}
-/// The folder a move from another drive copies into before the copy takes its place.
-fn staged(name: &str) -> bool {
-    made_up(name, MOVE)
+    name.strip_prefix(".tmp").is_some_and(|rest| rest.len() == 6 && rest.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
 /// The copy folder `dir` as a journal records it, so Undo can tell later that it is still that folder.
@@ -325,11 +395,13 @@ pub(crate) fn journal_root(dir: &Path) -> Result<Value> {
     Ok(root)
 }
 
-/// `raw`, a path that a journal entry which touched the copy names, checked against the copy folders the entry
-/// recorded (`journal_root`): `None` when it is in none of them, and an error when the one it is in isn't there as it
-/// was, as when its drive isn't connected. Nothing is made on an empty mount point.
-pub(crate) fn journal_path(raw: &str, roots: &Value) -> Result<Option<PathBuf>> {
+/// `raw`, a path that a journal entry which moved something of the copy names, checked against the copy folders the
+/// entry recorded (`journal_root`): `None` when it is in none of them, and an error when the one it is in isn't there
+/// as it was, as when its drive isn't connected. Nothing is made on an empty mount point. Only a folder that is a copy
+/// counts, `<data dir>/history` or one with the marker, so an entry edited by hand can't name any other folder.
+pub(crate) fn journal_path(env: &Env, raw: &str, roots: &Value) -> Result<Option<PathBuf>> {
     let path = PathBuf::from(raw);
+    let default = env.data_dir.join("history");
     for root in roots.as_array().into_iter().flatten() {
         let Some(dir) = root["path"].as_str().map(Path::new) else { continue };
         if !dir.is_absolute() || !paths::within(&path, dir) {
@@ -340,16 +412,43 @@ pub(crate) fn journal_path(raw: &str, roots: &Value) -> Result<Option<PathBuf>> 
             .filter(fs::Metadata::is_dir)
             .and_then(|meta| platform::identity(dir, &meta).ok())
             .is_some_and(|id| id.matches(root));
-        if same && inside(dir, &path) {
+        if !same {
+            return Err(format!(
+                "The folder of the copy of AI chats that this change touched isn't there as it was: {}. Connect its \
+                 drive, then try again.",
+                dir.display()
+            ));
+        }
+        if !(same_path(dir, &default) || marked(dir)) {
+            return Err(format!("{} isn't a folder of the copy of AI chats", dir.display()));
+        }
+        if inside(dir, &path) {
             return Ok(Some(path));
         }
-        return Err(format!(
-            "The folder of the copy of AI chats that this change touched isn't there as it was: {}. Connect its \
-             drive, then try again.",
-            dir.display()
-        ));
+        return Err(format!("{} isn't inside the copy of AI chats", path.display()));
     }
     Ok(None)
+}
+
+/// The move of the copy that runs, or stopped part-way, and whether it is the Undo of one: its journal, as the file
+/// [`MOVING`] names it.
+pub(crate) fn moving(env: &Env) -> Option<(Value, bool)> {
+    let record: Value = serde_json::from_str(&files::text(&ops::data(env, MOVING).ok()?)?).ok()?;
+    let id = record["journal"].as_str().filter(|id| ops::valid_id(id))?;
+    let journal = ops::read_journal(&ops::data(env, "journal").ok()?.join(format!("{id}.json"))).ok()?;
+    Some((journal, record["undo"] == true))
+}
+/// Notes that the move of the copy in the journal `id`, or with `undo` its Undo, starts.
+pub(crate) fn begin_moving(env: &Env, id: &str, undo: bool) -> Result<()> {
+    files::replace(&ops::data(env, MOVING)?, json!({"journal":id,"undo":undo}).to_string().as_bytes())
+}
+/// Notes that no move of the copy runs any more.
+pub(crate) fn end_moving(env: &Env) -> Result<()> {
+    let file = ops::data(env, MOVING)?;
+    match fs::remove_file(&file) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e.to_string()),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -358,11 +457,12 @@ mod tests {
 
     #[test]
     fn only_what_a_stopped_run_leaves_counts_as_left_over() {
-        for name in [".laci-copy-a1B2c3", ".tmpYmKbQv", ".laci-move-Ab12Cd"] {
+        for name in [".laci-copy-a1B2c3", ".tmpYmKbQv"] {
             assert!(leftover(name), "{name}");
         }
-        // The marker, a chat, and what a move set aside (its source) are not.
-        for name in [MARKER, ".tmpYmKbQ", ".tmpYmKbQvx", ".laci-move-1f2e-3", "session.jsonl.zst", "tmpYmKbQv"] {
+        // The marker, a chat, and what a move set aside or copied into, which can be the only copy, are not.
+        for name in [MARKER, ".tmpYmKbQ", ".tmpYmKbQvx", ".laci-move-1f2e-3", ".laci-move-Ab12Cd", "session.jsonl.zst"]
+        {
             assert!(!leftover(name), "{name}");
         }
     }
@@ -374,16 +474,25 @@ mod tests {
         let text = "{\"type\":\"user\"}\n".repeat(5000);
         fs::write(&src, &text).unwrap();
         let target = packed(&src);
-        assert!(pack(&src, text.len() as u64, &target).unwrap());
+        assert_eq!(pack(&src, &target).unwrap().map(|meta| meta.len()), Some(text.len() as u64));
         assert_eq!(content_size(&target), Some(text.len() as u64));
         assert!(fs::metadata(&target).unwrap().len() < text.len() as u64 / 4);
         let mut back = String::new();
         open(&target).unwrap().read_to_string(&mut back).unwrap();
         assert_eq!(back, text);
         assert!(same(&src, &target).unwrap());
-        // A source that is shorter than it was listed leaves the copy as it was.
+        // What a tool put in the log's place since it was listed is packed whole, as it is now.
+        let longer = format!("{text}{{\"type\":\"assistant\"}}\n");
+        let replacement = temp.path().join("replacement");
+        fs::write(&replacement, &longer).unwrap();
+        fs::rename(&replacement, &src).unwrap();
+        assert_eq!(pack(&src, &target).unwrap().map(|meta| meta.len()), Some(longer.len() as u64));
+        assert_eq!(content_size(&target), Some(longer.len() as u64));
+        // A file that gets shorter while it is read leaves the copy as it was.
         let before = fs::read(&target).unwrap();
-        assert!(!pack(&src, text.len() as u64 + 10, &target).unwrap());
+        let mut input = std::io::Cursor::new(b"short".to_vec());
+        let mut out = tempfile::tempfile().unwrap();
+        assert!(!write_packed(&mut input, 10, &mut out).unwrap());
         assert_eq!(fs::read(&target).unwrap(), before);
         assert_eq!(original(&target), src);
         assert!(is_log(&target) && is_log(&src) && !is_log(&temp.path().join("x.md.zst")));

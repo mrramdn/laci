@@ -217,8 +217,10 @@ pub fn runs_long(name: &str) -> bool {
     matches!(name, "backup" | "backup/move")
 }
 
-/// Runs one of the actions [`runs_long`] names. `snap` is the scan a backup copies the histories of.
+/// Runs one of the actions [`runs_long`] names. `snap` is the scan a backup copies the histories of. A move of the
+/// copy that stopped part-way, finished first, is told in the Log then.
 pub fn long_action(env: &Env, snap: &Value, name: &str, b: &Value, by: &str) -> Result<RequestOutcome> {
+    let _long = ops::LongRun::start(env);
     match name {
         "backup" => {
             let auto = b["auto"] == true;
@@ -230,36 +232,62 @@ pub fn long_action(env: &Env, snap: &Value, name: &str, b: &Value, by: &str) -> 
             {
                 return Ok(RequestOutcome { value: json!({"skipped":true}), refresh: Refresh::default() });
             }
-            let mut result = ops::backup_history(env, snap)?;
-            let copied = result["copied"].as_u64().unwrap_or(0);
-            result["size"] = json!(scan::bytes(result["bytes"].as_u64().unwrap_or(0)));
-            result["dest"] = json!(paths::tilde(Path::new(string(&result, "dest")), &env.home));
-            if copied > 0 || !auto {
-                let kept = format!(
-                    "{} kept · {} in {}",
-                    scan::plural(result["sessions"].as_u64().unwrap_or(0), "session"),
-                    scan::bytes(result["total"].as_u64().unwrap_or(0)),
-                    string(&result, "dest")
-                );
-                activity::record(
-                    env,
-                    json!({"by":if auto {"auto"} else {by},"title":if copied > 0 {format!("Backed up {}",scan::plural(copied,"agent history file"))} else {"Agent history backup is up to date".into()},
-                        "say":if copied > 0 {json!({"form":"backedUp","files":copied})} else {json!({"form":"backupUpToDate"})},"detail":kept}),
-                );
-            }
+            let result = backup_run(env, snap, if auto { "auto" } else { by }, !auto)?;
             // The warning and the backup line on Today come from the agent pass.
             Ok(RequestOutcome { value: result, refresh: Refresh::agents() })
         }
         "backup/move" => {
-            let moved = ops::move_backup(env, string(b, "dir"))?;
+            let moved = ops::move_backup(env, string(b, "dir"), b["fresh"] == true)?;
+            if moved["settled"].is_object() {
+                record_journal(env, &moved["settled"], None, by);
+            }
             record_journal(env, &moved["journal"], None, by);
             let bytes = moved["bytes"].as_u64().unwrap_or(0);
-            let value = json!({"journal":moved["journal"],"dest":paths::tilde(Path::new(string(&moved, "dest")), &env.home),"bytes":bytes,"size":scan::bytes(bytes)});
+            let value = json!({"journal":moved["journal"],"dest":paths::tilde(Path::new(string(&moved, "dest")), &env.home),
+                "moved":moved["moved"],"bytes":bytes,"size":scan::bytes(bytes)});
             // The sessions only the copy holds are listed from where it is now.
             Ok(RequestOutcome { value, refresh: Refresh::agents() })
         }
         _ => Err(format!("Unknown action: {name}")),
     }
+}
+
+/// Copies the agent histories `snap` connects into the copy of AI chats, and tells the Log, by `by`, when it copied
+/// something, or with `always` also that the copy is up to date.
+fn backup_run(env: &Env, snap: &Value, by: &str, always: bool) -> Result<Value> {
+    let mut result = ops::backup_history(env, snap)?;
+    if result["settled"].is_object() {
+        record_journal(env, &result["settled"], None, by);
+    }
+    let copied = result["copied"].as_u64().unwrap_or(0);
+    result["size"] = json!(scan::bytes(result["bytes"].as_u64().unwrap_or(0)));
+    result["dest"] = json!(paths::tilde(Path::new(string(&result, "dest")), &env.home));
+    result["kept"] = json!(format!(
+        "{} kept · {} in {}",
+        scan::plural(result["sessions"].as_u64().unwrap_or(0), "session"),
+        scan::bytes(result["total"].as_u64().unwrap_or(0)),
+        string(&result, "dest")
+    ));
+    if copied > 0 || always {
+        activity::record(
+            env,
+            json!({"by":by,"title":if copied > 0 {format!("Backed up {}",scan::plural(copied,"agent history file"))} else {"Agent history backup is up to date".into()},
+                "say":if copied > 0 {json!({"form":"backedUp","files":copied})} else {json!({"form":"backupUpToDate"})},"detail":result["kept"]}),
+        );
+    }
+    Ok(result)
+}
+
+/// `laci backup`: the backup "Back up now" makes, without the window and without a scan. It needs only the agents
+/// Laci connects and their history folders; the change lock keeps it from running beside the window's. The Log
+/// tells it, by `by`, only when it copied something. It runs whether or not automatic backups are on: running it is
+/// the user's choice. Gives the line the command prints.
+pub fn backup_now(env: &Env, by: &str) -> Result<String> {
+    let snap = json!({"connectors":crate::agents::connectors(env, &config::load(env))});
+    let _long = ops::LongRun::start(env);
+    let result = backup_run(env, &snap, by, false)?;
+    let copied = result["copied"].as_u64().unwrap_or(0);
+    Ok(format!("Copied {} · {}", scan::plural(copied, "file"), string(&result, "kept")))
 }
 
 /// Tells the Log about a journaled change, with its Undo when it has one.

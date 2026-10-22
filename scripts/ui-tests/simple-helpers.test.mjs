@@ -1043,6 +1043,14 @@ export async function aCopyLaciCantReachIsNotMovedButANewOneCanStart() {
   assert.equal(button(said.copyMove), undefined);
   const group = page.find((n) => n.props.role === "group" && n.props["aria-label"] === said.copyFresh);
   assert.equal(page.document.activeElement, group);
+  // Only as it opens: while it stays open, the focus stays where it went, also when an automatic backup reads
+  // history again meanwhile.
+  button(words.blocks.cancel).focus();
+  page.app.setState({ historyPending: true });
+  await page.settle();
+  page.app.setState({ historyPending: false });
+  await page.settle();
+  assert.ok(page.document.activeElement === button(words.blocks.cancel), "the focus stays on Cancel");
   // What it says is what a screen reader tells with the group.
   const told = page.find((n) => n.props.id === group.props["aria-describedby"]);
   assert.ok(told.textContent.includes(said.copyFreshAsk("/mnt/archive/ai-chats")), told.textContent);

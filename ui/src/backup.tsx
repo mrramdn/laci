@@ -118,10 +118,12 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
   const busy = moving || historyPending;
   const wasOpen = useRef(false);
   const giveBack = useRef(false);
-  // The question takes the focus when it opens, and gives it back to Change… when it closes, as soon as Change… can
-  // take it: after a move it is disabled until history is read again. Not if the focus went somewhere else meanwhile.
+  // The question takes the focus when it opens, and only then: while it stays open, as when a move starts or ends or
+  // an automatic backup reads history again, the focus stays where it went, as on Cancel. It gives the focus back to
+  // Change… when it closes, as soon as Change… can take it: after a move it is disabled until history is read again.
+  // Not if the focus went somewhere else meanwhile.
   useEffect(() => {
-    if (open) question.current?.focus();
+    if (open && !wasOpen.current) question.current?.focus();
     giveBack.current = open ? false : giveBack.current || wasOpen.current;
     wasOpen.current = open;
     if (!giveBack.current || busy) return;

@@ -320,6 +320,15 @@ export async function aHistoryBackupLaciCantReachIsNotMovedButANewOneCanStart() 
   assert.ok(question.textContent.includes(said.backupFreshNote), question.textContent);
   assert.ok(!question.textContent.includes("1.0 GB"), "nothing is said to move");
   assert.equal(p.document.activeElement, question, "the question takes the focus");
+  // Only as it opens: while it stays open, the focus stays where it went, also when an automatic backup reads
+  // history again meanwhile.
+  const cancel = () => p.find((n) => n.type === "button" && n.textContent === said.cancel);
+  cancel().focus();
+  p.app.setState({ historyPending: true });
+  await p.settle();
+  p.app.setState({ historyPending: false });
+  await p.settle();
+  assert.ok(p.document.activeElement === cancel(), p.focused());
   p.act(() => p.find((n) => n.type === "button" && n.textContent === said.backupFresh).props.onClick());
   await p.done();
   assert.deepEqual(p.asked("backup/move").at(-1), ["backup/move", { dir: `${HOME}/ai-chats`, fresh: true }]);

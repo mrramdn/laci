@@ -239,9 +239,9 @@ pub fn long_action(env: &Env, snap: &Value, name: &str, b: &Value, by: &str) -> 
         "backup/move" => {
             let moved = ops::move_backup(env, string(b, "dir"), b["fresh"] == true)?;
             if moved["settled"].is_object() {
-                record_journal(env, &moved["settled"], None, by);
+                activity::record_journal(env, &moved["settled"], None, by);
             }
-            record_journal(env, &moved["journal"], None, by);
+            activity::record_journal(env, &moved["journal"], None, by);
             let bytes = moved["bytes"].as_u64().unwrap_or(0);
             let value = json!({"journal":moved["journal"],"dest":paths::tilde(Path::new(string(&moved, "dest")), &env.home),
                 "moved":moved["moved"],"bytes":bytes,"size":scan::bytes(bytes)});
@@ -257,7 +257,7 @@ pub fn long_action(env: &Env, snap: &Value, name: &str, b: &Value, by: &str) -> 
 fn backup_run(env: &Env, snap: &Value, by: &str, always: bool) -> Result<Value> {
     let mut result = ops::backup_history(env, snap)?;
     if result["settled"].is_object() {
-        record_journal(env, &result["settled"], None, by);
+        activity::record_journal(env, &result["settled"], None, by);
     }
     let copied = result["copied"].as_u64().unwrap_or(0);
     result["size"] = json!(scan::bytes(result["bytes"].as_u64().unwrap_or(0)));
@@ -288,21 +288,6 @@ pub fn backup_now(env: &Env, by: &str) -> Result<String> {
     let result = backup_run(env, &snap, by, false)?;
     let copied = result["copied"].as_u64().unwrap_or(0);
     Ok(format!("Copied {} · {}", scan::plural(copied, "file"), string(&result, "kept")))
-}
-
-/// Tells the Log about a journaled change, with its Undo when it has one.
-fn record_journal(env: &Env, journal: &Value, path: Option<&str>, by: &str) {
-    let mut entry = json!({"by":by,"title":journal["title"],"path":path,"journal":journal["id"]});
-    if journal["say"].is_object() {
-        entry["say"] = journal["say"].clone();
-    }
-    if ops::can_undo(journal) {
-        entry["undo"] = json!({"type":"journal","id":journal["id"]});
-    }
-    if let Some(detail) = ops::recovery(journal) {
-        entry["detail"] = json!(detail);
-    }
-    activity::record(env, entry);
 }
 
 /// Adds a line to laci.log, where problems that stop nothing are told.
@@ -429,7 +414,7 @@ impl Service {
         sidecar::checkbox_occurrence(path, text, occurrence, known.len())
     }
     fn journaled(&mut self, journal: Value, path: Option<&str>, by: &str) -> Result<Value> {
-        record_journal(&self.env, &journal, path, by);
+        activity::record_journal(&self.env, &journal, path, by);
         Ok(json!({"journal":journal}))
     }
     pub fn apps(&self) -> Value {
@@ -854,7 +839,14 @@ impl Service {
                 self.journaled(j, node["path"].as_str(), by)
             }
             "undo" => {
-                let j = ops::undo(&self.env, id)?;
+                // A move of the copy that stopped part-way and that this finished first is told, also when the Undo
+                // is then refused.
+                let mut settled = None;
+                let undone = ops::undo_settling(&self.env, id, &mut settled);
+                if let Some(journal) = &settled {
+                    activity::record_journal(&self.env, journal, None, by);
+                }
+                let j = undone?;
                 let entry = activity::read_log(&self.env, 300).into_iter().find(|e| e["journal"] == j["id"]);
                 activity::record(
                     &self.env,

@@ -828,16 +828,22 @@ pub fn journals(env: &Env, limit: usize) -> Vec<Value> {
         .collect()
 }
 pub fn undo(env: &Env, id: &str) -> Result<Value> {
-    with_lock(env, || undo_unlocked(env, id))
+    with_lock(env, || undo_unlocked(env, id, &mut None))
 }
-pub(crate) fn undo_unlocked(env: &Env, id: &str) -> Result<Value> {
+/// [`undo`], which puts in `settled` the journal of a move of the copy of AI chats that stopped part-way and that it
+/// finished first ([`settle_copy`]), also when the Undo itself is then refused: the Log hasn't told that move yet.
+pub fn undo_settling(env: &Env, id: &str, settled: &mut Option<Value>) -> Result<Value> {
+    with_lock(env, || undo_unlocked(env, id, settled))
+}
+/// [`undo_settling`] under the change lock the caller holds.
+pub(crate) fn undo_unlocked(env: &Env, id: &str, settled: &mut Option<Value>) -> Result<Value> {
     if !valid_id(id) {
         return Err("Invalid journal id".into());
     }
     let file = data(env, "journal")?.join(format!("{id}.json"));
     let mut journal = read_journal(&file)?;
     if journal["copyMove"].is_object() {
-        return undo_copy_move(env, id, file);
+        return undo_copy_move(env, id, file, settled);
     }
     if journal["state"] != "applied" {
         return Err(format!("This change is {}, nothing to undo", journal["state"].as_str().unwrap_or("invalid")));
@@ -867,11 +873,11 @@ pub(crate) fn undo_unlocked(env: &Env, id: &str) -> Result<Value> {
 /// as the folder of an agent first backed up after the move. Only `backupDir` changes, so other settings changed since
 /// don't stand in the way, and whatever can refuse the Undo is asked before anything changes. An Undo that stops
 /// part-way is finished the way the setting points ([`settle_copy`]); one that fails puts the copy back whole where it
-/// was, so backups go on and the Undo can be asked again.
-fn undo_copy_move(env: &Env, id: &str, file: PathBuf) -> Result<Value> {
+/// was, so backups go on and the Undo can be asked again. A move this finished first is put in `settled`.
+fn undo_copy_move(env: &Env, id: &str, file: PathBuf, settled: &mut Option<Value>) -> Result<Value> {
     // A move of the copy that stopped part-way, this one, its Undo or another one, is finished first.
     let finishing = crate::backup::moving(env).is_some_and(|(journal, undo)| undo && journal["id"] == id);
-    settle_copy_unlocked(env)?;
+    *settled = settle_copy_unlocked(env)?;
     let journal = read_journal(&file)?;
     if journal["state"] != "applied" {
         if finishing && journal["state"] == "undone" {
@@ -2055,6 +2061,46 @@ mod tests {
         assert!(!to.join("claude").exists() && !to.join("codex").exists());
         assert_eq!(crate::config::load(&env)["backupDir"], "");
         assert!(crate::backup::moving(&env).is_none());
+    }
+
+    /// A move of the copy that stopped part-way and that an Undo of an older move finishes first is told in the Log
+    /// with its own Undo, as a backup or another move tells it, also when that Undo is then refused.
+    #[test]
+    fn a_move_of_the_copy_that_an_undo_finishes_is_told_in_the_log() {
+        let (_temp, env, disk) = copy_home();
+        let (from, to) = copy_of(&env, &disk, &["claude", "codex"]);
+        let mut service = crate::service::Service::new(env.clone());
+        service.request_as("backup/move", &json!({"dir":to}), "test").unwrap();
+        let log = || crate::activity::read_log(&env, 50);
+        let first = log().into_iter().find(|e| e["say"]["form"] == "movedCopy").unwrap();
+        // A second move, to a third folder, stopped after `claude` moved.
+        let next = disk.join("next");
+        fs::create_dir_all(&next).unwrap();
+        crate::backup::mark(&next).unwrap();
+        let say = json!({"form":"movedCopy","dir":next,"own":false});
+        let mut tx = Tx::new(&env, "Moved the copy of AI chats", say).unwrap();
+        let roots = json!([crate::backup::journal_root(&to).unwrap(), crate::backup::journal_root(&next).unwrap()]);
+        tx.journal["copyMove"] = json!({"from":to,"to":next,"roots":roots});
+        tx.save().unwrap();
+        let id = tx.journal["id"].as_str().unwrap().to_owned();
+        crate::backup::begin_moving(&env, &id, false).unwrap();
+        point_copy(&env, &next).unwrap();
+        tx.move_copy(&to.join("claude"), &next.join("claude"), &roots).unwrap();
+        drop(tx);
+
+        // The Undo of the first move finishes the second one, which then stands in its way.
+        let refused = service.request_as("log/undo", &json!({"id":first["id"]}), "test").unwrap_err();
+        assert!(refused.contains("moved again after this"), "{refused}");
+        assert!(holds(&next, "claude") && holds(&next, "codex"));
+        let told = log().into_iter().find(|e| e["journal"] == id.as_str()).expect("the finished move is in the Log");
+        assert_eq!((&told["by"], &told["state"], &told["canUndo"]), (&json!("test"), &json!("applied"), &json!(true)));
+        assert!(!told["id"].as_str().unwrap().starts_with("j:"), "a line of its own: {told}");
+
+        // Its Undo, and then the first one's, take the copy back where it started.
+        service.request_as("log/undo", &json!({"id":told["id"]}), "test").unwrap();
+        service.request_as("log/undo", &json!({"id":first["id"]}), "test").unwrap();
+        assert!(holds(&from, "claude") && holds(&from, "codex"));
+        assert_eq!(crate::config::load(&env)["backupDir"], "");
     }
 
     /// An Undo of a move of the copy that is refused changes nothing, so backups go on. Settings changed since, as the

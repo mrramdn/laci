@@ -955,7 +955,8 @@ function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
     <div className="s-helpers-place" ref={row} data-ui="copy-place">
       <p>
         <b>{said.copyPlace}</b>
-        <span className="s-quiet s-mono">
+        {/* Only a path is set as one: Laci's own folder is said by its name. */}
+        <span className={backup.chosen ? "s-quiet s-mono" : "s-quiet"}>
           {backup.chosen ? backup.dest : said.copyPlaceOwn}
         </span>
         <span className="s-quiet">{said.copyPlaceNote}</span>

@@ -990,6 +990,9 @@ export async function theCopyOfChatsMovesToAnotherFolderOnlyOnceAskedWhere() {
   const place = () => page.find((n) => n.props["data-ui"] === "copy-place");
   const button = (words) => page.find((n) => n.type === "button" && n.textContent === words);
   assert.ok(place().textContent.includes(said.copyPlaceOwn), place().textContent);
+  // Laci's own folder is said by its name, which isn't set as a path is; a chosen folder is a path.
+  const shown = (text) => page.find((n) => n.type === "span" && n.textContent === text);
+  assert.equal(shown(said.copyPlaceOwn).props.className, "s-quiet");
   assert.equal(button(said.copyPlaceBack), undefined, "the copy is in Laci’s own folder already");
   page.act(() => button(said.copyPlaceChange).props.onClick());
   await page.settle();
@@ -1012,6 +1015,7 @@ export async function theCopyOfChatsMovesToAnotherFolderOnlyOnceAskedWhere() {
   page.app.setState({ snapshot: { ...s, backup: { ...s.backup, chosen: true, dest: "/mnt/archive/ai-chats" } } });
   await page.settle();
   assert.ok(place().textContent.includes("/mnt/archive/ai-chats"));
+  assert.equal(shown("/mnt/archive/ai-chats").props.className, "s-quiet s-mono");
   page.act(() => button(said.copyPlaceBack).props.onClick());
   await page.settle();
   assert.ok(place().textContent.includes(said.copyMoveAsk(said.copyPlaceOwnName)), place().textContent);

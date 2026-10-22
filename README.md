@@ -293,7 +293,7 @@ The Agents page has one card per AI tool: whether it is connected and installed,
 
 Below the cards are your sessions, counted and listed as conversations: the logs of subagents and the stubs `/resume` leaves behind fold into the conversation they belong to. They are grouped by project, newest first; chats outside projects sit in one closed group. Chats of a couple of prompts that changed no file fold into one row. Each row says what happened in it: prompts, files changed, time spent, size and pull requests. Opening one shows its first and last prompt and the agent's last reply.
 
-Select sessions to **Keep** them or **Delete** them. A deleted session goes, with its subagent logs and Laci's backup copy, to Laci's quarantine; Undo in the Log puts it back. Kept sessions are never offered for cleanup. Filters show short chats, sessions older than 30 days, those outside projects, kept ones and those only the backup holds, and search covers titles, prompts and projects.
+Select sessions to **Keep** them or **Delete** them. A deleted session goes, with its subagent logs and Laci's backup copies of them, to Laci's quarantine; Undo in the Log puts it back. Kept sessions are never offered for cleanup. Filters show short chats, sessions older than 30 days, those outside projects, kept ones and those only the backup holds, and search covers titles, prompts and projects.
 
 **Storage and cleanup** has the history size per project, detached history, and what Laci keeps itself: the quarantine, undo copies of moves, the session backup (compressed, wherever it is kept) and files left by Laci 1. The quarantine, undo copies older than a week and the Laci 1 files can be freed from there; nothing is ever removed from the backup.
 

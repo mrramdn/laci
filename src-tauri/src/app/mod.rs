@@ -290,6 +290,9 @@ impl AppState {
                 // Remote verification can take time; browsing and watcher updates stay responsive.
                 return laci_core::deletion::plan(&env, &node);
             }
+            // A backup's first run after 3.1 packs gigabytes, and a move of the copy can copy them to another
+            // drive: the window and the watchers stay live meanwhile. The change lock keeps other changes out.
+            name if laci_core::service::runs_long(name) => return self.long_action(name, body),
             "secrets/check" => {
                 let (env, node) = {
                     let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
@@ -332,6 +335,37 @@ impl AppState {
         if name == "updates" {
             update::consent_changed(self);
         }
+        Ok(outcome.value)
+    }
+    /// Runs one of the actions `service::runs_long` names outside the engine lock, as `delete/plan` runs, then
+    /// tells the window and queues the refresh as a change under the lock does.
+    fn long_action(&self, name: &str, body: &Value) -> Result<Value> {
+        let started = Instant::now();
+        let (env, snapshot) = {
+            let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
+            self.updates.admit(name)?;
+            engine.admit(name)?;
+            (engine.service.env.clone(), engine.service.snapshot()?)
+        };
+        let result = laci_core::service::long_action(&env, &snapshot, name, body, "app");
+        let mut engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
+        let mut outcome = match result {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                engine.service.debug(&format!("{name}: {error}"));
+                return Err(error);
+            }
+        };
+        if outcome.value["skipped"] == true {
+            return Ok(outcome.value);
+        }
+        engine.committed(name, &mut outcome);
+        engine.service.debug(&format!("{name} committed outside the lock in {}ms", started.elapsed().as_millis()));
+        drop(engine);
+        self.queue.request(outcome.refresh);
+        self.notice(json!({"type":"snapshot"}));
+        self.notice(json!({"type":"log"}));
+        self.notice(self.status());
         Ok(outcome.value)
     }
     fn read_agents_soon(self: &Arc<Self>) {

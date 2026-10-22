@@ -39,13 +39,23 @@ impl Engine {
         value["historyPending"] = json!(self.history_pending);
     }
     pub fn execute(&mut self, name: &str, body: &Value) -> Result<RequestOutcome> {
+        self.admit(name)?;
+        let mut outcome = self.service.execute(name, body, "app")?;
+        self.committed(name, &mut outcome);
+        Ok(outcome)
+    }
+    /// Whether `name` may run now. Also asked of the actions that run outside the engine lock.
+    pub fn admit(&self, name: &str) -> Result<()> {
         if self.creation_running && mutates(name) {
             return Err("A project is being created. Wait before changing files or settings.".into());
         }
         if self.history_pending && changes_history(name) {
             return Err("History is refreshing. Wait before changing files again.".into());
         }
-        let mut outcome = self.service.execute(name, body, "app")?;
+        Ok(())
+    }
+    /// Takes in what `name` changed, whether it ran under the engine lock or outside it.
+    pub fn committed(&mut self, name: &str, outcome: &mut RequestOutcome) {
         if mutates(name) {
             self.revision += 1;
             if changes_history(name) {
@@ -59,7 +69,6 @@ impl Engine {
             }
             self.stamp(&mut outcome.value);
         }
-        Ok(outcome)
     }
     pub fn begin_creation(&mut self) -> Result<()> {
         if self.creation_running || self.history_pending {

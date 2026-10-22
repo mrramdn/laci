@@ -6,6 +6,19 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+### Added
+
+- **Choose where the copy of AI chats is kept.** Settings › Backup folder in Detailed, *Where Laci keeps the copy* in Simple's AI helpers: any empty folder, also on another drive. Laci moves the copy there in one change, and Undo in the Log moves it back. *Use the default* brings it back to Laci's data folder. Laci never makes a chosen folder: when its drive isn't connected, nothing is copied and Laci says why.
+
+### Changed
+
+- **The copy of AI chats is compressed** with zstd, about five times smaller. A copy from before 3.1 is compressed on the first backup, each file checked byte for byte before the plain one goes. Each file can be unpacked with `zstd -d`, and Laci still never removes anything from the copy.
+
+### Fixed
+
+- **Temporary files of an interrupted copy are removed** by the next backup, inside the copy only.
+- **Backing up no longer freezes the window**: a backup and a move of the copy run while the window stays usable.
+
 ## [3.0.0] - 2026-10-22
 
 Laci 3.0: Simple, a second design for people new to Git and coding agents, a new mark, and updates the AppImage installs itself after asking.

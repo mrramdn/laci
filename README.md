@@ -295,7 +295,7 @@ Below the cards are your sessions, counted and listed as conversations: the logs
 
 Select sessions to **Keep** them or **Delete** them. A deleted session goes, with its subagent logs and Laci's backup copy, to Laci's quarantine; Undo in the Log puts it back. Kept sessions are never offered for cleanup. Filters show short chats, sessions older than 30 days, those outside projects, kept ones and those only the backup holds, and search covers titles, prompts and projects.
 
-**Storage and cleanup** has the history size per project, detached history, and what Laci keeps itself: the quarantine, undo copies of moves, the session backup and files left by Laci 1. The quarantine, undo copies older than a week and the Laci 1 files can be freed from there.
+**Storage and cleanup** has the history size per project, detached history, and what Laci keeps itself: the quarantine, undo copies of moves, the session backup (compressed, wherever it is kept) and files left by Laci 1. The quarantine, undo copies older than a week and the Laci 1 files can be freed from there; nothing is ever removed from the backup.
 
 A connector tells laci where an AI tool keeps its history, so it shows on the right project and travels with it. Claude Code, Codex and Antigravity are offered as built-ins, enabled only when you select them. Previously configured integrations and custom stores remain readable; adding a built-in does not duplicate an existing store. Any other tool can be added with a short form, no code: its logs record the folder, it keeps one folder per project, it keeps history inside the project, or its files mention project paths.
 
@@ -323,7 +323,9 @@ Claude Code, Codex and Antigravity are built in. Any other tool can be added wit
 
 `{prompt}` and `{model}` stand for the value. Each list element is passed as one argument, never through a shell. `link` can be left out for a tool whose history Laci cannot read.
 
-Claude Code deletes session logs after a retention period. **Back up logs now** copies agent logs to `~/.local/share/laci/history`; Today then shows when the backup last ran and how many sessions it keeps, with **Open backup folder**. Automatic backup is optional and runs at most once an hour, only when a session changed. Nothing is ever removed from the backup. Sessions a tool has deleted stay listed from the backup, marked "In backup only", and can be restored.
+Claude Code deletes session logs after a retention period. **Back up logs now** copies agent logs, each compressed with zstd (chat logs get about five times smaller), to `~/.local/share/laci/history` or to the folder you choose in Settings; Today then shows when the backup last ran and how many sessions it keeps, with **Open backup folder**. Automatic backup is optional and runs at most once an hour, only when a session changed. Nothing is ever removed from the backup. Sessions a tool has deleted stay listed from the backup, marked "In backup only", and can be restored. A backup from before 3.1 is compressed on the next run, each file checked byte for byte first, and temporary files a stopped copy left behind are removed.
+
+The backup can live in any empty folder, also on another drive: **Settings › Backup folder › Change…** in Detailed, *Where Laci keeps the copy* under **AI helpers** in Simple. Laci moves what the backup holds there in one change, which Undo in the Log moves back, and **Use the default** brings it back to Laci's data folder. Laci never makes a chosen folder: when its drive isn't connected, the backup stops with a message and copies nothing, and the folder's drive is recognised as Laci recognises scan locations. The folder can't be your home folder or one above it, one of Laci's own folders, or one that holds an agent's history or lies inside it. A folder that holds a backup Laci made before (it has a `.laci-copy` file) can be chosen while the current backup is empty. Each file is a plain zstd file: `zstd -d` unpacks it without Laci.
 
 ![Agents: each tool with its MCP setup, and sessions grouped by project with short chats folded away](docs/screenshots/agents.png)
 
@@ -630,6 +632,7 @@ Other files laci keeps:
 | --- | --- |
 | `~/.config/laci/templates/` | Starting points for *New project*: each folder is one template |
 | `~/.local/share/laci/` | Undo journals, backups, the Log (`activity.jsonl`) and the debug log (`laci.log`) |
+| `~/.local/share/laci/history/` | The agent history backup, each file compressed with zstd (`<file>.zst`), unless you chose another folder for it (`backupDir` in config.json) |
 | `~/.cache/laci/` | What laci learned from agent logs and reports, the last scan, and when Laci last looked for a new version. Safe to delete |
 
 ## Development

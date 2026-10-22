@@ -57,8 +57,7 @@ impl Drop for LongRun {
 }
 /// Whether a backup or a move of the copy of the Laci data in `env` runs on another thread now.
 fn long_run_elsewhere(env: &Env) -> bool {
-    !IN_LONG_RUN.with(Cell::get)
-        && LONG_RUNS.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|dir| *dir == env.data_dir)
+    !IN_LONG_RUN.with(Cell::get) && LONG_RUNS.lock().unwrap_or_else(|e| e.into_inner()).contains(&env.data_dir)
 }
 fn exists(p: &Path) -> bool {
     fs::symlink_metadata(p).is_ok()
@@ -1936,7 +1935,7 @@ mod tests {
             assert!(!from.join(agent).exists());
         }
         assert!(crate::backup::moving(&env).is_none());
-        assert_eq!(crate::backup::dirs(&env), [to.clone()]);
+        assert_eq!(crate::backup::dirs(&env), [to.as_path()]);
         assert_eq!(settle_copy(&env).unwrap(), None, "nothing is left to finish");
 
         undo(&env, &id).unwrap();

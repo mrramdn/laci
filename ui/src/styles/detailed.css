@@ -837,6 +837,11 @@ kbd {
   flex: none;
   max-width: 240px;
 }
+/* A storage row's explanation wraps at any width, as a long one beside a button must: its box cut it off with no
+   ellipsis. */
+.item .name > .faint {
+  white-space: normal;
+}
 .item .t {
   white-space: nowrap;
   overflow: hidden;
@@ -3986,10 +3991,6 @@ textarea.notes:focus {
     flex: 1 1 160px;
     max-width: 240px;
     margin-left: auto;
-  }
-  /* A storage row's explanation wraps; its box cut it off with no ellipsis. */
-  .item .name > .faint {
-    white-space: normal;
   }
   /* A terminal dragged tall in a big window stays within what dragging allows (85%) in a small one. */
   .term:not(.max) {

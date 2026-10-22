@@ -6,6 +6,8 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-23
+
 ### Added
 
 - **Choose where the copy of AI chats is kept.** Settings › Backup folder in Detailed, *Where Laci keeps the copy* in Simple's AI helpers: any empty folder, also on another drive. Laci moves the copy there in one change, and Undo in the Log moves it back. *Use the default* brings it back to Laci's data folder. Laci never makes a chosen folder: when its drive isn't connected, nothing is copied and Laci says why, and the copy isn't moved; a new copy can start elsewhere instead, leaving the old one on its drive. Undo also takes back what the copy gained since, and other settings changed meanwhile don't stand in its way. A move or its Undo that stops part-way, as when Laci is closed, is finished by the next backup.

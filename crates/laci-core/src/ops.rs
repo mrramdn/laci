@@ -1470,6 +1470,15 @@ pub fn move_backup(env: &Env, raw: &str, fresh: bool) -> Result<Value> {
             )?,
         };
         let moved = source.is_some();
+        if !moved {
+            // What the last backup said is of the copy it made, not of this folder: the next run says what this one
+            // holds, and an automatic one runs at once.
+            if let Err(e) = fs::remove_file(data(env, BACKUP_STATE)?)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(e.to_string());
+            }
+        }
         let bytes = if moved { files::size(&dest) } else { 0 };
         Ok(json!({"journal":journal,"dest":dest,"moved":moved,"bytes":bytes,"settled":settled}))
     })

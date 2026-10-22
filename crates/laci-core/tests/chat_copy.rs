@@ -431,6 +431,7 @@ fn a_copy_that_cant_be_reached_moves_only_once_the_drive_is_back_or_a_new_copy_s
     assert_eq!(fresh["journal"]["say"]["form"], "keptCopyIn");
     assert_eq!(config::load(&env)["backupDir"], "");
     assert!(backup::packed(&away.join("codex/session.jsonl")).is_file());
+    assert_eq!(ops::backup_state(&env), None, "what the last backup said is of the copy left behind");
     assert_eq!(ops::backup_history(&env, &codex(&store)).unwrap()["copied"], 1);
     assert!(backup::packed(&env.data_dir.join("history/codex/session.jsonl")).is_file());
 }

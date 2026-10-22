@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Icon, KindIcon, Group, Expand } from "../common";
 import { useApp, backup, run, changed, toggleExpanded } from "../store";
@@ -22,12 +22,14 @@ import {
 } from "../helpers";
 import type { Conversation } from "../helpers";
 import { api } from "../api";
+import { usable, useFocusStays } from "../focus-stays";
 import { agentProviders } from "../agent-launch";
 import type { AgentCapabilities } from "../agent-launch";
 import { ConversationRows, keepSessions } from "../session-ui";
 import type { Selection } from "../session-ui";
 import { McpRow, loadMcp } from "../mcp-setup";
 import { LaciStorage } from "../storage";
+import { focusAfter } from "../simple/model";
 import type {
   Change,
   ClaudeDir,
@@ -38,6 +40,25 @@ import type {
 } from "../types";
 
 const SESSION_LIMIT = 50;
+
+/**
+ * Where the focus goes once a session's Restore went, as its row leaves In backup only (useFocusStays): to the next
+ * row's Restore, else the one before; once none is left, to the Show filter that is on, All once the list shows
+ * every session again. Another control that went is left to useFocusStays.
+ */
+export function afterRestore(
+  page: HTMLElement | null,
+  gone: HTMLElement,
+  around: HTMLElement[],
+) {
+  if (!gone.hasAttribute("data-restore")) return undefined;
+  return (
+    focusAfter(around, gone, (c) => c.hasAttribute("data-restore") && usable(c)) ??
+    page?.querySelector<HTMLElement>(
+      '[role="group"][aria-label="Show"] [aria-pressed="true"]',
+    )
+  );
+}
 const STORAGE = "agents:storage";
 const MORE = "agents:sessions";
 
@@ -59,6 +80,9 @@ export function AgentsView() {
     })),
   );
   useNow();
+  // A control that goes away, as a session's Restore, leaves the focus on the page.
+  const page = useRef<HTMLDivElement>(null);
+  useFocusStays(page, (gone, around) => afterRestore(page.current, gone, around));
   const snapshot = s.snapshot;
   const sessions = allSessions(snapshot);
   const launchable = agentProviders(snapshot.connectors);
@@ -155,7 +179,7 @@ export function AgentsView() {
             : "Nothing connected yet"}
         </span>
       </div>
-      <div className="body agents-page">
+      <div className="body agents-page" ref={page}>
         <div className="stats agent-cards">
           {cards.map((card) => {
             const { connector: c, suggestion: x } = card;

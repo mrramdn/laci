@@ -373,6 +373,23 @@ let helpersModule;
 /** AiHelpers.tsx, compiled the first time a test needs it. */
 function helpersOnce() {
   const { live, store } = helpersKit;
+  // The store, also as focus-stays.ts, beside AiHelpers.tsx, asks for it.
+  const appStore = {
+    acknowledge: noop,
+    changed: live("changed"),
+    copyText: live("copyText"),
+    external: noop,
+    goToProject: live("goToProject"),
+    markReportsSeen: noop,
+    moveCopy: live("moveCopy"),
+    openCopy: live("openCopy"),
+    refreshLog: noop,
+    rescan: noop,
+    run: live("run"),
+    setDesign: live("setDesign"),
+    toast: live("toast"),
+    useApp: store("app"),
+  };
   return (helpersModule ??= load(
     "simple/AiHelpers.tsx",
     {
@@ -399,22 +416,8 @@ function helpersOnce() {
         proseClick: noop,
       },
       "../session-ui": { requestResume: live("requestResume") },
-      "../store": {
-        acknowledge: noop,
-        changed: live("changed"),
-        copyText: live("copyText"),
-        external: noop,
-        goToProject: live("goToProject"),
-        markReportsSeen: noop,
-        moveCopy: live("moveCopy"),
-        openCopy: live("openCopy"),
-        refreshLog: noop,
-        rescan: noop,
-        run: live("run"),
-        setDesign: live("setDesign"),
-        toast: live("toast"),
-        useApp: store("app"),
-      },
+      "../store": appStore,
+      "./store": appStore,
       "./act": {
         aiTools: (s) =>
           s.connectors
@@ -937,8 +940,13 @@ export async function aPageCanSendTheFocusBackWhereItWas() {
     contains: (node) => [theme, report, save].includes(node),
   };
   const { useFocusStays } = helpersOnce();
+  // What the page asks for the one that went: the controls as they were when it took the focus come with it.
+  let asked;
   function Probe() {
-    useFocusStays(page.react.useRef(root), (gone) => (gone === save ? theme : undefined));
+    useFocusStays(page.react.useRef(root), (gone, around) => {
+      asked = around;
+      return gone === save ? theme : undefined;
+    });
     return null;
   }
   page.mount(createElement(Probe));
@@ -952,6 +960,7 @@ export async function aPageCanSendTheFocusBackWhereItWas() {
   // Save changes goes with its bar: the focus goes back to the setting, not on to the page's last control.
   goes(save);
   assert.equal(page.document.activeElement, theme);
+  assert.deepEqual(asked, [theme, report, save]);
   // When that one can't take it either, the usual way: here the one before.
   save.isConnected = true;
   theme.isConnected = false;

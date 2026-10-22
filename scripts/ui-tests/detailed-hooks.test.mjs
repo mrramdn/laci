@@ -317,6 +317,10 @@ async function detailed({ holdMarkdown = false, edit = noop } = {}) {
     return store.useApp(...args);
   }, store.useApp);
   const selects = new Map();
+  // The real focus-stays.ts, but for its hook, which the page can't run (it has no MutationObserver): a page that
+  // keeps the focus on it is noted with what it prefers, for a test to ask.
+  const focusStays = [];
+  const stays = load("focus-stays.ts", { "./store": store }, globals);
   const left = withReadme({
     ...twice("api", api),
     ...twice("store", { ...store, useApp }),
@@ -350,6 +354,10 @@ async function detailed({ holdMarkdown = false, edit = noop } = {}) {
     },
     "../mcp-setup": { McpRow: () => null, loadMcp: async () => {} },
     "../hotkeys": { HIDDEN_FILES_HINT: "Ctrl+H" },
+    "../focus-stays": {
+      ...stays,
+      useFocusStays: (page, instead) => void focusStays.push({ page, instead }),
+    },
   });
   // What the views share is one module each, as in the window. A file is compiled when a test first
   // needs it, since compiling is most of what a test takes.
@@ -383,6 +391,9 @@ async function detailed({ holdMarkdown = false, edit = noop } = {}) {
     },
     get AgentsView() {
       return compiled("views/agents.tsx").AgentsView;
+    },
+    get afterRestore() {
+      return compiled("views/agents.tsx").afterRestore;
     },
     get AgentDialog() {
       return compiled("session-ui.tsx").AgentDialog;
@@ -465,6 +476,7 @@ async function detailed({ holdMarkdown = false, edit = noop } = {}) {
   const app = {
     Shown,
     store,
+    focusStays,
     calls,
     requests,
     selects,
@@ -792,4 +804,58 @@ export async function theDetailsPanelLoadsMarkdownAheadForAProjectWithAReadme() 
   } finally {
     await app.close();
   }
+}
+
+// ── Agents › In backup only: Restore ────────────────────────────────────────────────────────────────
+
+export async function afterRestoreTheFocusGoesToTheNextRowsRestoreThenToTheFilter() {
+  // Every session is in the backup only.
+  const app = await detailed({ edit: (scan) => scan.sessions.forEach((s) => (s.backup = true)) });
+  try {
+    await app.draw({ agents: h(app.AgentsView) });
+    // The page that keeps the focus is the agents page, and a session's Restore says it is one.
+    const kept = app.focusStays.at(-1);
+    assert.equal(kept.page.current.getAttribute("class"), "body agents-page");
+    const restores = app.buttons("Restore");
+    assert.ok(restores.length >= 2, `${restores.length} Restore buttons`);
+    assert.ok(restores.every((b) => b.hasAttribute("data-restore")));
+  } finally {
+    await app.close();
+  }
+  // Where it goes, among controls as a browser draws them.
+  const app2 = await detailed();
+  const afterRestore = app2.afterRestore;
+  await app2.close();
+  const control = (restore, more = {}) => ({
+    isConnected: true,
+    offsetParent: {},
+    disabled: false,
+    hasAttribute: (name) => restore && name === "data-restore",
+    matches(selector) {
+      return selector === ":disabled" && this.disabled;
+    },
+    closest: () => null,
+    ...more,
+  });
+  const [title1, restore1, title2, restore2, title3, restore3] = [false, true, false, true, false, true].map((r) =>
+    control(r),
+  );
+  const around = [title1, restore1, title2, restore2, title3, restore3];
+  const all = control(false);
+  const page = {
+    querySelector: (selector) =>
+      selector === '[role="group"][aria-label="Show"] [aria-pressed="true"]' ? all : null,
+  };
+  // Its row gone, the next row's Restore, not its title.
+  restore2.isConnected = false;
+  title2.isConnected = false;
+  assert.equal(afterRestore(page, restore2, around), restore3);
+  // The last row's, the one before.
+  restore3.isConnected = false;
+  assert.equal(afterRestore(page, restore3, around), restore1);
+  // None left: the Show filter that is on.
+  restore1.isConnected = false;
+  assert.equal(afterRestore(page, restore1, around), all);
+  // Another control that went is left to the page's usual way.
+  assert.equal(afterRestore(page, title1, around), undefined);
 }

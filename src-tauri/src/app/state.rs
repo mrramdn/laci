@@ -1,7 +1,8 @@
 use laci_core::{
     Result,
     env::Env,
-    service::{Refresh, RequestOutcome, Service, changes_history, mutates},
+    ops::COPYING,
+    service::{Refresh, RequestOutcome, Service, changes_history, mutates, runs_long},
 };
 use serde_json::{Value, json};
 use std::sync::{Condvar, Mutex};
@@ -12,6 +13,8 @@ pub struct Engine {
     pub history_pending: bool,
     history_refresh: Refresh,
     creation_running: bool,
+    /// How many backups and moves of the copy of AI chats run outside the engine lock now (`service::runs_long`).
+    pub long_running: u32,
 }
 impl Engine {
     pub fn new(mut service: Service) -> Self {
@@ -25,6 +28,7 @@ impl Engine {
             revision: 0,
             history_pending,
             creation_running: false,
+            long_running: 0,
             history_refresh: if history_pending { Refresh::full() } else { Refresh::default() },
         }
     }
@@ -46,6 +50,10 @@ impl Engine {
     }
     /// Whether `name` may run now. Also asked of the actions that run outside the engine lock.
     pub fn admit(&self, name: &str) -> Result<()> {
+        // A change waits for the change lock, which the backup or move holds, and would hold the engine meanwhile.
+        if self.long_running > 0 && (mutates(name) || runs_long(name) || name == "new/start") {
+            return Err(COPYING.into());
+        }
         if self.creation_running && mutates(name) {
             return Err("A project is being created. Wait before changing files or settings.".into());
         }
@@ -71,6 +79,9 @@ impl Engine {
         }
     }
     pub fn begin_creation(&mut self) -> Result<()> {
+        if self.long_running > 0 {
+            return Err(COPYING.into());
+        }
         if self.creation_running || self.history_pending {
             return Err(
                 "History is refreshing or a project is being created. Wait before creating another project.".into()
@@ -247,6 +258,22 @@ mod tests {
         assert!(engine.install(&complete, json!({"nodes":{},"proposals":[]})));
         assert!(!engine.history_pending);
         assert!(engine.begin_creation().is_ok());
+    }
+
+    /// A backup or a move of the copy of AI chats holds the change lock for minutes, outside the engine. A change
+    /// asked for meanwhile is refused at once instead of waiting for that lock with the engine held.
+    #[test]
+    fn changes_are_refused_at_once_while_the_copy_of_ai_chats_is_copied() {
+        let (_home, mut engine, _) = engine();
+        engine.long_running = 1;
+        for name in ["theme", "todo", "setup/save", "backup/move", "backup"] {
+            assert_eq!(engine.admit(name), Err(laci_core::ops::COPYING.into()), "{name}");
+        }
+        assert!(engine.execute("theme", &json!({"theme":"dark"})).unwrap_err().contains("copying your AI chats"));
+        assert_eq!(engine.begin_creation(), Err(laci_core::ops::COPYING.into()));
+        assert!(engine.execute("log", &json!({})).is_ok());
+        engine.long_running = 0;
+        assert!(engine.admit("theme").is_ok());
     }
 
     #[test]

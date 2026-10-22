@@ -26,6 +26,15 @@ use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, ipc::Chan
 use terminal::{Info, Output, Terminals};
 use watch::{Changes, Watches};
 
+/// Counts one backup or move of the copy of AI chats as running until it is dropped, even by a panic.
+struct Running<'a>(&'a Mutex<Engine>);
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        let mut engine = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        engine.long_running = engine.long_running.saturating_sub(1);
+    }
+}
+
 struct AppState {
     engine: Mutex<Engine>,
     queue: Arc<RefreshQueue>,
@@ -339,15 +348,25 @@ impl AppState {
     }
     /// Runs one of the actions `service::runs_long` names outside the engine lock, as `delete/plan` runs, then
     /// tells the window and queues the refresh as a change under the lock does.
+    /// While it runs, other changes and an update's restart are refused at once (`Engine::admit`, `update::quiet`)
+    /// rather than wait for the change lock with the engine held.
     fn long_action(&self, name: &str, body: &Value) -> Result<Value> {
         let started = Instant::now();
         let (env, snapshot) = {
             let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
             self.updates.admit(name)?;
+            // The hourly automatic backup just waits for the next hour.
+            if engine.long_running > 0 && body["auto"] == true {
+                return Ok(json!({"skipped":true}));
+            }
             engine.admit(name)?;
-            (engine.service.env.clone(), engine.service.snapshot()?)
+            let snapshot = engine.service.snapshot()?;
+            engine.long_running += 1;
+            (engine.service.env.clone(), snapshot)
         };
+        let running = Running(&self.engine);
         let result = laci_core::service::long_action(&env, &snapshot, name, body, "app");
+        drop(running);
         let mut engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
         let mut outcome = match result {
             Ok(outcome) => outcome,

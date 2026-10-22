@@ -1268,6 +1268,9 @@ export const activity = {
     suggestedAgain: "Brought back a hidden suggestion",
     copied: (n: number) => `Copied ${count(n, "chat file")}`,
     copyUpToDate: "The copy of AI chats was up to date",
+    /** The first copy after the upgrade to Laci 3.1 packs the files an older copy kept plain. */
+    packedCopy: (files: number, before: string, after: string) =>
+      `Packed the copy of AI chats: ${files.toLocaleString("en-GB")} ${files === 1 ? "file" : "files"}, ${before} → ${after}`,
     copyOn: "Laci now copies new chats by itself",
     copyOff: "Laci now copies chats only when you ask",
     putBack: (ai: string) => `Put back a ${ai} chat from Laci’s copy`,
@@ -1333,6 +1336,7 @@ export const logForms = {
   suggestedAgain: told.suggestedAgain,
   backedUp: told.copied,
   backupUpToDate: told.copyUpToDate,
+  packedCopy: told.packedCopy,
   autoBackupOn: told.copyOn,
   autoBackupOff: told.copyOff,
   restoredChat: told.putBack,

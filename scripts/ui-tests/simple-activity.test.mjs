@@ -585,6 +585,10 @@ const FORMS = [
   [{ form: "suggestedAgain", title: "Archive habit-app?" }, "Brought back a hidden suggestion"],
   [{ form: "backedUp", files: 3 }, "Copied 3 chat files"],
   [{ form: "backupUpToDate" }, "The copy of AI chats was up to date"],
+  [
+    { form: "packedCopy", files: 1785, before: 4_980_000_000, after: 1_010_000_000 },
+    "Packed the copy of AI chats: 1,785 files, 5.0 GB → 1.0 GB",
+  ],
   [{ form: "autoBackupOn" }, "Laci now copies new chats by itself"],
   [{ form: "autoBackupOff" }, "Laci now copies chats only when you ask"],
   [{ form: "restoredChat", ai: "Claude Code" }, "Put back a Claude Code chat from Laci’s copy"],

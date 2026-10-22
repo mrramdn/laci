@@ -9,6 +9,9 @@
 export const count = (n: number, one: string, many = `${one}s`) =>
   `${n} ${n === 1 ? one : many}`;
 
+/** A big number with its thousands apart: "1,785". */
+const grouped = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
 /** "a.md", "a.md and b.md", "a.md, b.md and c.md". */
 export function listed(items: string[]) {
   return items.length < 2
@@ -1270,7 +1273,7 @@ export const activity = {
     copyUpToDate: "The copy of AI chats was up to date",
     /** The first copy after the upgrade to Laci 3.1 packs the files an older copy kept plain. */
     packedCopy: (files: number, before: string, after: string) =>
-      `Packed the copy of AI chats: ${files.toLocaleString("en-GB")} ${files === 1 ? "file" : "files"}, ${before} → ${after}`,
+      `Packed the copy of AI chats: ${grouped(files)} ${files === 1 ? "file" : "files"}, ${before} → ${after}`,
     copyOn: "Laci now copies new chats by itself",
     copyOff: "Laci now copies chats only when you ask",
     putBack: (ai: string) => `Put back a ${ai} chat from Laci’s copy`,

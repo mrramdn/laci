@@ -18,8 +18,8 @@ body:
     id: version
     attributes:
       label: Laci version
-      description: Run `laci --version`, or look at the name of the file you installed, such as `laci_2.5.2_amd64.deb`.
-      placeholder: "2.5.2"
+      description: Run `laci --version`, or look at the name of the file you installed, such as `laci_3.0.0_amd64.deb`.
+      placeholder: "3.0.0"
     validations:
       required: true
   - type: dropdown

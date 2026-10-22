@@ -6,6 +6,8 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-22
+
 Laci 3.0: Simple, a second design for people new to Git and coding agents, a new mark, and updates the AppImage installs itself after asking.
 
 Laci stays Linux-only: Windows and macOS versions won't be made.
@@ -14,9 +16,10 @@ Laci stays Linux-only: Windows and macOS versions won't be made.
 
 ### Added
 
-- **Simple, a new design.** The same projects, AI chats, to-dos and Undo, in a calmer layout with plain words: "saved version" for a commit, "upload" for a push, and each Git word named in Help. Its places are Home, Projects, AI helpers, Clean up and Activity, with Settings and Help at the foot of the sidebar.
+- **Simple, a new design.** The same projects, AI chats, to-dos and Undo, in a calmer layout in the colours of Laci's mark, with plain words: "saved version" for a commit, "upload" for a push, and each Git word named in Help. Its places are Home, Projects, AI helpers, Clean up and Activity, with Settings and Help at the foot of the sidebar.
   - **Home** puts the one project that needs you most on top, with its fix and *Ask Claude Code to do it* (or your own AI), then the others that need you, what's next, what's coming up and where you left off.
   - **A project's page** starts with *Is it safe?*: each problem in plain words, the button that fixes it, and a way to ask your AI to do it.
+  - **When your AI is asked to fix something**, its prompt asks it to show each command first, and never to force a push, rewrite history or delete a branch.
   - **Clean up** shows one suggestion at a time and what each will change, with the space Laci itself uses.
   - **Activity** says each change in a plain sentence, such as "Reconnected the AI chats of shop", with *What changed* for the details, *By me* and *By AI* filters, and Undo on each row.
   - **AI helpers** has your chats, the summaries your agents write, and the tools: which AI tools Laci shows, and *Let it use Laci* to set up MCP.
@@ -24,11 +27,12 @@ Laci stays Linux-only: Windows and macOS versions won't be made.
 - **New installs open in Simple.** If you used Laci 2, Detailed stays your design, and a card on Today offers Simple once.
 - **Switch designs at any time**: in Settings › Appearance, with the *Simple | Detailed* toggle at the foot of the sidebar, or with Ctrl K. The change shows at once and is saved as `design` in config.json.
 - **The first-run screen** welcomes you, says what this computer still needs (such as Git), and ends with two questions: whether Laci may look for new versions once a day, and how it should look.
-- **The open-drawer mark.** Laci has a new icon, an open drawer on turmeric, in the sidebar, on the first-run screen, as the window icon and in the packages, with scalable and symbolic versions for the app menu.
-- **Updates from inside Laci.** If you allow it, Laci asks GitHub once a day whether there is a new version. Nothing is downloaded or installed until you click.
-  - The AppImage installs the new version itself: *Install* downloads it, checks Laci's signature and replaces the AppImage, and *Restart* finishes it. A download without the signature is refused.
+- **The open-drawer mark.** Laci has a new icon, an open drawer on turmeric, in the sidebar, on the first-run screen, as the window icon and in the packages, with scalable and symbolic versions for the app menu. The app menu and the window title now say "Laci".
+- **Updates from inside Laci.** If you allow it, Laci asks GitHub once a day whether there is a new version, and *Check now* in Settings asks at any time. Nothing is downloaded or installed until you click, and a version Laci found is still offered after a restart.
+  - The AppImage installs the new version itself: *Install* downloads it, checks Laci's signature and replaces the AppImage, and *Restart* finishes it, closing Laci's terminals and the AI chats running in them. A download without the signature is refused.
   - The deb, the rpm and copies you built get a link to the release page instead.
   - Detailed shows a new version at the foot of the sidebar and in Settings › About & updates, and Ctrl K offers *Check for updates*, *Install update* and *Restart to update*. Simple shows it on Home and in Settings › Updates.
+  - A final version of Laci is offered only final versions, never a release candidate.
   - A check shows GitHub your IP address, as any website visit does, and sends nothing about your projects.
 - **Laci asks once.** If you used Laci 2, or skipped the first-run screen, a card on Today (Detailed) or Home (Simple) asks whether Laci may look for new versions, with *Check daily* and *Don't check*. Change it later in Settings, or with `"updates": "daily"` or `"off"` in config.json.
 - **Secrets stay off the internet.** Before a first commit, a new remote or a push, both designs look for files that look like passwords or keys, such as `.env`, by their names only. *Keep these out* adds them to `.gitignore`, with Undo.
@@ -39,14 +43,13 @@ Laci stays Linux-only: Windows and macOS versions won't be made.
 
 - **Laci runs on Ubuntu 22.04 and the systems built on it**, such as Linux Mint 21, Zorin OS 17 and Pop!_OS 22.04, and on Debian 12. The packages are now built on Ubuntu 22.04 and need glibc 2.35; 2.5 needed 2.39.
 - **Releases say where they come from.** Each one carries `SHA256SUMS`, `provenance.json` and a build attestation for every file. [Verify a download](https://github.com/mrramdn/laci/blob/main/RELEASING.md#verify-a-download) shows how to check them.
-- **Detailed's text is at least 12 px.** Labels, counts, key hints, column heads and paths drew at 10 to 11.5 px.
+- **Detailed's text is at least 12 px.** Labels, counts, key hints, column heads and paths drew at 10 to 11.5 px. Where the folder list is narrow, such as beside the side panel, it leaves out Stack, then Size, then Summary and Agents, instead of squeezing them.
 - **The window can be as small as 720 × 560**, and both designs fit it. In Detailed, from 880 px wide down, a project's details open as a sheet over the list, and filter bars wrap instead of sliding out of view.
 - **The first window fits the screen**, also on Wayland, and opens centred.
 - **Dates follow the language of your system** instead of always British English.
-- **When your AI is asked to fix something**, its prompt asks it to show each command first, and never to force a push, rewrite history or delete a branch.
+- **The foot of Detailed's sidebar says "Projects checked"** after a scan of your project folders, instead of "Up to date", which read as if Laci itself were current, and "Couldn't check projects" instead of "Scan failed".
 - **Detailed starts faster** and draws less while a scan runs: Markdown loads when a README or report first opens, and each view draws again only when what it shows changes.
 - The root of the disk (`/`) can no longer be picked as a folder to scan, since it holds the system and everything else. One you picked in 2.5 stays, and Laci keeps looking through it.
-- **Simple's colours now come from Laci's mark**: teak and coconut milk for buttons, links and the chosen place instead of teal, and a calm leaf green for "Safe".
 - **MCP:** `tidy_suggestions` answers a page at a time (30 by default) and lists only the first operations of each suggestion. `apply_suggestion` without `confirm` lists all of them, a page at a time: for a group of 500 history files it answered with 330,000 characters.
 
 ### Fixed
@@ -60,15 +63,8 @@ Laci stays Linux-only: Windows and macOS versions won't be made.
 - **Making a project never waits on a hidden password prompt.** The Git and `gh` that make it ask nothing, so a clone or push that needs a login fails with Git's message instead of waiting unseen until it timed out.
 - **A project's summary from its README is its whole first paragraph.** A paragraph wrapped over several lines gave only its first line, and a long one was cut in the middle of a word. Now the lines are joined, and a summary that is too long ends after a whole word with "…".
 - **Report items with a list under a label read as one sentence**, such as "Next: the review; the fonts", instead of "Next:; the review;; the fonts".
-- **A report about several projects shows each project only its own items** on Home, Today and in MCP's `open_items`. An item belongs to the project it names, or else to the project its session worked in; the report itself still lists every item.
-- **A new version found before a restart is still offered after it.** Laci said "No newer version was found" after a restart, although its last check had found one. Settings now shows that version with *Install*, which reads GitHub again for the download.
-- **The foot of the sidebar says "Projects checked" for its scan of the project folders**, not "Up to date", which read as if Laci itself were current. A new version that *Check now* found shows there too, also when Laci doesn't look by itself, in both designs.
-- **Detailed's update button says "Downloading…" while the download runs**, and "Installing…" only once it is in.
-- **Simple's "Don't look for new versions" stops pointing to *Check now* while an update is found**, since *Install* or *Restart* is in its place.
+- **A report about several projects shows each project only its own items** on Today, Simple's Home and in MCP's `open_items`. An item belongs to the project it names, or else to the project its session worked in; the report itself still lists every item.
 - **The first open after installing, or after the cache is cleared, is faster and says what it is doing.** Laci reads your AI chat history once at the start, which took minutes on a big history with only "Looking for your projects…" on screen. It now reads several chat files at a time, and the window says which step it is on and how far it has come, such as "120 of 2400 files · 900 MB of 4.4 GB".
-- **A project's card and its page count the same AI chats.** The card counted chats that the page didn't list: the ones past the first three, and an AI helper's side tasks that worked in that project for a chat in another one. The page now ends with "and 2 more chats and 3 quick chats", and side tasks count only with the chat that started them.
-- **Detailed's folder list keeps its Summary readable when the list is narrow**, such as in a 1440 px window with the side panel open, where it was cut to one letter. The list now drops Stack, then Size, then Summary and Agents as it gets narrower, instead of squeezing them.
-- **Simple says a new version "is available" until it is downloaded**, as Detailed does. It said "is ready to install" before the download, which read as if it were already downloaded; "ready" now means downloaded.
 
 ### Security
 

@@ -6,7 +6,7 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
-## [3.0.0] - 2026-10-21
+## [3.0.0] - 2026-10-22
 
 Laci 3.0: Simple, a second design for people new to Git and coding agents, a new mark, and updates the AppImage installs itself after asking.
 

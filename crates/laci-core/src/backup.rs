@@ -324,38 +324,58 @@ fn connector_dirs(env: &Env, root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// What [`convert`] packed: how many plain files, and how many bytes they and the packed copies beside them took
+/// before and take now.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Packing {
+    pub files: u64,
+    pub before: u64,
+    pub after: u64,
+}
+
 /// Packs each plain file the copy at `root` still holds, as copies before Laci 3.1 kept them, into `<file>.zst`. The
 /// packed file is checked byte for byte before the plain one goes. One that can't be packed stays as it is, and
-/// laci.log says why: the run goes on.
-pub(crate) fn convert(env: &Env, root: &Path) {
+/// laci.log says why: the run goes on. Says what it packed.
+pub(crate) fn convert(env: &Env, root: &Path) -> Packing {
     let plain: Vec<PathBuf> = connector_dirs(env, root)
         .iter()
         .flat_map(|dir| kept_files(dir.as_path()))
         .map(walkdir::DirEntry::into_path)
         .filter(|path| path.extension().is_some_and(|ext| KINDS.iter().any(|kind| ext == *kind)))
         .collect();
+    let mut packing = Packing::default();
     for file in plain {
-        if let Err(error) = convert_one(&file, &packed(&file)) {
-            crate::service::debug_log(env, &format!("copy of AI chats: {} stays plain: {error}", file.display()));
+        match convert_one(&file, &packed(&file)) {
+            Ok((before, after)) => {
+                packing.files += 1;
+                packing.before += before;
+                packing.after += after;
+            }
+            Err(error) => {
+                crate::service::debug_log(env, &format!("copy of AI chats: {} stays plain: {error}", file.display()));
+            }
         }
     }
+    packing
 }
-fn convert_one(plain: &Path, target: &Path) -> Result<()> {
+/// Packs the plain file `plain` into `target`, and says how many bytes both took before and take now.
+fn convert_one(plain: &Path, target: &Path) -> Result<(u64, u64)> {
     sidecar::plain_path(plain)?;
     let meta = fs::metadata(plain).map_err(|e| e.to_string())?;
     let folder = target.parent().ok_or("Missing folder")?;
-    let replace = match fs::symlink_metadata(target) {
+    let (replace, old) = match fs::symlink_metadata(target) {
         // A run since copied the chat again, packed: that copy is the newer one unless it records that it holds
         // less, as when a Laci before 3.1 copied a log that had grown since into the plain file.
         Ok(packed) if packed.is_file() => {
             if !content_size(target).is_some_and(|size| size < meta.len()) {
                 fs::remove_file(plain).map_err(|e| e.to_string())?;
-                return sync_dir(folder);
+                sync_dir(folder)?;
+                return Ok((meta.len() + packed.len(), packed.len()));
             }
-            true
+            (true, packed.len())
         }
         Ok(_) => return Err(format!("{} is in the way", target.display())),
-        Err(_) => false,
+        Err(_) => (false, 0),
     };
     let input = File::open(plain).map_err(|e| e.to_string())?;
     let mut temp = temp_in(folder)?;
@@ -366,6 +386,7 @@ fn convert_one(plain: &Path, target: &Path) -> Result<()> {
     if !same(plain, temp.path()).map_err(|e| e.to_string())? {
         return Err("its packed copy doesn't unpack to the same bytes".into());
     }
+    let after = temp.as_file().metadata().map_err(|e| e.to_string())?.len();
     if replace {
         temp.persist(target).map_err(|e| e.error.to_string())?;
     } else {
@@ -375,7 +396,8 @@ fn convert_one(plain: &Path, target: &Path) -> Result<()> {
     // The packed file is on the disk before the plain one goes.
     sync_dir(folder)?;
     fs::remove_file(plain).map_err(|e| e.to_string())?;
-    sync_dir(folder)
+    sync_dir(folder)?;
+    Ok((meta.len() + old, after))
 }
 
 /// Removes, inside the copy's connector folders at `root` only, the temporary files of runs that stopped part-way:

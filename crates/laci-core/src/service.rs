@@ -252,12 +252,27 @@ pub fn long_action(env: &Env, snap: &Value, name: &str, b: &Value, by: &str) -> 
     }
 }
 
-/// Copies the agent histories `snap` connects into the copy of AI chats, and tells the Log, by `by`, when it copied
-/// something, or with `always` also that the copy is up to date.
+/// Copies the agent histories `snap` connects into the copy of AI chats, and tells the Log, by `by`, when it packed
+/// the plain files of a copy from before 3.1, and when it copied something, or with `always` also that the copy is up
+/// to date.
 fn backup_run(env: &Env, snap: &Value, by: &str, always: bool) -> Result<Value> {
     let mut result = ops::backup_history(env, snap)?;
     if result["settled"].is_object() {
         activity::record_journal(env, &result["settled"], None, by);
+    }
+    // The first run after the upgrade packs the plain files of the copy: gigabytes freed, and nothing copied.
+    let packing = &result["packing"];
+    let packed = packing["files"].as_u64().unwrap_or(0);
+    if packed > 0 {
+        let (before, after) = (packing["before"].as_u64().unwrap_or(0), packing["after"].as_u64().unwrap_or(0));
+        let sizes = format!("{} → {}", scan::bytes(before), scan::bytes(after));
+        let files = format!("{} file{}", grouped(packed), if packed == 1 { "" } else { "s" });
+        activity::record(
+            env,
+            json!({"by":by,"title":format!("Compressed the agent history backup: {files}, {sizes}"),
+                "say":{"form":"packedCopy","files":packed,"before":before,"after":after}}),
+        );
+        result["packing"]["said"] = json!(format!("Packed the copy of AI chats: {files}, {sizes}"));
     }
     let copied = result["copied"].as_u64().unwrap_or(0);
     result["size"] = json!(scan::bytes(result["bytes"].as_u64().unwrap_or(0)));
@@ -280,14 +295,31 @@ fn backup_run(env: &Env, snap: &Value, by: &str, always: bool) -> Result<Value> 
 
 /// `laci backup`: the backup "Back up now" makes, without the window and without a scan. It needs only the agents
 /// Laci connects and their history folders; the change lock keeps it from running beside the window's. The Log
-/// tells it, by `by`, only when it copied something. It runs whether or not automatic backups are on: running it is
-/// the user's choice. Gives the line the command prints.
+/// tells it, by `by`, only when it copied something, or packed the plain files a copy from before 3.1 holds. It runs
+/// whether or not automatic backups are on: running it is the user's choice. Gives the lines the command prints.
 pub fn backup_now(env: &Env, by: &str) -> Result<String> {
     let snap = json!({"connectors":crate::agents::connectors(env, &config::load(env))});
     let _long = ops::LongRun::start(env);
     let result = backup_run(env, &snap, by, false)?;
     let copied = result["copied"].as_u64().unwrap_or(0);
-    Ok(format!("Copied {} · {}", scan::plural(copied, "file"), string(&result, "kept")))
+    let said = format!("Copied {} · {}", scan::plural(copied, "file"), string(&result, "kept"));
+    Ok(match result["packing"]["said"].as_str() {
+        Some(packed) => format!("{packed}\n{said}"),
+        None => said,
+    })
+}
+
+/// `n` with its thousands apart, as people write a big number: "1,785".
+fn grouped(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
 }
 
 /// Adds a line to laci.log, where problems that stop nothing are told.
@@ -1508,6 +1540,13 @@ fn external_terminal(app: &str, cwd: &Path, cmd: Option<&str>, confirm: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_big_number_has_its_thousands_apart() {
+        for (n, said) in [(0, "0"), (999, "999"), (1785, "1,785"), (12_345_678, "12,345,678")] {
+            assert_eq!(grouped(n), said);
+        }
+    }
 
     #[test]
     fn design_saves_only_the_two_designs_and_leaves_no_log_entry() {

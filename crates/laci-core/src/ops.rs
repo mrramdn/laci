@@ -1210,14 +1210,15 @@ fn apply_action_checked(
 }
 /// Copies agent histories into the copy of AI chats (`backup::dir`), each file packed with zstd, and says what the
 /// copy holds. Only files that grew since their last copy are copied again.
-/// A move of the copy that stopped part-way is finished first: the result names its journal as `settled`.
+/// A move of the copy that stopped part-way is finished first: the result names its journal as `settled`. What the
+/// plain files from before 3.1 that it packed first took before and take now is its `packing`.
 pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
     with_lock(env, || {
         let settled = settle_copy_unlocked(env)?;
         let dest = crate::backup::ready(env)?;
         // What runs that stopped part-way left goes first, and plain files from before 3.1 are packed.
         crate::backup::remove_leftovers(env, &dest);
-        crate::backup::convert(env, &dest);
+        let packing = crate::backup::convert(env, &dest);
         let mut copied = 0u64;
         let mut bytes = 0u64;
         for c in snap["connectors"]
@@ -1277,7 +1278,7 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
         files::replace(&data(env, BACKUP_STATE)?, state.to_string().as_bytes())?;
         Ok(
             json!({"copied":copied,"bytes":bytes,"size":bytes,"dest":dest,"sessions":sessions,"files":kept,"total":total,
-            "settled":settled}),
+            "settled":settled,"packing":{"files":packing.files,"before":packing.before,"after":packing.after}}),
         )
     })
 }

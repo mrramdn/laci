@@ -478,6 +478,36 @@ fn a_plain_copy_longer_than_its_packed_one_takes_its_place() {
 }
 
 #[test]
+fn the_first_backup_after_the_upgrade_tells_the_log_what_it_packed() {
+    let (_temp, env, _) = home();
+    claude(&env);
+    fs::create_dir_all(env.home.join(".claude/projects")).unwrap();
+    let kept = env.data_dir.join("history/claude/-home-old");
+    let text = "{\"type\":\"user\",\"message\":\"hello\"}\n".repeat(2000);
+    write(&kept.join("old.jsonl"), &text);
+    write(&kept.join("memory/MEMORY.md"), "- a note\n");
+    let said = laci_core::service::backup_now(&env, "cli").unwrap();
+    let (packed, copied) = said.split_once('\n').unwrap();
+    assert!(packed.starts_with("Packed the copy of AI chats: 2 files, "), "{said}");
+    assert!(packed.contains(" → "), "{said}");
+    assert!(copied.starts_with("Copied 0 files · 1 session kept · "), "{said}");
+    // Packing is told once, by the command line, and copying nothing isn't told.
+    let log = activity::read_log(&env, 10);
+    assert_eq!(log.len(), 1, "{log:?}");
+    let say = &log[0]["say"];
+    assert_eq!((&log[0]["by"], &say["form"], &say["files"]), (&json!("cli"), &json!("packedCopy"), &json!(2)));
+    assert!(log[0]["title"].as_str().unwrap().starts_with("Compressed the agent history backup: 2 files, "));
+    let after = fs::metadata(kept.join("old.jsonl.zst")).unwrap().len()
+        + fs::metadata(kept.join("memory/MEMORY.md.zst")).unwrap().len();
+    assert_eq!((&say["before"], &say["after"]), (&json!(text.len() + 9), &json!(after)));
+    assert!(after < text.len() as u64 / 4);
+    // Nothing is left to pack: the next run tells nothing.
+    let said = laci_core::service::backup_now(&env, "cli").unwrap();
+    assert!(said.starts_with("Copied 0 files · "), "{said}");
+    assert_eq!(activity::read_log(&env, 10).len(), 1);
+}
+
+#[test]
 fn laci_backup_copies_without_a_scan_and_tells_the_log_only_when_it_copied() {
     let (_temp, env, disk) = home();
     let project = claude(&env);

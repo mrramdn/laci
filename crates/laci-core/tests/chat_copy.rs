@@ -378,11 +378,12 @@ fn a_folder_for_the_copy_that_was_never_chosen_takes_nothing_and_loses_nothing()
     let (_temp, env, disk) = home();
     let store = env.home.join(".codex/sessions");
     write(&store.join("session.jsonl"), "a log\n");
-    // config.json edited by hand, or by another program: home itself, and a folder of the user's files.
+    // config.json edited by hand, or by another program: home itself, which is told as such before anything is on
+    // record, and a folder of the user's files.
     let theirs = disk.join("archive");
     write(&theirs.join("codex/notes.md"), "the user's notes\n");
     write(&theirs.join("codex/.tmpAbCdEf"), "the user's file\n");
-    for (dir, why) in [(env.home.clone(), "isn't the one Laci knows"), (theirs.clone(), "isn't the one Laci knows")] {
+    for (dir, why) in [(env.home.clone(), "not your home folder"), (theirs.clone(), "isn't the one Laci knows")] {
         config::save(&env, &json!({"presets":["codex"],"backupDir":dir})).unwrap();
         let refused = ops::backup_history(&env, &codex(&store)).unwrap_err();
         assert!(refused.contains(why), "{refused}");

@@ -99,9 +99,10 @@ pub(crate) fn ready(env: &Env) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Whether the chosen folder `dir` can hold the copy now. It must be the folder that was chosen, by the rules of
-/// `scan::check_root_identity` and with its identity on record, and a copy Laci made, with the marker at its top.
-/// config.json can be edited by hand, so the rules a chosen folder must meet are asked again too.
+/// Whether the chosen folder `dir` can hold the copy now. config.json can be edited by hand, so the rules a chosen
+/// folder must meet are asked first: a folder that can never hold the copy, as home, is told why, whatever is on
+/// record. Then it must be the folder that was chosen, by the rules of `scan::check_root_identity` and with its
+/// identity on record, and a copy Laci made, with the marker at its top.
 fn check(env: &Env, dir: &Path, cfg: &Value) -> Result<()> {
     let shown = paths::tilde(dir, &env.home);
     if !dir.is_absolute() {
@@ -109,6 +110,7 @@ fn check(env: &Env, dir: &Path, cfg: &Value) -> Result<()> {
             "The folder for the copy of AI chats isn't a full path: {shown}. Choose the folder for the copy again."
         ));
     }
+    config::backup_dir_refusal(env, dir, cfg).map_err(|why| format!("{why} ({shown})"))?;
     if !fs::metadata(dir).is_ok_and(|meta| meta.is_dir()) {
         return Err(format!(
             "The folder for the copy of AI chats isn't there: {shown}. Connect its drive, or choose another folder \
@@ -129,7 +131,6 @@ fn check(env: &Env, dir: &Path, cfg: &Value) -> Result<()> {
              the folder for the copy again."
         ));
     }
-    config::backup_dir_refusal(env, dir, cfg).map_err(|why| format!("{why} ({shown})"))?;
     if !marked(dir) {
         return Err(format!(
             "The folder for the copy of AI chats doesn't hold a copy Laci made: {shown}. Choose the folder for the \

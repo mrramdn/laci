@@ -589,6 +589,7 @@ const FORMS = [
   [{ form: "autoBackupOff" }, "Laci now copies chats only when you ask"],
   [{ form: "restoredChat", ai: "Claude Code" }, "Put back a Claude Code chat from Laci’s copy"],
   [{ form: "restoredChat" }, "Put back a chat from Laci’s copy"],
+  [{ form: "movedCopy", dir: "/mnt/archive/ai-chats" }, "Moved the copy of AI chats to /mnt/archive/ai-chats"],
   [{ form: "emptiedKept" }, "Emptied Kept for Undo"],
   [{ form: "removedOldUndo" }, "Removed the old undo records"],
   [{ form: "removedLaci1" }, "Removed the leftovers of Laci 1"],

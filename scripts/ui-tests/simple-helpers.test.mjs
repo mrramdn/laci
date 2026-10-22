@@ -387,7 +387,7 @@ function helpersOnce() {
         useReportText: () => ({ raw: "# Title\n\nWords.", retry: noop }),
       },
       "../mcp-setup": { loadMcp: async () => {}, useMcp: store("mcp") },
-      "../pick": { chooseFolder: noop },
+      "../pick": { chooseFolder: live("chooseFolder") },
       "../readme": {
         renderReadme: (raw) => ({ html: raw, remote: 0, headings: [] }),
         proseClick: noop,
@@ -400,6 +400,8 @@ function helpersOnce() {
         external: noop,
         goToProject: live("goToProject"),
         markReportsSeen: noop,
+        moveCopy: live("moveCopy"),
+        openCopy: live("openCopy"),
         refreshLog: noop,
         rescan: noop,
         run: live("run"),
@@ -484,6 +486,20 @@ function helpersPage({ view = "agents", snapshot = scan(), replies = {}, mcp = {
     requestResume: (...args) => void resumed.push(args),
     goToProject: (id) => void navigated.push(`project:${id}`),
     setDesign: (design) => void navigated.push(`design:${design}`),
+    // The system's picker hands over a folder on another drive.
+    chooseFolder: (_options, onPick) => onPick("/mnt/archive/ai-chats"),
+    // As the store moves the copy: a refusal goes to `onError`, a move to a toast with its Undo.
+    moveCopy: async (dir, words, onError) => {
+      asked.push(["backup/move", { dir }]);
+      const refused = replies["backup/move"];
+      if (refused instanceof Error) {
+        onError(refused);
+        return false;
+      }
+      toasts.push([words.moved(dir || "Laci’s own folder"), words.note]);
+      return true;
+    },
+    openCopy: (dest) => void navigated.push(`copy:${dest}`),
   };
   const exports = helpersOnce();
   exports.useHelpers.reset();
@@ -952,6 +968,42 @@ export async function theCopyOfChatsSaysAfterHowManyDaysAnAiDeletesThem() {
   page.app.setState({ snapshot: { ...week, backup: { ...week.backup, auto: true } } });
   await page.settle();
   assert.equal(warned(), undefined);
+}
+
+export async function theCopyOfChatsMovesToAnotherFolderOnlyOnceAskedWhere() {
+  const replies = {};
+  const page = helpersPage({ replies });
+  const place = () => page.find((n) => n.props["data-ui"] === "copy-place");
+  const button = (words) => page.find((n) => n.type === "button" && n.textContent === words);
+  assert.ok(place().textContent.includes(said.copyPlaceOwn), place().textContent);
+  assert.equal(button(said.copyPlaceBack), undefined, "the copy is in Laci’s own folder already");
+  page.act(() => button(said.copyPlaceChange).props.onClick());
+  await page.settle();
+  assert.deepEqual(page.asked("backup/move"), [], "a folder picked only asks");
+  assert.ok(place().textContent.includes(said.copyMoveAsk("/mnt/archive/ai-chats")), place().textContent);
+  assert.ok(place().textContent.includes(said.copyMoveNote));
+  // Refused, the question stays, and says why.
+  replies["backup/move"] = new Error("That folder already holds files.");
+  page.act(() => button(said.copyMove).props.onClick());
+  await page.settle();
+  assert.match(place().textContent, /That folder already holds files\./);
+  delete replies["backup/move"];
+  page.act(() => button(said.copyMove).props.onClick());
+  await page.settle();
+  assert.deepEqual(page.asked("backup/move").at(-1), ["backup/move", { dir: "/mnt/archive/ai-chats" }]);
+  assert.deepEqual(page.toasts.at(-1), [said.copyMoved("/mnt/archive/ai-chats"), said.copyMoveNote]);
+  assert.equal(button(said.copyMove), undefined, "moved, the question goes");
+  // A chosen folder shows, and the copy can go back to Laci’s own folder, asked the same way.
+  const s = scan();
+  page.app.setState({ snapshot: { ...s, backup: { ...s.backup, chosen: true, dest: "/mnt/archive/ai-chats" } } });
+  await page.settle();
+  assert.ok(place().textContent.includes("/mnt/archive/ai-chats"));
+  page.act(() => button(said.copyPlaceBack).props.onClick());
+  await page.settle();
+  assert.ok(place().textContent.includes(said.copyMoveAsk(said.copyPlaceOwnName)), place().textContent);
+  page.act(() => button(said.copyMove).props.onClick());
+  await page.settle();
+  assert.deepEqual(page.asked("backup/move").at(-1), ["backup/move", { dir: "" }]);
 }
 
 export async function stillToDoItemsAreClosedInLaciNotInTheFile() {

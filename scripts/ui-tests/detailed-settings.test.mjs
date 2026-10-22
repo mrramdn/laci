@@ -119,6 +119,7 @@ async function settingsPage({
     "setup/info": () => structuredClone(info),
     prefs: () => ({ ...desk.prefs }),
     "setup/save": (body) => (saved.push(body), { revision: 2 }),
+    "backup/move": (body) => ({ revision: 3, dest: body.dir }),
     "update/status": () => desk.status,
     "update/check": () => (desk.status = desk.found),
     "update/install": () => ({ started: true }),
@@ -194,6 +195,17 @@ async function settingsPage({
         changed: noop,
         chooseDesign: () => true,
         copyText: noop,
+        // As the store moves the copy: through `run`, which hands a failure to `onError`.
+        moveCopy: async (dir, _words, onError) => {
+          try {
+            await api("backup/move", { dir });
+            return true;
+          } catch (error) {
+            onError(error);
+            return false;
+          }
+        },
+        openCopy: noop,
         rescan: noop,
         run: async (task, _working, options = {}) => {
           try {
@@ -253,6 +265,33 @@ const folders = (page) =>
 /** The alert Settings shows, if any. */
 const alert = (page) => page.find((n) => n.props.role === "alert")?.textContent;
 
+export async function theHistoryBackupMovesOnlyOnceSettingsHasAskedWhere() {
+  const p = await settingsPage();
+  const change = picker(p, said.backupFolderTitle);
+  assert.equal(change.props["data-from"], "~", "the default folder isn't one to start the picker in");
+  assert.equal(p.find((n) => n.type === "button" && n.textContent === said.backupFolderDefaultButton), undefined);
+  const move = () => p.find((n) => n.type === "button" && n.textContent === said.backupMove);
+  const question = () => p.find((n) => n.props.role === "group" && n.props["aria-label"] === said.backupMove);
+  p.box.picked = "/mnt/archive/ai-chats";
+  p.act(() => change.props.onClick());
+  assert.deepEqual(p.asked("backup/move"), [], "a pick only asks");
+  const asked = question().textContent;
+  assert.ok(asked.includes(said.backupMoveAsk("/mnt/archive/ai-chats")), asked);
+  assert.ok(asked.includes(said.backupMoveNote), asked);
+  // Refused, as for a folder that holds files: the reason shows beside the question, which stays.
+  const why = "That folder already holds files. Choose an empty folder, or one that holds a copy Laci made.";
+  p.desk.refuse["backup/move"] = new Error(why);
+  p.act(() => move().props.onClick());
+  await p.done();
+  assert.ok(p.all((n) => n.props.role === "alert").some((n) => n.textContent === why));
+  assert.ok(question());
+  delete p.desk.refuse["backup/move"];
+  p.act(() => move().props.onClick());
+  await p.done();
+  assert.deepEqual(p.asked("backup/move").at(-1), ["backup/move", { dir: "/mnt/archive/ai-chats" }]);
+  assert.equal(question(), undefined, "moved, the question goes");
+}
+
 export async function aChooseButtonSitsBesideEachFolderFieldOfSettings() {
   const p = await settingsPage();
   const buttons = p.all((n) => n.props["data-picker"] !== undefined);
@@ -261,6 +300,7 @@ export async function aChooseButtonSitsBesideEachFolderFieldOfSettings() {
     [
       [said.addFolderTitle, "Choose…"],
       [said.archiveFolderTitle, "Choose…"],
+      [said.backupFolderTitle, said.backupFolderChange],
       [said.reportsFolderTitle, "Choose…"],
     ],
   );

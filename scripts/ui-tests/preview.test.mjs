@@ -151,6 +151,28 @@ export async function aTickedToDoShowsInTheProjectTheLogAndCanBeUndone() {
   });
 }
 
+export async function theCopyOfChatsMovesToAChosenFolderAndUndoBringsItBack() {
+  await onPreview(async ({ request }) => {
+    const before = (await request("snapshot")).backup;
+    assert.deepEqual([before.dest, before.chosen], ["~/.local/share/laci/history", false]);
+    const moved = await request("backup/move", { dir: "/mnt/archive/ai-chats" });
+    assert.equal(moved.dest, "/mnt/archive/ai-chats");
+    assert.equal(moved.journal.canUndo, true);
+    const after = (await request("snapshot")).backup;
+    assert.deepEqual([after.dest, after.chosen], ["/mnt/archive/ai-chats", true]);
+    const part = (await request("storage")).parts.find((p) => p.id === "history");
+    assert.equal(part.dir, "/mnt/archive/ai-chats");
+    const [entry] = (await request("log")).entries;
+    assert.deepEqual(entry.say, { form: "movedCopy", dir: "/mnt/archive/ai-chats" });
+    await assert.rejects(request("backup/move", { dir: "/mnt/archive/ai-chats" }), /already/);
+    // A folder in home is said with ~, as the engine says it.
+    await request("undo", { id: entry.id });
+    assert.deepEqual((await request("snapshot")).backup.dest, "~/.local/share/laci/history");
+    assert.equal((await request("backup/move", { dir: "/home/demo/chats" })).dest, "~/chats");
+    assert.equal((await request("backup/move", { dir: "" })).dest, "~/.local/share/laci/history");
+  });
+}
+
 export async function aReportIsFoundByTheWordsInIt() {
   await onPreview(async ({ request }) => {
     const hits = await request("reports/search", { query: "checkout safari" });

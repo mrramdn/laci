@@ -327,10 +327,11 @@ export async function aHistoryBackupLaciCantReachIsNotMovedButANewOneCanStart() 
   // Answered, the focus goes back to Change… once history is read again and Change… can take it.
   const change = () => picker(p, said.backupFolderTitle);
   assert.equal(change().props.disabled, true);
-  assert.notEqual(p.document.activeElement, change());
+  // Compared as booleans: a failed compare of two elements would print the whole page.
+  assert.ok(p.document.activeElement !== change(), "not while it is disabled");
   p.app.setState({ historyPending: false });
   await p.settle();
-  assert.equal(p.document.activeElement, change());
+  assert.ok(p.document.activeElement === change(), p.focused());
 }
 
 export async function aChooseButtonSitsBesideEachFolderFieldOfSettings() {

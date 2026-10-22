@@ -899,6 +899,7 @@ function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
   const [error, setError] = useState("");
   const change = useRef<HTMLButtonElement>(null);
   const question = useRef<HTMLDivElement>(null);
+  const row = useRef<HTMLDivElement>(null);
   const told = useId();
   const open = asking !== null;
   const fresh = Boolean(backup.error);
@@ -907,7 +908,7 @@ function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
   const wasOpen = useRef(false);
   const giveBack = useRef(false);
   // The question takes the focus when it opens, and gives it back to Change… when it closes, as soon as Change… can
-  // take it: after a move it is disabled until history is read again. Not if the focus went somewhere meanwhile.
+  // take it: after a move it is disabled until history is read again. Not if the focus went somewhere else meanwhile.
   useEffect(() => {
     if (open) question.current?.focus();
     giveBack.current = open ? false : giveBack.current || wasOpen.current;
@@ -915,7 +916,7 @@ function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
     if (!giveBack.current || busy) return;
     giveBack.current = false;
     const at = document.activeElement;
-    if (!at || at === document.body) change.current?.focus();
+    if (!at || at === document.body || row.current?.contains(at)) change.current?.focus();
   }, [open, busy]);
   const where = (dir: string) => (dir ? tilde(dir, home) : said.copyPlaceOwnName);
   const note = fresh ? said.copyFreshNote : said.copyMoveNote;
@@ -949,7 +950,7 @@ function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
     });
   const act = fresh ? said.copyFresh : said.copyMove;
   return (
-    <div className="s-helpers-place" data-ui="copy-place">
+    <div className="s-helpers-place" ref={row} data-ui="copy-place">
       <p>
         <b>{said.copyPlace}</b>
         <span className="s-quiet s-mono">

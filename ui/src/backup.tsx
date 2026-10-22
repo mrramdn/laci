@@ -111,6 +111,7 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
   const told = useId();
   const change = useRef<HTMLButtonElement>(null);
   const question = useRef<HTMLDivElement>(null);
+  const row = useRef<HTMLDivElement>(null);
   const open = asking !== null;
   const fresh = Boolean(state.error);
   const moving = working === said.backupMoving;
@@ -118,7 +119,7 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
   const wasOpen = useRef(false);
   const giveBack = useRef(false);
   // The question takes the focus when it opens, and gives it back to Change… when it closes, as soon as Change… can
-  // take it: after a move it is disabled until history is read again. Not if the focus went somewhere meanwhile.
+  // take it: after a move it is disabled until history is read again. Not if the focus went somewhere else meanwhile.
   useEffect(() => {
     if (open) question.current?.focus();
     giveBack.current = open ? false : giveBack.current || wasOpen.current;
@@ -126,7 +127,7 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
     if (!giveBack.current || busy) return;
     giveBack.current = false;
     const at = document.activeElement;
-    if (!at || at === document.body) change.current?.focus();
+    if (!at || at === document.body || row.current?.contains(at)) change.current?.focus();
   }, [open, busy]);
   const where = (dir: string) => (dir ? tilde(dir, home) : said.backupFolderDefault);
   const note = fresh ? said.backupFreshNote : said.backupMoveNote;
@@ -160,7 +161,7 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
     });
   const act = fresh ? said.backupFresh : said.backupMove;
   return (
-    <div className="fld" data-ui="backup-folder">
+    <div className="fld" ref={row} data-ui="backup-folder">
       <span id={label}>{said.backupFolder}</span>
       <div className="addrow">
         <output className="inp mono" aria-labelledby={label}>

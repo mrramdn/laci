@@ -52,7 +52,13 @@ class Host {
     return [{}];
   }
   focus() {
+    // As in a browser, a disabled control doesn't take the focus.
+    if (this.props.disabled) return;
     this.page.document.activeElement = this;
+  }
+  contains(other) {
+    for (let at = other; at; at = at.parent) if (at === this) return true;
+    return false;
   }
   /** The `data-` attributes, as an element's own. */
   get dataset() {
@@ -1047,10 +1053,11 @@ export async function aCopyLaciCantReachIsNotMovedButANewOneCanStart() {
   assert.deepEqual(page.toasts.at(-1), [said.copyKept("/mnt/archive/ai-chats"), said.copyFreshNote]);
   // Answered, the focus goes back to Change… once history is read again and Change… can take it.
   assert.equal(button(said.copyPlaceChange).props.disabled, true);
-  assert.notEqual(page.document.activeElement, button(said.copyPlaceChange));
+  // Compared as booleans: a failed compare of two elements would print the whole page.
+  assert.ok(page.document.activeElement !== button(said.copyPlaceChange), "not while it is disabled");
   page.app.setState({ historyPending: false });
   await page.settle();
-  assert.equal(page.document.activeElement, button(said.copyPlaceChange));
+  assert.ok(page.document.activeElement === button(said.copyPlaceChange), "the focus is on Change…");
 }
 
 export async function theSizeOfACopyIsSaidOnlyOnceItIsPacked() {

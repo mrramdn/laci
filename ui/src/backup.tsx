@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { api, errorText } from "./api";
 import { Icon } from "./common";
-import { bytes, plural, tilde, when } from "./helpers";
+import { bytes, copyChangeSaid, plural, tilde, when } from "./helpers";
 import { ChooseFolder } from "./pick";
 import { acknowledge, backup, moveCopy, openCopy, run, useApp } from "./store";
 import type { Backup, Snapshot } from "./types";
@@ -18,9 +18,12 @@ function turnOn(thenBackup: boolean) {
   });
 }
 
-/** How much a move of the copy would carry, or nothing when it holds nothing yet. */
+/**
+ * About how much a move of the copy would carry, once the last backup packed every file; nothing when it holds
+ * nothing yet, or still holds plain files from before Laci 3.1, which are packed before they move.
+ */
 export const copySize = (state: Backup) =>
-  state.bytes ? bytes(state.bytes) : undefined;
+  state.bytes && state.packed ? bytes(state.bytes) : undefined;
 
 export function BackupNotice() {
   const snapshot = useApp((s) => s.snapshot);
@@ -95,7 +98,8 @@ export function BackupNotice() {
 
 /**
  * Settings: where the agent history backup is, with Change… and, for a chosen folder, Use the default. A move asks
- * first, naming the folder and how much moves.
+ * first, naming the folder and how much moves. A backup Laci can't reach now isn't moved: a new one can start in the
+ * folder chosen instead, and the question says the old one stays where it is.
  */
 export function BackupFolder({ state, home }: { state: Backup; home: string }) {
   const working = useApp((s) => s.working);
@@ -103,43 +107,73 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
   // The folder the user picked, waiting for the question to be answered; "" is Laci's data folder.
   const [asking, setAsking] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const label = useId();
+  const told = useId();
+  const change = useRef<HTMLButtonElement>(null);
+  const question = useRef<HTMLDivElement>(null);
+  const open = asking !== null;
+  const wasOpen = useRef(false);
+  // The question takes the focus when it opens, and gives it back to Change… when it closes.
+  useEffect(() => {
+    if (open) question.current?.focus();
+    else if (wasOpen.current) change.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
+  const fresh = Boolean(state.error);
   const moving = working === said.backupMoving;
   const where = (dir: string) => (dir ? tilde(dir, home) : said.backupFolderDefault);
+  const note = fresh ? said.backupFreshNote : said.backupMoveNote;
+  const ask = (dir: string) => {
+    setError("");
+    setAsking(dir);
+  };
+  const asked = (dir: string) =>
+    fresh
+      ? said.backupFreshAsk(where(dir))
+      : state.bytes && !state.packed
+        ? said.backupMovePlainAsk(where(dir))
+        : said.backupMoveAsk(where(dir), copySize(state));
   const move = (dir: string) =>
     void moveCopy(
       dir,
-      { moving: said.backupMoving, moved: said.backupMoved, note: said.backupMoveNote },
+      fresh,
+      {
+        moving: said.backupMoving,
+        note,
+        said: (answer) =>
+          copyChangeSaid(dir, answer, {
+            moved: said.backupMoved,
+            kept: said.backupKept,
+            own: said.backupFolderDefault,
+          }),
+      },
       (failure) => setError(errorText(failure)),
     ).then((done) => {
       if (done) setAsking(null);
     });
+  const act = fresh ? said.backupFresh : said.backupMove;
   return (
     <div className="fld" data-ui="backup-folder">
-      <span>{said.backupFolder}</span>
+      <span id={label}>{said.backupFolder}</span>
       <div className="addrow">
-        <span className="inp mono" aria-label={said.backupFolder}>
+        <output className="inp mono" aria-labelledby={label}>
           {state.chosen ? state.dest : `${state.dest ?? ""} (${said.backupFolderDefault})`}
-        </span>
+        </output>
         <ChooseFolder
+          ref={change}
           label={said.backupFolderChange}
           name={said.backupFolderChangeName}
           title={said.backupFolderTitle}
           defaultPath={state.chosen && state.dest ? state.dest : "~"}
           disabled={moving || historyPending}
-          onPick={(path) => {
-            setError("");
-            setAsking(path);
-          }}
+          onPick={ask}
         />
         {state.chosen ? (
           <button
             type="button"
             className="btn"
             disabled={moving || historyPending}
-            onClick={() => {
-              setError("");
-              setAsking("");
-            }}
+            onClick={() => ask("")}
           >
             {said.backupFolderDefaultButton}
           </button>
@@ -151,9 +185,16 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
         </p>
       ) : null}
       {asking !== null ? (
-        <div className="row-acts" role="group" aria-label={said.backupMove}>
-          <span className="muted">
-            {said.backupMoveAsk(where(asking), copySize(state))} {said.backupMoveNote}
+        <div
+          ref={question}
+          className="row-acts"
+          role="group"
+          aria-label={act}
+          aria-describedby={told}
+          tabIndex={-1}
+        >
+          <span className="muted" id={told}>
+            {asked(asking)} {note}
           </span>
           <span className="grow" />
           <button
@@ -171,7 +212,7 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
             aria-busy={moving || undefined}
             onClick={() => move(asking)}
           >
-            {moving ? said.backupMoving : said.backupMove}
+            {moving ? said.backupMoving : act}
           </button>
         </div>
       ) : null}

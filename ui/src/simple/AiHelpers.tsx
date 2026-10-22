@@ -18,6 +18,7 @@ import {
   bytes,
   conversationIds,
   conversationKey,
+  copyChangeSaid,
   deletable,
   LOCALE,
   localDay,
@@ -885,28 +886,61 @@ function CopyCard({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-/** "Where Laci keeps the copy": the folder, Change… and, for a chosen one, back to Laci's own folder. */
+/**
+ * "Where Laci keeps the copy": the folder, Change… and, for a chosen one, back to Laci's own folder. A copy Laci
+ * can't reach now isn't moved: a new one can start in the folder chosen instead, and the question says the old one
+ * stays where it is.
+ */
 function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
   const historyPending = useApp((s) => s.historyPending);
   const working = useApp((s) => s.working);
   // The folder picked, waiting for the question to be answered; "" is Laci's own folder.
   const [asking, setAsking] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const change = useRef<HTMLButtonElement>(null);
+  const question = useRef<HTMLDivElement>(null);
+  const open = asking !== null;
+  const wasOpen = useRef(false);
+  // The question takes the focus when it opens, and gives it back to Change… when it closes.
+  useEffect(() => {
+    if (open) question.current?.focus();
+    else if (wasOpen.current) change.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
+  const fresh = Boolean(backup.error);
   const moving = working === said.copyMoving;
   const busy = moving || historyPending;
   const where = (dir: string) => (dir ? tilde(dir, home) : said.copyPlaceOwnName);
+  const note = fresh ? said.copyFreshNote : said.copyMoveNote;
   const ask = (dir: string) => {
     setError("");
     setAsking(dir);
   };
+  const asked = (dir: string) =>
+    fresh
+      ? said.copyFreshAsk(where(dir))
+      : backup.bytes && !backup.packed
+        ? said.copyMovePlainAsk(where(dir))
+        : said.copyMoveAsk(where(dir), backup.bytes ? bytes(backup.bytes) : undefined);
   const move = (dir: string) =>
     void moveCopy(
       dir,
-      { moving: said.copyMoving, moved: said.copyMoved, note: said.copyMoveNote },
+      fresh,
+      {
+        moving: said.copyMoving,
+        note,
+        said: (answer) =>
+          copyChangeSaid(dir, answer, {
+            moved: said.copyMoved,
+            kept: said.copyKept,
+            own: said.copyPlaceOwnName,
+          }),
+      },
       (failure) => setError(errorText(failure)),
     ).then((done) => {
       if (done) setAsking(null);
     });
+  const act = fresh ? said.copyFresh : said.copyMove;
   return (
     <div className="s-helpers-place" data-ui="copy-place">
       <p>
@@ -917,26 +951,27 @@ function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
         <span className="s-quiet">{said.copyPlaceNote}</span>
       </p>
       {asking !== null ? (
-        <>
+        <div ref={question} role="group" aria-label={act} tabIndex={-1}>
           <p>
-            {said.copyMoveAsk(where(asking), backup.bytes ? bytes(backup.bytes) : undefined)}{" "}
-            {said.copyMoveNote}
+            {asked(asking)} {note}
           </p>
           <div className="s-actions">
             <Button kind="text" small disabled={moving} onClick={() => setAsking(null)}>
               {blocks.cancel}
             </Button>
             <Button kind="outline" small icon="move" disabled={busy} onClick={() => move(asking)}>
-              {moving ? said.copyMoving : said.copyMove}
+              {moving ? said.copyMoving : act}
             </Button>
           </div>
-        </>
+        </div>
       ) : (
         <div className="s-actions">
           <Button
+            ref={change}
             kind="text"
             small
             icon="folder"
+            aria-label={said.copyPlaceChangeName}
             disabled={busy}
             onClick={() =>
               void chooseFolder(

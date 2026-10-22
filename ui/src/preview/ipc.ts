@@ -488,6 +488,7 @@ function backup(body: Body) {
     sessions: 6,
     files: 9,
     bytes: 40960,
+    packed: true,
     dest,
   };
   record(
@@ -511,24 +512,34 @@ function backup(body: Body) {
 /**
  * Moves the copy of AI chats to the folder asked for, or back to Laci's own for "", as one change Undo takes
  * back. The preview's folder picker always picks ~/project, which the engine would refuse because it holds
- * files; here it just shows a chosen folder.
+ * files; here it just shows a chosen folder. A copy that holds nothing yet, or one Laci can't reach with `fresh`,
+ * moves nothing: the copy is kept in the new folder from then on, as the engine answers `moved`.
  */
 function moveBackup(body: Body) {
   const state = snapshot.backup ?? fail("Connect an AI tool first");
   const dir = text(body, "dir");
   const home = fixtures.meta.home;
   const dest = !dir ? OWN_COPY : dir === home || dir.startsWith(`${home}/`) ? `~${dir.slice(home.length)}` : dir;
-  if (dest === (state.dest ?? OWN_COPY)) fail("The copy of AI chats is in that folder already");
-  const was = { dest: state.dest, chosen: state.chosen };
+  if (state.error && body.fresh !== true)
+    fail(`Connect the drive first, so Laci can move the copy. ${state.error}`);
+  if (!state.error && dest === (state.dest ?? OWN_COPY)) fail("The copy of AI chats is in that folder already");
+  const moved = !state.error && (state.bytes ?? 0) > 0;
+  const was = { dest: state.dest, chosen: state.chosen, error: state.error };
   const part = storage.parts.find((p) => p.id === "history");
-  const place = (where: { dest?: string | null; chosen?: boolean }) => {
+  const place = (where: { dest?: string | null; chosen?: boolean; error?: string }) => {
     if (snapshot.backup) snapshot.backup = { ...snapshot.backup, ...where };
-    if (part) part.dir = where.dest ?? OWN_COPY;
+    if (part) {
+      part.dir = where.dest ?? OWN_COPY;
+      part.elsewhere = Boolean(where.chosen);
+    }
   };
-  place({ dest, chosen: Boolean(dir) });
-  const change = changed(`Moved the copy of AI chats to ${dest}`, () => place(was));
-  log[0].say = { form: "movedCopy", dir: dest };
-  return { ...change, dest, bytes: state.bytes ?? 0 };
+  place({ dest, chosen: Boolean(dir), error: undefined });
+  const change = changed(
+    moved ? `Moved the copy of AI chats to ${dest}` : `The copy of AI chats is kept in ${dest} from now on`,
+    () => place(was),
+  );
+  log[0].say = { form: moved ? "movedCopy" : "keptCopyIn", dir: dest, own: !dir };
+  return { ...change, dest, moved, bytes: moved ? (state.bytes ?? 0) : 0 };
 }
 function backupAuto(body: Body) {
   const on = body.on === true;

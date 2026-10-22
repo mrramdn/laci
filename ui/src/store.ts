@@ -769,19 +769,30 @@ export function backup() {
 export function openCopy(dest: string) {
   external(dest, "copy");
 }
+/** The engine's answer to `backup/move`: where the copy is now, and whether anything moved there. */
+export interface CopyMoved {
+  dest: string;
+  moved: boolean;
+}
 /**
  * Moves the copy of AI chats to `dir`, or back to Laci's own folder for "" (`backup/move`): one change, which
- * Undo in the Log takes back. `words` say it in the design's own words. True once it moved.
+ * Undo in the Log takes back. With `fresh`, a copy Laci can't reach now stays where it is and a new one starts in
+ * `dir`. `words` say it in the design's own words: `said` the toast for the engine's answer (helpers.ts
+ * `copyChangeSaid`). True once the folder changed.
  */
 export async function moveCopy(
   dir: string,
-  words: { moving: string; moved: (where: string) => string; note: string },
+  fresh: boolean,
+  words: { moving: string; note: string; said: (answer: CopyMoved) => string },
   onError: (error: unknown) => void,
 ) {
   const done = await run(
     async () => {
-      const change = await api<Change & { dest: string }>("backup/move", { dir });
-      changed(change, words.moved(change.dest), words.note);
+      const change = await api<Change & CopyMoved>(
+        "backup/move",
+        fresh ? { dir, fresh } : { dir },
+      );
+      changed(change, words.said(change), words.note);
       return true;
     },
     words.moving,

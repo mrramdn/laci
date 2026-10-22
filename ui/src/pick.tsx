@@ -1,5 +1,5 @@
 // The system's folder picker, opened by the desktop over the window (`pick/folder`).
-import { useState } from "react";
+import { useState, type Ref } from "react";
 import { api, errorText } from "./api";
 import { Icon } from "./common";
 import { toast } from "./store";
@@ -53,9 +53,12 @@ export function ChooseFolder({
   name,
   className = "btn",
   disabled = false,
+  ref,
   ...options
 }: PickOptions & {
   onPick: (path: string) => void;
+  /** The button, for a view that gives it the focus back once what it opened is answered. */
+  ref?: Ref<HTMLButtonElement>;
   label?: string;
   /**
    * The button's name for a screen reader, when its words don't say which folder it chooses. It
@@ -68,6 +71,7 @@ export function ChooseFolder({
   const [open, setOpen] = useState(false);
   return (
     <button
+      ref={ref}
       type="button"
       className={className}
       disabled={disabled}

@@ -1271,6 +1271,9 @@ export const activity = {
     putBack: (ai: string) => `Put back a ${ai} chat from Laci’s copy`,
     putBackAny: "Put back a chat from Laci’s copy",
     movedCopy: (dir: string) => `Moved the copy of AI chats to ${dir}`,
+    movedCopyOwn: "Moved the copy of AI chats to Laci’s own folder",
+    keptCopyIn: (dir: string) => `Laci keeps the copy of AI chats in ${dir} from now on`,
+    keptCopyInOwn: "Laci keeps the copy of AI chats in its own folder from now on",
     emptiedKept: "Emptied Kept for Undo",
     removedOldUndo: "Removed the old undo records",
     removedLaci1: "Removed the leftovers of Laci 1",
@@ -1333,6 +1336,7 @@ export const logForms = {
   restoredChat: told.putBack,
   restoredChatAny: told.putBackAny,
   movedCopy: told.movedCopy,
+  keptCopyIn: told.keptCopyIn,
   emptiedKept: told.emptiedKept,
   removedOldUndo: told.removedOldUndo,
   removedLaci1: told.removedLaci1,
@@ -1470,17 +1474,29 @@ export const aiHelpers = {
   copyPlaceNote:
     "Laci packs the copy to take little space. It can be in any folder, also on another drive.",
   copyPlaceChange: "Change…",
+  /** What a screen reader calls Change…: it starts with the button's own word. */
+  copyPlaceChangeName: "Change where Laci keeps the copy",
   copyPlaceTitle: "Choose where Laci keeps the copy of your AI chats",
   copyPlaceBack: "Use Laci’s own folder",
   copyPlaceOwnName: "Laci’s own folder",
+  /** The question before a move; the size only once every file is packed, as after a backup by Laci 3.1. */
   copyMoveAsk: (where: string, size?: string) =>
     size
       ? `Move the copy of your AI chats (${size}) to ${where}?`
       : `Keep the copy of your AI chats in ${where} from now on?`,
+  /** The question before a move of a copy that still holds chats as earlier versions of Laci kept them. */
+  copyMovePlainAsk: (where: string) =>
+    `Move the copy of your AI chats to ${where}? Laci packs it small first.`,
   copyMoveNote: "Undo in Activity moves it back.",
   copyMove: "Move the copy",
   copyMoving: "Moving the copy of your AI chats…",
   copyMoved: (where: string) => `The copy of your AI chats is now in ${where}`,
+  copyKept: (where: string) => `Laci keeps the copy of your AI chats in ${where} from now on`,
+  /** The copy can't be reached now, as on a drive that isn't connected: a new one can start elsewhere. */
+  copyFreshAsk: (where: string) =>
+    `Laci can’t reach the copy of your AI chats now, so it can’t move it. Start a new copy in ${where} instead? The old one stays where it is.`,
+  copyFreshNote: "Undo in Activity goes back to the old folder.",
+  copyFresh: "Start a new copy",
 
   // Summaries
   searchSummaries: "Search summaries",
@@ -1977,14 +1993,24 @@ export const detailedSettings = {
   /** What a screen reader calls Change…: it starts with the button's own word. */
   backupFolderChangeName: "Change the folder of the history backup",
   backupFolderDefaultButton: "Use the default",
+  /** The question before a move; the size only once every file is packed, as after a backup by Laci 3.1. */
   backupMoveAsk: (where: string, size?: string) =>
     size
       ? `Move the history backup (${size}) to ${where}?`
       : `Keep the history backup in ${where} from now on?`,
+  /** The question before a move of a backup that still holds plain files from before Laci 3.1. */
+  backupMovePlainAsk: (where: string) =>
+    `Move the history backup to ${where}? Laci compresses its files first, so less moves.`,
   backupMoveNote: "Undo in the Log moves it back.",
   backupMove: "Move backup",
   backupMoving: "Moving the history backup…",
   backupMoved: (where: string) => `History backup moved to ${where}`,
+  backupKept: (where: string) => `History backup is kept in ${where} from now on`,
+  /** The backup can't be reached now, as on a drive that isn't connected: a new one can start elsewhere. */
+  backupFreshAsk: (where: string) =>
+    `Laci can't reach the history backup now, so it can't move it. Start a new backup in ${where} instead? The old one stays where it is.`,
+  backupFreshNote: "Undo in the Log goes back to the old folder.",
+  backupFresh: "Start a new backup",
   cancel: "Cancel",
   /** A folder chosen that Laci doesn’t take as a place to keep projects. */
   wholeDisk:

@@ -166,6 +166,8 @@ export interface StoragePart {
   dir?: string | null;
   /** Why the folder chosen for the copy can't be used now, as when its drive isn't connected. */
   error?: string;
+  /** The copy is in a folder the user chose, outside the data folder: it isn't part of the data folder's total. */
+  elsewhere?: boolean;
 }
 export interface Storage {
   parts: StoragePart[];
@@ -386,8 +388,10 @@ export interface Backup {
   /** Session logs the backup holds, including ones their tool has since deleted. */
   sessions?: number;
   files?: number;
-  /** What the copy takes on the disk, packed. */
+  /** What the copy takes on the disk, as the last backup measured it. */
   bytes?: number;
+  /** The last backup packed every file (Laci 3.1 and later), so `bytes` is about what a move carries. */
+  packed?: boolean;
   /** Where the copy is, with `~` for home: Laci's data folder, or the folder chosen in Settings. */
   dest?: string | null;
   /** A folder was chosen for the copy (`backupDir`); false for Laci's own folder. */

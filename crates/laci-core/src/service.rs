@@ -178,6 +178,7 @@ pub fn mutates(name: &str) -> bool {
             | "connector/add"
             | "connector/remove"
             | "backup/restore"
+            | "backup/move"
             | "session/delete"
             | "session/keep"
             | "storage/free"
@@ -201,10 +202,92 @@ pub fn changes_history(name: &str) -> bool {
             | "connector/add"
             | "connector/remove"
             | "backup/restore"
+            | "backup/move"
             | "session/delete"
             | "storage/free"
             | "secrets/keep-out"
     )
+}
+
+/// The actions that work on the copy of AI chats for a long while: `backup`, whose first run after 3.1 packs
+/// gigabytes of logs, and `backup/move`, which can copy them to another drive. The desktop app runs them outside its
+/// engine lock, [`Service::execute`] for the command line and tests; the change lock keeps every other change out
+/// meanwhile either way.
+pub fn runs_long(name: &str) -> bool {
+    matches!(name, "backup" | "backup/move")
+}
+
+/// Runs one of the actions [`runs_long`] names. `snap` is the scan a backup copies the histories of.
+pub fn long_action(env: &Env, snap: &Value, name: &str, b: &Value, by: &str) -> Result<RequestOutcome> {
+    match name {
+        "backup" => {
+            let auto = b["auto"] == true;
+            // An automatic run is opt-in, at most hourly, and only when a session changed since the last one.
+            if auto
+                && (config::load(env)["autoBackup"] != true
+                    || snap["backup"]["pending"] == 0
+                    || files::age(string(&snap["backup"], "at")) < 1.0 / 24.0)
+            {
+                return Ok(RequestOutcome { value: json!({"skipped":true}), refresh: Refresh::default() });
+            }
+            let mut result = ops::backup_history(env, snap)?;
+            let copied = result["copied"].as_u64().unwrap_or(0);
+            result["size"] = json!(scan::bytes(result["bytes"].as_u64().unwrap_or(0)));
+            result["dest"] = json!(paths::tilde(Path::new(string(&result, "dest")), &env.home));
+            if copied > 0 || !auto {
+                let kept = format!(
+                    "{} kept · {} in {}",
+                    scan::plural(result["sessions"].as_u64().unwrap_or(0), "session"),
+                    scan::bytes(result["total"].as_u64().unwrap_or(0)),
+                    string(&result, "dest")
+                );
+                activity::record(
+                    env,
+                    json!({"by":if auto {"auto"} else {by},"title":if copied > 0 {format!("Backed up {}",scan::plural(copied,"agent history file"))} else {"Agent history backup is up to date".into()},
+                        "say":if copied > 0 {json!({"form":"backedUp","files":copied})} else {json!({"form":"backupUpToDate"})},"detail":kept}),
+                );
+            }
+            // The warning and the backup line on Today come from the agent pass.
+            Ok(RequestOutcome { value: result, refresh: Refresh::agents() })
+        }
+        "backup/move" => {
+            let moved = ops::move_backup(env, string(b, "dir"))?;
+            record_journal(env, &moved["journal"], None, by);
+            let bytes = moved["bytes"].as_u64().unwrap_or(0);
+            let value = json!({"journal":moved["journal"],"dest":paths::tilde(Path::new(string(&moved, "dest")), &env.home),"bytes":bytes,"size":scan::bytes(bytes)});
+            // The sessions only the copy holds are listed from where it is now.
+            Ok(RequestOutcome { value, refresh: Refresh::agents() })
+        }
+        _ => Err(format!("Unknown action: {name}")),
+    }
+}
+
+/// Tells the Log about a journaled change, with its Undo when it has one.
+fn record_journal(env: &Env, journal: &Value, path: Option<&str>, by: &str) {
+    let mut entry = json!({"by":by,"title":journal["title"],"path":path,"journal":journal["id"]});
+    if journal["say"].is_object() {
+        entry["say"] = journal["say"].clone();
+    }
+    if ops::can_undo(journal) {
+        entry["undo"] = json!({"type":"journal","id":journal["id"]});
+    }
+    if let Some(detail) = ops::recovery(journal) {
+        entry["detail"] = json!(detail);
+    }
+    activity::record(env, entry);
+}
+
+/// Adds a line to laci.log, where problems that stop nothing are told.
+pub fn debug_log(env: &Env, message: &str) {
+    use std::io::Write;
+    let path = env.data_dir.join("laci.log");
+    if sidecar::plain_path(&path).is_err() || files::private_dir(&env.data_dir).is_err() {
+        return;
+    }
+    files::rotate_private(&path, &path.with_extension("log.1"), 1_048_576);
+    if let Ok(mut file) = files::private_append(&path) {
+        let _ = writeln!(file, "{} {message}", files::now());
+    }
 }
 
 /// A check's name as the user sees it, for Log titles.
@@ -260,15 +343,7 @@ impl Service {
         let _ = files::replace(&self.env.cache_dir.join("snapshot-v2.json"), cached.to_string().as_bytes());
     }
     pub fn debug(&self, message: &str) {
-        use std::io::Write;
-        let path = self.env.data_dir.join("laci.log");
-        if sidecar::plain_path(&path).is_err() || files::private_dir(&self.env.data_dir).is_err() {
-            return;
-        }
-        files::rotate_private(&path, &path.with_extension("log.1"), 1_048_576);
-        if let Ok(mut file) = files::private_append(&path) {
-            let _ = writeln!(file, "{} {message}", files::now());
-        }
+        debug_log(&self.env, message);
     }
     /// The scanned folder `id` names.
     pub fn node(&mut self, id: &str) -> Result<Value> {
@@ -326,17 +401,7 @@ impl Service {
         sidecar::checkbox_occurrence(path, text, occurrence, known.len())
     }
     fn journaled(&mut self, journal: Value, path: Option<&str>, by: &str) -> Result<Value> {
-        let mut entry = json!({"by":by,"title":journal["title"],"path":path,"journal":journal["id"]});
-        if journal["say"].is_object() {
-            entry["say"] = journal["say"].clone();
-        }
-        if ops::can_undo(&journal) {
-            entry["undo"] = json!({"type":"journal","id":journal["id"]});
-        }
-        if let Some(detail) = ops::recovery(&journal) {
-            entry["detail"] = json!(detail);
-        }
-        activity::record(&self.env, entry);
+        record_journal(&self.env, &journal, path, by);
         Ok(json!({"journal":journal}))
     }
     pub fn apps(&self) -> Value {
@@ -390,6 +455,16 @@ impl Service {
     }
     /// Executes the action without waiting for a scan. Desktop refreshes run outside its service lock.
     pub fn execute(&mut self, name: &str, b: &Value, by: &str) -> Result<RequestOutcome> {
+        if runs_long(name) {
+            let snap = self.snapshot()?;
+            let outcome = long_action(&self.env, &snap, name, b, by)?;
+            if changes_history(name)
+                && let Some(snapshot) = self.current.as_mut()
+            {
+                snapshot["proposals"] = json!([]);
+            }
+            return Ok(outcome);
+        }
         let apply_kind = if name == "apply" {
             self.snapshot()?["proposals"]
                 .as_array()
@@ -406,8 +481,6 @@ impl Service {
             "connector/add" | "connector/remove" => Refresh { watches: true, ..Refresh::agents() },
             "apply" if matches!(apply_kind.as_deref(), Some("archive" | "trash" | "clear")) => Refresh::full(),
             "apply" => Refresh { watches: true, ..Refresh::agents() },
-            // The warning and the backup line on Today come from the agent pass.
-            "backup" if value["skipped"] != true => Refresh::agents(),
             "backup/auto" | "backup/restore" | "session/keep" => Refresh::agents(),
             "session/delete" | "storage/free" => Refresh { watches: true, ..Refresh::agents() },
             "proposal/dismiss" => Refresh::agents(),
@@ -772,36 +845,6 @@ impl Service {
                 platform::open(&self.env.data_dir.join("laci.log").to_string_lossy(), &self.env.home)?;
                 Ok(json!({"ok":true}))
             }
-            "backup" => {
-                let auto = b["auto"] == true;
-                let snap = self.snapshot()?;
-                // An automatic run is opt-in, at most hourly, and only when a session changed since the last one.
-                if auto
-                    && (config::load(&self.env)["autoBackup"] != true
-                        || snap["backup"]["pending"] == 0
-                        || files::age(string(&snap["backup"], "at")) < 1.0 / 24.0)
-                {
-                    return Ok(json!({"skipped":true}));
-                }
-                let mut result = ops::backup_history(&self.env, &snap)?;
-                let copied = result["copied"].as_u64().unwrap_or(0);
-                result["size"] = json!(scan::bytes(result["bytes"].as_u64().unwrap_or(0)));
-                result["dest"] = json!(paths::tilde(Path::new(string(&result, "dest")), &self.env.home));
-                if copied > 0 || !auto {
-                    let kept = format!(
-                        "{} kept · {} in {}",
-                        scan::plural(result["sessions"].as_u64().unwrap_or(0), "session"),
-                        scan::bytes(result["total"].as_u64().unwrap_or(0)),
-                        string(&result, "dest")
-                    );
-                    activity::record(
-                        &self.env,
-                        json!({"by":if auto {"auto"} else {by},"title":if copied > 0 {format!("Backed up {}",scan::plural(copied,"agent history file"))} else {"Agent history backup is up to date".into()},
-                            "say":if copied > 0 {json!({"form":"backedUp","files":copied})} else {json!({"form":"backupUpToDate"})},"detail":kept}),
-                    );
-                }
-                Ok(result)
-            }
             "backup/restore" => {
                 let snap = self.snapshot()?;
                 let result = ops::restore_backup(&self.env, &snap, string(b, "id"))?;
@@ -956,11 +999,9 @@ impl Service {
                     if let Some(reports_dir) = reports_dir {
                         c["reportsDir"] = reports_dir;
                     }
-                    let mut locations = array(&c["roots"]);
-                    if let Some(dir) = c["archiveDir"].as_str().filter(|dir| !dir.is_empty()) {
-                        locations.push(json!(dir));
-                    }
-                    c["rootIdentities"] = config::root_identities(&self.env, &json!(locations), &c["rootIdentities"]);
+                    // The folder of the copy of AI chats keeps the identity it was recorded with when it was chosen.
+                    c["rootIdentities"] =
+                        config::root_identities(&self.env, &config::known_locations(&c), &c["rootIdentities"]);
                     config::save(&self.env, &c)?;
                     let detail = settings_detail(&self.env, &before, &c);
                     if !detail.is_empty() {
@@ -1318,7 +1359,14 @@ impl Service {
         let id = string(b, "id");
         let what = string(b, "what");
         let apps = self.apps();
-        if what == "default" {
+        if what == "copy" {
+            // The copy of AI chats can be kept outside home and the scan locations; only its own folder opens so.
+            let dir = crate::backup::dir(&self.env)?;
+            if !dir.is_dir() {
+                return Err("Laci hasn't copied any chats yet. Back up first.".into());
+            }
+            detach(string(&apps, "files"), &[dir.to_string_lossy().into_owned()], &dir)?;
+        } else if what == "default" {
             let path = paths::workspace_path(id, &self.env)?;
             if !path.exists() {
                 return Err("That file is gone".into());

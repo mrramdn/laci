@@ -2,6 +2,7 @@
 pub mod activity;
 pub mod agents;
 pub mod assistant;
+pub mod backup;
 pub mod config;
 pub mod create;
 pub mod deletion;

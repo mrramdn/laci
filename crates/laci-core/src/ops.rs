@@ -44,6 +44,14 @@ fn journal_path(env: &Env, entry: &Value, key: &str) -> Result<PathBuf> {
         }
         return Ok(file);
     }
+    // The copy of AI chats can be in a folder outside home, on a drive that may be gone: its entries name the copy
+    // folders they touch, and a path in one of those is checked against that folder as it was recorded.
+    if entry["scope"] == "copy"
+        && let Some(path) =
+            crate::backup::journal_path(entry[key].as_str().ok_or("Missing file path")?, &entry["roots"])?
+    {
+        return Ok(path);
+    }
     let checked = value_path(env, &entry[key]);
     if checked.is_err()
         && key == "from"
@@ -268,6 +276,14 @@ impl<'a> Tx<'a> {
         Ok(())
     }
     fn move_to(&mut self, src: &Path, dest: &Path) -> Result<()> {
+        self.move_journaled(src, dest, Value::Null)
+    }
+    /// [`Tx::move_to`] for a file or folder of the copy of AI chats, which may be outside home: the entry names the
+    /// copy folders it touches (`backup::journal_root`), so Undo can check them.
+    fn move_copy(&mut self, src: &Path, dest: &Path, roots: &Value) -> Result<()> {
+        self.move_journaled(src, dest, roots.clone())
+    }
+    fn move_journaled(&mut self, src: &Path, dest: &Path, roots: Value) -> Result<()> {
         sidecar::plain_path(src)?;
         sidecar::plain_path(dest)?;
         if exists(dest) {
@@ -283,6 +299,10 @@ impl<'a> Tx<'a> {
             guard(&[src.to_owned()])?;
         }
         let mut entry = json!({"kind":"move","from":src,"to":dest});
+        if roots.is_array() {
+            entry["scope"] = json!("copy");
+            entry["roots"] = roots;
+        }
         if !src.starts_with(&self.env.home) && paths::workspace_roots(self.env).iter().any(|root| root == src) {
             let parent = src.parent().ok_or("Missing workspace parent")?;
             let id = platform::identity(parent, &fs::metadata(parent).map_err(|e| e.to_string())?)?;
@@ -379,7 +399,7 @@ impl<'a> Tx<'a> {
         sidecar::set_meta(dir, "status", status)
     }
     fn remember_archive(&mut self, dest: &Path) -> Result<()> {
-        let mut cfg = crate::config::load(self.env);
+        let cfg = crate::config::load(self.env);
         let roots: Vec<_> = if let Some(roots) = cfg["roots"].as_array() {
             roots.iter().filter_map(Value::as_str).map(|raw| paths::expand(raw, &self.env.home)).collect()
         } else {
@@ -392,14 +412,19 @@ impl<'a> Tx<'a> {
         if archived || roots.iter().any(|root| dest.starts_with(root)) {
             return Ok(());
         }
+        let home = &self.env.home;
+        let roots: Vec<_> = roots
+            .iter()
+            .map(|root| paths::tilde(root, home))
+            .chain(std::iter::once(paths::tilde(dest, home)))
+            .collect();
+        self.config(|cfg| cfg["roots"] = json!(roots))
+    }
+    /// Changes the settings in config.json, keeping a copy first, so Undo puts them back unless they changed since.
+    fn config(&mut self, change: impl FnOnce(&mut Value)) -> Result<()> {
+        let mut cfg = crate::config::load(self.env);
+        change(&mut cfg);
         let file = paths::config_file(self.env)?;
-        cfg["roots"] = json!(
-            roots
-                .iter()
-                .map(|root| paths::tilde(root, &self.env.home))
-                .chain(std::iter::once(paths::tilde(dest, &self.env.home)))
-                .collect::<Vec<_>>()
-        );
         let existed = exists(&file);
         let backup = if existed { Some(self.backup(&file)?) } else { None };
         self.log(json!({"kind":"file","scope":"config","path":file,"existed":existed,"backup":backup}))?;
@@ -502,7 +527,7 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
             let file = journal_path(env, entry, "path")?;
             if !fs::read(&file).is_ok_and(|bytes| format!("{:x}", Sha256::digest(bytes)) == expected) {
                 return Err(if entry["scope"] == "config" {
-                    "Settings changed after this archive. Restore those settings before undoing it.".into()
+                    "Settings changed after this. Restore those settings before undoing it.".into()
                 } else {
                     format!(
                         "{} changed after this, or its folder moved, so Undo would lose that. Edit it by hand.",
@@ -645,7 +670,7 @@ pub(crate) fn undo_unlocked(env: &Env, id: &str) -> Result<Value> {
         &entries
             .iter()
             .filter(|e| e["kind"] == "move")
-            .map(|e| value_path(env, &e["to"]))
+            .map(|e| journal_path(env, e, "to"))
             .collect::<Result<Vec<_>>>()?,
     )?;
     undo_entries(env, entries)?;
@@ -695,6 +720,17 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
         may_contain(&src, &owned) || may_contain(&owned, &dest)
     }) {
         return Err("Can't move Laci's settings, history, cache or recovery data".into());
+    }
+    if let Some(copy) = crate::backup::chosen(env, &crate::config::load(env)) {
+        let copy = platform::path::canonical(&copy).unwrap_or_else(|_| paths::normalize(&copy));
+        if may_contain(&src, &copy) {
+            return Err(
+                "This folder holds Laci's copy of AI chats. Move the copy somewhere else in Settings first.".into()
+            );
+        }
+        if may_contain(&copy, &dest) {
+            return Err("That place is inside Laci's copy of AI chats. Choose another one.".into());
+        }
     }
     if contains(&src, &dest) {
         return Err("Can't move a folder into itself".into());
@@ -927,9 +963,14 @@ fn apply_action_checked(
         Ok(())
     })
 }
+/// Copies agent histories into the copy of AI chats (`backup::dir`), each file packed with zstd, and says what the
+/// copy holds. Only files that grew since their last copy are copied again.
 pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
     with_lock(env, || {
-        let dest = data(env, "history")?;
+        let dest = crate::backup::ready(env)?;
+        // What runs that stopped part-way left goes first, and plain files from before 3.1 are packed.
+        crate::backup::remove_leftovers(&dest);
+        crate::backup::convert(env, &dest);
         let mut copied = 0u64;
         let mut bytes = 0u64;
         for c in snap["connectors"]
@@ -943,8 +984,15 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
             if connector.is_empty() || connector.contains(['/', '\\']) || connector == ".." {
                 return Err("Invalid connector id".into());
             }
-            if dest.starts_with(&src) {
+            let real = platform::path::canonical(&src).unwrap_or_else(|_| src.clone());
+            if [&src, &real].iter().any(|src| may_contain(src, &dest)) {
                 return Err("History backup cannot be inside its source".into());
+            }
+            if [&src, &real].iter().any(|src| may_contain(&dest, src)) {
+                return Err(format!(
+                    "The history of {} is inside the copy of AI chats. Choose another folder for the copy in Settings.",
+                    c["name"].as_str().unwrap_or(connector)
+                ));
             }
             for item in walkdir::WalkDir::new(&src)
                 .follow_links(false)
@@ -952,31 +1000,29 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
                 .filter_map(|e| e.ok())
                 .filter(|e| e.file_type().is_file())
             {
-                if !item.path().extension().is_some_and(|e| ["jsonl", "json", "md"].iter().any(|ext| e == *ext)) {
+                if !item.path().extension().is_some_and(|e| crate::backup::KINDS.iter().any(|ext| e == *ext)) {
                     continue;
                 }
-                let target = dest.join(connector).join(item.path().strip_prefix(&src).map_err(|e| e.to_string())?);
+                let relative = item.path().strip_prefix(&src).map_err(|e| e.to_string())?;
+                let target = crate::backup::packed(&dest.join(connector).join(relative));
                 sidecar::plain_path(&target)?;
                 let metadata = fs::metadata(item.path()).map_err(|e| e.to_string())?;
-                if fs::metadata(&target).is_ok_and(|m| m.len() == metadata.len()) {
+                // The packed copy records how long the log was, and a tool only adds to a log it writes.
+                if crate::backup::content_size(&target) == Some(metadata.len()) {
                     continue;
                 }
-                let content = fs::read(item.path()).map_err(|e| e.to_string())?;
-                files::replace(&target, &content)?;
+                fs::create_dir_all(target.parent().ok_or("Missing folder")?).map_err(|e| e.to_string())?;
+                // A log that got shorter meanwhile keeps its last copy; the next run copies it again.
+                if !crate::backup::pack(item.path(), metadata.len(), &target)? {
+                    continue;
+                }
                 preserve(&metadata, &target)?;
                 copied += 1;
                 bytes += metadata.len();
             }
         }
         // What the backup holds now, including sessions their tool has since deleted.
-        let (mut sessions, mut kept, mut total) = (0u64, 0u64, 0u64);
-        for item in walkdir::WalkDir::new(&dest).follow_links(false).into_iter().filter_map(|e| e.ok()) {
-            if item.file_type().is_file() {
-                kept += 1;
-                total += item.metadata().map_or(0, |m| m.len());
-                sessions += u64::from(item.path().extension().is_some_and(|e| e == "jsonl"));
-            }
-        }
+        let (sessions, kept, total) = crate::backup::count(&dest);
         let state = json!({"at":files::now(),"copied":copied,"sessions":sessions,"files":kept,"bytes":total});
         files::replace(&data(env, BACKUP_STATE)?, state.to_string().as_bytes())?;
         Ok(
@@ -1000,9 +1046,13 @@ pub fn restore_backup(env: &Env, snap: &Value, id: &str) -> Result<Value> {
             .flatten()
             .find(|c| c["id"] == session["connector"])
             .ok_or("Connect this agent before restoring its sessions")?;
-        let kept = data(env, "history")?.join(connector["id"].as_str().ok_or("Missing connector")?);
-        let source = value_path(env, &session["file"])?;
-        let relative = source.strip_prefix(&kept).map_err(|_| "That file is not part of the backup".to_owned())?;
+        let kept = crate::backup::dir(env)?.join(connector["id"].as_str().ok_or("Missing connector")?);
+        let source = PathBuf::from(session["file"].as_str().ok_or("Missing file path")?);
+        if !crate::backup::inside(&kept, &source) {
+            return Err("That file is not part of the backup".into());
+        }
+        let log = crate::backup::original(&source);
+        let relative = log.strip_prefix(&kept).map_err(|_| "That file is not part of the backup".to_owned())?;
         let target = value_path(env, &connector["link"]["dir"])?.join(relative);
         if session["restoreTo"].as_str() != target.to_str() {
             return Err("That session no longer matches the backup; refresh history".into());
@@ -1011,8 +1061,7 @@ pub fn restore_backup(env: &Env, snap: &Value, id: &str) -> Result<Value> {
         if exists(&target) {
             return Err("That session is already back in place".into());
         }
-        let content = fs::read(&source).map_err(|e| e.to_string())?;
-        files::replace(&target, &content)?;
+        crate::backup::unpack(&source, &target)?;
         // The file keeps today's date on purpose: a tool that deletes old logs would remove it again at once.
         Ok(json!({"restored":target,"title":session["title"],"provider":session["provider"]}))
     })
@@ -1079,7 +1128,13 @@ pub fn delete_sessions(env: &Env, snap: &Value, files: &[String]) -> Result<Valu
     transact(env, &title, say, |tx| {
         let id = tx.journal["id"].as_str().unwrap_or("removed").to_owned();
         let removed = data(env, "orphans")?.join("sessions").join(&id);
-        let history = data(env, "history")?;
+        // Asked under the lock, so a move of the copy can't come in between. A copy whose drive isn't connected
+        // keeps its copies of them, and one never made has none.
+        let copy = crate::backup::dir(env).ok().filter(|dir| dir.is_dir());
+        let roots = match &copy {
+            Some(dir) => json!([crate::backup::journal_root(dir)?]),
+            None => Value::Null,
+        };
         for (connector, claude, store, relative, _) in &plan {
             let source = store.join(relative);
             tx.move_to(&source, &removed.join(connector).join(relative))?;
@@ -1088,22 +1143,91 @@ pub fn delete_sessions(env: &Env, snap: &Value, files: &[String]) -> Result<Valu
             if *claude && fs::symlink_metadata(&folder).is_ok_and(|m| m.is_dir()) {
                 tx.move_to(&folder, &removed.join(connector).join(relative.with_extension("")))?;
             }
-            // Otherwise the backup's copy would bring it straight back as "In backup only".
-            let copy = history.join(connector).join(relative);
-            if fs::symlink_metadata(&copy).is_ok_and(|m| m.is_file()) {
-                tx.move_to(&copy, &removed.join("backup").join(connector).join(relative))?;
+            // Otherwise the backup's copy would bring it straight back as "In backup only": packed, or still plain.
+            if let Some(history) = &copy {
+                let kept = history.join(connector).join(relative);
+                for file in [crate::backup::packed(&kept), kept] {
+                    if fs::symlink_metadata(&file).is_ok_and(|m| m.is_file()) {
+                        let name = file.strip_prefix(history).map_err(|e| e.to_string())?;
+                        tx.move_copy(&file, &removed.join("backup").join(name), &roots)?;
+                    }
+                }
             }
         }
         Ok(())
     })
 }
 const BACKUP_STATE: &str = "backup.json";
-/// When agent history was last backed up and what the backup holds, or nothing if it never ran.
+/// When agent history was last backed up and what the backup holds, or nothing if it never ran. Where the copy is
+/// comes from `backup::dir`.
 pub fn backup_state(env: &Env) -> Option<Value> {
-    let mut state: Value = serde_json::from_str(&files::text(&data(env, BACKUP_STATE).ok()?)?).ok()?;
+    let state: Value = serde_json::from_str(&files::text(&data(env, BACKUP_STATE).ok()?)?).ok()?;
     state["at"].as_str()?;
-    state["dest"] = json!(data(env, "history").ok()?);
     Some(state)
+}
+/// Moves the copy of AI chats to the folder `raw` names (`""`: back to the default in Laci's data folder), in one
+/// journal, so Undo in the Log moves it back and restores the setting. Plain files from before 3.1 are packed first,
+/// so less crosses disks. The folder it leaves stays, empty: Laci never removes a folder the user chose. A copy that
+/// holds no chat, or whose folder isn't there, moves nothing: the copy is kept in the new folder from then on, which
+/// may hold a copy Laci made before.
+pub fn move_backup(env: &Env, raw: &str) -> Result<Value> {
+    let chosen = crate::config::validate_backup_dir(env, &json!(raw))?;
+    let dest = match &chosen {
+        Some(dir) => dir.clone(),
+        None => data(env, "history")?,
+    };
+    let shown = paths::tilde(&dest, &env.home);
+    let title = format!("Moved the copy of AI chats to {shown}");
+    let journal = transact(env, &title, json!({"form":"movedCopy","dir":shown}), |tx| {
+        let current = crate::backup::dir(env).ok();
+        if current.as_ref().is_some_and(|now| same_path(now, &dest)) {
+            return Err("The copy of AI chats is in that folder already".into());
+        }
+        // Only the default folder is ever made.
+        if chosen.is_none() {
+            fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+        }
+        if !fs::symlink_metadata(&dest).is_ok_and(|m| m.is_dir()) {
+            return Err(format!("{shown} isn't there"));
+        }
+        sidecar::plain_path(&dest)?;
+        let source = current.filter(|now| !crate::backup::empty(now));
+        if let Some(now) = &source
+            && (may_contain(now, &dest) || may_contain(&dest, now))
+        {
+            return Err("Choose a folder outside the copy of AI chats that doesn't hold it either".into());
+        }
+        if !crate::backup::empty(&dest) && !(source.is_none() && crate::backup::marked(&dest)) {
+            return Err(
+                "That folder already holds files. Choose an empty folder, or one that holds a copy Laci made.".into()
+            );
+        }
+        if let Some(now) = &source {
+            crate::backup::remove_leftovers(now);
+            crate::backup::convert(env, now);
+            let roots = json!([crate::backup::journal_root(now)?, crate::backup::journal_root(&dest)?]);
+            for entry in files::entries(now) {
+                // Each folder keeps its own marker.
+                if entry.file_name() != crate::backup::MARKER {
+                    tx.move_copy(&entry.path(), &dest.join(entry.file_name()), &roots)?;
+                }
+            }
+        }
+        crate::backup::mark(&dest)?;
+        let identity = crate::backup::journal_root(&dest)?;
+        tx.config(|cfg| {
+            cfg["backupDir"] = json!(chosen.as_ref().map(|dir| paths::tilde(dir, &env.home)).unwrap_or_default());
+            if let Some(dir) = &chosen {
+                if !cfg["rootIdentities"].is_object() {
+                    cfg["rootIdentities"] = json!({});
+                }
+                // Chosen again, as when its drive came back as another one, it is known as it is now.
+                cfg["rootIdentities"][dir.to_string_lossy().as_ref()] =
+                    json!({"device":identity["device"],"inode":identity["inode"]});
+            }
+        })
+    })?;
+    Ok(json!({"journal":journal,"dest":dest,"bytes":files::size(&dest)}))
 }
 
 /// This test binary stands in for Git and the other programs: started again under their names,

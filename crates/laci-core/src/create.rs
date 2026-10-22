@@ -280,7 +280,7 @@ fn create_unlocked(env: &Env, r: &Value, cancel: &AtomicBool, progress: &dyn Fn(
         if !roots.iter().filter_map(Value::as_str).any(|root| dest.starts_with(paths::expand(root, &env.home))) {
             roots.push(json!(paths::tilde(&dest, &env.home)));
             c["roots"] = json!(roots);
-            c["rootIdentities"] = config::root_identities(env, &c["roots"], &c["rootIdentities"]);
+            c["rootIdentities"] = config::root_identities(env, &config::known_locations(&c), &c["rootIdentities"]);
             if let Err(error) = config::save(env, &c) {
                 warnings.push(format!("Project created, but adding its scan location failed: {error}"));
             }

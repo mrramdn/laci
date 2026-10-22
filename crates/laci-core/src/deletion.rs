@@ -225,6 +225,17 @@ pub fn plan(env: &Env, node: &Value) -> Result<Value> {
     if [&env.home, &env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|p| may_contain(&dir, p)) {
         return Err("This folder contains Laci settings or recovery data and cannot be removed".into());
     }
+    if let Some(copy) = crate::backup::chosen(env, &crate::config::load(env)) {
+        let copy = canonical(&copy).unwrap_or_else(|_| paths::normalize(&copy));
+        let real = canonical(&dir).unwrap_or_else(|_| dir.clone());
+        if may_contain(&dir, &copy) || may_contain(&real, &copy) {
+            return Err(
+                "This folder holds Laci's copy of AI chats and cannot be removed. Move the copy somewhere else in \
+                 Settings first."
+                    .into(),
+            );
+        }
+    }
     // Removal also waits until it is known what only this computer has: Simple asks for more before losing it.
     let listed = unbacked(&dir);
     let verified = check(&dir).and_then(|remote| listed.clone().map(|_| remote));

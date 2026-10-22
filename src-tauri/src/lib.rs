@@ -21,6 +21,8 @@ enum Action {
     Doctor,
     Json,
     Mcp,
+    /// Copy new and changed AI chats into Laci's copy of them, as "Back up now" does, without the window
+    Backup,
 }
 
 /// Does what the command line asks, opening the window with `open` without a command, and exits with 1 after saying
@@ -37,6 +39,14 @@ fn run(action: Option<Action>, open: fn(Env) -> laci_core::Result<()>) -> laci_c
     match action {
         None => open(Env::from_process()?),
         Some(Action::Mcp) => mcp::run(Env::from_process()?),
+        // No scan: the copy needs only the agents Laci connects and their history folders.
+        Some(Action::Backup) => {
+            let said = laci_core::service::backup_now(&Env::from_process()?, "cli")?;
+            match writeln!(io::stdout().lock(), "{said}") {
+                Err(e) if e.kind() != io::ErrorKind::BrokenPipe => Err(e.to_string()),
+                _ => Ok(()),
+            }
+        }
         Some(action) => {
             let mut snapshot = Service::new(Env::from_process()?).rescan()?;
             unsaid(&mut snapshot);
@@ -113,11 +123,12 @@ mod tests {
         assert!(matches!(public(&["laci", "doctor"]), Some(Action::Doctor)));
         assert!(matches!(public(&["laci", "json"]), Some(Action::Json)));
         assert!(matches!(public(&["laci", "mcp"]), Some(Action::Mcp)));
-        for wrong in [&["laci", "nothing"][..], &["laci", "ls", "extra"]] {
+        assert!(matches!(public(&["laci", "backup"]), Some(Action::Backup)));
+        for wrong in [&["laci", "nothing"][..], &["laci", "ls", "extra"], &["laci", "backup", "now"]] {
             assert!(Cli::try_parse_from(wrong).is_err(), "{wrong:?}");
         }
         let help = Cli::command().render_long_help().to_string();
-        for shown in ["ls", "doctor", "json", "mcp"] {
+        for shown in ["ls", "doctor", "json", "mcp", "backup"] {
             assert!(help.contains(shown), "{help}");
         }
         // The version reads `laci 2.5.2`; package-smoke reads it.

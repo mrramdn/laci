@@ -42,10 +42,25 @@ pub fn chosen(env: &Env, cfg: &Value) -> Option<PathBuf> {
     cfg["backupDir"].as_str().map(str::trim).filter(|raw| !raw.is_empty()).map(|raw| paths::expand(raw, &env.home))
 }
 
+/// The settings, which say where the copy is. Refused while config.json is there but can't be read, as when the app
+/// that syncs it can't download it: the defaults would name another folder than the user's, and a backup, a move or
+/// one that stopped part-way and is finished would then put the chats where the setting, once it is back, doesn't look.
+pub(crate) fn settings(env: &Env) -> Result<Value> {
+    if let Some(file) = config::unreadable(env) {
+        return Err(format!(
+            "Laci couldn't read your settings in {}, so it doesn't know where the copy of AI chats is kept and leaves \
+             it as it is. Make sure the app that syncs that folder is running, or fix the file, then try again.",
+            paths::tilde(&file, &env.home)
+        ));
+    }
+    Ok(config::load(env))
+}
+
 /// Where the copy is, checked: `<data dir>/history`, or the chosen folder, which must still be there as the folder
-/// that was chosen, reached without a link, and hold the marker of a copy Laci made.
+/// that was chosen, reached without a link, and hold the marker of a copy Laci made. Refused while the settings can't
+/// be read ([`settings`]).
 pub fn dir(env: &Env) -> Result<PathBuf> {
-    let cfg = config::load(env);
+    let cfg = settings(env)?;
     match chosen(env, &cfg) {
         None => ops::data(env, "history"),
         Some(dir) => check(env, &dir, &cfg).map(|()| dir),
@@ -77,16 +92,17 @@ pub(crate) fn dirs(env: &Env) -> Vec<PathBuf> {
 /// marker is written.
 pub(crate) fn ready(env: &Env) -> Result<PathBuf> {
     let dir = dir(env)?;
-    if chosen(env, &config::load(env)).is_none() {
+    if chosen(env, &settings(env)?).is_none() {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
     mark(&dir)?;
     Ok(dir)
 }
 
-/// Whether the chosen folder `dir` can hold the copy now. It must be the folder that was chosen, by the rules of
-/// `scan::check_root_identity` and with its identity on record, and a copy Laci made, with the marker at its top.
-/// config.json can be edited by hand, so the rules a chosen folder must meet are asked again too.
+/// Whether the chosen folder `dir` can hold the copy now. config.json can be edited by hand, so the rules a chosen
+/// folder must meet are asked first: a folder that can never hold the copy, as home, is told why, whatever is on
+/// record. Then it must be the folder that was chosen, by the rules of `scan::check_root_identity` and with its
+/// identity on record, and a copy Laci made, with the marker at its top.
 fn check(env: &Env, dir: &Path, cfg: &Value) -> Result<()> {
     let shown = paths::tilde(dir, &env.home);
     if !dir.is_absolute() {
@@ -94,6 +110,7 @@ fn check(env: &Env, dir: &Path, cfg: &Value) -> Result<()> {
             "The folder for the copy of AI chats isn't a full path: {shown}. Choose the folder for the copy again."
         ));
     }
+    config::backup_dir_refusal(env, dir, cfg).map_err(|why| format!("{why} ({shown})"))?;
     if !fs::metadata(dir).is_ok_and(|meta| meta.is_dir()) {
         return Err(format!(
             "The folder for the copy of AI chats isn't there: {shown}. Connect its drive, or choose another folder \
@@ -114,7 +131,6 @@ fn check(env: &Env, dir: &Path, cfg: &Value) -> Result<()> {
              the folder for the copy again."
         ));
     }
-    config::backup_dir_refusal(env, dir, cfg).map_err(|why| format!("{why} ({shown})"))?;
     if !marked(dir) {
         return Err(format!(
             "The folder for the copy of AI chats doesn't hold a copy Laci made: {shown}. Choose the folder for the \
@@ -189,6 +205,13 @@ pub(crate) fn content_size(path: &Path) -> Option<u64> {
     let mut head = Vec::new();
     file.take(HEADER).read_to_end(&mut head).ok()?;
     zstd::zstd_safe::get_frame_content_size(&head).ok().flatten()
+}
+
+/// How long the chat the copy's file `path` holds is: what its frame header records once packed, or the file's own
+/// length while still plain. What the copy takes on the disk is the file's length (`storage`).
+pub(crate) fn chat_size(path: &Path) -> u64 {
+    let size = if is_packed(path) { content_size(path) } else { fs::metadata(path).ok().map(|meta| meta.len()) };
+    size.unwrap_or(0)
 }
 
 /// The chat log the copy's file `path` holds: unpacked as it is read, or read as it is while still plain.
@@ -301,38 +324,58 @@ fn connector_dirs(env: &Env, root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// What [`convert`] packed: how many plain files, and how many bytes they and the packed copies beside them took
+/// before and take now.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Packing {
+    pub files: u64,
+    pub before: u64,
+    pub after: u64,
+}
+
 /// Packs each plain file the copy at `root` still holds, as copies before Laci 3.1 kept them, into `<file>.zst`. The
 /// packed file is checked byte for byte before the plain one goes. One that can't be packed stays as it is, and
-/// laci.log says why: the run goes on.
-pub(crate) fn convert(env: &Env, root: &Path) {
+/// laci.log says why: the run goes on. Says what it packed.
+pub(crate) fn convert(env: &Env, root: &Path) -> Packing {
     let plain: Vec<PathBuf> = connector_dirs(env, root)
         .iter()
         .flat_map(|dir| kept_files(dir.as_path()))
         .map(walkdir::DirEntry::into_path)
         .filter(|path| path.extension().is_some_and(|ext| KINDS.iter().any(|kind| ext == *kind)))
         .collect();
+    let mut packing = Packing::default();
     for file in plain {
-        if let Err(error) = convert_one(&file, &packed(&file)) {
-            crate::service::debug_log(env, &format!("copy of AI chats: {} stays plain: {error}", file.display()));
+        match convert_one(&file, &packed(&file)) {
+            Ok((before, after)) => {
+                packing.files += 1;
+                packing.before += before;
+                packing.after += after;
+            }
+            Err(error) => {
+                crate::service::debug_log(env, &format!("copy of AI chats: {} stays plain: {error}", file.display()));
+            }
         }
     }
+    packing
 }
-fn convert_one(plain: &Path, target: &Path) -> Result<()> {
+/// Packs the plain file `plain` into `target`, and says how many bytes both took before and take now.
+fn convert_one(plain: &Path, target: &Path) -> Result<(u64, u64)> {
     sidecar::plain_path(plain)?;
     let meta = fs::metadata(plain).map_err(|e| e.to_string())?;
     let folder = target.parent().ok_or("Missing folder")?;
-    let replace = match fs::symlink_metadata(target) {
+    let (replace, old) = match fs::symlink_metadata(target) {
         // A run since copied the chat again, packed: that copy is the newer one unless it records that it holds
         // less, as when a Laci before 3.1 copied a log that had grown since into the plain file.
         Ok(packed) if packed.is_file() => {
             if !content_size(target).is_some_and(|size| size < meta.len()) {
                 fs::remove_file(plain).map_err(|e| e.to_string())?;
-                return sync_dir(folder);
+                sync_dir(folder)?;
+                return Ok((meta.len() + packed.len(), packed.len()));
             }
-            true
+            (true, packed.len())
         }
         Ok(_) => return Err(format!("{} is in the way", target.display())),
-        Err(_) => false,
+        Err(_) => (false, 0),
     };
     let input = File::open(plain).map_err(|e| e.to_string())?;
     let mut temp = temp_in(folder)?;
@@ -343,6 +386,7 @@ fn convert_one(plain: &Path, target: &Path) -> Result<()> {
     if !same(plain, temp.path()).map_err(|e| e.to_string())? {
         return Err("its packed copy doesn't unpack to the same bytes".into());
     }
+    let after = temp.as_file().metadata().map_err(|e| e.to_string())?.len();
     if replace {
         temp.persist(target).map_err(|e| e.error.to_string())?;
     } else {
@@ -352,7 +396,8 @@ fn convert_one(plain: &Path, target: &Path) -> Result<()> {
     // The packed file is on the disk before the plain one goes.
     sync_dir(folder)?;
     fs::remove_file(plain).map_err(|e| e.to_string())?;
-    sync_dir(folder)
+    sync_dir(folder)?;
+    Ok((meta.len() + old, after))
 }
 
 /// Removes, inside the copy's connector folders at `root` only, the temporary files of runs that stopped part-way:

@@ -180,6 +180,9 @@ fn a_session_only_the_packed_copy_holds_is_listed_and_comes_back_byte_for_byte()
     assert_eq!(kept[0]["sessionId"], ID);
     assert_eq!(kept[0]["restoreTo"], json!(file));
     assert!(kept[0]["file"].as_str().unwrap().ends_with(&format!("{ID}.jsonl.zst")));
+    // Its size is the chat's, as its tool's copy told it, not that of the packed file.
+    assert_eq!(kept[0]["bytes"], json!(bytes.len()));
+    assert!(fs::metadata(kept[0]["file"].as_str().unwrap()).unwrap().len() != bytes.len() as u64);
     service.request("backup/restore", &json!({"id":kept[0]["id"]})).unwrap();
     assert_eq!(fs::read(&file).unwrap(), bytes, "the restored log is the log as it was");
 }
@@ -189,12 +192,19 @@ fn the_copy_moves_to_a_folder_outside_home_and_undo_moves_it_back() {
     let (_temp, env, disk) = home();
     let project = claude(&env);
     let file = session(&env, &project, ID, "Fix the login page");
+    // Claude Code keeps the session's subagent logs in a folder named after it, and the project's memory beside it.
+    let subagent = file.with_extension("").join("subagents/agent-a1b2c3.jsonl");
+    write(&subagent, &format!("{}\n", json!({"type":"user","isSidechain":true,"cwd":project,"sessionId":ID})));
+    write(&file.with_file_name("memory/MEMORY.md"), "- a note\n");
     let mut service = Service::new(env.clone());
     service.request("backup", &json!({})).unwrap();
     let default = env.data_dir.join("history");
     let relative = file.strip_prefix(env.home.join(".claude/projects")).unwrap();
     let before = backup::packed(&default.join("claude").join(relative));
     assert!(before.is_file());
+    let subagents = relative.with_extension("");
+    let packed_subagent = |copy: PathBuf| backup::packed(&copy.join(&subagents).join("subagents/agent-a1b2c3.jsonl"));
+    assert!(packed_subagent(default.join("claude")).is_file());
 
     let chosen = disk.join("ai-chats");
     fs::create_dir(&chosen).unwrap();
@@ -233,13 +243,21 @@ fn the_copy_moves_to_a_folder_outside_home_and_undo_moves_it_back() {
     let hour_ago = SystemTime::now() - Duration::from_secs(3600);
     fs::File::options().write(true).open(&file).unwrap().set_modified(hour_ago).unwrap();
     service.rescan().unwrap();
+    assert!(packed_subagent(chosen.join("claude")).is_file());
     let deleted = service.request("session/delete", &json!({"files":[file]})).unwrap();
-    assert!(!after.exists() && !file.exists());
+    assert!(!after.exists() && !file.exists() && !subagent.exists());
     let quarantine = env.data_dir.join("orphans/sessions").join(deleted["journal"]["id"].as_str().unwrap());
     assert!(backup::packed(&quarantine.join("backup/claude").join(relative)).is_file());
+    // The copy of its subagent logs goes with it, beside the copy of the log, and nothing else of the copy does.
+    assert!(!chosen.join("claude").join(&subagents).exists());
+    assert!(packed_subagent(quarantine.join("backup/claude")).is_file());
+    let memory = backup::packed(&chosen.join("claude").join(relative.with_file_name("memory/MEMORY.md")));
+    assert!(memory.is_file() && backup::marked(&chosen));
     let entry = journal_entry(&env, &deleted["journal"]);
     service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
-    assert!(after.is_file() && file.is_file());
+    assert!(after.is_file() && file.is_file() && subagent.is_file());
+    assert!(packed_subagent(chosen.join("claude")).is_file());
+    assert!(!quarantine.join("backup/claude").join(&subagents).exists());
 
     // Undo of the move refuses while the folder's drive is gone, and makes nothing in its place.
     let entry = journal_entry(&env, &moved["journal"]);
@@ -251,6 +269,7 @@ fn the_copy_moves_to_a_folder_outside_home_and_undo_moves_it_back() {
     fs::rename(&away, &chosen).unwrap();
     service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
     assert!(before.is_file() && !after.exists());
+    assert!(packed_subagent(default.join("claude")).is_file());
     assert_eq!(config::load(&env)["backupDir"], "", "the copy is in the default folder again");
     assert!(chosen.is_dir(), "the folder the copy left stays");
 }
@@ -378,11 +397,12 @@ fn a_folder_for_the_copy_that_was_never_chosen_takes_nothing_and_loses_nothing()
     let (_temp, env, disk) = home();
     let store = env.home.join(".codex/sessions");
     write(&store.join("session.jsonl"), "a log\n");
-    // config.json edited by hand, or by another program: home itself, and a folder of the user's files.
+    // config.json edited by hand, or by another program: home itself, which is told as such before anything is on
+    // record, and a folder of the user's files.
     let theirs = disk.join("archive");
     write(&theirs.join("codex/notes.md"), "the user's notes\n");
     write(&theirs.join("codex/.tmpAbCdEf"), "the user's file\n");
-    for (dir, why) in [(env.home.clone(), "isn't the one Laci knows"), (theirs.clone(), "isn't the one Laci knows")] {
+    for (dir, why) in [(env.home.clone(), "not your home folder"), (theirs.clone(), "isn't the one Laci knows")] {
         config::save(&env, &json!({"presets":["codex"],"backupDir":dir})).unwrap();
         let refused = ops::backup_history(&env, &codex(&store)).unwrap_err();
         assert!(refused.contains(why), "{refused}");
@@ -471,6 +491,36 @@ fn a_plain_copy_longer_than_its_packed_one_takes_its_place() {
     ops::backup_history(&env, &codex(&store)).unwrap();
     assert_eq!(unpacked(&kept.join("grown.jsonl.zst")), "first line\nsecond line\n");
     assert!(!kept.join("grown.jsonl").exists());
+}
+
+#[test]
+fn the_first_backup_after_the_upgrade_tells_the_log_what_it_packed() {
+    let (_temp, env, _) = home();
+    claude(&env);
+    fs::create_dir_all(env.home.join(".claude/projects")).unwrap();
+    let kept = env.data_dir.join("history/claude/-home-old");
+    let text = "{\"type\":\"user\",\"message\":\"hello\"}\n".repeat(2000);
+    write(&kept.join("old.jsonl"), &text);
+    write(&kept.join("memory/MEMORY.md"), "- a note\n");
+    let said = laci_core::service::backup_now(&env, "cli").unwrap();
+    let (packed, copied) = said.split_once('\n').unwrap();
+    assert!(packed.starts_with("Packed the copy of AI chats: 2 files, "), "{said}");
+    assert!(packed.contains(" → "), "{said}");
+    assert!(copied.starts_with("Copied 0 files · 1 session kept · "), "{said}");
+    // Packing is told once, by the command line, and copying nothing isn't told.
+    let log = activity::read_log(&env, 10);
+    assert_eq!(log.len(), 1, "{log:?}");
+    let say = &log[0]["say"];
+    assert_eq!((&log[0]["by"], &say["form"], &say["files"]), (&json!("cli"), &json!("packedCopy"), &json!(2)));
+    assert!(log[0]["title"].as_str().unwrap().starts_with("Compressed the agent history backup: 2 files, "));
+    let after = fs::metadata(kept.join("old.jsonl.zst")).unwrap().len()
+        + fs::metadata(kept.join("memory/MEMORY.md.zst")).unwrap().len();
+    assert_eq!((&say["before"], &say["after"]), (&json!(text.len() + 9), &json!(after)));
+    assert!(after < text.len() as u64 / 4);
+    // Nothing is left to pack: the next run tells nothing.
+    let said = laci_core::service::backup_now(&env, "cli").unwrap();
+    assert!(said.starts_with("Copied 0 files · "), "{said}");
+    assert_eq!(activity::read_log(&env, 10).len(), 1);
 }
 
 #[test]

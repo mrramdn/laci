@@ -1147,7 +1147,8 @@ fn read_backup(env: &Env, on: &[Value], cache: &mut Cache, out: &mut AgentData) 
         session["restoreTo"] = json!(original);
         session["resumeCapability"] = json!("history-only");
         session["at"] = session["updatedAt"].clone();
-        session["bytes"] = json!(fs::metadata(&file).map_or(0, |m| m.len()));
+        // The chat's own size, as a session its tool still holds tells it, not that of its packed copy.
+        session["bytes"] = json!(crate::backup::chat_size(&file));
         out.sessions.push(session);
     }
 }

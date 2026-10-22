@@ -10,7 +10,7 @@ import { Icon } from "../common";
 import { base, bytes } from "../helpers";
 import { changed, goToProject, run, toast, useApp } from "../store";
 import type { Change, Storage, StoragePart } from "../types";
-import { ago, blocks, cleanup as said, listed, project } from "../words";
+import { ago, blocks, cleanup as said, engineSays, listed, project } from "../words";
 import { cleanupView, laciSpace } from "./model";
 import type { CleanupItem, CleanupTile } from "./model";
 import { focused, focusLost } from "./page-focus";
@@ -745,7 +745,7 @@ function SpacePart({
         </span>
         <span className="s-quiet">{words?.about ?? part.about}</span>
         {part.dir ? <span className="s-quiet s-mono">{said.laci.keptIn(part.dir)}</span> : null}
-        {part.error ? <Callout tone="soon">{part.error}</Callout> : null}
+        {part.error ? <Callout tone="soon">{engineSays(part.error, "simple")}</Callout> : null}
       </div>
       <span className="s-space-size">
         {part.bytes ? bytes(part.bytes) : said.laci.none}

@@ -806,6 +806,8 @@ interface BackupResult {
   dest: string;
   sessions: number;
   total: number;
+  /** The plain files of a copy from before Laci 3.1 that the run packed first, and their bytes before and after. */
+  packing?: { files: number; before: number; after: number };
   snapshot?: Snapshot;
 }
 const AUTO_BACKUP_EVERY = 10 * 60 * 1000;
@@ -820,9 +822,11 @@ export function autoBackup(snapshot: Snapshot | null) {
     auto: true,
   })
     .then((result) => {
-      if (result.skipped || !result.copied) return;
+      // The first run after the upgrade can pack the copy and copy nothing: the Log tells that.
+      if (result.skipped || !(result.copied || result.packing?.files)) return;
       if (result.snapshot) acknowledge({ snapshot: result.snapshot });
-      toast(`Backed up ${count(result.copied, "file")} automatically`);
+      if (result.copied)
+        toast(`Backed up ${count(result.copied, "file")} automatically`);
       void refreshLog();
     })
     .catch(() => {});

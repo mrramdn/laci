@@ -39,6 +39,20 @@ pub fn record(env: &Env, mut entry: Value) -> Value {
     }
     entry
 }
+/// Tells the Log about a journaled change, with its Undo when it has one.
+pub(crate) fn record_journal(env: &Env, journal: &Value, path: Option<&str>, by: &str) {
+    let mut entry = json!({"by":by,"title":journal["title"],"path":path,"journal":journal["id"]});
+    if journal["say"].is_object() {
+        entry["say"] = journal["say"].clone();
+    }
+    if ops::can_undo(journal) {
+        entry["undo"] = json!({"type":"journal","id":journal["id"]});
+    }
+    if let Some(detail) = ops::recovery(journal) {
+        entry["detail"] = json!(detail);
+    }
+    record(env, entry);
+}
 fn read_activity(env: &Env) -> Vec<Value> {
     let file = activity_file(env);
     if sidecar::plain_path(&file).is_err() {
@@ -206,7 +220,14 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
         let kind = undo["type"].as_str().ok_or("Invalid undo")?;
         let mut out = json!({"refresh":"project"});
         if kind == "journal" {
-            out["journal"] = ops::undo_unlocked(env, undo["id"].as_str().ok_or("Missing journal")?)?;
+            // A move of the copy that stopped part-way and that this finished first is told before the Undo, also
+            // when the Undo is then refused.
+            let mut settled = None;
+            let undone = ops::undo_unlocked(env, undo["id"].as_str().ok_or("Missing journal")?, &mut settled);
+            if let Some(journal) = &settled {
+                record_journal(env, journal, None, by);
+            }
+            out["journal"] = undone?;
             out["refresh"] = json!("all");
         } else if kind == "config" || kind == "connector" {
             let mut c = config::load(env);

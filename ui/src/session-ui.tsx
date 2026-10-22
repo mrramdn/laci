@@ -260,6 +260,7 @@ function ConversationRow({
             <button
               className="btn sm act always"
               title="Put this session back where its tool keeps it"
+              data-restore=""
               disabled={historyPending}
               onClick={() => restoreSession(session)}
             >

@@ -7,7 +7,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { useNow } from "../clock";
 import { Icon } from "../common";
-import { localDay, logKind } from "../helpers";
+import { bytes, localDay, logKind } from "../helpers";
 import { changed, refreshLog, run, useApp } from "../store";
 import type { ActivityLog, Change, LogEntry, LogSay } from "../types";
 import { activity as said, ago, logForms as forms, project } from "../words";
@@ -265,6 +265,12 @@ const SAYS: Record<string, Telling> = {
     return n === undefined ? undefined : forms.backedUp(n);
   },
   backupUpToDate: () => forms.backupUpToDate,
+  packedCopy: ({ files, before, after }) => {
+    const [n, was, is] = [number(files), number(before), number(after)];
+    return n === undefined || was === undefined || is === undefined
+      ? undefined
+      : forms.packedCopy(n, bytes(was), bytes(is));
+  },
   autoBackupOn: () => forms.autoBackupOn,
   autoBackupOff: () => forms.autoBackupOff,
   restoredChat: ({ ai }) => {

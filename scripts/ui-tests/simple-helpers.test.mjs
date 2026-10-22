@@ -373,6 +373,23 @@ let helpersModule;
 /** AiHelpers.tsx, compiled the first time a test needs it. */
 function helpersOnce() {
   const { live, store } = helpersKit;
+  // The store, also as focus-stays.ts, beside AiHelpers.tsx, asks for it.
+  const appStore = {
+    acknowledge: noop,
+    changed: live("changed"),
+    copyText: live("copyText"),
+    external: noop,
+    goToProject: live("goToProject"),
+    markReportsSeen: noop,
+    moveCopy: live("moveCopy"),
+    openCopy: live("openCopy"),
+    refreshLog: noop,
+    rescan: noop,
+    run: live("run"),
+    setDesign: live("setDesign"),
+    toast: live("toast"),
+    useApp: store("app"),
+  };
   return (helpersModule ??= load(
     "simple/AiHelpers.tsx",
     {
@@ -399,22 +416,8 @@ function helpersOnce() {
         proseClick: noop,
       },
       "../session-ui": { requestResume: live("requestResume") },
-      "../store": {
-        acknowledge: noop,
-        changed: live("changed"),
-        copyText: live("copyText"),
-        external: noop,
-        goToProject: live("goToProject"),
-        markReportsSeen: noop,
-        moveCopy: live("moveCopy"),
-        openCopy: live("openCopy"),
-        refreshLog: noop,
-        rescan: noop,
-        run: live("run"),
-        setDesign: live("setDesign"),
-        toast: live("toast"),
-        useApp: store("app"),
-      },
+      "../store": appStore,
+      "./store": appStore,
       "./act": {
         aiTools: (s) =>
           s.connectors
@@ -937,8 +940,13 @@ export async function aPageCanSendTheFocusBackWhereItWas() {
     contains: (node) => [theme, report, save].includes(node),
   };
   const { useFocusStays } = helpersOnce();
+  // What the page asks for the one that went: the controls as they were when it took the focus come with it.
+  let asked;
   function Probe() {
-    useFocusStays(page.react.useRef(root), (gone) => (gone === save ? theme : undefined));
+    useFocusStays(page.react.useRef(root), (gone, around) => {
+      asked = around;
+      return gone === save ? theme : undefined;
+    });
     return null;
   }
   page.mount(createElement(Probe));
@@ -952,6 +960,7 @@ export async function aPageCanSendTheFocusBackWhereItWas() {
   // Save changes goes with its bar: the focus goes back to the setting, not on to the page's last control.
   goes(save);
   assert.equal(page.document.activeElement, theme);
+  assert.deepEqual(asked, [theme, report, save]);
   // When that one can't take it either, the usual way: here the one before.
   save.isConnected = true;
   theme.isConnected = false;
@@ -990,6 +999,9 @@ export async function theCopyOfChatsMovesToAnotherFolderOnlyOnceAskedWhere() {
   const place = () => page.find((n) => n.props["data-ui"] === "copy-place");
   const button = (words) => page.find((n) => n.type === "button" && n.textContent === words);
   assert.ok(place().textContent.includes(said.copyPlaceOwn), place().textContent);
+  // Laci's own folder is said by its name, which isn't set as a path is; a chosen folder is a path.
+  const shown = (text) => page.find((n) => n.type === "span" && n.textContent === text);
+  assert.equal(shown(said.copyPlaceOwn).props.className, "s-quiet");
   assert.equal(button(said.copyPlaceBack), undefined, "the copy is in Laci’s own folder already");
   page.act(() => button(said.copyPlaceChange).props.onClick());
   await page.settle();
@@ -1012,6 +1024,7 @@ export async function theCopyOfChatsMovesToAnotherFolderOnlyOnceAskedWhere() {
   page.app.setState({ snapshot: { ...s, backup: { ...s.backup, chosen: true, dest: "/mnt/archive/ai-chats" } } });
   await page.settle();
   assert.ok(place().textContent.includes("/mnt/archive/ai-chats"));
+  assert.equal(shown("/mnt/archive/ai-chats").props.className, "s-quiet s-mono");
   page.act(() => button(said.copyPlaceBack).props.onClick());
   await page.settle();
   assert.ok(place().textContent.includes(said.copyMoveAsk(said.copyPlaceOwnName)), place().textContent);
@@ -1030,6 +1043,11 @@ export async function aCopyLaciCantReachIsNotMovedButANewOneCanStart() {
   const page = helpersPage({ snapshot, replies });
   const place = () => page.find((n) => n.props["data-ui"] === "copy-place");
   const button = (words) => page.find((n) => n.type === "button" && n.textContent === words);
+  // Why, in Simple's words, and where to choose another folder.
+  assert.equal(
+    page.find((n) => n.props["data-tone"] === "act").textContent,
+    words.engineWords.simple.copyMissing("/mnt/archive/ai-chats"),
+  );
   const change = button(said.copyPlaceChange);
   assert.equal(change.props["aria-label"], said.copyPlaceChangeName);
   assert.ok(change.props["aria-label"].startsWith(said.copyPlaceChange.replace("…", "")));
@@ -1043,6 +1061,14 @@ export async function aCopyLaciCantReachIsNotMovedButANewOneCanStart() {
   assert.equal(button(said.copyMove), undefined);
   const group = page.find((n) => n.props.role === "group" && n.props["aria-label"] === said.copyFresh);
   assert.equal(page.document.activeElement, group);
+  // Only as it opens: while it stays open, the focus stays where it went, also when an automatic backup reads
+  // history again meanwhile.
+  button(words.blocks.cancel).focus();
+  page.app.setState({ historyPending: true });
+  await page.settle();
+  page.app.setState({ historyPending: false });
+  await page.settle();
+  assert.ok(page.document.activeElement === button(words.blocks.cancel), "the focus stays on Cancel");
   // What it says is what a screen reader tells with the group.
   const told = page.find((n) => n.props.id === group.props["aria-describedby"]);
   assert.ok(told.textContent.includes(said.copyFreshAsk("/mnt/archive/ai-chats")), told.textContent);

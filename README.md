@@ -11,7 +11,7 @@ laci shows every folder like a file manager, and for each project it adds its gi
   <img alt="Simple's Home: the one project that needs you most, the others that need you, what's next and where you left off" src="docs/screenshots/simple-light.png">
 </picture>
 
-> Status: 3.0.0 is the [latest release](https://github.com/mrramdn/laci/releases/latest), for Linux on x86-64. Rust + Tauri 2, with a React interface. See the [changelog](CHANGELOG.md).
+> Status: 3.1.0 is the [latest release](https://github.com/mrramdn/laci/releases/latest), for Linux on x86-64. Rust + Tauri 2, with a React interface. See the [changelog](CHANGELOG.md).
 
 ## Contents
 
@@ -293,7 +293,7 @@ The Agents page has one card per AI tool: whether it is connected and installed,
 
 Below the cards are your sessions, counted and listed as conversations: the logs of subagents and the stubs `/resume` leaves behind fold into the conversation they belong to. They are grouped by project, newest first; chats outside projects sit in one closed group. Chats of a couple of prompts that changed no file fold into one row. Each row says what happened in it: prompts, files changed, time spent, size and pull requests. Opening one shows its first and last prompt and the agent's last reply.
 
-Select sessions to **Keep** them or **Delete** them. A deleted session goes, with its subagent logs and Laci's backup copy, to Laci's quarantine; Undo in the Log puts it back. Kept sessions are never offered for cleanup. Filters show short chats, sessions older than 30 days, those outside projects, kept ones and those only the backup holds, and search covers titles, prompts and projects.
+Select sessions to **Keep** them or **Delete** them. A deleted session goes, with its subagent logs and Laci's backup copies of them, to Laci's quarantine; Undo in the Log puts it back. Kept sessions are never offered for cleanup. Filters show short chats, sessions older than 30 days, those outside projects, kept ones and those only the backup holds, and search covers titles, prompts and projects.
 
 **Storage and cleanup** has the history size per project, detached history, and what Laci keeps itself: the quarantine, undo copies of moves, the session backup (compressed, wherever it is kept) and files left by Laci 1. The quarantine, undo copies older than a week and the Laci 1 files can be freed from there; nothing is ever removed from the backup.
 
@@ -415,7 +415,7 @@ laci backup    # copy new and changed AI chats into the backup, as "Back up logs
 
 #### Back up AI chats while Laci is closed
 
-The window copies AI chats only while it is open, but a tool that deletes old chats (Claude Code, after 30 days by default) deletes them whether or not Laci was open. `laci backup` makes the same backup as **Back up logs now** without the window and without scanning your projects, whether or not automatic backup is on in Settings. It prints one line, such as `Copied 3 files · 912 sessions kept · 1.0 GB in /mnt/archive/ai-chats`, adds it to the Log when it copied something, and exits with 1 and the reason when the backup folder can't be used, as when its drive isn't connected. It waits for nothing: while the window is changing files, it says so and stops.
+The window copies AI chats only while it is open, but a tool that deletes old chats (Claude Code, after 30 days by default) deletes them whether or not Laci was open. `laci backup` makes the same backup as **Back up logs now** without the window and without scanning your projects, whether or not automatic backup is on in Settings. It prints one line, such as `Copied 3 files · 912 sessions kept · 1.0 GB in /mnt/archive/ai-chats`, adds it to the Log when it copied something, and exits with 1 and the reason when the backup folder can't be used, as when its drive isn't connected. The first backup after the upgrade to 3.1 also packs a backup from before, and says so on a line of its own and in the Log, such as `Packed the copy of AI chats: 1,785 files, 5.0 GB → 1.0 GB`. It waits for nothing: while the window is changing files, it says so and stops.
 
 To run it every hour with systemd, save these two files in `~/.config/systemd/user/`. Use the path of your Laci in `ExecStart`: `/usr/bin/laci` for the .deb and .rpm packages, `%h/.local/bin/laci` for a build installed with `scripts/install-desktop.sh`, or the full path of the AppImage, such as `%h/Applications/laci_3.1.0_amd64.AppImage` (it keeps its name when Laci updates it). The AppImage needs FUSE 2 here too.
 

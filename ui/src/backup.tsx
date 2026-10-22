@@ -5,7 +5,7 @@ import { bytes, copyChangeSaid, plural, tilde, when } from "./helpers";
 import { ChooseFolder } from "./pick";
 import { acknowledge, backup, moveCopy, openCopy, run, useApp } from "./store";
 import type { Backup, Snapshot } from "./types";
-import { detailedSettings as said } from "./words";
+import { detailedSettings as said, engineSays } from "./words";
 
 function turnOn(thenBackup: boolean) {
   void run(async () => {
@@ -39,7 +39,7 @@ export function BackupNotice() {
     ) : null;
   const unusable = state?.error ? (
     <p className="err" role="alert">
-      {state.error}
+      {engineSays(state.error, "detailed")}
     </p>
   ) : null;
   if (warning) {
@@ -76,7 +76,7 @@ export function BackupNotice() {
       <div className="backup-ok">
         <Icon name={state.error ? "alert" : "check"} />
         <span className="txt">
-          {state.error ??
+          {(state.error && engineSays(state.error, "detailed")) ??
             `Agent history backed up ${when(state.at)}${
               state.sessions !== undefined
                 ? ` · ${plural(state.sessions, "session")} kept (${bytes(state.bytes)})`
@@ -118,10 +118,12 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
   const busy = moving || historyPending;
   const wasOpen = useRef(false);
   const giveBack = useRef(false);
-  // The question takes the focus when it opens, and gives it back to Change… when it closes, as soon as Change… can
-  // take it: after a move it is disabled until history is read again. Not if the focus went somewhere else meanwhile.
+  // The question takes the focus when it opens, and only then: while it stays open, as when a move starts or ends or
+  // an automatic backup reads history again, the focus stays where it went, as on Cancel. It gives the focus back to
+  // Change… when it closes, as soon as Change… can take it: after a move it is disabled until history is read again.
+  // Not if the focus went somewhere else meanwhile.
   useEffect(() => {
-    if (open) question.current?.focus();
+    if (open && !wasOpen.current) question.current?.focus();
     giveBack.current = open ? false : giveBack.current || wasOpen.current;
     wasOpen.current = open;
     if (!giveBack.current || busy) return;
@@ -189,7 +191,7 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
       </div>
       {state.error ? (
         <p className="err" role="alert">
-          {state.error}
+          {engineSays(state.error, "detailed")}
         </p>
       ) : null}
       {asking !== null ? (

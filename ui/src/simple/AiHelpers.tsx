@@ -31,6 +31,7 @@ import {
   trimSep,
 } from "../helpers";
 import type { Conversation } from "../helpers";
+import { useFocusStays } from "../focus-stays";
 import { useReportSearch, useReportText } from "../hooks";
 import { loadMcp, useMcp } from "../mcp-setup";
 import { chooseFolder } from "../pick";
@@ -62,13 +63,12 @@ import type {
   SetupInfo,
   Snapshot,
 } from "../types";
-import { ago, aiHelpers as said, blocks, project, spent } from "../words";
+import { ago, aiHelpers as said, blocks, engineSays, project, spent } from "../words";
 import { aiTools, editorName } from "./act";
 import {
   canUseOf,
   chatsAtRisk,
   draftOf,
-  focusAfter,
   helperChats,
   installOf,
   startsWith,
@@ -141,76 +141,8 @@ export function useCapabilities(providers: string[]) {
   return caps;
 }
 
-const CONTROLS =
-  'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])';
-/** Taken off the page, or no longer drawn. */
-const gone = (control: HTMLElement) =>
-  !control.isConnected || control.offsetParent === null || Boolean(control.closest("[hidden]"));
-const usable = (control: HTMLElement) => !gone(control) && !control.matches(":disabled");
-
-/**
- * Keeps the keyboard on the page when the control that has the focus goes away: a folder's Remove,
- * a summary's Done, Save changes once nothing waits. The focus moves to the control `instead` names
- * for the one that went, when that can take it; else to the control that was after it, else the one
- * before (focusAfter). A control that is only switched off for a moment keeps it. Watching the page,
- * as a Sheet does, works in every web view, whether or not it says that the focus left. While a
- * change runs the window takes no focus, so the move waits for the change to end.
- */
-export function useFocusStays(
-  page: RefObject<HTMLElement | null>,
-  instead?: (gone: HTMLElement) => HTMLElement | null | undefined,
-) {
-  const prefer = useRef(instead);
-  prefer.current = instead;
-  useEffect(() => {
-    const root = page.current;
-    if (!root) return;
-    let last: { control: HTMLElement; around: HTMLElement[] } | null = null;
-    const focused = (event: FocusEvent) => {
-      const control = event.target as HTMLElement;
-      last = { control, around: Array.from(root.querySelectorAll<HTMLElement>(CONTROLS)) };
-    };
-    // The focus went on elsewhere, such as to a sheet or the sidebar, or a click put it nowhere.
-    const left = (event: FocusEvent) => {
-      const to = event.relatedTarget as Element | null;
-      if (to && !root.contains(to)) last = null;
-    };
-    const clicked = (event: PointerEvent) => {
-      if (!(event.target as Element).closest(CONTROLS)) last = null;
-    };
-    const moveOn = () => {
-      const at = document.activeElement;
-      if (!last || (at && at !== document.body && at !== last.control)) return;
-      if (!gone(last.control)) return;
-      const preferred = prefer.current?.(last.control);
-      const next =
-        preferred && root.contains(preferred) && usable(preferred)
-          ? preferred
-          : focusAfter(last.around, last.control, usable);
-      if (next && !next.closest("[inert]")) next.focus();
-    };
-    const watch = new MutationObserver(moveOn);
-    watch.observe(root, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["hidden", "class", "data-show"],
-    });
-    const done = useApp.subscribe((state, before) => {
-      if (before.working && !state.working) requestAnimationFrame(moveOn);
-    });
-    root.addEventListener("focusin", focused);
-    root.addEventListener("focusout", left);
-    root.addEventListener("pointerdown", clicked);
-    return () => {
-      watch.disconnect();
-      done();
-      root.removeEventListener("focusin", focused);
-      root.removeEventListener("focusout", left);
-      root.removeEventListener("pointerdown", clicked);
-    };
-  }, [page]);
-}
+// Keeps the keyboard on the page when the control that has the focus goes away; Detailed's Agents uses it too.
+export { useFocusStays };
 
 /** Turns the automatic copy of AI chats on or off (`backup/auto`, as Detailed's Settings sends it). */
 export function setCopying(on: boolean) {
@@ -870,7 +802,7 @@ function CopyCard({ snapshot }: { snapshot: Snapshot }) {
           ? said.copyLast(ago(backup.at), backup.sessions ?? 0, bytes(backup.bytes))
           : said.copyNone}
       </p>
-      {backup.error ? <Callout tone="act">{backup.error}</Callout> : null}
+      {backup.error ? <Callout tone="act">{engineSays(backup.error, "simple")}</Callout> : null}
       <div className="s-actions">
         <Button kind="outline" small icon="copy" onClick={copyNow}>
           {said.copyNow}
@@ -907,10 +839,12 @@ function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
   const busy = moving || historyPending;
   const wasOpen = useRef(false);
   const giveBack = useRef(false);
-  // The question takes the focus when it opens, and gives it back to Change… when it closes, as soon as Change… can
-  // take it: after a move it is disabled until history is read again. Not if the focus went somewhere else meanwhile.
+  // The question takes the focus when it opens, and only then: while it stays open, as when a move starts or ends or
+  // an automatic backup reads history again, the focus stays where it went, as on Cancel. It gives the focus back to
+  // Change… when it closes, as soon as Change… can take it: after a move it is disabled until history is read again.
+  // Not if the focus went somewhere else meanwhile.
   useEffect(() => {
-    if (open) question.current?.focus();
+    if (open && !wasOpen.current) question.current?.focus();
     giveBack.current = open ? false : giveBack.current || wasOpen.current;
     wasOpen.current = open;
     if (!giveBack.current || busy) return;
@@ -953,7 +887,8 @@ function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
     <div className="s-helpers-place" ref={row} data-ui="copy-place">
       <p>
         <b>{said.copyPlace}</b>
-        <span className="s-quiet s-mono">
+        {/* Only a path is set as one: Laci's own folder is said by its name. */}
+        <span className={backup.chosen ? "s-quiet s-mono" : "s-quiet"}>
           {backup.chosen ? backup.dest : said.copyPlaceOwn}
         </span>
         <span className="s-quiet">{said.copyPlaceNote}</span>

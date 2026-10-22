@@ -26,38 +26,49 @@ use std::{
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 static IN_PROCESS: Mutex<()> = Mutex::new(());
-/// The data folders of the backups and moves of the copy of AI chats that run in this process ([`LongRun`]).
-static LONG_RUNS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+/// The data folders of the backups and moves of the copy of AI chats that run in this process ([`LongRun`]), each
+/// with whether it is a move.
+static LONG_RUNS: Mutex<Vec<(PathBuf, bool)>> = Mutex::new(Vec::new());
 thread_local! {
     /// This thread runs a backup or a move of the copy of AI chats, so it may wait for the change lock.
     static IN_LONG_RUN: Cell<bool> = const { Cell::new(false) };
 }
-/// What a change asked for while a backup or a move of the copy of AI chats runs is told.
+/// What a change asked for while a backup of the copy of AI chats runs is told.
 pub const COPYING: &str = "Laci is copying your AI chats. Try again when it's done.";
+/// What a change asked for while a move of the copy of AI chats runs is told.
+pub const MOVING: &str = "Laci is moving the copy of your AI chats. Try again when it's done.";
 
 /// A backup or a move of the copy of AI chats, which can take minutes, runs on this thread until this is dropped.
 /// Meanwhile a change of the same Laci data on another thread that would wait for the change lock is refused at once
 /// ([`with_lock`]).
-pub struct LongRun(PathBuf);
+pub struct LongRun(PathBuf, bool);
 impl LongRun {
-    pub fn start(env: &Env) -> Self {
-        LONG_RUNS.lock().unwrap_or_else(|e| e.into_inner()).push(env.data_dir.clone());
+    /// `moving`: it is a move of the copy, not a backup.
+    pub fn start(env: &Env, moving: bool) -> Self {
+        LONG_RUNS.lock().unwrap_or_else(|e| e.into_inner()).push((env.data_dir.clone(), moving));
         IN_LONG_RUN.with(|long| long.set(true));
-        Self(env.data_dir.clone())
+        Self(env.data_dir.clone(), moving)
     }
 }
 impl Drop for LongRun {
     fn drop(&mut self) {
         IN_LONG_RUN.with(|long| long.set(false));
         let mut runs = LONG_RUNS.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(at) = runs.iter().position(|dir| *dir == self.0) {
+        if let Some(at) = runs.iter().position(|(dir, moving)| *dir == self.0 && *moving == self.1) {
             runs.remove(at);
         }
     }
 }
-/// Whether a backup or a move of the copy of the Laci data in `env` runs on another thread now.
-fn long_run_elsewhere(env: &Env) -> bool {
-    !IN_LONG_RUN.with(Cell::get) && LONG_RUNS.lock().unwrap_or_else(|e| e.into_inner()).contains(&env.data_dir)
+/// What a change of the Laci data in `env` is told while a backup or a move of its copy runs on another thread now:
+/// [`MOVING`] while a move does, else [`COPYING`]. Nothing when none runs.
+fn long_run_elsewhere(env: &Env) -> Option<&'static str> {
+    if IN_LONG_RUN.with(Cell::get) {
+        return None;
+    }
+    let runs = LONG_RUNS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut here = runs.iter().filter(|(dir, _)| *dir == env.data_dir).map(|(_, moving)| *moving);
+    let first = here.next()?;
+    Some(if first || here.any(|moving| moving) { MOVING } else { COPYING })
 }
 fn exists(p: &Path) -> bool {
     fs::symlink_metadata(p).is_ok()
@@ -126,8 +137,10 @@ pub fn with_lock<T>(env: &Env, work: impl FnOnce() -> Result<T>) -> Result<T> {
     let _serial = match IN_PROCESS.try_lock() {
         Ok(serial) => serial,
         // A backup or a move of the copy holds it for minutes: waiting would hold up whoever asked, as the window.
-        Err(TryLockError::WouldBlock) if long_run_elsewhere(env) => return Err(COPYING.into()),
-        Err(TryLockError::WouldBlock) => IN_PROCESS.lock().map_err(|_| interrupted())?,
+        Err(TryLockError::WouldBlock) => match long_run_elsewhere(env) {
+            Some(busy) => return Err(busy.into()),
+            None => IN_PROCESS.lock().map_err(|_| interrupted())?,
+        },
         Err(TryLockError::Poisoned(_)) => return Err(interrupted()),
     };
     let _lock = lock(env)?;
@@ -828,16 +841,22 @@ pub fn journals(env: &Env, limit: usize) -> Vec<Value> {
         .collect()
 }
 pub fn undo(env: &Env, id: &str) -> Result<Value> {
-    with_lock(env, || undo_unlocked(env, id))
+    with_lock(env, || undo_unlocked(env, id, &mut None))
 }
-pub(crate) fn undo_unlocked(env: &Env, id: &str) -> Result<Value> {
+/// [`undo`], which puts in `settled` the journal of a move of the copy of AI chats that stopped part-way and that it
+/// finished first ([`settle_copy`]), also when the Undo itself is then refused: the Log hasn't told that move yet.
+pub fn undo_settling(env: &Env, id: &str, settled: &mut Option<Value>) -> Result<Value> {
+    with_lock(env, || undo_unlocked(env, id, settled))
+}
+/// [`undo_settling`] under the change lock the caller holds.
+pub(crate) fn undo_unlocked(env: &Env, id: &str, settled: &mut Option<Value>) -> Result<Value> {
     if !valid_id(id) {
         return Err("Invalid journal id".into());
     }
     let file = data(env, "journal")?.join(format!("{id}.json"));
     let mut journal = read_journal(&file)?;
     if journal["copyMove"].is_object() {
-        return undo_copy_move(env, id, file);
+        return undo_copy_move(env, id, file, settled);
     }
     if journal["state"] != "applied" {
         return Err(format!("This change is {}, nothing to undo", journal["state"].as_str().unwrap_or("invalid")));
@@ -867,11 +886,11 @@ pub(crate) fn undo_unlocked(env: &Env, id: &str) -> Result<Value> {
 /// as the folder of an agent first backed up after the move. Only `backupDir` changes, so other settings changed since
 /// don't stand in the way, and whatever can refuse the Undo is asked before anything changes. An Undo that stops
 /// part-way is finished the way the setting points ([`settle_copy`]); one that fails puts the copy back whole where it
-/// was, so backups go on and the Undo can be asked again.
-fn undo_copy_move(env: &Env, id: &str, file: PathBuf) -> Result<Value> {
+/// was, so backups go on and the Undo can be asked again. A move this finished first is put in `settled`.
+fn undo_copy_move(env: &Env, id: &str, file: PathBuf, settled: &mut Option<Value>) -> Result<Value> {
     // A move of the copy that stopped part-way, this one, its Undo or another one, is finished first.
     let finishing = crate::backup::moving(env).is_some_and(|(journal, undo)| undo && journal["id"] == id);
-    settle_copy_unlocked(env)?;
+    *settled = settle_copy_unlocked(env)?;
     let journal = read_journal(&file)?;
     if journal["state"] != "applied" {
         if finishing && journal["state"] == "undone" {
@@ -881,7 +900,7 @@ fn undo_copy_move(env: &Env, id: &str, file: PathBuf) -> Result<Value> {
     }
     validate_entries(env, journal["entries"].as_array().ok_or("Invalid journal")?)?;
     let (from, to, roots) = copy_halves(env, &journal)?;
-    if !same_path(&configured_copy(env), &to) {
+    if !same_path(&configured_copy(env)?, &to) {
         return Err("The copy of AI chats moved again after this. Undo that move first.".into());
     }
     let going: Vec<PathBuf> = movable(&to).into_iter().map(|name| to.join(name)).collect();
@@ -899,14 +918,18 @@ fn undo_copy_move(env: &Env, id: &str, file: PathBuf) -> Result<Value> {
         .and_then(|()| crate::backup::mark(&from))
         .and_then(|()| shift(&mut tx, &to, &from, &roots, &mut moved));
     if let Err(error) = undone {
-        if point_copy(env, &to).and_then(|()| shift_back(&mut tx, &to, &from, &roots, &moved)).is_ok() {
-            tx.save()?;
-            crate::backup::end_moving(env)?;
-        } else {
-            // The next backup finishes it, the way the setting points.
-            let _ = tx.save();
-        }
-        return Err(error);
+        return match point_copy(env, &to).and_then(|()| shift_back(&mut tx, &to, &from, &roots, &moved)) {
+            Ok(()) => {
+                tx.save()?;
+                crate::backup::end_moving(env)?;
+                Err(error)
+            }
+            Err(rollback) => {
+                // The next backup finishes it, the way the setting points, once what stopped it is put right.
+                let _ = tx.save();
+                Err(format!("{error} · rollback failed: {rollback}"))
+            }
+        };
     }
     tx.journal["state"] = json!("undone");
     tx.save()?;
@@ -1200,14 +1223,15 @@ fn apply_action_checked(
 }
 /// Copies agent histories into the copy of AI chats (`backup::dir`), each file packed with zstd, and says what the
 /// copy holds. Only files that grew since their last copy are copied again.
-/// A move of the copy that stopped part-way is finished first: the result names its journal as `settled`.
+/// A move of the copy that stopped part-way is finished first: the result names its journal as `settled`. What the
+/// plain files from before 3.1 that it packed first took before and take now is its `packing`.
 pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
     with_lock(env, || {
         let settled = settle_copy_unlocked(env)?;
         let dest = crate::backup::ready(env)?;
         // What runs that stopped part-way left goes first, and plain files from before 3.1 are packed.
         crate::backup::remove_leftovers(env, &dest);
-        crate::backup::convert(env, &dest);
+        let packing = crate::backup::convert(env, &dest);
         let mut copied = 0u64;
         let mut bytes = 0u64;
         for c in snap["connectors"]
@@ -1267,7 +1291,7 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
         files::replace(&data(env, BACKUP_STATE)?, state.to_string().as_bytes())?;
         Ok(
             json!({"copied":copied,"bytes":bytes,"size":bytes,"dest":dest,"sessions":sessions,"files":kept,"total":total,
-            "settled":settled}),
+            "settled":settled,"packing":{"files":packing.files,"before":packing.before,"after":packing.after}}),
         )
     })
 }
@@ -1315,7 +1339,8 @@ pub fn restore_backup(env: &Env, snap: &Value, id: &str) -> Result<Value> {
     })
 }
 /// Moves the sessions the user chose out of their tool's history and into Laci's quarantine, in one
-/// journal, so Undo in the Log puts them back. `files` name sessions of the current scan; the rest is
+/// journal, so Undo in the Log puts them back: each log, Claude Code's folder of its subagent logs, and
+/// the copies of both in the copy of AI chats. `files` name sessions of the current scan; the rest is
 /// checked again here: only whole Claude Code and Codex sessions, never one that is kept, still being
 /// written, or only a copy in the backup.
 pub fn delete_sessions(env: &Env, snap: &Value, files: &[String]) -> Result<Value> {
@@ -1393,11 +1418,22 @@ pub fn delete_sessions(env: &Env, snap: &Value, files: &[String]) -> Result<Valu
             // Otherwise the backup's copy would bring it straight back as "In backup only": packed, or still plain.
             for history in &copies {
                 let kept = history.join(connector).join(relative);
+                let subagents = kept.with_extension("");
                 for file in [crate::backup::packed(&kept), kept] {
                     if fs::symlink_metadata(&file).is_ok_and(|m| m.is_file()) {
                         let name = file.strip_prefix(history).map_err(|e| e.to_string())?;
                         tx.move_copy(&file, &removed.join("backup").join(name), &roots)?;
                     }
+                }
+                // The copy of its folder of subagent logs goes with it: nothing lists that folder, so it would stay
+                // in the copy for good. Only that folder itself, never through a link.
+                if *claude
+                    && relative.extension().is_some_and(|ext| ext == "jsonl")
+                    && fs::symlink_metadata(&subagents).is_ok_and(|m| m.is_dir())
+                    && crate::backup::inside(history, &subagents)
+                {
+                    let name = subagents.strip_prefix(history).map_err(|e| e.to_string())?;
+                    tx.move_copy(&subagents, &removed.join("backup").join(name), &roots)?;
                 }
             }
         }
@@ -1419,6 +1455,8 @@ pub fn backup_state(env: &Env) -> Option<Value> {
 /// before. A copy Laci can't reach now, as on a drive that isn't connected, isn't left behind unless `fresh` says to
 /// start a new copy in the new folder: the old one then stays where it is. `moved` says whether anything moved.
 pub fn move_backup(env: &Env, raw: &str, fresh: bool) -> Result<Value> {
+    // Where the copy is now, and so what moves, is the setting's to say, also for a new copy.
+    crate::backup::settings(env)?;
     let chosen = crate::config::validate_backup_dir(env, &json!(raw))?;
     let dest = match &chosen {
         Some(dir) => dir.clone(),
@@ -1503,15 +1541,17 @@ fn move_copy_into(env: &Env, from: &Path, to: &Path, shown: &str, own: bool) -> 
     if let Err(error) = point_copy(env, to).and_then(|()| shift(&mut tx, from, to, &roots, &mut moved)) {
         let back = point_copy(env, from).and_then(|()| shift_back(&mut tx, from, to, &roots, &moved));
         tx.journal["state"] = json!(if back.is_ok() { "undone" } else { "failed" });
-        tx.journal["error"] = json!(match &back {
-            Ok(()) => error.clone(),
+        // A rollback that stopped says why, so what stands in its way can be put right.
+        let told = match &back {
+            Ok(()) => error,
             Err(rollback) => format!("{error} · rollback failed: {rollback}"),
-        });
+        };
+        tx.journal["error"] = json!(told);
         // One whose rollback failed is finished by the next backup, the way the setting points.
         if tx.save().is_ok() && back.is_ok() {
             crate::backup::end_moving(env)?;
         }
-        return Err(error);
+        return Err(told);
     }
     tx.journal["state"] = json!("applied");
     tx.save()?;
@@ -1523,9 +1563,10 @@ fn move_copy_into(env: &Env, from: &Path, to: &Path, shown: &str, own: bool) -> 
 fn copy_setting(env: &Env, dir: &Path) -> String {
     if same_path(dir, &env.data_dir.join("history")) { String::new() } else { paths::tilde(dir, &env.home) }
 }
-/// The folder the setting names for the copy, unchecked.
-fn configured_copy(env: &Env) -> PathBuf {
-    crate::backup::chosen(env, &crate::config::load(env)).unwrap_or_else(|| env.data_dir.join("history"))
+/// The folder the setting names for the copy, unchecked. Refused while the settings can't be read
+/// ([`crate::backup::settings`]): the copy moves only the way the user's setting points.
+fn configured_copy(env: &Env) -> Result<PathBuf> {
+    Ok(crate::backup::chosen(env, &crate::backup::settings(env)?).unwrap_or_else(|| env.data_dir.join("history")))
 }
 /// Points the setting in `cfg` to the copy folder `dest`, saved as `setting` (`""` for the default), with the identity
 /// it has now.
@@ -1567,12 +1608,24 @@ fn shift(tx: &mut Tx<'_>, from: &Path, to: &Path, roots: &Value, moved: &mut Vec
     }
     Ok(())
 }
-/// Moves what [`shift`] moved from `from` into `to` back, the last first.
+/// Moves what [`shift`] moved from `from` into `to` back, the last first. One that is in both folders was copied to
+/// another drive whose file system can't rename without replacing, as NFS, sshfs or 9p, and its source couldn't be
+/// deleted afterwards ([`across`]): only the user can tell which half is complete, so it stops there and names both.
 fn shift_back(tx: &mut Tx<'_>, from: &Path, to: &Path, roots: &Value, moved: &[std::ffi::OsString]) -> Result<()> {
     for name in moved.iter().rev() {
         let (there, back) = (to.join(name), from.join(name));
-        if exists(&there) && !exists(&back) {
-            tx.move_copy(&there, &back, roots)?;
+        match (exists(&there), exists(&back)) {
+            (true, false) => tx.move_copy(&there, &back, roots)?,
+            (true, true) => {
+                return Err(format!(
+                    "{} is both in {} and in {}, so Laci stopped: keep the one that is complete, remove the other, \
+                     and back up again.",
+                    name.to_string_lossy(),
+                    paths::tilde(to, &tx.env.home),
+                    paths::tilde(from, &tx.env.home)
+                ));
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -1609,7 +1662,7 @@ fn settle_copy_unlocked(env: &Env) -> Result<Option<Value>> {
         return Ok(None);
     }
     let (from, to, roots) = copy_halves(env, &journal)?;
-    let target = configured_copy(env);
+    let target = configured_copy(env)?;
     // A setting edited by hand meanwhile to name neither folder: the move goes on as it started.
     let forward = !same_path(&target, &from);
     if forward && !same_path(&target, &to) {
@@ -2057,6 +2110,110 @@ mod tests {
         assert!(crate::backup::moving(&env).is_none());
     }
 
+    /// A move of the copy that stopped part-way and that an Undo of an older move finishes first is told in the Log
+    /// with its own Undo, as a backup or another move tells it, also when that Undo is then refused.
+    #[test]
+    fn a_move_of_the_copy_that_an_undo_finishes_is_told_in_the_log() {
+        let (_temp, env, disk) = copy_home();
+        let (from, to) = copy_of(&env, &disk, &["claude", "codex"]);
+        let mut service = crate::service::Service::new(env.clone());
+        service.request_as("backup/move", &json!({"dir":to}), "test").unwrap();
+        let log = || crate::activity::read_log(&env, 50);
+        let first = log().into_iter().find(|e| e["say"]["form"] == "movedCopy").unwrap();
+        // A second move, to a third folder, stopped after `claude` moved.
+        let next = disk.join("next");
+        fs::create_dir_all(&next).unwrap();
+        crate::backup::mark(&next).unwrap();
+        let say = json!({"form":"movedCopy","dir":next,"own":false});
+        let mut tx = Tx::new(&env, "Moved the copy of AI chats", say).unwrap();
+        let roots = json!([crate::backup::journal_root(&to).unwrap(), crate::backup::journal_root(&next).unwrap()]);
+        tx.journal["copyMove"] = json!({"from":to,"to":next,"roots":roots});
+        tx.save().unwrap();
+        let id = tx.journal["id"].as_str().unwrap().to_owned();
+        crate::backup::begin_moving(&env, &id, false).unwrap();
+        point_copy(&env, &next).unwrap();
+        tx.move_copy(&to.join("claude"), &next.join("claude"), &roots).unwrap();
+        drop(tx);
+
+        // The Undo of the first move finishes the second one, which then stands in its way.
+        let refused = service.request_as("log/undo", &json!({"id":first["id"]}), "test").unwrap_err();
+        assert!(refused.contains("moved again after this"), "{refused}");
+        assert!(holds(&next, "claude") && holds(&next, "codex"));
+        let told = log().into_iter().find(|e| e["journal"] == id.as_str()).expect("the finished move is in the Log");
+        assert_eq!((&told["by"], &told["state"], &told["canUndo"]), (&json!("test"), &json!("applied"), &json!(true)));
+        assert!(!told["id"].as_str().unwrap().starts_with("j:"), "a line of its own: {told}");
+
+        // Its Undo, and then the first one's, take the copy back where it started.
+        service.request_as("log/undo", &json!({"id":told["id"]}), "test").unwrap();
+        service.request_as("log/undo", &json!({"id":first["id"]}), "test").unwrap();
+        assert!(holds(&from, "claude") && holds(&from, "codex"));
+        assert_eq!(crate::config::load(&env)["backupDir"], "");
+    }
+
+    /// While config.json is there but can't be read, as when the app that syncs it can't download it, nothing moves the
+    /// copy: the defaults would name the folder the move started from, and finishing it that way would hide the chats
+    /// from the setting once it is back. Once it is back, the move is finished the way it points.
+    #[test]
+    fn nothing_moves_the_copy_while_the_settings_cant_be_read() {
+        let (_temp, env, disk) = copy_home();
+        let (from, to) = copy_of(&env, &disk, &["claude", "codex"]);
+        crate::backup::mark(&to).unwrap();
+        let mut tx = Tx::new(&env, "Moved the copy of AI chats", Value::Null).unwrap();
+        let roots = json!([crate::backup::journal_root(&from).unwrap(), crate::backup::journal_root(&to).unwrap()]);
+        tx.journal["copyMove"] = json!({"from":from,"to":to,"roots":roots});
+        tx.save().unwrap();
+        let id = tx.journal["id"].as_str().unwrap().to_owned();
+        crate::backup::begin_moving(&env, &id, false).unwrap();
+        point_copy(&env, &to).unwrap();
+        tx.move_copy(&from.join("claude"), &to.join("claude"), &roots).unwrap();
+        drop(tx);
+        let file = env.config_dir.join("config.json");
+        let saved = fs::read(&file).unwrap();
+        fs::write(&file, b"\0\0\0\0").unwrap();
+
+        let unreadable = |error: String| {
+            assert!(error.starts_with("Laci couldn't read your settings in "), "{error}");
+            assert!(error.contains("doesn't know where the copy of AI chats is kept"), "{error}");
+        };
+        unreadable(settle_copy(&env).unwrap_err());
+        unreadable(backup_history(&env, &json!({"connectors":[]})).unwrap_err());
+        unreadable(move_backup(&env, "", true).unwrap_err());
+        unreadable(undo(&env, &id).unwrap_err());
+        assert!(holds(&to, "claude") && holds(&from, "codex"), "nothing moved");
+        assert!(crate::backup::moving(&env).is_some(), "the move is still to be finished");
+        assert_eq!(fs::read(&file).unwrap(), b"\0\0\0\0", "the settings are as they were");
+
+        fs::write(&file, saved).unwrap();
+        assert_eq!(settle_copy(&env).unwrap().expect("the move is finished")["state"], "applied");
+        assert!(holds(&to, "claude") && holds(&to, "codex"));
+    }
+
+    /// A move of the copy that is put back stops at a folder of it that is in both places, as a move to sshfs leaves one
+    /// whose source it couldn't delete after its copy was published, and names both folders: it isn't counted as put
+    /// back, so the copy isn't left whole in the folder the setting no longer names.
+    #[test]
+    fn putting_a_move_of_the_copy_back_stops_at_a_part_that_is_in_both_folders() {
+        let (_temp, env, disk) = copy_home();
+        let (from, to) = copy_of(&env, &disk, &["claude", "codex"]);
+        let roots = json!([crate::backup::journal_root(&from).unwrap(), crate::backup::journal_root(&to).unwrap()]);
+        let mut tx = Tx::new(&env, "Moved the copy of AI chats", Value::Null).unwrap();
+        // `codex` moved first; `claude` was copied in full, and then its source couldn't be deleted.
+        fs::rename(from.join("codex"), to.join("codex")).unwrap();
+        copy_tree(&from.join("claude"), &to.join("claude")).unwrap();
+        let moved = ["codex", "claude"].map(std::ffi::OsString::from);
+        let error = shift_back(&mut tx, &from, &to, &roots, &moved).unwrap_err();
+        let both =
+            format!("claude is both in {} and in {}, so Laci stopped", to.display(), paths::tilde(&from, &env.home));
+        assert!(error.starts_with(&both), "{error}");
+        assert!(holds(&from, "claude") && holds(&to, "claude"), "neither half is removed");
+        assert!(holds(&to, "codex") && !from.join("codex").exists(), "nothing after it moved back");
+        // Without such a part, as on ext4, everything moves back.
+        fs::remove_dir_all(to.join("claude")).unwrap();
+        shift_back(&mut tx, &from, &to, &roots, &moved).unwrap();
+        assert!(holds(&from, "claude") && holds(&from, "codex"));
+        assert!(!to.join("claude").exists() && !to.join("codex").exists());
+    }
+
     /// An Undo of a move of the copy that is refused changes nothing, so backups go on. Settings changed since, as the
     /// theme, don't stand in its way, and what the copy gained since, as the folder of another agent, goes back too.
     #[test]
@@ -2173,30 +2330,33 @@ mod tests {
         assert!(copy_move_names(&src, &dest, "../x").is_err(), "a journal can't name another folder");
     }
 
-    /// While a backup holds the change lock for minutes, another change of the same data is refused at once rather
-    /// than wait; the backup itself, and a change of other data, wait as before.
+    /// While a backup or a move of the copy holds the change lock for minutes, another change of the same data is
+    /// refused at once rather than wait, told which of the two runs; the backup itself, and a change of other data,
+    /// wait as before.
     #[test]
     fn a_change_is_refused_at_once_while_a_backup_holds_the_change_lock() {
         let (_temp, env, _) = copy_home();
         let env = &env;
-        let (held, holding) = std::sync::mpsc::channel();
-        let (release, released) = std::sync::mpsc::channel::<()>();
-        thread::scope(|scope| {
-            let long = scope.spawn(move || {
-                let _long = LongRun::start(env);
-                with_lock(env, || {
-                    held.send(()).unwrap();
-                    released.recv().unwrap();
-                    Ok(())
-                })
+        for (moving, told) in [(false, COPYING), (true, MOVING)] {
+            let (held, holding) = std::sync::mpsc::channel();
+            let (release, released) = std::sync::mpsc::channel::<()>();
+            thread::scope(|scope| {
+                let long = scope.spawn(move || {
+                    let _long = LongRun::start(env, moving);
+                    with_lock(env, || {
+                        held.send(()).unwrap();
+                        released.recv().unwrap();
+                        Ok(())
+                    })
+                });
+                holding.recv().unwrap();
+                let asked = Instant::now();
+                assert_eq!(with_lock(env, || Ok(())), Err(told.to_owned()));
+                assert!(asked.elapsed() < Duration::from_secs(1));
+                release.send(()).unwrap();
+                long.join().unwrap().unwrap();
             });
-            holding.recv().unwrap();
-            let asked = Instant::now();
-            assert_eq!(with_lock(env, || Ok(())), Err(COPYING.to_owned()));
-            assert!(asked.elapsed() < Duration::from_secs(1));
-            release.send(()).unwrap();
-            long.join().unwrap().unwrap();
-        });
-        assert_eq!(with_lock(env, || Ok(1)), Ok(1));
+            assert_eq!(with_lock(env, || Ok(1)), Ok(1));
+        }
     }
 }

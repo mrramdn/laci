@@ -220,7 +220,7 @@ pub fn runs_long(name: &str) -> bool {
 /// Runs one of the actions [`runs_long`] names. `snap` is the scan a backup copies the histories of. A move of the
 /// copy that stopped part-way, finished first, is told in the Log then.
 pub fn long_action(env: &Env, snap: &Value, name: &str, b: &Value, by: &str) -> Result<RequestOutcome> {
-    let _long = ops::LongRun::start(env);
+    let _long = ops::LongRun::start(env, name == "backup/move");
     match name {
         "backup" => {
             let auto = b["auto"] == true;
@@ -239,9 +239,9 @@ pub fn long_action(env: &Env, snap: &Value, name: &str, b: &Value, by: &str) -> 
         "backup/move" => {
             let moved = ops::move_backup(env, string(b, "dir"), b["fresh"] == true)?;
             if moved["settled"].is_object() {
-                record_journal(env, &moved["settled"], None, by);
+                activity::record_journal(env, &moved["settled"], None, by);
             }
-            record_journal(env, &moved["journal"], None, by);
+            activity::record_journal(env, &moved["journal"], None, by);
             let bytes = moved["bytes"].as_u64().unwrap_or(0);
             let value = json!({"journal":moved["journal"],"dest":paths::tilde(Path::new(string(&moved, "dest")), &env.home),
                 "moved":moved["moved"],"bytes":bytes,"size":scan::bytes(bytes)});
@@ -252,12 +252,27 @@ pub fn long_action(env: &Env, snap: &Value, name: &str, b: &Value, by: &str) -> 
     }
 }
 
-/// Copies the agent histories `snap` connects into the copy of AI chats, and tells the Log, by `by`, when it copied
-/// something, or with `always` also that the copy is up to date.
+/// Copies the agent histories `snap` connects into the copy of AI chats, and tells the Log, by `by`, when it packed
+/// the plain files of a copy from before 3.1, and when it copied something, or with `always` also that the copy is up
+/// to date.
 fn backup_run(env: &Env, snap: &Value, by: &str, always: bool) -> Result<Value> {
     let mut result = ops::backup_history(env, snap)?;
     if result["settled"].is_object() {
-        record_journal(env, &result["settled"], None, by);
+        activity::record_journal(env, &result["settled"], None, by);
+    }
+    // The first run after the upgrade packs the plain files of the copy: gigabytes freed, and nothing copied.
+    let packing = &result["packing"];
+    let packed = packing["files"].as_u64().unwrap_or(0);
+    if packed > 0 {
+        let (before, after) = (packing["before"].as_u64().unwrap_or(0), packing["after"].as_u64().unwrap_or(0));
+        let sizes = format!("{} → {}", scan::bytes(before), scan::bytes(after));
+        let files = format!("{} file{}", grouped(packed), if packed == 1 { "" } else { "s" });
+        activity::record(
+            env,
+            json!({"by":by,"title":format!("Compressed the agent history backup: {files}, {sizes}"),
+                "say":{"form":"packedCopy","files":packed,"before":before,"after":after}}),
+        );
+        result["packing"]["said"] = json!(format!("Packed the copy of AI chats: {files}, {sizes}"));
     }
     let copied = result["copied"].as_u64().unwrap_or(0);
     result["size"] = json!(scan::bytes(result["bytes"].as_u64().unwrap_or(0)));
@@ -280,29 +295,31 @@ fn backup_run(env: &Env, snap: &Value, by: &str, always: bool) -> Result<Value> 
 
 /// `laci backup`: the backup "Back up now" makes, without the window and without a scan. It needs only the agents
 /// Laci connects and their history folders; the change lock keeps it from running beside the window's. The Log
-/// tells it, by `by`, only when it copied something. It runs whether or not automatic backups are on: running it is
-/// the user's choice. Gives the line the command prints.
+/// tells it, by `by`, only when it copied something, or packed the plain files a copy from before 3.1 holds. It runs
+/// whether or not automatic backups are on: running it is the user's choice. Gives the lines the command prints.
 pub fn backup_now(env: &Env, by: &str) -> Result<String> {
     let snap = json!({"connectors":crate::agents::connectors(env, &config::load(env))});
-    let _long = ops::LongRun::start(env);
+    let _long = ops::LongRun::start(env, false);
     let result = backup_run(env, &snap, by, false)?;
     let copied = result["copied"].as_u64().unwrap_or(0);
-    Ok(format!("Copied {} · {}", scan::plural(copied, "file"), string(&result, "kept")))
+    let said = format!("Copied {} · {}", scan::plural(copied, "file"), string(&result, "kept"));
+    Ok(match result["packing"]["said"].as_str() {
+        Some(packed) => format!("{packed}\n{said}"),
+        None => said,
+    })
 }
 
-/// Tells the Log about a journaled change, with its Undo when it has one.
-fn record_journal(env: &Env, journal: &Value, path: Option<&str>, by: &str) {
-    let mut entry = json!({"by":by,"title":journal["title"],"path":path,"journal":journal["id"]});
-    if journal["say"].is_object() {
-        entry["say"] = journal["say"].clone();
+/// `n` with its thousands apart, as people write a big number: "1,785".
+fn grouped(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
     }
-    if ops::can_undo(journal) {
-        entry["undo"] = json!({"type":"journal","id":journal["id"]});
-    }
-    if let Some(detail) = ops::recovery(journal) {
-        entry["detail"] = json!(detail);
-    }
-    activity::record(env, entry);
+    out
 }
 
 /// Adds a line to laci.log, where problems that stop nothing are told.
@@ -429,7 +446,7 @@ impl Service {
         sidecar::checkbox_occurrence(path, text, occurrence, known.len())
     }
     fn journaled(&mut self, journal: Value, path: Option<&str>, by: &str) -> Result<Value> {
-        record_journal(&self.env, &journal, path, by);
+        activity::record_journal(&self.env, &journal, path, by);
         Ok(json!({"journal":journal}))
     }
     pub fn apps(&self) -> Value {
@@ -854,7 +871,14 @@ impl Service {
                 self.journaled(j, node["path"].as_str(), by)
             }
             "undo" => {
-                let j = ops::undo(&self.env, id)?;
+                // A move of the copy that stopped part-way and that this finished first is told, also when the Undo
+                // is then refused.
+                let mut settled = None;
+                let undone = ops::undo_settling(&self.env, id, &mut settled);
+                if let Some(journal) = &settled {
+                    activity::record_journal(&self.env, journal, None, by);
+                }
+                let j = undone?;
                 let entry = activity::read_log(&self.env, 300).into_iter().find(|e| e["journal"] == j["id"]);
                 activity::record(
                     &self.env,
@@ -1516,6 +1540,13 @@ fn external_terminal(app: &str, cwd: &Path, cmd: Option<&str>, confirm: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_big_number_has_its_thousands_apart() {
+        for (n, said) in [(0, "0"), (999, "999"), (1785, "1,785"), (12_345_678, "12,345,678")] {
+            assert_eq!(grouped(n), said);
+        }
+    }
 
     #[test]
     fn design_saves_only_the_two_designs_and_leaves_no_log_entry() {

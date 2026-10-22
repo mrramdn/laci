@@ -61,11 +61,18 @@ pub fn load(env: &Env) -> Value {
 fn read(file: &Path) -> Option<Value> {
     files::text(file).and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object)
 }
+/// config.json, when it is there but can't be read as settings, as when the app that syncs it can't download it:
+/// [`load`] then gives the defaults, which aren't the user's settings. An empty file holds nothing, and a link is
+/// refused where it would be written.
+pub(crate) fn unreadable(env: &Env) -> Option<std::path::PathBuf> {
+    let file = env.config_dir.join("config.json");
+    (fs::symlink_metadata(&file).is_ok_and(|meta| !meta.is_symlink() && meta.len() > 0) && read(&file).is_none())
+        .then_some(file)
+}
 pub fn save(env: &Env, c: &Value) -> Result<()> {
     let file = env.config_dir.join("config.json");
-    // Settings that are there but can't be read, as when the app that syncs them can't download them, were loaded as
-    // defaults: written over, they would be gone. An empty file holds nothing, and a link is refused below.
-    if fs::symlink_metadata(&file).is_ok_and(|meta| !meta.is_symlink() && meta.len() > 0) && read(&file).is_none() {
+    // Settings that can't be read were loaded as defaults: written over, they would be gone.
+    if unreadable(env).is_some() {
         return Err(format!(
             "Laci couldn't read your settings in {}, so it won't write over them. Make sure the app that syncs that \
              folder is running, or fix the file, then try again.",

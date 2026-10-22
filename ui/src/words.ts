@@ -9,6 +9,9 @@
 export const count = (n: number, one: string, many = `${one}s`) =>
   `${n} ${n === 1 ? one : many}`;
 
+/** A big number with its thousands apart: "1,785". */
+const grouped = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
 /** "a.md", "a.md and b.md", "a.md, b.md and c.md". */
 export function listed(items: string[]) {
   return items.length < 2
@@ -1268,6 +1271,9 @@ export const activity = {
     suggestedAgain: "Brought back a hidden suggestion",
     copied: (n: number) => `Copied ${count(n, "chat file")}`,
     copyUpToDate: "The copy of AI chats was up to date",
+    /** The first copy after the upgrade to Laci 3.1 packs the files an older copy kept plain. */
+    packedCopy: (files: number, before: string, after: string) =>
+      `Packed the copy of AI chats: ${grouped(files)} ${files === 1 ? "file" : "files"}, ${before} → ${after}`,
     copyOn: "Laci now copies new chats by itself",
     copyOff: "Laci now copies chats only when you ask",
     putBack: (ai: string) => `Put back a ${ai} chat from Laci’s copy`,
@@ -1333,6 +1339,7 @@ export const logForms = {
   suggestedAgain: told.suggestedAgain,
   backedUp: told.copied,
   backupUpToDate: told.copyUpToDate,
+  packedCopy: told.packedCopy,
   autoBackupOn: told.copyOn,
   autoBackupOff: told.copyOff,
   restoredChat: told.putBack,
@@ -2140,3 +2147,81 @@ export const polish = {
     open: "Back in Still to do",
   },
 };
+
+/**
+ * What the engine says in a reason or a refusal of its own, in each design's words: why the folder of the copy of
+ * AI chats can't be used now (laci-core's backup.rs, `check`), with the folder it names, and why a change is
+ * refused while a backup or a move of the copy runs (ops.rs, `COPYING` and `MOVING`). Detailed calls the copy the
+ * history backup, chosen in Settings › Backup folder; Simple calls it the copy of your AI chats, chosen in AI
+ * helpers › Where Laci keeps the copy. `engineSays` puts them in.
+ */
+export const engineWords = {
+  detailed: {
+    copyNotFull: (dir: string) =>
+      `The history backup's folder isn't a full path: ${dir}. Choose the folder again in Settings › Backup folder.`,
+    copyMissing: (dir: string) =>
+      `The history backup's folder isn't there: ${dir}. Connect its drive, or choose another folder in Settings › Backup folder.`,
+    copyLink: (dir: string) =>
+      `The history backup's folder is reached through a link: ${dir}. Choose the folder itself in Settings › Backup folder.`,
+    copyUnknown: (dir: string) =>
+      `The history backup's folder isn't the one Laci knows: ${dir}. Connect its drive, or choose the folder again in Settings › Backup folder.`,
+    copyNotMade: (dir: string) =>
+      `The history backup's folder doesn't hold a backup Laci made: ${dir}. Choose the folder again in Settings › Backup folder.`,
+    copying: "Laci is making the history backup. Try again when it's done.",
+    moving: "Laci is moving the history backup. Try again when it's done.",
+  },
+  simple: {
+    copyNotFull: (dir: string) =>
+      `The folder for the copy of your AI chats isn’t a full path: ${dir}. Choose the folder again in AI helpers › Where Laci keeps the copy.`,
+    copyMissing: (dir: string) =>
+      `The folder for the copy of your AI chats isn’t there: ${dir}. Connect its drive, or choose another folder in AI helpers › Where Laci keeps the copy.`,
+    copyLink: (dir: string) =>
+      `The folder for the copy of your AI chats is reached through a link: ${dir}. Choose the folder itself in AI helpers › Where Laci keeps the copy.`,
+    copyUnknown: (dir: string) =>
+      `The folder for the copy of your AI chats isn’t the one Laci knows: ${dir}. Connect its drive, or choose the folder again in AI helpers › Where Laci keeps the copy.`,
+    copyNotMade: (dir: string) =>
+      `The folder for the copy of your AI chats doesn’t hold a copy Laci made: ${dir}. Choose the folder again in AI helpers › Where Laci keeps the copy.`,
+    copying: "Laci is copying your AI chats. Try again when it’s done.",
+    moving: "Laci is moving the copy of your AI chats. Try again when it’s done.",
+  },
+};
+
+type EngineSaying = Exclude<keyof (typeof engineWords)["simple"], "copying" | "moving">;
+/** The engine's sentences, as backup.rs writes them, each with the folder it names. */
+const COPY_REASONS: [RegExp, EngineSaying][] = [
+  [/The folder for the copy of AI chats isn't a full path: (.+?)\. Choose the folder for the copy again\./g, "copyNotFull"],
+  [
+    /The folder for the copy of AI chats isn't there: (.+?)\. Connect its drive, or choose another folder for the copy\./g,
+    "copyMissing",
+  ],
+  [
+    /The folder for the copy of AI chats is reached through a link: (.+?)\. Choose the folder itself for the copy\./g,
+    "copyLink",
+  ],
+  [
+    /The folder for the copy of AI chats isn't the one Laci knows: (.+?)\. Connect its drive, or choose the folder for the copy again\./g,
+    "copyUnknown",
+  ],
+  [
+    /The folder for the copy of AI chats doesn't hold a copy Laci made: (.+?)\. Choose the folder for the copy again\./g,
+    "copyNotMade",
+  ],
+];
+/** The engine's refusals while a backup or a move of the copy runs, as ops.rs writes them. */
+const REFUSALS: [string, "copying" | "moving"][] = [
+  ["Laci is copying your AI chats. Try again when it's done.", "copying"],
+  ["Laci is moving the copy of your AI chats. Try again when it's done.", "moving"],
+];
+
+/**
+ * `text`, a reason or an error the engine gave, with each of its sentences that `engineWords` knows said in the
+ * words of `design`, also inside a longer message. Anything else stays as the engine said it.
+ */
+export function engineSays(text: string, design: keyof typeof engineWords): string {
+  const words = engineWords[design];
+  let said = text;
+  for (const [form, key] of COPY_REASONS)
+    said = said.replace(form, (_, dir: string) => words[key](dir));
+  for (const [refusal, key] of REFUSALS) said = said.split(refusal).join(words[key]);
+  return said;
+}

@@ -129,7 +129,7 @@ export interface Session {
   backup?: boolean;
   /** Where a restore puts the copy back. */
   restoreTo?: string;
-  /** Log size in bytes. */
+  /** Log size in bytes; for a session only the backup holds, the log's own size, not its packed copy's. */
   bytes?: number;
   /** "unsupported" for entries that share one file with others and can't be removed alone. */
   cleanupCapability?: string;

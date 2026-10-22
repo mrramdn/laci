@@ -13,7 +13,7 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ### Changed
 
-- **The copy of AI chats is compressed** with zstd, about five times smaller. A copy from before 3.1 is compressed on the first backup: each file Laci packs is checked byte for byte before the plain one goes, and a plain file that already has a newer packed copy is removed. Each file can be unpacked with `zstd -d`, and Laci still never removes anything from the copy.
+- **The copy of AI chats is compressed** with zstd, about five times smaller. A copy from before 3.1 is compressed on the first backup: each file Laci packs is checked byte for byte before the plain one goes, and a plain file that already has a newer packed copy is removed. Each file can be unpacked with `zstd -d`, and Laci still never removes a chat from the copy.
 
 ### Fixed
 

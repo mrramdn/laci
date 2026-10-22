@@ -26,38 +26,49 @@ use std::{
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 static IN_PROCESS: Mutex<()> = Mutex::new(());
-/// The data folders of the backups and moves of the copy of AI chats that run in this process ([`LongRun`]).
-static LONG_RUNS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+/// The data folders of the backups and moves of the copy of AI chats that run in this process ([`LongRun`]), each
+/// with whether it is a move.
+static LONG_RUNS: Mutex<Vec<(PathBuf, bool)>> = Mutex::new(Vec::new());
 thread_local! {
     /// This thread runs a backup or a move of the copy of AI chats, so it may wait for the change lock.
     static IN_LONG_RUN: Cell<bool> = const { Cell::new(false) };
 }
-/// What a change asked for while a backup or a move of the copy of AI chats runs is told.
+/// What a change asked for while a backup of the copy of AI chats runs is told.
 pub const COPYING: &str = "Laci is copying your AI chats. Try again when it's done.";
+/// What a change asked for while a move of the copy of AI chats runs is told.
+pub const MOVING: &str = "Laci is moving the copy of your AI chats. Try again when it's done.";
 
 /// A backup or a move of the copy of AI chats, which can take minutes, runs on this thread until this is dropped.
 /// Meanwhile a change of the same Laci data on another thread that would wait for the change lock is refused at once
 /// ([`with_lock`]).
-pub struct LongRun(PathBuf);
+pub struct LongRun(PathBuf, bool);
 impl LongRun {
-    pub fn start(env: &Env) -> Self {
-        LONG_RUNS.lock().unwrap_or_else(|e| e.into_inner()).push(env.data_dir.clone());
+    /// `moving`: it is a move of the copy, not a backup.
+    pub fn start(env: &Env, moving: bool) -> Self {
+        LONG_RUNS.lock().unwrap_or_else(|e| e.into_inner()).push((env.data_dir.clone(), moving));
         IN_LONG_RUN.with(|long| long.set(true));
-        Self(env.data_dir.clone())
+        Self(env.data_dir.clone(), moving)
     }
 }
 impl Drop for LongRun {
     fn drop(&mut self) {
         IN_LONG_RUN.with(|long| long.set(false));
         let mut runs = LONG_RUNS.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(at) = runs.iter().position(|dir| *dir == self.0) {
+        if let Some(at) = runs.iter().position(|(dir, moving)| *dir == self.0 && *moving == self.1) {
             runs.remove(at);
         }
     }
 }
-/// Whether a backup or a move of the copy of the Laci data in `env` runs on another thread now.
-fn long_run_elsewhere(env: &Env) -> bool {
-    !IN_LONG_RUN.with(Cell::get) && LONG_RUNS.lock().unwrap_or_else(|e| e.into_inner()).contains(&env.data_dir)
+/// What a change of the Laci data in `env` is told while a backup or a move of its copy runs on another thread now:
+/// [`MOVING`] while a move does, else [`COPYING`]. Nothing when none runs.
+fn long_run_elsewhere(env: &Env) -> Option<&'static str> {
+    if IN_LONG_RUN.with(Cell::get) {
+        return None;
+    }
+    let runs = LONG_RUNS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut here = runs.iter().filter(|(dir, _)| *dir == env.data_dir).map(|(_, moving)| *moving);
+    let first = here.next()?;
+    Some(if first || here.any(|moving| moving) { MOVING } else { COPYING })
 }
 fn exists(p: &Path) -> bool {
     fs::symlink_metadata(p).is_ok()
@@ -126,8 +137,10 @@ pub fn with_lock<T>(env: &Env, work: impl FnOnce() -> Result<T>) -> Result<T> {
     let _serial = match IN_PROCESS.try_lock() {
         Ok(serial) => serial,
         // A backup or a move of the copy holds it for minutes: waiting would hold up whoever asked, as the window.
-        Err(TryLockError::WouldBlock) if long_run_elsewhere(env) => return Err(COPYING.into()),
-        Err(TryLockError::WouldBlock) => IN_PROCESS.lock().map_err(|_| interrupted())?,
+        Err(TryLockError::WouldBlock) => match long_run_elsewhere(env) {
+            Some(busy) => return Err(busy.into()),
+            None => IN_PROCESS.lock().map_err(|_| interrupted())?,
+        },
         Err(TryLockError::Poisoned(_)) => return Err(interrupted()),
     };
     let _lock = lock(env)?;
@@ -2317,30 +2330,33 @@ mod tests {
         assert!(copy_move_names(&src, &dest, "../x").is_err(), "a journal can't name another folder");
     }
 
-    /// While a backup holds the change lock for minutes, another change of the same data is refused at once rather
-    /// than wait; the backup itself, and a change of other data, wait as before.
+    /// While a backup or a move of the copy holds the change lock for minutes, another change of the same data is
+    /// refused at once rather than wait, told which of the two runs; the backup itself, and a change of other data,
+    /// wait as before.
     #[test]
     fn a_change_is_refused_at_once_while_a_backup_holds_the_change_lock() {
         let (_temp, env, _) = copy_home();
         let env = &env;
-        let (held, holding) = std::sync::mpsc::channel();
-        let (release, released) = std::sync::mpsc::channel::<()>();
-        thread::scope(|scope| {
-            let long = scope.spawn(move || {
-                let _long = LongRun::start(env);
-                with_lock(env, || {
-                    held.send(()).unwrap();
-                    released.recv().unwrap();
-                    Ok(())
-                })
+        for (moving, told) in [(false, COPYING), (true, MOVING)] {
+            let (held, holding) = std::sync::mpsc::channel();
+            let (release, released) = std::sync::mpsc::channel::<()>();
+            thread::scope(|scope| {
+                let long = scope.spawn(move || {
+                    let _long = LongRun::start(env, moving);
+                    with_lock(env, || {
+                        held.send(()).unwrap();
+                        released.recv().unwrap();
+                        Ok(())
+                    })
+                });
+                holding.recv().unwrap();
+                let asked = Instant::now();
+                assert_eq!(with_lock(env, || Ok(())), Err(told.to_owned()));
+                assert!(asked.elapsed() < Duration::from_secs(1));
+                release.send(()).unwrap();
+                long.join().unwrap().unwrap();
             });
-            holding.recv().unwrap();
-            let asked = Instant::now();
-            assert_eq!(with_lock(env, || Ok(())), Err(COPYING.to_owned()));
-            assert!(asked.elapsed() < Duration::from_secs(1));
-            release.send(()).unwrap();
-            long.join().unwrap().unwrap();
-        });
-        assert_eq!(with_lock(env, || Ok(1)), Ok(1));
+            assert_eq!(with_lock(env, || Ok(1)), Ok(1));
+        }
     }
 }

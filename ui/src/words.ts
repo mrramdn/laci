@@ -2149,10 +2149,11 @@ export const polish = {
 };
 
 /**
- * What the engine says in a reason of its own, in each design's words: why the folder of the copy of AI chats
- * can't be used now (laci-core's backup.rs, `check`), with the folder it names. Detailed calls the copy the history
- * backup, chosen in Settings › Backup folder; Simple calls it the copy of your AI chats, chosen in AI helpers ›
- * Where Laci keeps the copy. `engineSays` puts them in.
+ * What the engine says in a reason or a refusal of its own, in each design's words: why the folder of the copy of
+ * AI chats can't be used now (laci-core's backup.rs, `check`), with the folder it names, and why a change is
+ * refused while a backup or a move of the copy runs (ops.rs, `COPYING` and `MOVING`). Detailed calls the copy the
+ * history backup, chosen in Settings › Backup folder; Simple calls it the copy of your AI chats, chosen in AI
+ * helpers › Where Laci keeps the copy. `engineSays` puts them in.
  */
 export const engineWords = {
   detailed: {
@@ -2166,6 +2167,8 @@ export const engineWords = {
       `The history backup's folder isn't the one Laci knows: ${dir}. Connect its drive, or choose the folder again in Settings › Backup folder.`,
     copyNotMade: (dir: string) =>
       `The history backup's folder doesn't hold a backup Laci made: ${dir}. Choose the folder again in Settings › Backup folder.`,
+    copying: "Laci is making the history backup. Try again when it's done.",
+    moving: "Laci is moving the history backup. Try again when it's done.",
   },
   simple: {
     copyNotFull: (dir: string) =>
@@ -2178,10 +2181,12 @@ export const engineWords = {
       `The folder for the copy of your AI chats isn’t the one Laci knows: ${dir}. Connect its drive, or choose the folder again in AI helpers › Where Laci keeps the copy.`,
     copyNotMade: (dir: string) =>
       `The folder for the copy of your AI chats doesn’t hold a copy Laci made: ${dir}. Choose the folder again in AI helpers › Where Laci keeps the copy.`,
+    copying: "Laci is copying your AI chats. Try again when it’s done.",
+    moving: "Laci is moving the copy of your AI chats. Try again when it’s done.",
   },
 };
 
-type EngineSaying = keyof (typeof engineWords)["simple"];
+type EngineSaying = Exclude<keyof (typeof engineWords)["simple"], "copying" | "moving">;
 /** The engine's sentences, as backup.rs writes them, each with the folder it names. */
 const COPY_REASONS: [RegExp, EngineSaying][] = [
   [/The folder for the copy of AI chats isn't a full path: (.+?)\. Choose the folder for the copy again\./g, "copyNotFull"],
@@ -2202,6 +2207,11 @@ const COPY_REASONS: [RegExp, EngineSaying][] = [
     "copyNotMade",
   ],
 ];
+/** The engine's refusals while a backup or a move of the copy runs, as ops.rs writes them. */
+const REFUSALS: [string, "copying" | "moving"][] = [
+  ["Laci is copying your AI chats. Try again when it's done.", "copying"],
+  ["Laci is moving the copy of your AI chats. Try again when it's done.", "moving"],
+];
 
 /**
  * `text`, a reason or an error the engine gave, with each of its sentences that `engineWords` knows said in the
@@ -2212,5 +2222,6 @@ export function engineSays(text: string, design: keyof typeof engineWords): stri
   let said = text;
   for (const [form, key] of COPY_REASONS)
     said = said.replace(form, (_, dir: string) => words[key](dir));
+  for (const [refusal, key] of REFUSALS) said = said.split(refusal).join(words[key]);
   return said;
 }

@@ -210,14 +210,33 @@ export async function theEnginesReasonsAboutTheCopyAreSaidInEachDesignsWords() {
   assert.equal(words.engineSays("That folder already holds files.", "simple"), "That folder already holds files.");
 }
 
+export async function aRefusedChangeSaysWhetherTheCopyIsCopiedOrMoved() {
+  const told = Object.fromEntries(
+    [...engine("ops.rs").matchAll(/pub const (COPYING|MOVING): &str = "([^"]*)";/g)].map(([, name, text]) => [name, text]),
+  );
+  assert.deepEqual(Object.keys(told).sort(), ["COPYING", "MOVING"]);
+  for (const design of ["detailed", "simple"]) {
+    const said = words.engineWords[design];
+    assert.equal(words.engineSays(told.COPYING, design), said.copying);
+    assert.equal(words.engineSays(told.MOVING, design), said.moving);
+    assert.notEqual(said.copying, said.moving);
+  }
+  assert.match(words.engineWords.detailed.moving, /^Laci is moving the history backup\./);
+  assert.match(words.engineWords.simple.copying, /^Laci is copying your AI chats\. Try again when it’s done\.$/);
+  assert.match(words.engineWords.simple.moving, /^Laci is moving the copy of your AI chats\. Try again when it’s done\.$/);
+}
+
 export async function aFailureIsSaidInTheWordsOfTheDesignOnThePage() {
   const page = { documentElement: { dataset: { design: "simple" } } };
   const { errorText } = load("api.ts", { "@tauri-apps/api/core": { invoke: async () => ({}) } }, { document: page });
   const why =
     "The folder for the copy of AI chats isn't there: /mnt/archive/ai-chats. Connect its drive, or choose another folder for the copy.";
+  const refusal = "Laci is moving the copy of your AI chats. Try again when it's done.";
   assert.equal(errorText(new Error(why)), words.engineWords.simple.copyMissing("/mnt/archive/ai-chats"));
+  assert.equal(errorText(new Error(refusal)), words.engineWords.simple.moving);
   page.documentElement.dataset.design = "detailed";
   assert.equal(errorText(why), words.engineWords.detailed.copyMissing("/mnt/archive/ai-chats"));
+  assert.equal(errorText(refusal), words.engineWords.detailed.moving);
   assert.equal(errorText(new Error("Something else")), "Something else");
   assert.equal(errorText({ code: 1 }), '{"code":1}');
 }

@@ -7,7 +7,7 @@ export function api<T>(
   return invoke<T>("request", { name, body });
 }
 /**
- * What a failure says, with the engine's own reasons in the words of the design on the page
+ * What a failure says, with the engine's own reasons and refusals in the words of the design on the page
  * (`engineSays`), as the store puts it on the page's root.
  */
 export function errorText(error: unknown): string {

@@ -220,7 +220,7 @@ pub fn runs_long(name: &str) -> bool {
 /// Runs one of the actions [`runs_long`] names. `snap` is the scan a backup copies the histories of. A move of the
 /// copy that stopped part-way, finished first, is told in the Log then.
 pub fn long_action(env: &Env, snap: &Value, name: &str, b: &Value, by: &str) -> Result<RequestOutcome> {
-    let _long = ops::LongRun::start(env);
+    let _long = ops::LongRun::start(env, name == "backup/move");
     match name {
         "backup" => {
             let auto = b["auto"] == true;
@@ -299,7 +299,7 @@ fn backup_run(env: &Env, snap: &Value, by: &str, always: bool) -> Result<Value> 
 /// whether or not automatic backups are on: running it is the user's choice. Gives the lines the command prints.
 pub fn backup_now(env: &Env, by: &str) -> Result<String> {
     let snap = json!({"connectors":crate::agents::connectors(env, &config::load(env))});
-    let _long = ops::LongRun::start(env);
+    let _long = ops::LongRun::start(env, false);
     let result = backup_run(env, &snap, by, false)?;
     let copied = result["copied"].as_u64().unwrap_or(0);
     let said = format!("Copied {} · {}", scan::plural(copied, "file"), string(&result, "kept"));

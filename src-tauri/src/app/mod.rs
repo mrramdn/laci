@@ -26,22 +26,22 @@ use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, ipc::Chan
 use terminal::{Info, Output, Terminals};
 use watch::{Changes, Watches};
 
-/// Counts one backup or move of the copy of AI chats as running until it [ends](Running::end), or is dropped, even by a
-/// panic.
-struct Running<'a>(Option<&'a Mutex<Engine>>);
+/// Counts one backup or move of the copy of AI chats, by its action's name, as running until it [ends](Running::end),
+/// or is dropped, even by a panic.
+struct Running<'a>(Option<&'a Mutex<Engine>>, &'a str);
 impl Running<'_> {
     /// Stops counting it in `engine`, which the caller holds to take in the result: no change can come in between and
     /// be let in on the snapshot from before it.
     fn end(mut self, engine: &mut Engine) {
         self.0 = None;
-        engine.long_running = engine.long_running.saturating_sub(1);
+        engine.end_long(self.1);
     }
 }
 impl Drop for Running<'_> {
     fn drop(&mut self) {
         if let Some(lock) = self.0 {
             let mut engine = lock.lock().unwrap_or_else(|e| e.into_inner());
-            engine.long_running = engine.long_running.saturating_sub(1);
+            engine.end_long(self.1);
         }
     }
 }
@@ -372,10 +372,10 @@ impl AppState {
             }
             engine.admit(name)?;
             let snapshot = engine.service.snapshot()?;
-            engine.long_running += 1;
+            engine.begin_long(name);
             (engine.service.env.clone(), snapshot)
         };
-        let running = Running(Some(&self.engine));
+        let running = Running(Some(&self.engine), name);
         let result = laci_core::service::long_action(&env, &snapshot, name, body, "app");
         let mut engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
         running.end(&mut engine);

@@ -1099,6 +1099,8 @@ export const cleanup = {
   laci: {
     title: "Space Laci uses",
     total: (size: string) => `${size} in all`,
+    /** The total once the copy of AI chats is kept in a folder of its own, where it isn't counted. */
+    totalOwn: (size: string) => `${size} in Laci’s own folder`,
     reading: "Reading the space Laci uses…",
     failed: "Laci couldn’t read how much space it uses.",
     tryAgain: "Try again",

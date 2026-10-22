@@ -96,7 +96,10 @@ export function LaciStorage() {
       {storage ? (
         <div className="item">
           <span className="name" style={{ maxWidth: "none", flex: 1 }}>
-            Total
+            {/* A backup kept in a folder of its own isn't in the data folder's total. */}
+            {storage.parts.some((part) => part.elsewhere)
+              ? `Total in ${storage.dir}`
+              : "Total"}
           </span>
           <span className="meta">{bytes(storage.total)}</span>
         </div>

@@ -462,7 +462,9 @@ export function CleanUp() {
           </h2>
           {space.storage ? (
             <span className="s-quiet">
-              {said.laci.total(
+              {(space.storage.parts.some((part) => part.elsewhere)
+                ? said.laci.totalOwn
+                : said.laci.total)(
                 space.storage.total ? bytes(space.storage.total) : said.laci.none,
               )}
             </span>

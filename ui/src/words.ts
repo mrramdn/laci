@@ -2147,3 +2147,70 @@ export const polish = {
     open: "Back in Still to do",
   },
 };
+
+/**
+ * What the engine says in a reason of its own, in each design's words: why the folder of the copy of AI chats
+ * can't be used now (laci-core's backup.rs, `check`), with the folder it names. Detailed calls the copy the history
+ * backup, chosen in Settings › Backup folder; Simple calls it the copy of your AI chats, chosen in AI helpers ›
+ * Where Laci keeps the copy. `engineSays` puts them in.
+ */
+export const engineWords = {
+  detailed: {
+    copyNotFull: (dir: string) =>
+      `The history backup's folder isn't a full path: ${dir}. Choose the folder again in Settings › Backup folder.`,
+    copyMissing: (dir: string) =>
+      `The history backup's folder isn't there: ${dir}. Connect its drive, or choose another folder in Settings › Backup folder.`,
+    copyLink: (dir: string) =>
+      `The history backup's folder is reached through a link: ${dir}. Choose the folder itself in Settings › Backup folder.`,
+    copyUnknown: (dir: string) =>
+      `The history backup's folder isn't the one Laci knows: ${dir}. Connect its drive, or choose the folder again in Settings › Backup folder.`,
+    copyNotMade: (dir: string) =>
+      `The history backup's folder doesn't hold a backup Laci made: ${dir}. Choose the folder again in Settings › Backup folder.`,
+  },
+  simple: {
+    copyNotFull: (dir: string) =>
+      `The folder for the copy of your AI chats isn’t a full path: ${dir}. Choose the folder again in AI helpers › Where Laci keeps the copy.`,
+    copyMissing: (dir: string) =>
+      `The folder for the copy of your AI chats isn’t there: ${dir}. Connect its drive, or choose another folder in AI helpers › Where Laci keeps the copy.`,
+    copyLink: (dir: string) =>
+      `The folder for the copy of your AI chats is reached through a link: ${dir}. Choose the folder itself in AI helpers › Where Laci keeps the copy.`,
+    copyUnknown: (dir: string) =>
+      `The folder for the copy of your AI chats isn’t the one Laci knows: ${dir}. Connect its drive, or choose the folder again in AI helpers › Where Laci keeps the copy.`,
+    copyNotMade: (dir: string) =>
+      `The folder for the copy of your AI chats doesn’t hold a copy Laci made: ${dir}. Choose the folder again in AI helpers › Where Laci keeps the copy.`,
+  },
+};
+
+type EngineSaying = keyof (typeof engineWords)["simple"];
+/** The engine's sentences, as backup.rs writes them, each with the folder it names. */
+const COPY_REASONS: [RegExp, EngineSaying][] = [
+  [/The folder for the copy of AI chats isn't a full path: (.+?)\. Choose the folder for the copy again\./g, "copyNotFull"],
+  [
+    /The folder for the copy of AI chats isn't there: (.+?)\. Connect its drive, or choose another folder for the copy\./g,
+    "copyMissing",
+  ],
+  [
+    /The folder for the copy of AI chats is reached through a link: (.+?)\. Choose the folder itself for the copy\./g,
+    "copyLink",
+  ],
+  [
+    /The folder for the copy of AI chats isn't the one Laci knows: (.+?)\. Connect its drive, or choose the folder for the copy again\./g,
+    "copyUnknown",
+  ],
+  [
+    /The folder for the copy of AI chats doesn't hold a copy Laci made: (.+?)\. Choose the folder for the copy again\./g,
+    "copyNotMade",
+  ],
+];
+
+/**
+ * `text`, a reason or an error the engine gave, with each of its sentences that `engineWords` knows said in the
+ * words of `design`, also inside a longer message. Anything else stays as the engine said it.
+ */
+export function engineSays(text: string, design: keyof typeof engineWords): string {
+  const words = engineWords[design];
+  let said = text;
+  for (const [form, key] of COPY_REASONS)
+    said = said.replace(form, (_, dir: string) => words[key](dir));
+  return said;
+}

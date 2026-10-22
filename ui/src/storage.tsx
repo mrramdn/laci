@@ -4,6 +4,7 @@ import { Group } from "./common";
 import { bytes } from "./helpers";
 import { openCopy, run, toast } from "./store";
 import type { Storage, StoragePart } from "./types";
+import { engineSays } from "./words";
 export function LaciStorage() {
   const [storage, setStorage] = useState<Storage | null>(null);
   const [asking, setAsking] = useState<StoragePart["id"] | null>(null);
@@ -58,7 +59,7 @@ export function LaciStorage() {
               ) : null}
               {part.error ? (
                 <span className="err" role="alert" style={{ display: "block" }}>
-                  {part.error}
+                  {engineSays(part.error, "detailed")}
                 </span>
               ) : null}
             </span>

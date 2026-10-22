@@ -62,7 +62,7 @@ import type {
   SetupInfo,
   Snapshot,
 } from "../types";
-import { ago, aiHelpers as said, blocks, project, spent } from "../words";
+import { ago, aiHelpers as said, blocks, engineSays, project, spent } from "../words";
 import { aiTools, editorName } from "./act";
 import {
   canUseOf,
@@ -870,7 +870,7 @@ function CopyCard({ snapshot }: { snapshot: Snapshot }) {
           ? said.copyLast(ago(backup.at), backup.sessions ?? 0, bytes(backup.bytes))
           : said.copyNone}
       </p>
-      {backup.error ? <Callout tone="act">{backup.error}</Callout> : null}
+      {backup.error ? <Callout tone="act">{engineSays(backup.error, "simple")}</Callout> : null}
       <div className="s-actions">
         <Button kind="outline" small icon="copy" onClick={copyNow}>
           {said.copyNow}

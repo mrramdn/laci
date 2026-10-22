@@ -1034,6 +1034,11 @@ export async function aCopyLaciCantReachIsNotMovedButANewOneCanStart() {
   const page = helpersPage({ snapshot, replies });
   const place = () => page.find((n) => n.props["data-ui"] === "copy-place");
   const button = (words) => page.find((n) => n.type === "button" && n.textContent === words);
+  // Why, in Simple's words, and where to choose another folder.
+  assert.equal(
+    page.find((n) => n.props["data-tone"] === "act").textContent,
+    words.engineWords.simple.copyMissing("/mnt/archive/ai-chats"),
+  );
   const change = button(said.copyPlaceChange);
   assert.equal(change.props["aria-label"], said.copyPlaceChangeName);
   assert.ok(change.props["aria-label"].startsWith(said.copyPlaceChange.replace("…", "")));

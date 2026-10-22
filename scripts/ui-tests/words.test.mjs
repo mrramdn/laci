@@ -1,6 +1,7 @@
 // ui/src/words.ts: Simple's words follow its writing rules (design-research §3.4), every ⓘ has its
 // glossary entry, and times read as words.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { load } from "../ui-module.mjs";
 
 const words = load("words.ts");
@@ -12,7 +13,7 @@ const words = load("words.ts");
  */
 function texts() {
   const found = [];
-  const skip = new Set(["glossary", "termOf", "findTerms", "count", "listed", "ago", "spent"]);
+  const skip = new Set(["glossary", "termOf", "findTerms", "count", "listed", "ago", "spent", "engineSays"]);
   // Help says that the glossary lists the Git words; that sentence may name them.
   const quiet = /summaryPrompt|reportUrl|wordsWas|wordsIntro/;
   const walk = (value, where) => {
@@ -167,4 +168,56 @@ export async function helpFindsAWordByAnyOfItsNames() {
   assert.ok(find("remote").includes("online-copy"));
   assert.ok(find("STASH").includes("set-aside"));
   assert.deepEqual(find("nothing like this anywhere"), []);
+}
+
+/** A source file of the engine, its strings continued over lines (`\` at a line's end) joined. */
+const engine = (file) =>
+  readFileSync(new URL(`../../crates/laci-core/src/${file}`, import.meta.url), "utf8").replace(/\\\n\s*/g, "");
+
+export async function theEnginesReasonsAboutTheCopyAreSaidInEachDesignsWords() {
+  // Every reason backup.rs gives why the copy's folder can't be used now, with the folder it names.
+  const reasons = [...engine("backup.rs").matchAll(/"(The folder for the copy of AI chats [^"]*)"/g)].map(([, text]) =>
+    text.replace("{shown}", "/mnt/archive/ai-chats"),
+  );
+  assert.equal(reasons.length, 5, reasons.join("\n"));
+  for (const reason of reasons) {
+    const detailed = words.engineSays(reason, "detailed");
+    const simple = words.engineSays(reason, "simple");
+    // Detailed's words call it the history backup and say where its folder is chosen.
+    assert.match(detailed, /^The history backup's folder .*: \/mnt\/archive\/ai-chats\. .* in Settings › Backup folder\.$/, detailed);
+    // Simple's say where it shows the copy's place, with its own apostrophes.
+    assert.match(simple, /^The folder for the copy of your AI chats .*: \/mnt\/archive\/ai-chats\. .* in AI helpers › Where Laci keeps the copy\.$/, simple);
+    assert.doesNotMatch(simple, /'/, simple);
+    // Also inside a longer message, as when a move can't start.
+    const longer = `Connect the drive first, so Laci can move the copy. ${reason}`;
+    assert.equal(words.engineSays(longer, "simple"), `Connect the drive first, so Laci can move the copy. ${simple}`);
+  }
+  assert.equal(
+    words.engineSays(
+      "The folder for the copy of AI chats isn't there: /mnt/archive/ai-chats. Connect its drive, or choose another folder for the copy.",
+      "simple",
+    ),
+    "The folder for the copy of your AI chats isn’t there: /mnt/archive/ai-chats. Connect its drive, or choose another folder in AI helpers › Where Laci keeps the copy.",
+  );
+  assert.equal(
+    words.engineSays(
+      "The folder for the copy of AI chats isn't there: /mnt/archive/ai-chats. Connect its drive, or choose another folder for the copy.",
+      "detailed",
+    ),
+    "The history backup's folder isn't there: /mnt/archive/ai-chats. Connect its drive, or choose another folder in Settings › Backup folder.",
+  );
+  // What it doesn't know stays as the engine said it.
+  assert.equal(words.engineSays("That folder already holds files.", "simple"), "That folder already holds files.");
+}
+
+export async function aFailureIsSaidInTheWordsOfTheDesignOnThePage() {
+  const page = { documentElement: { dataset: { design: "simple" } } };
+  const { errorText } = load("api.ts", { "@tauri-apps/api/core": { invoke: async () => ({}) } }, { document: page });
+  const why =
+    "The folder for the copy of AI chats isn't there: /mnt/archive/ai-chats. Connect its drive, or choose another folder for the copy.";
+  assert.equal(errorText(new Error(why)), words.engineWords.simple.copyMissing("/mnt/archive/ai-chats"));
+  page.documentElement.dataset.design = "detailed";
+  assert.equal(errorText(why), words.engineWords.detailed.copyMissing("/mnt/archive/ai-chats"));
+  assert.equal(errorText(new Error("Something else")), "Something else");
+  assert.equal(errorText({ code: 1 }), '{"code":1}');
 }

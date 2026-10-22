@@ -5,7 +5,7 @@ import { bytes, copyChangeSaid, plural, tilde, when } from "./helpers";
 import { ChooseFolder } from "./pick";
 import { acknowledge, backup, moveCopy, openCopy, run, useApp } from "./store";
 import type { Backup, Snapshot } from "./types";
-import { detailedSettings as said } from "./words";
+import { detailedSettings as said, engineSays } from "./words";
 
 function turnOn(thenBackup: boolean) {
   void run(async () => {
@@ -39,7 +39,7 @@ export function BackupNotice() {
     ) : null;
   const unusable = state?.error ? (
     <p className="err" role="alert">
-      {state.error}
+      {engineSays(state.error, "detailed")}
     </p>
   ) : null;
   if (warning) {
@@ -76,7 +76,7 @@ export function BackupNotice() {
       <div className="backup-ok">
         <Icon name={state.error ? "alert" : "check"} />
         <span className="txt">
-          {state.error ??
+          {(state.error && engineSays(state.error, "detailed")) ??
             `Agent history backed up ${when(state.at)}${
               state.sessions !== undefined
                 ? ` · ${plural(state.sessions, "session")} kept (${bytes(state.bytes)})`
@@ -191,7 +191,7 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
       </div>
       {state.error ? (
         <p className="err" role="alert">
-          {state.error}
+          {engineSays(state.error, "detailed")}
         </p>
       ) : null}
       {asking !== null ? (

@@ -308,6 +308,11 @@ export async function aHistoryBackupLaciCantReachIsNotMovedButANewOneCanStart() 
   p.app.setState({ snapshot });
   await p.settle();
   const row = () => p.find((n) => n.props["data-ui"] === "backup-folder");
+  // Why, in Detailed's words, and where to choose another folder.
+  assert.equal(
+    row().descendants().find((n) => n.props.role === "alert").textContent,
+    words.engineWords.detailed.copyMissing("/mnt/archive/ai-chats"),
+  );
   // The folder is a labelled output, not a span a screen reader skips the name of.
   const shown = row().descendants().find((n) => n.type === "output");
   assert.equal(shown.textContent, "/mnt/archive/ai-chats");

@@ -8,17 +8,17 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ### Added
 
-- **Choose where the copy of AI chats is kept.** Settings › Backup folder in Detailed, *Where Laci keeps the copy* in Simple's AI helpers: any empty folder, also on another drive. Laci moves the copy there in one change, and Undo in the Log moves it back. *Use the default* brings it back to Laci's data folder. Laci never makes a chosen folder: when its drive isn't connected, nothing is copied and Laci says why, and the copy isn't moved; a new copy can start elsewhere instead, leaving the old one on its drive. A move that stops part-way, as when Laci is closed, is finished by the next backup.
+- **Choose where the copy of AI chats is kept.** Settings › Backup folder in Detailed, *Where Laci keeps the copy* in Simple's AI helpers: any empty folder, also on another drive. Laci moves the copy there in one change, and Undo in the Log moves it back. *Use the default* brings it back to Laci's data folder. Laci never makes a chosen folder: when its drive isn't connected, nothing is copied and Laci says why, and the copy isn't moved; a new copy can start elsewhere instead, leaving the old one on its drive. Undo also takes back what the copy gained since, and other settings changed meanwhile don't stand in its way. A move or its Undo that stops part-way, as when Laci is closed, is finished by the next backup.
 - **`laci backup`** makes the same backup without the window and without a scan, so a systemd timer can run it every hour (see the README). It adds to the Log only when it copied something.
 
 ### Changed
 
-- **The copy of AI chats is compressed** with zstd, about five times smaller. A copy from before 3.1 is compressed on the first backup, each file checked byte for byte before the plain one goes. Each file can be unpacked with `zstd -d`, and Laci still never removes anything from the copy.
+- **The copy of AI chats is compressed** with zstd, about five times smaller. A copy from before 3.1 is compressed on the first backup: each file Laci packs is checked byte for byte before the plain one goes, and a plain file that already has a newer packed copy is removed. Each file can be unpacked with `zstd -d`, and Laci still never removes anything from the copy.
 
 ### Fixed
 
 - **Temporary files of an interrupted copy are removed** by the next backup, inside the copy only.
-- **Backing up no longer freezes the window**: while a backup or a move of the copy runs, the window keeps drawing and stays up to date. A backup or move you start shows that it is working until it is done, and other changes wait until then; the automatic backup runs in the background.
+- **Backing up no longer freezes the window**: while a backup or a move of the copy runs, also the automatic one, the window keeps drawing and stays up to date. Changes asked for meanwhile are refused with a message until it is done. A backup or move you start shows that it is working.
 
 ## [3.0.0] - 2026-10-22
 

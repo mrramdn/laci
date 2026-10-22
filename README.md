@@ -73,7 +73,7 @@ Laci runs on Linux. Windows and macOS versions won't be made: porting is complex
 - `git`.
 - `gio` (from GLib), for moving things to the Trash.
 - `xdg-open` (from xdg-utils), for opening files and links.
-- The AppImage may need FUSE 2: the package `libfuse2t64` on Ubuntu 24.04 (`libfuse2` on older ones) or `fuse-libs` on Fedora. Without it, start the AppImage with `--appimage-extract-and-run`.
+- The AppImage may need FUSE 2: the package `libfuse2t64` on Ubuntu 24.04 (`libfuse2` on older ones), `fuse-libs` on Fedora or `fuse2` on Arch. Without it, start the AppImage with `--appimage-extract-and-run`.
 - Optional: `gh` or `glab`, to create an online copy of a new project from *New project*.
 
 The deb and rpm install what they need themselves.
@@ -323,9 +323,9 @@ Claude Code, Codex and Antigravity are built in. Any other tool can be added wit
 
 `{prompt}` and `{model}` stand for the value. Each list element is passed as one argument, never through a shell. `link` can be left out for a tool whose history Laci cannot read.
 
-Claude Code deletes session logs after a retention period. **Back up logs now** copies agent logs, each compressed with zstd (chat logs get about five times smaller), to `~/.local/share/laci/history` or to the folder you choose in Settings; Today then shows when the backup last ran and how many sessions it keeps, with **Open backup folder**. Automatic backup is optional and runs at most once an hour, only when a session changed. Nothing is ever removed from the backup. Sessions a tool has deleted stay listed from the backup, marked "In backup only", and can be restored. A backup from before 3.1 is compressed on the next run, each file checked byte for byte first, and temporary files a stopped copy left behind are removed.
+Claude Code deletes session logs after a retention period. **Back up logs now** copies agent logs, each compressed with zstd (chat logs get about five times smaller), to `~/.local/share/laci/history` or to the folder you choose in Settings; Today then shows when the backup last ran and how many sessions it keeps, with **Open backup folder**. Automatic backup is optional and runs at most once an hour, only when a session changed. Nothing is ever removed from the backup. Sessions a tool has deleted stay listed from the backup, marked "In backup only", and can be restored. A backup from before 3.1 is compressed on the next run: each file Laci packs is checked byte for byte before the plain one goes, and a plain file that already has a newer packed copy beside it just goes. Temporary files a stopped copy left behind are removed.
 
-The backup can live in any empty folder, also on another drive: **Settings › Backup folder › Change…** in Detailed, *Where Laci keeps the copy* under **AI helpers** in Simple. Laci moves what the backup holds there in one change, which Undo in the Log moves back, and **Use the default** brings it back to Laci's data folder. Laci never makes a chosen folder: when its drive isn't connected, the backup stops with a message and copies nothing, and the folder's drive is recognised as Laci recognises scan locations. While it can't reach the backup, Laci doesn't move it; you can start a new backup in another folder instead, and the old one stays on its drive. A move that stops part-way, as when Laci is closed, is finished by the next backup. The folder can't be your home folder or one above it, one of Laci's own folders, or one that holds an agent's history or lies inside it. A folder that holds a backup Laci made before (it has a `.laci-copy` file) can be chosen while the current backup is empty. Each file is a plain zstd file: `zstd -d` unpacks it without Laci.
+The backup can live in any empty folder, also on another drive: **Settings › Backup folder › Change…** in Detailed, *Where Laci keeps the copy* under **AI helpers** in Simple. Laci moves what the backup holds there in one change, which Undo in the Log moves back, also what the backup gained since; settings you changed meanwhile stay as they are. **Use the default** brings it back to Laci's data folder. Laci never makes a chosen folder: when its drive isn't connected, the backup stops with a message and copies nothing, and the folder's drive is recognised as Laci recognises scan locations. While it can't reach the backup, Laci doesn't move it; you can start a new backup in another folder instead, and the old one stays on its drive. A move or its Undo that stops part-way, as when Laci is closed, is finished by the next backup or move, into the folder the setting names. The folder can't be your home folder or one above it, one of Laci's own folders, or one that holds an agent's history or lies inside it. A folder that holds a backup Laci made before (it has a `.laci-copy` file) can be chosen while the current backup is empty. Each file is a plain zstd file: `zstd -d` unpacks it without Laci.
 
 ![Agents: each tool with its MCP setup, and sessions grouped by project with short chats folded away](docs/screenshots/agents.png)
 
@@ -417,7 +417,7 @@ laci backup    # copy new and changed AI chats into the backup, as "Back up logs
 
 The window copies AI chats only while it is open, but a tool that deletes old chats (Claude Code, after 30 days by default) deletes them whether or not Laci was open. `laci backup` makes the same backup as **Back up logs now** without the window and without scanning your projects, whether or not automatic backup is on in Settings. It prints one line, such as `Copied 3 files · 912 sessions kept · 1.0 GB in /mnt/archive/ai-chats`, adds it to the Log when it copied something, and exits with 1 and the reason when the backup folder can't be used, as when its drive isn't connected. It waits for nothing: while the window is changing files, it says so and stops.
 
-To run it every hour with systemd, save these two files in `~/.config/systemd/user/`. Use the path of your Laci in `ExecStart`: `/usr/bin/laci` for the .deb and .rpm packages, or the full path of the AppImage (for example `%h/Applications/laci_amd64.AppImage`).
+To run it every hour with systemd, save these two files in `~/.config/systemd/user/`. Use the path of your Laci in `ExecStart`: `/usr/bin/laci` for the .deb and .rpm packages, `%h/.local/bin/laci` for a build installed with `scripts/install-desktop.sh`, or the full path of the AppImage, such as `%h/Applications/laci_3.1.0_amd64.AppImage` (it keeps its name when Laci updates it). The AppImage needs FUSE 2 here too.
 
 ```ini
 # laci-backup.service
@@ -617,7 +617,8 @@ One line per thing still to do, most important first, or `Nothing open.`
 | Ticking a checkbox | Changes that line in the file it came from, for example `NOTES.md` |
 | Archive, move, reconnect, finish a move | Moves folders, renames agent history folders, rewrites the folder path in agent logs (keeping each log's time) |
 | Free space | Deletes `node_modules`, `.next` and similar folders for good; an install or build brings them back |
-| Back up logs | Copies agent logs to `~/.local/share/laci/history` |
+| Back up logs, `laci backup` | Packs new and changed agent logs with zstd into the backup folder (`~/.local/share/laci/history`, or the one you chose); packs plain copies from before 3.1 after checking them; removes temporary files a stopped run left in it. Never removes a chat |
+| Backup folder › Change… | Moves the whole backup into the folder you chose, also across drives, in one change; Undo moves it back. The folder it leaves stays |
 | Reports folder | Read-only: lists, reads and searches the reports, never writes there |
 | New project | Makes the folder; creates a remote repo only if you pick one. A template's own Git repository stays behind |
 | First commit, new remote, push | Looks for files that look like secrets first, by name only, and offers to keep them out |
@@ -625,7 +626,7 @@ One line per thing still to do, most important first, or `Nothing open.`
 
 - **Undo.** Every move and rewrite is written to `~/.local/share/laci/journal/` *before* it happens. Rewritten files are kept in `~/.local/share/laci/backup/`. Undo restores them byte for byte. If a step fails midway, laci rolls back what it already did.
 - **Archive and trash recovery.** Undoing an archive restores the saved `.laci.md` in full and can replace edits made while archived. Recover trashed orphan history from system Trash; journal Undo does not restore it. Deleted dependencies and build output come back with the next install or build. Pure Trash actions have no Laci Undo. Mixed actions explain which moves or edits Undo can restore.
-- **Log.** Every change is also listed in `~/.local/share/laci/activity.jsonl`, which the Log page reads. Undo from the Log goes through the same checks as the app, and stays inside home or explicitly selected workspace folders.
+- **Log.** Every change is also listed in `~/.local/share/laci/activity.jsonl`, which the Log page reads. Undo from the Log goes through the same checks as the app, and stays inside home, explicitly selected workspace folders and the backup folder you chose.
 - **Busy folders are refused.** If a running process (a `claude` session, a dev server) has its working directory inside a folder, laci won't move it. If Laci can't tell, for example because `/proc` can't be read, it refuses too.
 - **Names are names.** Names Laci reads from a project, such as Git tags, remotes and branches, are passed to the programs it runs as names, never as options, and so are the ones in the prompts it gives your AI.
 - **One change at a time.** A lock file keeps the app and agents from changing files at once.

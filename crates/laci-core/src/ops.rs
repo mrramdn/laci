@@ -887,7 +887,7 @@ fn undo_copy_move(env: &Env, id: &str, file: PathBuf, settled: &mut Option<Value
     }
     validate_entries(env, journal["entries"].as_array().ok_or("Invalid journal")?)?;
     let (from, to, roots) = copy_halves(env, &journal)?;
-    if !same_path(&configured_copy(env), &to) {
+    if !same_path(&configured_copy(env)?, &to) {
         return Err("The copy of AI chats moved again after this. Undo that move first.".into());
     }
     let going: Vec<PathBuf> = movable(&to).into_iter().map(|name| to.join(name)).collect();
@@ -1425,6 +1425,8 @@ pub fn backup_state(env: &Env) -> Option<Value> {
 /// before. A copy Laci can't reach now, as on a drive that isn't connected, isn't left behind unless `fresh` says to
 /// start a new copy in the new folder: the old one then stays where it is. `moved` says whether anything moved.
 pub fn move_backup(env: &Env, raw: &str, fresh: bool) -> Result<Value> {
+    // Where the copy is now, and so what moves, is the setting's to say, also for a new copy.
+    crate::backup::settings(env)?;
     let chosen = crate::config::validate_backup_dir(env, &json!(raw))?;
     let dest = match &chosen {
         Some(dir) => dir.clone(),
@@ -1529,9 +1531,10 @@ fn move_copy_into(env: &Env, from: &Path, to: &Path, shown: &str, own: bool) -> 
 fn copy_setting(env: &Env, dir: &Path) -> String {
     if same_path(dir, &env.data_dir.join("history")) { String::new() } else { paths::tilde(dir, &env.home) }
 }
-/// The folder the setting names for the copy, unchecked.
-fn configured_copy(env: &Env) -> PathBuf {
-    crate::backup::chosen(env, &crate::config::load(env)).unwrap_or_else(|| env.data_dir.join("history"))
+/// The folder the setting names for the copy, unchecked. Refused while the settings can't be read
+/// ([`crate::backup::settings`]): the copy moves only the way the user's setting points.
+fn configured_copy(env: &Env) -> Result<PathBuf> {
+    Ok(crate::backup::chosen(env, &crate::backup::settings(env)?).unwrap_or_else(|| env.data_dir.join("history")))
 }
 /// Points the setting in `cfg` to the copy folder `dest`, saved as `setting` (`""` for the default), with the identity
 /// it has now.
@@ -1615,7 +1618,7 @@ fn settle_copy_unlocked(env: &Env) -> Result<Option<Value>> {
         return Ok(None);
     }
     let (from, to, roots) = copy_halves(env, &journal)?;
-    let target = configured_copy(env);
+    let target = configured_copy(env)?;
     // A setting edited by hand meanwhile to name neither folder: the move goes on as it started.
     let forward = !same_path(&target, &from);
     if forward && !same_path(&target, &to) {
@@ -2101,6 +2104,44 @@ mod tests {
         service.request_as("log/undo", &json!({"id":first["id"]}), "test").unwrap();
         assert!(holds(&from, "claude") && holds(&from, "codex"));
         assert_eq!(crate::config::load(&env)["backupDir"], "");
+    }
+
+    /// While config.json is there but can't be read, as when the app that syncs it can't download it, nothing moves the
+    /// copy: the defaults would name the folder the move started from, and finishing it that way would hide the chats
+    /// from the setting once it is back. Once it is back, the move is finished the way it points.
+    #[test]
+    fn nothing_moves_the_copy_while_the_settings_cant_be_read() {
+        let (_temp, env, disk) = copy_home();
+        let (from, to) = copy_of(&env, &disk, &["claude", "codex"]);
+        crate::backup::mark(&to).unwrap();
+        let mut tx = Tx::new(&env, "Moved the copy of AI chats", Value::Null).unwrap();
+        let roots = json!([crate::backup::journal_root(&from).unwrap(), crate::backup::journal_root(&to).unwrap()]);
+        tx.journal["copyMove"] = json!({"from":from,"to":to,"roots":roots});
+        tx.save().unwrap();
+        let id = tx.journal["id"].as_str().unwrap().to_owned();
+        crate::backup::begin_moving(&env, &id, false).unwrap();
+        point_copy(&env, &to).unwrap();
+        tx.move_copy(&from.join("claude"), &to.join("claude"), &roots).unwrap();
+        drop(tx);
+        let file = env.config_dir.join("config.json");
+        let saved = fs::read(&file).unwrap();
+        fs::write(&file, b"\0\0\0\0").unwrap();
+
+        let unreadable = |error: String| {
+            assert!(error.starts_with("Laci couldn't read your settings in "), "{error}");
+            assert!(error.contains("doesn't know where the copy of AI chats is kept"), "{error}");
+        };
+        unreadable(settle_copy(&env).unwrap_err());
+        unreadable(backup_history(&env, &json!({"connectors":[]})).unwrap_err());
+        unreadable(move_backup(&env, "", true).unwrap_err());
+        unreadable(undo(&env, &id).unwrap_err());
+        assert!(holds(&to, "claude") && holds(&from, "codex"), "nothing moved");
+        assert!(crate::backup::moving(&env).is_some(), "the move is still to be finished");
+        assert_eq!(fs::read(&file).unwrap(), b"\0\0\0\0", "the settings are as they were");
+
+        fs::write(&file, saved).unwrap();
+        assert_eq!(settle_copy(&env).unwrap().expect("the move is finished")["state"], "applied");
+        assert!(holds(&to, "claude") && holds(&to, "codex"));
     }
 
     /// An Undo of a move of the copy that is refused changes nothing, so backups go on. Settings changed since, as the

@@ -42,10 +42,25 @@ pub fn chosen(env: &Env, cfg: &Value) -> Option<PathBuf> {
     cfg["backupDir"].as_str().map(str::trim).filter(|raw| !raw.is_empty()).map(|raw| paths::expand(raw, &env.home))
 }
 
+/// The settings, which say where the copy is. Refused while config.json is there but can't be read, as when the app
+/// that syncs it can't download it: the defaults would name another folder than the user's, and a backup, a move or
+/// one that stopped part-way and is finished would then put the chats where the setting, once it is back, doesn't look.
+pub(crate) fn settings(env: &Env) -> Result<Value> {
+    if let Some(file) = config::unreadable(env) {
+        return Err(format!(
+            "Laci couldn't read your settings in {}, so it doesn't know where the copy of AI chats is kept and leaves \
+             it as it is. Make sure the app that syncs that folder is running, or fix the file, then try again.",
+            paths::tilde(&file, &env.home)
+        ));
+    }
+    Ok(config::load(env))
+}
+
 /// Where the copy is, checked: `<data dir>/history`, or the chosen folder, which must still be there as the folder
-/// that was chosen, reached without a link, and hold the marker of a copy Laci made.
+/// that was chosen, reached without a link, and hold the marker of a copy Laci made. Refused while the settings can't
+/// be read ([`settings`]).
 pub fn dir(env: &Env) -> Result<PathBuf> {
-    let cfg = config::load(env);
+    let cfg = settings(env)?;
     match chosen(env, &cfg) {
         None => ops::data(env, "history"),
         Some(dir) => check(env, &dir, &cfg).map(|()| dir),
@@ -77,7 +92,7 @@ pub(crate) fn dirs(env: &Env) -> Vec<PathBuf> {
 /// marker is written.
 pub(crate) fn ready(env: &Env) -> Result<PathBuf> {
     let dir = dir(env)?;
-    if chosen(env, &config::load(env)).is_none() {
+    if chosen(env, &settings(env)?).is_none() {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
     mark(&dir)?;

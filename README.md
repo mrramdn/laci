@@ -325,7 +325,7 @@ Claude Code, Codex and Antigravity are built in. Any other tool can be added wit
 
 Claude Code deletes session logs after a retention period. **Back up logs now** copies agent logs, each compressed with zstd (chat logs get about five times smaller), to `~/.local/share/laci/history` or to the folder you choose in Settings; Today then shows when the backup last ran and how many sessions it keeps, with **Open backup folder**. Automatic backup is optional and runs at most once an hour, only when a session changed. Nothing is ever removed from the backup. Sessions a tool has deleted stay listed from the backup, marked "In backup only", and can be restored. A backup from before 3.1 is compressed on the next run, each file checked byte for byte first, and temporary files a stopped copy left behind are removed.
 
-The backup can live in any empty folder, also on another drive: **Settings › Backup folder › Change…** in Detailed, *Where Laci keeps the copy* under **AI helpers** in Simple. Laci moves what the backup holds there in one change, which Undo in the Log moves back, and **Use the default** brings it back to Laci's data folder. Laci never makes a chosen folder: when its drive isn't connected, the backup stops with a message and copies nothing, and the folder's drive is recognised as Laci recognises scan locations. The folder can't be your home folder or one above it, one of Laci's own folders, or one that holds an agent's history or lies inside it. A folder that holds a backup Laci made before (it has a `.laci-copy` file) can be chosen while the current backup is empty. Each file is a plain zstd file: `zstd -d` unpacks it without Laci.
+The backup can live in any empty folder, also on another drive: **Settings › Backup folder › Change…** in Detailed, *Where Laci keeps the copy* under **AI helpers** in Simple. Laci moves what the backup holds there in one change, which Undo in the Log moves back, and **Use the default** brings it back to Laci's data folder. Laci never makes a chosen folder: when its drive isn't connected, the backup stops with a message and copies nothing, and the folder's drive is recognised as Laci recognises scan locations. While it can't reach the backup, Laci doesn't move it; you can start a new backup in another folder instead, and the old one stays on its drive. A move that stops part-way, as when Laci is closed, is finished by the next backup. The folder can't be your home folder or one above it, one of Laci's own folders, or one that holds an agent's history or lies inside it. A folder that holds a backup Laci made before (it has a `.laci-copy` file) can be chosen while the current backup is empty. Each file is a plain zstd file: `zstd -d` unpacks it without Laci.
 
 ![Agents: each tool with its MCP setup, and sessions grouped by project with short chats folded away](docs/screenshots/agents.png)
 
@@ -410,7 +410,42 @@ The window can be as small as 720 × 560. The interface runs inside Tauri’s na
 laci ls        # every project, newest activity first
 laci doctor    # work at risk, open checkboxes and tidy-up suggestions
 laci json      # the complete scan as JSON
+laci backup    # copy new and changed AI chats into the backup, as "Back up logs now" does
 ```
+
+#### Back up AI chats while Laci is closed
+
+The window copies AI chats only while it is open, but a tool that deletes old chats (Claude Code, after 30 days by default) deletes them whether or not Laci was open. `laci backup` makes the same backup as **Back up logs now** without the window and without scanning your projects, whether or not automatic backup is on in Settings. It prints one line, such as `Copied 3 files · 912 sessions kept · 1.0 GB in /mnt/archive/ai-chats`, adds it to the Log when it copied something, and exits with 1 and the reason when the backup folder can't be used, as when its drive isn't connected. It waits for nothing: while the window is changing files, it says so and stops.
+
+To run it every hour with systemd, save these two files in `~/.config/systemd/user/`. Use the path of your Laci in `ExecStart`: `/usr/bin/laci` for the .deb and .rpm packages, or the full path of the AppImage (for example `%h/Applications/laci_amd64.AppImage`).
+
+```ini
+# laci-backup.service
+[Unit]
+Description=Copy new AI chats into Laci's backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/laci backup
+Nice=10
+IOSchedulingClass=idle
+```
+
+```ini
+# laci-backup.timer
+[Unit]
+Description=Copy new AI chats into Laci's backup every hour
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
+```
+
+Then turn it on with `systemctl --user daemon-reload && systemctl --user enable --now laci-backup.timer`. `journalctl --user -u laci-backup` shows what each run said.
 
 ### Agents (MCP)
 

@@ -8,7 +8,8 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ### Added
 
-- **Choose where the copy of AI chats is kept.** Settings › Backup folder in Detailed, *Where Laci keeps the copy* in Simple's AI helpers: any empty folder, also on another drive. Laci moves the copy there in one change, and Undo in the Log moves it back. *Use the default* brings it back to Laci's data folder. Laci never makes a chosen folder: when its drive isn't connected, nothing is copied and Laci says why.
+- **Choose where the copy of AI chats is kept.** Settings › Backup folder in Detailed, *Where Laci keeps the copy* in Simple's AI helpers: any empty folder, also on another drive. Laci moves the copy there in one change, and Undo in the Log moves it back. *Use the default* brings it back to Laci's data folder. Laci never makes a chosen folder: when its drive isn't connected, nothing is copied and Laci says why, and the copy isn't moved; a new copy can start elsewhere instead, leaving the old one on its drive. A move that stops part-way, as when Laci is closed, is finished by the next backup.
+- **`laci backup`** makes the same backup without the window and without a scan, so a systemd timer can run it every hour (see the README). It adds to the Log only when it copied something.
 
 ### Changed
 
@@ -17,7 +18,7 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 ### Fixed
 
 - **Temporary files of an interrupted copy are removed** by the next backup, inside the copy only.
-- **Backing up no longer freezes the window**: a backup and a move of the copy run while the window stays usable.
+- **Backing up no longer freezes the window**: while a backup or a move of the copy runs, the window keeps drawing and stays up to date. A backup or move you start shows that it is working until it is done, and other changes wait until then; the automatic backup runs in the background.
 
 ## [3.0.0] - 2026-10-22
 

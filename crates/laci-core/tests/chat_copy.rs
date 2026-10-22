@@ -192,12 +192,19 @@ fn the_copy_moves_to_a_folder_outside_home_and_undo_moves_it_back() {
     let (_temp, env, disk) = home();
     let project = claude(&env);
     let file = session(&env, &project, ID, "Fix the login page");
+    // Claude Code keeps the session's subagent logs in a folder named after it, and the project's memory beside it.
+    let subagent = file.with_extension("").join("subagents/agent-a1b2c3.jsonl");
+    write(&subagent, &format!("{}\n", json!({"type":"user","isSidechain":true,"cwd":project,"sessionId":ID})));
+    write(&file.with_file_name("memory/MEMORY.md"), "- a note\n");
     let mut service = Service::new(env.clone());
     service.request("backup", &json!({})).unwrap();
     let default = env.data_dir.join("history");
     let relative = file.strip_prefix(env.home.join(".claude/projects")).unwrap();
     let before = backup::packed(&default.join("claude").join(relative));
     assert!(before.is_file());
+    let subagents = relative.with_extension("");
+    let packed_subagent = |copy: PathBuf| backup::packed(&copy.join(&subagents).join("subagents/agent-a1b2c3.jsonl"));
+    assert!(packed_subagent(default.join("claude")).is_file());
 
     let chosen = disk.join("ai-chats");
     fs::create_dir(&chosen).unwrap();
@@ -236,13 +243,21 @@ fn the_copy_moves_to_a_folder_outside_home_and_undo_moves_it_back() {
     let hour_ago = SystemTime::now() - Duration::from_secs(3600);
     fs::File::options().write(true).open(&file).unwrap().set_modified(hour_ago).unwrap();
     service.rescan().unwrap();
+    assert!(packed_subagent(chosen.join("claude")).is_file());
     let deleted = service.request("session/delete", &json!({"files":[file]})).unwrap();
-    assert!(!after.exists() && !file.exists());
+    assert!(!after.exists() && !file.exists() && !subagent.exists());
     let quarantine = env.data_dir.join("orphans/sessions").join(deleted["journal"]["id"].as_str().unwrap());
     assert!(backup::packed(&quarantine.join("backup/claude").join(relative)).is_file());
+    // The copy of its subagent logs goes with it, beside the copy of the log, and nothing else of the copy does.
+    assert!(!chosen.join("claude").join(&subagents).exists());
+    assert!(packed_subagent(quarantine.join("backup/claude")).is_file());
+    let memory = backup::packed(&chosen.join("claude").join(relative.with_file_name("memory/MEMORY.md")));
+    assert!(memory.is_file() && backup::marked(&chosen));
     let entry = journal_entry(&env, &deleted["journal"]);
     service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
-    assert!(after.is_file() && file.is_file());
+    assert!(after.is_file() && file.is_file() && subagent.is_file());
+    assert!(packed_subagent(chosen.join("claude")).is_file());
+    assert!(!quarantine.join("backup/claude").join(&subagents).exists());
 
     // Undo of the move refuses while the folder's drive is gone, and makes nothing in its place.
     let entry = journal_entry(&env, &moved["journal"]);
@@ -254,6 +269,7 @@ fn the_copy_moves_to_a_folder_outside_home_and_undo_moves_it_back() {
     fs::rename(&away, &chosen).unwrap();
     service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
     assert!(before.is_file() && !after.exists());
+    assert!(packed_subagent(default.join("claude")).is_file());
     assert_eq!(config::load(&env)["backupDir"], "", "the copy is in the default folder again");
     assert!(chosen.is_dir(), "the folder the copy left stays");
 }

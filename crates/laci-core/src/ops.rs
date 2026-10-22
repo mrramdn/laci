@@ -1326,7 +1326,8 @@ pub fn restore_backup(env: &Env, snap: &Value, id: &str) -> Result<Value> {
     })
 }
 /// Moves the sessions the user chose out of their tool's history and into Laci's quarantine, in one
-/// journal, so Undo in the Log puts them back. `files` name sessions of the current scan; the rest is
+/// journal, so Undo in the Log puts them back: each log, Claude Code's folder of its subagent logs, and
+/// the copies of both in the copy of AI chats. `files` name sessions of the current scan; the rest is
 /// checked again here: only whole Claude Code and Codex sessions, never one that is kept, still being
 /// written, or only a copy in the backup.
 pub fn delete_sessions(env: &Env, snap: &Value, files: &[String]) -> Result<Value> {
@@ -1404,11 +1405,22 @@ pub fn delete_sessions(env: &Env, snap: &Value, files: &[String]) -> Result<Valu
             // Otherwise the backup's copy would bring it straight back as "In backup only": packed, or still plain.
             for history in &copies {
                 let kept = history.join(connector).join(relative);
+                let subagents = kept.with_extension("");
                 for file in [crate::backup::packed(&kept), kept] {
                     if fs::symlink_metadata(&file).is_ok_and(|m| m.is_file()) {
                         let name = file.strip_prefix(history).map_err(|e| e.to_string())?;
                         tx.move_copy(&file, &removed.join("backup").join(name), &roots)?;
                     }
+                }
+                // The copy of its folder of subagent logs goes with it: nothing lists that folder, so it would stay
+                // in the copy for good. Only that folder itself, never through a link.
+                if *claude
+                    && relative.extension().is_some_and(|ext| ext == "jsonl")
+                    && fs::symlink_metadata(&subagents).is_ok_and(|m| m.is_dir())
+                    && crate::backup::inside(history, &subagents)
+                {
+                    let name = subagents.strip_prefix(history).map_err(|e| e.to_string())?;
+                    tx.move_copy(&subagents, &removed.join("backup").join(name), &roots)?;
                 }
             }
         }

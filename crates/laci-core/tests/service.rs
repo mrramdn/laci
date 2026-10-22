@@ -1026,7 +1026,7 @@ fn a_backup_leaves_a_trace_and_clears_the_warning_until_a_session_changes() {
     let warned = |snap: &Value| snap["warnings"].as_array().unwrap().iter().any(|w| w["code"] == "claude-cleanup");
     let snap = service.snapshot().unwrap();
     assert!(warned(&snap));
-    assert_eq!(snap["backup"], json!({"auto":false}));
+    assert_eq!(snap["backup"], json!({"auto":false,"chosen":false,"dest":"~/.local/share/laci/history"}));
 
     assert_eq!(service.request("backup", &json!({"auto":true})).unwrap(), json!({"skipped":true}));
     let done = service.request("backup", &json!({})).unwrap();
@@ -1177,6 +1177,7 @@ fn sessions_only_the_backup_holds_are_listed_and_can_be_put_back() {
         (&json!("Fix the login page"), &json!("history-only"), &json!(project), &json!(session))
     );
     assert!(Path::new(lost["file"].as_str().unwrap()).starts_with(env.data_dir.join("history/claude")));
+    assert!(lost["file"].as_str().unwrap().ends_with(".jsonl.zst"), "the copy is packed");
     assert!(kept.iter().any(|s| s["provider"] == "codex" && s["sessionId"] == CODEX));
     let (request, found) =
         service.agent_context(&json!({"provider":"claude","sessionId":ID,"projectPath":project})).unwrap();
@@ -1226,8 +1227,9 @@ fn deleted_sessions_go_to_the_quarantine_with_their_backup_copy_and_undo_brings_
     let other = old_session(&env, &project, OTHER, "Write the docs");
     let mut service = loaded(&env, &project);
     service.request("backup", &json!({})).unwrap();
-    let copy =
-        env.data_dir.join("history/claude").join(session.strip_prefix(env.home.join(".claude/projects")).unwrap());
+    let copy = laci_core::backup::packed(
+        &env.data_dir.join("history/claude").join(session.strip_prefix(env.home.join(".claude/projects")).unwrap()),
+    );
     assert!(copy.is_file());
 
     // Kept sessions, sessions still being written and unknown files are refused, and nothing moves.

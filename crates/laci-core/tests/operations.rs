@@ -323,12 +323,17 @@ fn history_backup_is_incremental_preserves_time_and_ignores_links() {
     let snap = json!({"connectors":[{"id":"codex","link":{"kind":"cwd","dir":store}}]});
     let first = ops::backup_history(&env, &snap).unwrap();
     assert_eq!(first["copied"], 1);
-    let dest = env.data_dir.join("history/codex/year/session.jsonl");
-    assert_eq!(fs::read_to_string(&dest).unwrap(), "original log\n");
+    let dest = env.data_dir.join("history/codex/year/session.jsonl.zst");
+    let unpacked = |path: &Path| {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut laci_core::backup::open(path).unwrap(), &mut text).unwrap();
+        text
+    };
+    assert_eq!(unpacked(&dest), "original log\n");
     assert_eq!(fs::metadata(&dest).unwrap().modified().unwrap(), fs::metadata(&source).unwrap().modified().unwrap());
-    assert!(!env.data_dir.join("history/codex/linked.jsonl").exists());
+    assert!(!env.data_dir.join("history/codex/linked.jsonl.zst").exists());
     assert_eq!(ops::backup_history(&env, &snap).unwrap()["copied"], 0);
     write(&source, "a longer changed log\n");
     assert_eq!(ops::backup_history(&env, &snap).unwrap()["copied"], 1);
-    assert_eq!(fs::read_to_string(dest).unwrap(), "a longer changed log\n");
+    assert_eq!(unpacked(&dest), "a longer changed log\n");
 }

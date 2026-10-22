@@ -26,6 +26,26 @@ use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, ipc::Chan
 use terminal::{Info, Output, Terminals};
 use watch::{Changes, Watches};
 
+/// Counts one backup or move of the copy of AI chats as running until it [ends](Running::end), or is dropped, even by a
+/// panic.
+struct Running<'a>(Option<&'a Mutex<Engine>>);
+impl Running<'_> {
+    /// Stops counting it in `engine`, which the caller holds to take in the result: no change can come in between and
+    /// be let in on the snapshot from before it.
+    fn end(mut self, engine: &mut Engine) {
+        self.0 = None;
+        engine.long_running = engine.long_running.saturating_sub(1);
+    }
+}
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        if let Some(lock) = self.0 {
+            let mut engine = lock.lock().unwrap_or_else(|e| e.into_inner());
+            engine.long_running = engine.long_running.saturating_sub(1);
+        }
+    }
+}
+
 struct AppState {
     engine: Mutex<Engine>,
     queue: Arc<RefreshQueue>,
@@ -290,6 +310,9 @@ impl AppState {
                 // Remote verification can take time; browsing and watcher updates stay responsive.
                 return laci_core::deletion::plan(&env, &node);
             }
+            // A backup's first run after 3.1 packs gigabytes, and a move of the copy can copy them to another
+            // drive: the window and the watchers stay live meanwhile. The change lock keeps other changes out.
+            name if laci_core::service::runs_long(name) => return self.long_action(name, body),
             "secrets/check" => {
                 let (env, node) = {
                     let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
@@ -332,6 +355,47 @@ impl AppState {
         if name == "updates" {
             update::consent_changed(self);
         }
+        Ok(outcome.value)
+    }
+    /// Runs one of the actions `service::runs_long` names outside the engine lock, as `delete/plan` runs, then
+    /// tells the window and queues the refresh as a change under the lock does.
+    /// While it runs, other changes and an update's restart are refused at once (`Engine::admit`, `update::quiet`)
+    /// rather than wait for the change lock with the engine held.
+    fn long_action(&self, name: &str, body: &Value) -> Result<Value> {
+        let started = Instant::now();
+        let (env, snapshot) = {
+            let mut engine = self.engine.lock().map_err(|e| e.to_string())?;
+            self.updates.admit(name)?;
+            // The hourly automatic backup just waits for the next hour.
+            if engine.long_running > 0 && body["auto"] == true {
+                return Ok(json!({"skipped":true}));
+            }
+            engine.admit(name)?;
+            let snapshot = engine.service.snapshot()?;
+            engine.long_running += 1;
+            (engine.service.env.clone(), snapshot)
+        };
+        let running = Running(Some(&self.engine));
+        let result = laci_core::service::long_action(&env, &snapshot, name, body, "app");
+        let mut engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
+        running.end(&mut engine);
+        let mut outcome = match result {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                engine.service.debug(&format!("{name}: {error}"));
+                return Err(error);
+            }
+        };
+        if outcome.value["skipped"] == true {
+            return Ok(outcome.value);
+        }
+        engine.committed(name, &mut outcome);
+        engine.service.debug(&format!("{name} committed outside the lock in {}ms", started.elapsed().as_millis()));
+        drop(engine);
+        self.queue.request(outcome.refresh);
+        self.notice(json!({"type":"snapshot"}));
+        self.notice(json!({"type":"log"}));
+        self.notice(self.status());
         Ok(outcome.value)
     }
     fn read_agents_soon(self: &Arc<Self>) {

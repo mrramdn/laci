@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorText } from "./api";
 import { Group } from "./common";
 import { bytes } from "./helpers";
-import { run, toast } from "./store";
+import { openCopy, run, toast } from "./store";
 import type { Storage, StoragePart } from "./types";
 export function LaciStorage() {
   const [storage, setStorage] = useState<Storage | null>(null);
@@ -51,9 +51,24 @@ export function LaciStorage() {
               style={{ display: "block", fontWeight: 400 }}
             >
               {part.about}
+              {part.dir ? (
+                <span className="mono" style={{ display: "block" }}>
+                  In {part.dir}
+                </span>
+              ) : null}
+              {part.error ? (
+                <span className="err" role="alert" style={{ display: "block" }}>
+                  {part.error}
+                </span>
+              ) : null}
             </span>
           </span>
           <span className="meta">{bytes(part.bytes)}</span>
+          {part.id === "history" && part.dir && !part.error && part.bytes > 0 ? (
+            <button className="btn sm" onClick={() => part.dir && openCopy(part.dir)}>
+              Open backup folder
+            </button>
+          ) : null}
           {part.free > 0 && asking !== part.id ? (
             <button className="btn sm" onClick={() => setAsking(part.id)}>
               Free {bytes(part.free)}…
@@ -81,7 +96,10 @@ export function LaciStorage() {
       {storage ? (
         <div className="item">
           <span className="name" style={{ maxWidth: "none", flex: 1 }}>
-            Total
+            {/* A backup kept in a folder of its own isn't in the total, which also counts the cache. */}
+            {storage.parts.some((part) => part.elsewhere)
+              ? "Total, without the backup"
+              : "Total"}
           </span>
           <span className="meta">{bytes(storage.total)}</span>
         </div>

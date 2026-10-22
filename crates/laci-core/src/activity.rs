@@ -210,6 +210,11 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
             out["refresh"] = json!("all");
         } else if kind == "config" || kind == "connector" {
             let mut c = config::load(env);
+            // The copy of AI chats moves on its own, with its own Undo, so it keeps the identity it has now.
+            let copy = crate::backup::chosen(env, &c).and_then(|dir| {
+                let key = dir.to_string_lossy().into_owned();
+                c["rootIdentities"].get(&key).cloned().map(|id| (key, id))
+            });
             if kind == "config" {
                 for field in ["roots", "presets"] {
                     if undo[field].is_null() {
@@ -227,6 +232,12 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
                     if let Some(value) = undo.get(key) {
                         c[key] = value.clone();
                     }
+                }
+                if let Some((key, id)) = copy {
+                    if !c["rootIdentities"].is_object() {
+                        c["rootIdentities"] = json!({});
+                    }
+                    c["rootIdentities"][key] = id;
                 }
                 // Entries from before a setting existed carry no key for it and leave it alone.
                 for key in ["archiveDir", "reportsDir"] {

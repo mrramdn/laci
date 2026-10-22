@@ -474,10 +474,12 @@ function closeItem(body: Body) {
   revision++;
   return { ok: true };
 }
+/** Where the engine keeps the copy of AI chats until a folder is chosen for it. */
+const OWN_COPY = "~/.local/share/laci/history";
 function backup(body: Body) {
   if (body.auto === true) return { skipped: true };
   const state = snapshot.backup ?? { auto: false };
-  const dest = "~/.local/share/laci/history";
+  const dest = state.dest ?? OWN_COPY;
   const copied = state.pending === 0 ? 0 : 3;
   snapshot.backup = {
     ...state,
@@ -486,6 +488,7 @@ function backup(body: Body) {
     sessions: 6,
     files: 9,
     bytes: 40960,
+    packed: true,
     dest,
   };
   record(
@@ -505,6 +508,38 @@ function backup(body: Body) {
     sessions: 6,
     total: 40960,
   };
+}
+/**
+ * Moves the copy of AI chats to the folder asked for, or back to Laci's own for "", as one change Undo takes
+ * back. The preview's folder picker always picks ~/project, which the engine would refuse because it holds
+ * files; here it just shows a chosen folder. A copy that holds nothing yet, or one Laci can't reach with `fresh`,
+ * moves nothing: the copy is kept in the new folder from then on, as the engine answers `moved`.
+ */
+function moveBackup(body: Body) {
+  const state = snapshot.backup ?? fail("Connect an AI tool first");
+  const dir = text(body, "dir");
+  const home = fixtures.meta.home;
+  const dest = !dir ? OWN_COPY : dir === home || dir.startsWith(`${home}/`) ? `~${dir.slice(home.length)}` : dir;
+  if (state.error && body.fresh !== true)
+    fail(`Connect the drive first, so Laci can move the copy. ${state.error}`);
+  if (!state.error && dest === (state.dest ?? OWN_COPY)) fail("The copy of AI chats is in that folder already");
+  const moved = !state.error && (state.bytes ?? 0) > 0;
+  const was = { dest: state.dest, chosen: state.chosen, error: state.error };
+  const part = storage.parts.find((p) => p.id === "history");
+  const place = (where: { dest?: string | null; chosen?: boolean; error?: string }) => {
+    if (snapshot.backup) snapshot.backup = { ...snapshot.backup, ...where };
+    if (part) {
+      part.dir = where.dest ?? OWN_COPY;
+      part.elsewhere = Boolean(where.chosen);
+    }
+  };
+  place({ dest, chosen: Boolean(dir), error: undefined });
+  const change = changed(
+    moved ? `Moved the copy of AI chats to ${dest}` : `The copy of AI chats is kept in ${dest} from now on`,
+    () => place(was),
+  );
+  log[0].say = { form: moved ? "movedCopy" : "keptCopyIn", dir: dest, own: !dir };
+  return { ...change, dest, moved, bytes: moved ? (state.bytes ?? 0) : 0 };
 }
 function backupAuto(body: Body) {
   const on = body.on === true;
@@ -839,6 +874,7 @@ const writes: Record<string, Handler> = {
   "secrets/keep-out": keepOut,
   "session/delete": deleteSessions,
   backup,
+  "backup/move": moveBackup,
   "backup/auto": backupAuto,
   "storage/free": free,
   "agent/mcp/apply": applyMcp,

@@ -46,7 +46,7 @@ const CODE: &[&str] = &[
     "artisan",
 ];
 
-fn check_root_identity(path: &Path, cfg: &Value) -> Result<()> {
+pub(crate) fn check_root_identity(path: &Path, cfg: &Value) -> Result<()> {
     crate::sidecar::plain_path(path)?;
     let meta = std::fs::metadata(path).map_err(|_| "Folder or drive is unavailable".to_owned())?;
     if !meta.is_dir() {
@@ -114,10 +114,20 @@ impl Found {
     }
 }
 
-fn detect(env: &Env, path: &Path, agent_paths: &BTreeSet<PathBuf>, depth: usize) -> Option<Found> {
-    if paths::workspace_path(&path.to_string_lossy(), env).is_err() || !path.is_dir() {
+/// What a scan goes by besides the folders: those agents worked in, which count as projects, and the folder chosen
+/// for the copy of AI chats, which can sit in a scan location and holds copies of agents' files, never projects.
+struct Skip<'a> {
+    agent_paths: &'a BTreeSet<PathBuf>,
+    copy: Option<PathBuf>,
+}
+fn detect(env: &Env, path: &Path, skip: &Skip<'_>, depth: usize) -> Option<Found> {
+    if skip.copy.as_deref().is_some_and(|copy| platform::path::same_path(copy, path))
+        || paths::workspace_path(&path.to_string_lossy(), env).is_err()
+        || !path.is_dir()
+    {
         return None;
     }
+    let agent_paths = skip.agent_paths;
     let entries = files::entries(path);
     let regular: Vec<_> = entries
         .iter()
@@ -147,7 +157,7 @@ fn detect(env: &Env, path: &Path, agent_paths: &BTreeSet<PathBuf>, depth: usize)
             {
                 continue;
             }
-            if let Some(child) = detect(env, &entry.path(), agent_paths, depth + 1) {
+            if let Some(child) = detect(env, &entry.path(), skip, depth + 1) {
                 children.push(child);
             }
         }
@@ -235,7 +245,8 @@ pub fn scan(env: &Env) -> Result<Value> {
 fn find(env: &Env, cfg: &Value, agent_paths: &BTreeSet<PathBuf>) -> Vec<Found> {
     env.progress.start(Step::Folders, 0, 0);
     let _done = env.progress.until_done();
-    available_roots(env, cfg).iter().filter_map(|r| detect(env, r, agent_paths, 0)).collect()
+    let skip = Skip { agent_paths, copy: crate::backup::chosen(env, cfg) };
+    available_roots(env, cfg).iter().filter_map(|r| detect(env, r, &skip, 0)).collect()
 }
 
 fn build(
@@ -590,9 +601,19 @@ fn link(
         if ran {
             let at = string(&backup, "at").to_owned();
             backup["pending"] = json!(live.iter().filter(|(_, t)| t.as_str() > at.as_str()).count());
-            backup["dest"] = json!(paths::tilde(Path::new(string(&backup, "dest")), &env.home));
         }
-        backup["auto"] = json!(crate::config::load(env)["autoBackup"] == true);
+        let cfg = crate::config::load(env);
+        backup["auto"] = json!(cfg["autoBackup"] == true);
+        // Where the copy is, and, when the folder chosen for it can't be used now, why: nothing is copied then.
+        let chosen = crate::backup::chosen(env, &cfg);
+        match crate::backup::dir(env) {
+            Ok(dir) => backup["dest"] = json!(paths::tilde(&dir, &env.home)),
+            Err(error) => {
+                backup["dest"] = json!(chosen.as_ref().map(|dir| paths::tilde(dir, &env.home)));
+                backup["error"] = json!(error);
+            }
+        }
+        backup["chosen"] = json!(chosen.is_some());
         let covered = ran && backup["pending"] == 0;
         // Each agent that deletes its own history says so in a setting of its own.
         for provider in crate::providers::all(env) {

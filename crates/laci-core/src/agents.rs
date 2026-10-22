@@ -26,6 +26,19 @@ fn legacy_catalog(env: &Env) -> Vec<Value> {
         json!({"id":"aider","name":"Aider","link":{"kind":"inside","path":".aider.chat.history.md"}}),
     ]
 }
+/// The ids of every connector Laci knows: built in, from before, and the user's own in `cfg`. The copy of AI chats
+/// keeps each agent's files under its id.
+pub(crate) fn known_ids(env: &Env, cfg: &Value) -> Vec<String> {
+    let mut ids: Vec<String> = catalog(env)
+        .into_iter()
+        .chain(legacy_catalog(env))
+        .chain(connectors(env, cfg))
+        .filter_map(|c| c["id"].as_str().map(str::to_owned))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
 fn same_store(a: &Value, b: &Value) -> bool {
     match (a["link"]["dir"].as_str(), b["link"]["dir"].as_str()) {
         (Some(a), Some(b)) => {
@@ -314,6 +327,7 @@ enum Reader {
 impl Reader {
     fn read(&self, path: &Path, previous: Option<&Value>) -> Value {
         match self {
+            Self::Session(provider) if crate::backup::is_packed(path) => packed_session_facts(path, provider),
             Self::Session(provider) => session_facts_from(path, provider, previous),
             Self::Log(field) => log_facts(path, field, false),
         }
@@ -495,19 +509,118 @@ fn probe(file: &mut fs::File, offset: u64) -> Option<String> {
 fn session_facts(path: &Path, provider: &str) -> Value {
     session_facts_from(path, provider, None)
 }
+/// Where a pass over a session log's lines is, and what its records so far prove. Kept in `_read`, so the next pass
+/// over a log that only grew carries on from here.
+struct Pass {
+    offset: u64,
+    head: bool,
+    head_bytes: u64,
+    head_records: usize,
+    parsed: bool,
+    valid: bool,
+    pending: bool,
+    changed: BTreeSet<String>,
+}
+impl Pass {
+    /// A pass from the start of a log.
+    fn fresh() -> Self {
+        Self {
+            offset: 0,
+            head: true,
+            head_bytes: 0,
+            head_records: 0,
+            parsed: true,
+            valid: true,
+            pending: false,
+            changed: BTreeSet::new(),
+        }
+    }
+    /// The pass that `state`, a `_read` of an earlier pass, stopped at.
+    fn resumed(state: &Value) -> Self {
+        Self {
+            offset: state["offset"].as_u64().unwrap_or(0),
+            head: state["head"] == true,
+            head_bytes: state["headBytes"].as_u64().unwrap_or(0),
+            head_records: state["headRecords"].as_u64().unwrap_or(0) as usize,
+            parsed: state["parsed"] == true,
+            valid: state["valid"] == true,
+            pending: false,
+            changed: state["files"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|f| f.as_str().map(str::to_owned))
+                .collect(),
+        }
+    }
+    /// Reads the records `reader` gives, which start at `offset` in the log, until the log ends, its last line is
+    /// still being written, or this pass has read [`PASS_BYTES`]. True when the log ended.
+    fn lines(&mut self, mut reader: impl std::io::BufRead, provider: &str, facts: &mut Value) -> bool {
+        let start = self.offset;
+        let mut line = Vec::new();
+        while self.offset - start < PASS_BYTES {
+            line.clear();
+            match reader.read_until(b'\n', &mut line) {
+                Ok(0) => return true,
+                Err(_) => return false,
+                Ok(_) => {}
+            }
+            let finished = line.last() == Some(&b'\n');
+            let value = serde_json::from_slice::<Value>(&line).ok().filter(Value::is_object);
+            // A half-written last line is read again once its writer finishes it.
+            if !finished && value.is_none() {
+                self.pending = true;
+                return false;
+            }
+            let size = line.len() as u64;
+            self.offset += size;
+            let in_head = self.head && self.head_bytes + size <= METADATA_BYTES && self.head_records < METADATA_RECORDS;
+            if in_head {
+                self.head_bytes += size;
+                self.head_records += 1;
+            } else {
+                self.head = false;
+            }
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            let Some(v) = value else {
+                self.parsed = false;
+                continue;
+            };
+            read_record(&v, provider, in_head, facts, &mut self.valid, &mut self.changed);
+        }
+        false
+    }
+    /// Puts what the pass found into `facts`. `replaced`: the log shrank or was replaced while it was read.
+    fn finish(&self, facts: &mut Value, replaced: bool) {
+        facts["filesChanged"] = json!(self.changed.len());
+        if facts["title"].is_null()
+            && let Some(prompt) = facts["firstPrompt"].as_str()
+        {
+            facts["title"] = json!(prompt.chars().take(120).collect::<String>().trim_end_matches('…'));
+            facts["titleSource"] = json!("first-message");
+        }
+        facts["ownershipComplete"] = json!(self.head && self.parsed && self.valid && !self.pending && !replaced);
+    }
+}
+fn fresh_facts() -> Value {
+    json!({"cwds":{},"lines":0,"prompts":0,"filesChanged":0})
+}
+fn unread_facts() -> Value {
+    json!({"cwds":{},"lines":0,"ownershipComplete":false})
+}
 /// Reads one session log. When `previous` is the last pass over the same file and the file only grew,
 /// only the new lines are read: an agent that is working costs a few kilobytes per refresh.
 ///
 /// Ownership (which folders a log belongs to) is still decided by the head window alone, as before: a
 /// log longer than it is never complete enough to clean up.
 fn session_facts_from(path: &Path, provider: &str, previous: Option<&Value>) -> Value {
-    use std::io::BufRead;
-    let fresh = || json!({"cwds":{},"lines":0,"prompts":0,"filesChanged":0});
     let Ok(mut file) = fs::File::open(path) else {
-        return json!({"cwds":{},"lines":0,"ownershipComplete":false});
+        return unread_facts();
     };
     let Ok(before) = file.metadata() else {
-        return json!({"cwds":{},"lines":0,"ownershipComplete":false});
+        return unread_facts();
     };
     let len = before.len();
     // The file this read began with. Without it, nothing is resumed and the read proves nothing.
@@ -521,75 +634,52 @@ fn session_facts_from(path: &Path, provider: &str, previous: Option<&Value>) -> 
                 .as_str()
                 .is_some_and(|hash| Some(hash.to_owned()) == probe(&mut file, read["offset"].as_u64().unwrap_or(0)))
     });
-    let mut facts = resumed.cloned().unwrap_or_else(fresh);
-    let mut state = facts["_read"].take();
-    if resumed.is_none() {
-        state = json!({"reader":READER,"offset":0,"headBytes":0,"headRecords":0,"head":true,"parsed":true,"valid":true,"files":[]});
-    }
-    let start = state["offset"].as_u64().unwrap_or(0);
-    let mut changed: BTreeSet<String> =
-        state["files"].as_array().into_iter().flatten().filter_map(|f| f.as_str().map(str::to_owned)).collect();
-    let mut head = state["head"] == true;
-    let mut head_bytes = state["headBytes"].as_u64().unwrap_or(0);
-    let mut head_records = state["headRecords"].as_u64().unwrap_or(0) as usize;
-    let mut parsed = state["parsed"] == true;
-    let mut valid = state["valid"] == true;
-    let mut offset = start;
-    let mut pending = false;
+    let mut facts = resumed.cloned().unwrap_or_else(fresh_facts);
+    let state = facts["_read"].take();
+    let mut pass = if resumed.is_some() { Pass::resumed(&state) } else { Pass::fresh() };
+    let start = pass.offset;
     if file.seek(SeekFrom::Start(start)).is_ok() {
-        let mut reader = std::io::BufReader::new((&mut file).take(len - start));
-        let mut line = Vec::new();
-        while offset - start < PASS_BYTES {
-            line.clear();
-            match reader.read_until(b'\n', &mut line) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {}
-            }
-            let finished = line.last() == Some(&b'\n');
-            let value = serde_json::from_slice::<Value>(&line).ok().filter(Value::is_object);
-            // A half-written last line is read again once its writer finishes it.
-            if !finished && value.is_none() {
-                pending = true;
-                break;
-            }
-            let size = line.len() as u64;
-            offset += size;
-            let in_head = head && head_bytes + size <= METADATA_BYTES && head_records < METADATA_RECORDS;
-            if in_head {
-                head_bytes += size;
-                head_records += 1;
-            } else {
-                head = false;
-            }
-            if line.iter().all(u8::is_ascii_whitespace) {
-                continue;
-            }
-            let Some(v) = value else {
-                parsed = false;
-                continue;
-            };
-            read_record(&v, provider, in_head, &mut facts, &mut valid, &mut changed);
-        }
-        if offset < len && !pending {
+        pass.lines(std::io::BufReader::new((&mut file).take(len - start)), provider, &mut facts);
+        if pass.offset < len && !pass.pending {
             // The pass stopped at its size limit; the rest is read at the next refresh.
-            pending = true;
+            pass.pending = true;
         }
     }
     // A log that shrank or was replaced while it was read proves nothing; read it again next time.
     let replaced = fs::metadata(path).map_or(true, |after| {
-        platform::identity(path, &after).map_or(true, |id| Some(id.file_json()) != inode) || after.len() < offset
+        platform::identity(path, &after).map_or(true, |id| Some(id.file_json()) != inode) || after.len() < pass.offset
     });
-    facts["filesChanged"] = json!(changed.len());
-    if facts["title"].is_null()
-        && let Some(prompt) = facts["firstPrompt"].as_str()
-    {
-        facts["title"] = json!(prompt.chars().take(120).collect::<String>().trim_end_matches('…'));
-        facts["titleSource"] = json!("first-message");
-    }
-    facts["ownershipComplete"] = json!(head && parsed && valid && !pending && !replaced);
+    pass.finish(&mut facts, replaced);
     if !replaced {
+        let Pass { offset, head, head_bytes, head_records, parsed, valid, changed, .. } = pass;
         facts["_read"] = json!({"reader":READER,"inode":inode,"offset":offset,"probe":probe(&mut file, offset),"headBytes":head_bytes,"headRecords":head_records,"head":head,"parsed":parsed,"valid":valid,"files":changed.into_iter().take(CHANGED_FILES).collect::<Vec<_>>()});
     }
+    facts
+}
+/// Reads a session log that Laci's copy of AI chats keeps packed, unpacking it as it goes. Such a log is read from
+/// its start each time, with the limits a first read of a log has; its facts are kept until the packed file changes.
+fn packed_session_facts(path: &Path, provider: &str) -> Value {
+    let Ok(file) = fs::File::open(path) else {
+        return unread_facts();
+    };
+    let Ok(before) =
+        file.metadata().map_err(|e| e.to_string()).and_then(|meta| platform::file_change_stamp(&file, &meta))
+    else {
+        return unread_facts();
+    };
+    let mut facts = fresh_facts();
+    let mut pass = Pass::fresh();
+    let ended = match zstd::stream::read::Decoder::new(&file) {
+        Ok(decoder) => pass.lines(std::io::BufReader::new(decoder), provider, &mut facts),
+        Err(_) => false,
+    };
+    // Stopped at the size limit, or the file doesn't unpack: what was read proves nothing about the rest.
+    if !ended {
+        pass.pending = true;
+    }
+    let replaced = fs::metadata(path).map_err(|e| e.to_string()).and_then(|after| platform::change_stamp(path, &after))
+        != Ok(before);
+    pass.finish(&mut facts, replaced);
     facts
 }
 /// One record of a Claude Code or Codex log: where it ran, what it is called, and what happened in it.
@@ -890,7 +980,7 @@ fn jobs(env: &Env, on: &[Value]) -> Vec<Job> {
             jobs.push(Job { kind: format!("cwd:{id}:{field}"), path, reader });
         }
     }
-    for (_, provider, file, _) in backup_files(env, on) {
+    for (_, provider, file, ..) in backup_files(env, on) {
         jobs.push(Job { kind: format!("backup:{provider}"), path: file, reader: Reader::Session(provider) });
     }
     jobs
@@ -1041,13 +1131,15 @@ fn read_antigravity(env: &Env, dir: &Path, connector: &str, cache: &mut Cache, o
 /// Sessions Laci's backup still holds although their tool has deleted them. They cannot be resumed
 /// from there, only read and put back.
 fn read_backup(env: &Env, on: &[Value], cache: &mut Cache, out: &mut AgentData) {
-    for (id, provider, file, original) in backup_files(env, on) {
-        let kept = env.data_dir.join("history").join(&id);
-        let Ok(relative) = file.strip_prefix(&kept) else { continue };
+    for (id, provider, file, original, copy) in backup_files(env, on) {
+        let kept = copy.join(&id);
+        // The session is named by the log it holds, whether that is packed yet or not.
+        let log = crate::backup::original(&file);
+        let Ok(relative) = log.strip_prefix(&kept) else { continue };
+        let reader = Reader::Session(provider.clone());
+        let facts = cache.grown(&format!("backup:{provider}"), &file, |previous| reader.read(&file, previous));
         let provider = provider.as_str();
-        let facts =
-            cache.grown(&format!("backup:{provider}"), &file, |previous| session_facts_from(&file, provider, previous));
-        let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+        let stem = log.file_stem().unwrap_or_default().to_string_lossy();
         let mut session = normalized_session(provider, &file, &facts, (provider == "claude").then_some(&*stem));
         session["id"] = json!(format!("backup:{id}:{}", relative.display()));
         session["connector"] = json!(id);
@@ -1059,20 +1151,39 @@ fn read_backup(env: &Env, on: &[Value], cache: &mut Cache, out: &mut AgentData) 
         out.sessions.push(session);
     }
 }
-/// The backed-up logs whose session is gone from its tool: `(connector, provider, file, where it was)`.
-fn backup_files(env: &Env, on: &[Value]) -> Vec<(String, String, PathBuf, PathBuf)> {
-    let mut out = Vec::new();
+/// A backed-up log whose session is gone from its tool: `(connector, provider, file, where it was, copy folder)`.
+type BackupFile = (String, String, PathBuf, PathBuf, PathBuf);
+/// The backed-up logs whose session is gone from its tool. A log is `<relative>.jsonl.zst` in the copy, or
+/// `<relative>.jsonl` until a backup run packs it; where both are there, the packed one is the newer copy. Until a
+/// move of the copy that stopped part-way is finished, part of it is still in the folder it was moving from, and is
+/// listed from there.
+fn backup_files(env: &Env, on: &[Value]) -> Vec<BackupFile> {
+    let mut out: Vec<BackupFile> = Vec::new();
+    // A copy whose folder isn't there now, as on a drive that isn't connected, lists nothing.
+    for copy in crate::backup::dirs(env) {
+        backup_files_in(env, on, &copy, &mut out);
+    }
+    out
+}
+fn backup_files_in(env: &Env, on: &[Value], copy: &Path, out: &mut Vec<BackupFile>) {
     for c in on {
         let (Some(id), Some(store)) = (c["id"].as_str(), c["link"]["dir"].as_str()) else { continue };
         let provider = c["provider"].as_str().unwrap_or(id);
         // Only these two keep one log per session in a form Laci reads.
-        if !matches!(provider, "claude" | "codex") {
+        if !matches!(provider, "claude" | "codex") || id.is_empty() || id.contains(['/', '\\']) || id.starts_with('.') {
             continue;
         }
         let store = paths::expand(store, &env.home);
-        let kept = env.data_dir.join("history").join(id);
-        for file in regular_files(env, &kept, ".jsonl") {
-            let Ok(relative) = file.strip_prefix(&kept) else { continue };
+        let kept = copy.join(id);
+        let mut logs: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
+        for file in copied_logs(copy, &kept) {
+            let log = crate::backup::original(&file);
+            if crate::backup::is_packed(&file) || !logs.contains_key(&log) {
+                logs.insert(log, file);
+            }
+        }
+        for (log, file) in logs {
+            let Ok(relative) = log.strip_prefix(&kept) else { continue };
             // Claude Code keeps a session at <project>/<id>.jsonl; deeper logs belong to its subagents.
             if provider == "claude" && relative.components().count() != 2 {
                 continue;
@@ -1081,10 +1192,26 @@ fn backup_files(env: &Env, on: &[Value]) -> Vec<(String, String, PathBuf, PathBu
             if fs::symlink_metadata(&original).is_ok() {
                 continue;
             }
-            out.push((id.to_owned(), provider.to_owned(), file, original));
+            out.push((id.to_owned(), provider.to_owned(), file, original, copy.to_owned()));
         }
     }
-    out
+}
+/// The chat logs in `dir`, a folder of the copy of AI chats at `root`: packed or still plain. The copy may be
+/// outside home, so each must stay inside it, with no link on the way; what a run that stopped left is skipped.
+fn copied_logs(root: &Path, dir: &Path) -> Vec<PathBuf> {
+    if !crate::backup::inside(root, dir) || !dir.is_dir() {
+        return Vec::new();
+    }
+    files::walk(dir, true)
+        .filter(|entry| entry.file_type().is_file() && crate::backup::is_log(entry.path()))
+        .map(|entry| entry.into_path())
+        .filter(|path| {
+            path.strip_prefix(root)
+                .is_ok_and(|rest| !rest.components().any(|c| c.as_os_str().to_string_lossy().starts_with(".laci-")))
+                && crate::backup::inside(root, path)
+        })
+        .take(20_000)
+        .collect()
 }
 
 /// The sessions the user keeps: cleanup never offers or deletes them. Keyed by agent and session id, so

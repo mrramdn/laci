@@ -73,13 +73,33 @@ pub fn report(env: &Env) -> Result<Value> {
     let parts = [
         json!({"id":"removed","label":"Deleted sessions and quarantined history","about":"Kept so Undo in the Log can put them back. Freeing it makes those deletions final.","bytes":size("orphans"),"free":size("orphans")}),
         json!({"id":"undo","label":"Undo copies of moved projects","about":format!("Copies of agent logs and settings taken before a move rewrote them. Copies older than {UNDO_DAYS} days can go; those moves can then no longer be undone."),"bytes":size("backup"),"free":old}),
-        json!({"id":"history","label":"Agent history backup","about":"Copies of your agents' sessions, so a tool that deletes old logs cannot lose them. Nothing is removed from it.","bytes":size("history"),"free":0}),
+        copy_part(env),
         json!({"id":"legacy","label":"Files left by Laci 1","about":"Web data of the old Electron app in ~/.config/laci. Laci 2 does not read it.","bytes":legacy,"free":legacy}),
         json!({"id":"journal","label":"Change journal and Log","about":"What Undo needs to know about each change.","bytes":size("journal") + fs::metadata(env.data_dir.join("activity.jsonl")).map_or(0, |m| m.len()),"free":0}),
         json!({"id":"cache","label":"Scan cache","about":"Rebuilt by the next scan.","bytes":files::size(&env.cache_dir),"free":0}),
     ];
-    let total: u64 = parts.iter().map(|p| p["bytes"].as_u64().unwrap_or(0)).sum();
+    // A copy of AI chats kept in a folder of the user's choice, often on another drive, isn't in the data folder.
+    let total: u64 = parts.iter().filter(|p| p["elsewhere"] != true).map(|p| p["bytes"].as_u64().unwrap_or(0)).sum();
     Ok(json!({"parts":parts,"total":total,"dir":paths::tilde(&env.data_dir,&env.home)}))
+}
+
+/// The copy of AI chats, wherever it is kept: `dir` says where, `error` why it can't be reached now, and `elsewhere`
+/// that it is in a folder the user chose, outside the data folder, so it isn't part of the data folder's total.
+fn copy_part(env: &Env) -> Value {
+    let mut part = json!({"id":"history","label":"Agent history backup","about":"Packed copies of your agents' sessions, so a tool that deletes old logs cannot lose them. It can be kept in any folder, also on another drive. Nothing is removed from it.","bytes":0,"free":0});
+    part["elsewhere"] = json!(crate::backup::chosen(env, &crate::config::load(env)).is_some());
+    match crate::backup::dir(env) {
+        Ok(dir) => {
+            part["bytes"] = json!(files::size(&dir));
+            part["dir"] = json!(paths::tilde(&dir, &env.home));
+        }
+        Err(error) => {
+            let chosen = crate::backup::chosen(env, &crate::config::load(env));
+            part["dir"] = json!(chosen.map(|dir| paths::tilde(&dir, &env.home)));
+            part["error"] = json!(error);
+        }
+    }
+    part
 }
 
 /// Frees one part of `report`. Returns how much was freed and what to tell the Log.

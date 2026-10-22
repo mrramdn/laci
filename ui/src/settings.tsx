@@ -20,6 +20,7 @@ import {
   trimSep,
 } from "./helpers";
 import { Select } from "./select";
+import { BackupFolder } from "./backup";
 import { LaciMark } from "./brand";
 import { Icon } from "./common";
 import { useMarkdown } from "./hooks";
@@ -548,10 +549,14 @@ export function Settings({ first = false }: { first?: boolean }) {
                 />
                 <span>Back up agent history automatically</span>
                 <span className="sub">
-                  Copies new and changed session logs to Laci's own folder at
-                  most once an hour. Nothing is ever removed from the backup.
+                  Copies new and changed session logs, compressed, to the backup
+                  folder at most once an hour. Nothing is ever removed from the
+                  backup.
                 </span>
               </label>
+            ) : null}
+            {!first && snapshot.backup ? (
+              <BackupFolder state={snapshot.backup} home={snapshot.home} />
             ) : null}
           </section>
           <section className="sset">

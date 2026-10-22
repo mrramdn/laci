@@ -418,13 +418,17 @@ fn quiet_engine(state: &AppState) -> Result<MutexGuard<'_, Engine>> {
     quiet(&state.engine, &state.creations, BUSY_WAIT)
 }
 
-/// The engine, once no change runs: refused while one holds the engine for longer than `wait`, while a project is
-/// being created or its agent started, and while history is read again after a change (a creation sets that too,
-/// before its job shows).
+/// The engine, once no change runs: refused while one holds the engine for longer than `wait`, while a backup or a
+/// move of the copy of AI chats runs outside it, while a project is being created or its agent started, and while
+/// history is read again after a change (a creation sets that too, before its job shows).
 fn quiet<'a>(engine: &'a Mutex<Engine>, creations: &Creations, wait: Duration) -> Result<MutexGuard<'a, Engine>> {
     let engine = lock_within(engine, wait).ok_or_else(|| BUSY.to_owned())?;
     let job = creations.current()?;
-    if engine.history_pending || job["status"] == "running" || job["continuation"]["status"] == "running" {
+    if engine.history_pending
+        || engine.long_running > 0
+        || job["status"] == "running"
+        || job["continuation"]["status"] == "running"
+    {
         return Err(BUSY.into());
     }
     Ok(engine)
@@ -1088,6 +1092,10 @@ mod tests {
         engine.lock().unwrap().history_pending = true;
         assert_eq!(update(wait), Err(BUSY.into()));
         engine.lock().unwrap().history_pending = false;
+        // A backup or a move of the copy of AI chats runs outside the engine: a restart would stop it part-way.
+        engine.lock().unwrap().long_running = 1;
+        assert_eq!(update(wait), Err(BUSY.into()));
+        engine.lock().unwrap().long_running = 0;
         // A project is being created: its name is refused, but the job runs until this test lets it end.
         let (entered, running) = mpsc::channel();
         let (release, held) = mpsc::channel::<()>();

@@ -55,10 +55,11 @@ const FOUND = {
 /** The system's folder picker as a button that says what it was asked for and hands over `box.picked`. */
 function chooser(box) {
   return {
-    ChooseFolder: ({ label, name, title, defaultPath, disabled, onPick }) =>
+    ChooseFolder: ({ ref, label, name, title, defaultPath, disabled, onPick }) =>
       createElement(
         "button",
         {
+          ref,
           type: "button",
           "aria-label": name,
           "data-picker": title,
@@ -119,6 +120,7 @@ async function settingsPage({
     "setup/info": () => structuredClone(info),
     prefs: () => ({ ...desk.prefs }),
     "setup/save": (body) => (saved.push(body), { revision: 2 }),
+    "backup/move": (body) => ({ revision: 3, dest: body.dir || "~/.local/share/laci/history", moved: !body.fresh }),
     "update/status": () => desk.status,
     "update/check": () => (desk.status = desk.found),
     "update/install": () => ({ started: true }),
@@ -194,6 +196,21 @@ async function settingsPage({
         changed: noop,
         chooseDesign: () => true,
         copyText: noop,
+        // As the store moves the copy: through `run`, which hands a failure to `onError`, and a toast in the words
+        // the store chooses.
+        moveCopy: async (dir, fresh, words, onError) => {
+          try {
+            const answer = await api("backup/move", fresh ? { dir, fresh } : { dir });
+            toasts.push([words.said(answer), words.note]);
+            // As the store takes in the change: history is read again, and Change… waits for it.
+            app.setState({ historyPending: true });
+            return true;
+          } catch (error) {
+            onError(error);
+            return false;
+          }
+        },
+        openCopy: noop,
         rescan: noop,
         run: async (task, _working, options = {}) => {
           try {
@@ -219,6 +236,7 @@ async function settingsPage({
   return {
     ...page,
     ...settings,
+    app,
     desk,
     box,
     markdown,
@@ -253,6 +271,69 @@ const folders = (page) =>
 /** The alert Settings shows, if any. */
 const alert = (page) => page.find((n) => n.props.role === "alert")?.textContent;
 
+export async function theHistoryBackupMovesOnlyOnceSettingsHasAskedWhere() {
+  const p = await settingsPage();
+  const change = picker(p, said.backupFolderTitle);
+  assert.equal(change.props["data-from"], "~", "the default folder isn't one to start the picker in");
+  assert.equal(p.find((n) => n.type === "button" && n.textContent === said.backupFolderDefaultButton), undefined);
+  const move = () => p.find((n) => n.type === "button" && n.textContent === said.backupMove);
+  const question = () => p.find((n) => n.props.role === "group" && n.props["aria-label"] === said.backupMove);
+  p.box.picked = "/mnt/archive/ai-chats";
+  p.act(() => change.props.onClick());
+  assert.deepEqual(p.asked("backup/move"), [], "a pick only asks");
+  const asked = question().textContent;
+  assert.ok(asked.includes(said.backupMoveAsk("/mnt/archive/ai-chats")), asked);
+  assert.ok(asked.includes(said.backupMoveNote), asked);
+  // Refused, as for a folder that holds files: the reason shows beside the question, which stays.
+  const why = "That folder already holds files. Choose an empty folder, or one that holds a copy Laci made.";
+  p.desk.refuse["backup/move"] = new Error(why);
+  p.act(() => move().props.onClick());
+  await p.done();
+  assert.ok(p.all((n) => n.props.role === "alert").some((n) => n.textContent === why));
+  assert.ok(question());
+  delete p.desk.refuse["backup/move"];
+  p.act(() => move().props.onClick());
+  await p.done();
+  assert.deepEqual(p.asked("backup/move").at(-1), ["backup/move", { dir: "/mnt/archive/ai-chats" }]);
+  assert.equal(question(), undefined, "moved, the question goes");
+  assert.deepEqual(p.toasts.at(-1), [said.backupMoved("/mnt/archive/ai-chats"), said.backupMoveNote]);
+}
+
+export async function aHistoryBackupLaciCantReachIsNotMovedButANewOneCanStart() {
+  const p = await settingsPage();
+  const why =
+    "The folder for the copy of AI chats isn't there: /mnt/archive/ai-chats. Connect its drive, or choose another folder for the copy.";
+  const snapshot = structuredClone(fixtures.snapshot);
+  snapshot.backup = { ...snapshot.backup, chosen: true, dest: "/mnt/archive/ai-chats", bytes: 1e9, packed: true, error: why };
+  p.app.setState({ snapshot });
+  await p.settle();
+  const row = () => p.find((n) => n.props["data-ui"] === "backup-folder");
+  // The folder is a labelled output, not a span a screen reader skips the name of.
+  const shown = row().descendants().find((n) => n.type === "output");
+  assert.equal(shown.textContent, "/mnt/archive/ai-chats");
+  assert.equal(p.find((n) => n.props.id === shown.props["aria-labelledby"]).textContent, said.backupFolder);
+  p.box.picked = `${HOME}/ai-chats`;
+  p.act(() => picker(p, said.backupFolderTitle).props.onClick());
+  await p.settle();
+  const question = p.find((n) => n.props.role === "group" && n.props["aria-label"] === said.backupFresh);
+  assert.ok(question.textContent.includes(said.backupFreshAsk("~/ai-chats")), question.textContent);
+  assert.ok(question.textContent.includes(said.backupFreshNote), question.textContent);
+  assert.ok(!question.textContent.includes("1.0 GB"), "nothing is said to move");
+  assert.equal(p.document.activeElement, question, "the question takes the focus");
+  p.act(() => p.find((n) => n.type === "button" && n.textContent === said.backupFresh).props.onClick());
+  await p.done();
+  assert.deepEqual(p.asked("backup/move").at(-1), ["backup/move", { dir: `${HOME}/ai-chats`, fresh: true }]);
+  assert.deepEqual(p.toasts.at(-1), [said.backupKept(`${HOME}/ai-chats`), said.backupFreshNote]);
+  // Answered, the focus goes back to Change… once history is read again and Change… can take it.
+  const change = () => picker(p, said.backupFolderTitle);
+  assert.equal(change().props.disabled, true);
+  // Compared as booleans: a failed compare of two elements would print the whole page.
+  assert.ok(p.document.activeElement !== change(), "not while it is disabled");
+  p.app.setState({ historyPending: false });
+  await p.settle();
+  assert.ok(p.document.activeElement === change(), p.focused());
+}
+
 export async function aChooseButtonSitsBesideEachFolderFieldOfSettings() {
   const p = await settingsPage();
   const buttons = p.all((n) => n.props["data-picker"] !== undefined);
@@ -261,6 +342,7 @@ export async function aChooseButtonSitsBesideEachFolderFieldOfSettings() {
     [
       [said.addFolderTitle, "Choose…"],
       [said.archiveFolderTitle, "Choose…"],
+      [said.backupFolderTitle, said.backupFolderChange],
       [said.reportsFolderTitle, "Choose…"],
     ],
   );

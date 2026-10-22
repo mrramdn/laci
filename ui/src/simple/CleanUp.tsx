@@ -462,7 +462,9 @@ export function CleanUp() {
           </h2>
           {space.storage ? (
             <span className="s-quiet">
-              {said.laci.total(
+              {(space.storage.parts.some((part) => part.elsewhere)
+                ? said.laci.totalOwn
+                : said.laci.total)(
                 space.storage.total ? bytes(space.storage.total) : said.laci.none,
               )}
             </span>
@@ -742,6 +744,8 @@ function SpacePart({
           {words?.term ? <Info term={words.term} /> : null}
         </span>
         <span className="s-quiet">{words?.about ?? part.about}</span>
+        {part.dir ? <span className="s-quiet s-mono">{said.laci.keptIn(part.dir)}</span> : null}
+        {part.error ? <Callout tone="soon">{part.error}</Callout> : null}
       </div>
       <span className="s-space-size">
         {part.bytes ? bytes(part.bytes) : said.laci.none}

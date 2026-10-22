@@ -47,6 +47,20 @@ export function within(path: string, root: string) {
   );
 }
 /** The path with the home folder written as "~". */
+/**
+ * What the toast says once `backup/move` for `dir` answered, in a design's `words`: `moved` only when the engine says
+ * something moved, else `kept` (it held nothing, or a new copy starts), and Laci's own folder (`dir` "") by the
+ * design's name for it, `own`, rather than its path.
+ */
+export function copyChangeSaid(
+  dir: string,
+  answer: { dest: string; moved?: boolean },
+  words: { moved: (where: string) => string; kept: (where: string) => string; own: string },
+) {
+  const where = dir ? answer.dest : words.own;
+  return answer.moved ? words.moved(where) : words.kept(where);
+}
+
 export function tilde(path: string | undefined, home: string) {
   return path === home
     ? "~"

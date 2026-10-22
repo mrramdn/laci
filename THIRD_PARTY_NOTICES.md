@@ -10,7 +10,7 @@ It is made by `node scripts/notices.mjs` from the lockfiles. Please don't edit i
 - [Icons](#icons)
 - [Fonts](#fonts)
 - [Interface packages](#interface-packages): 47 npm packages
-- [Rust crates](#rust-crates): 396 crates for `x86_64-unknown-linux-gnu`
+- [Rust crates](#rust-crates): 400 crates for `x86_64-unknown-linux-gnu`
 
 ## Icons
 
@@ -1793,6 +1793,7 @@ Crates that only run while building are included. Crates that only tests need ar
 | `javascriptcore-rs-sys` | 1.1.1 | MIT | [source](https://github.com/tauri-apps/javascriptcore-rs) |
 | `jiff` | 0.2.37 | Unlicense OR MIT | [source](https://github.com/BurntSushi/jiff) |
 | `jiff-core` | 0.1.1 | Unlicense OR MIT | [source](https://github.com/BurntSushi/jiff) |
+| `jobserver` | 0.1.35 | MIT OR Apache-2.0 | [source](https://github.com/rust-lang/jobserver-rs) |
 | `json-patch` | 4.2.0 | MIT/Apache-2.0 | [source](https://github.com/idubrov/json-patch) |
 | `jsonptr` | 0.7.1 | MIT OR Apache-2.0 | [source](https://github.com/chanced/jsonptr) |
 | `keyboard-types` | 0.8.3 | MIT OR Apache-2.0 | [source](https://github.com/rust-windowing/keyboard-types) |
@@ -2010,6 +2011,9 @@ Crates that only run while building are included. Crates that only tests need ar
 | `zerovec-derive` | 0.11.6 | Unicode-3.0 | [source](https://github.com/unicode-org/icu4x) |
 | `zlib-rs` | 0.6.8 | Zlib | [source](https://github.com/trifectatechfoundation/zlib-rs) |
 | `zmij` | 1.0.23 | MIT | [source](https://github.com/dtolnay/zmij) |
+| `zstd` | 0.14.3 | BSD-3-Clause | [source](https://github.com/gyscos/zstd-rs) |
+| `zstd-safe` | 8.2.0 | BSD-3-Clause | [source](https://github.com/gyscos/zstd-rs) |
+| `zstd-sys` | 2.1.2+zstd.1.5.7 | BSD-3-Clause | [source](https://github.com/gyscos/zstd-rs) |
 | `zvariant` | 5.15.0 | MIT | [source](https://github.com/z-galaxy/zbus/) |
 | `zvariant_derive` | 5.15.0 | MIT | [source](https://github.com/z-galaxy/zbus/) |
 | `zvariant_utils` | 4.2.0 | MIT | [source](https://github.com/z-galaxy/zbus/) |
@@ -2840,7 +2844,7 @@ Used by: `async-channel` 2.5.0, `async-executor` 1.14.0, `async-io` 2.6.0, `asyn
 `fnv` 1.0.7, `form_urlencoded` 1.2.2, `futures-lite` 2.6.1, `glob` 0.3.4, `hashbrown` 0.12.3,
 `hashbrown` 0.17.1, `heck` 0.4.1, `heck` 0.5.0, `html5ever` 0.39.0, `httparse` 1.10.1,
 `hyper-rustls` 0.27.10, `idna` 1.1.0, `idna_adapter` 1.2.2, `indexmap` 1.9.3, `indexmap` 2.14.2,
-`keyboard-types` 0.8.3, `libappindicator` 0.9.0, `libappindicator-sys` 0.9.0*,
+`jobserver` 0.1.35, `keyboard-types` 0.8.3, `libappindicator` 0.9.0, `libappindicator-sys` 0.9.0*,
 `linux-raw-sys` 0.12.1, `lock_api` 0.4.14, `log` 0.4.34, `markup5ever` 0.39.0, `mime` 0.3.17,
 `muda` 0.20.0, `num-traits` 0.2.19, `once_cell` 1.21.4, `openssl-probe` 0.2.1,
 `ordered-stream` 0.2.0, `parking` 2.2.1, `parking_lot` 0.12.5, `parking_lot_core` 0.9.12,
@@ -8800,6 +8804,80 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+#### BSD 3-Clause License
+
+Used by: `zstd` 0.14.3, `zstd-safe` 8.2.0, `zstd-sys` 2.1.2+zstd.1.5.7
+
+```text
+BSD 3-Clause License
+
+Copyright (c) 2026, Alexandre Bury
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+#### BSD 3-Clause License
+
+Used by: `zstd-sys` 2.1.2+zstd.1.5.7
+
+```text
+The auto-generated bindings are under the 3-clause BSD license:
+
+BSD License
+
+For Zstandard software
+
+Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+ * Neither the name Facebook, nor Meta, nor the names of its contributors may
+   be used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 #### BSD Zero Clause License
 
 Used by: `adler2` 2.0.1
@@ -9586,8 +9664,8 @@ DEALINGS IN THE SOFTWARE.
 
 #### MIT License
 
-Used by: `cc` 1.5.1, `cfg-if` 1.0.5, `find-msvc-tools` 0.1.14, `openssl-probe` 0.2.1,
-`pkg-config` 0.3.34, `socket2` 0.6.5, `toml_datetime` 0.6.3
+Used by: `cc` 1.5.1, `cfg-if` 1.0.5, `find-msvc-tools` 0.1.14, `jobserver` 0.1.35,
+`openssl-probe` 0.2.1, `pkg-config` 0.3.34, `socket2` 0.6.5, `toml_datetime` 0.6.3
 
 ```text
 Copyright (c) 2014 Alex Crichton

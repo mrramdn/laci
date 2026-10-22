@@ -30,6 +30,7 @@ clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "io-std"] }
 rmcp = { version = "3", features = ["server", "macros", "transport-io"] }
 rustix = { version = "1", features = ["fs", "process"] }
+zstd = { version = "0.14", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

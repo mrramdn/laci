@@ -1963,7 +1963,9 @@
   },
   "snapshot": {
     "backup": {
-      "auto": false
+      "auto": false,
+      "chosen": false,
+      "dest": "~/.local/share/laci/history"
     },
     "claude": {
       "-home-demo-project-clients-acme-store": {
@@ -4290,8 +4292,9 @@
         "label": "Undo copies of moved projects"
       },
       {
-        "about": "Copies of your agents' sessions, so a tool that deletes old logs cannot lose them. Nothing is removed from it.",
+        "about": "Packed copies of your agents' sessions, so a tool that deletes old logs cannot lose them. It can be kept in any folder, also on another drive. Nothing is removed from it.",
         "bytes": 0,
+        "dir": "~/.local/share/laci/history",
         "free": 0,
         "id": "history",
         "label": "Agent history backup"

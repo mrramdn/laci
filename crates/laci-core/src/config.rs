@@ -174,6 +174,73 @@ pub fn validate_reports_dir(env: &Env, value: &Value) -> Result<Value> {
     Ok(json!(paths::tilde(&path, &env.home)))
 }
 
+/// The folder chosen for the copy of AI chats (`backup::dir`), or `None` for the default, `<data dir>/history`, which
+/// is also what choosing that folder itself means. The copy must have a folder of its own ([`backup_dir_refusal`]).
+/// Whether the folder is empty is asked when the copy moves (`ops::move_backup`).
+pub fn validate_backup_dir(env: &Env, value: &Value) -> Result<Option<std::path::PathBuf>> {
+    let raw = value.as_str().ok_or("Pick a folder for the copy of AI chats")?.trim();
+    let default = paths::normalize(&env.data_dir.join("history"));
+    if raw.is_empty() || same_path(&paths::expand(raw, &env.home), &default) {
+        return Ok(None);
+    }
+    let Some(path) = chosen_folder(env, value, "backupDir", "Pick a folder for the copy of AI chats")? else {
+        return Ok(None);
+    };
+    if same_path(&path, &real(&default)) {
+        return Ok(None);
+    }
+    backup_dir_refusal(env, &path, &load(env))?;
+    Ok(Some(path))
+}
+
+/// `path` with every link on the way followed, or as spelled when it isn't there.
+fn real(path: &Path) -> std::path::PathBuf {
+    platform::path::canonical(path).unwrap_or_else(|_| paths::normalize(path))
+}
+
+/// Why `path` can't hold the copy of AI chats, asked when a folder is chosen and again before each use of it
+/// (`backup::check`), as config.json can be edited by hand: not home or one above it, not one of Laci's own folders or
+/// anything inside them, and nothing that holds the history of an agent `cfg` connects or lies inside it.
+pub(crate) fn backup_dir_refusal(env: &Env, path: &Path, cfg: &Value) -> Result<()> {
+    let forms = [paths::normalize(path), real(path)];
+    let overlaps = |other: &Path| {
+        [paths::normalize(other), real(other)]
+            .iter()
+            .any(|other| forms.iter().any(|path| may_contain(other, path) || may_contain(path, other)))
+    };
+    let holds = |inner: &Path| {
+        [paths::normalize(inner), real(inner)].iter().any(|inner| forms.iter().any(|path| may_contain(path, inner)))
+    };
+    if holds(&env.home) {
+        return Err("Choose a folder of its own for the copy, not your home folder or one above it".into());
+    }
+    if [&env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|own| overlaps(own)) {
+        return Err("That folder belongs to Laci itself. Choose another one.".into());
+    }
+    for c in crate::agents::connectors(env, cfg) {
+        let Some(store) = c["link"]["dir"].as_str().map(|raw| paths::expand(raw, &env.home)) else { continue };
+        if overlaps(&store) {
+            return Err(format!(
+                "That folder holds the history of {}, or is inside it. Choose a folder of its own for the copy.",
+                c["name"].as_str().unwrap_or("an AI helper")
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The folders whose drive Laci recognises by the identity it recorded in `rootIdentities`: the scan locations, the
+/// archive folder and the folder chosen for the copy of AI chats.
+pub(crate) fn known_locations(cfg: &Value) -> Value {
+    let mut locations = cfg["roots"].as_array().cloned().unwrap_or_default();
+    for key in ["archiveDir", "backupDir"] {
+        if let Some(dir) = cfg[key].as_str().filter(|dir| !dir.trim().is_empty()) {
+            locations.push(json!(dir));
+        }
+    }
+    Value::Array(locations)
+}
+
 pub fn validate_apps(apps: &Value) -> Result<Value> {
     let mut out = json!({});
     for key in ["terminal", "editor", "files"] {

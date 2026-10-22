@@ -765,6 +765,41 @@ export function backup() {
     void refreshLog();
   }, "Copying agent logs…");
 }
+/** Opens the folder of the copy of AI chats, which can be outside home and the scan locations. */
+export function openCopy(dest: string) {
+  external(dest, "copy");
+}
+/** The engine's answer to `backup/move`: where the copy is now, and whether anything moved there. */
+export interface CopyMoved {
+  dest: string;
+  moved: boolean;
+}
+/**
+ * Moves the copy of AI chats to `dir`, or back to Laci's own folder for "" (`backup/move`): one change, which
+ * Undo in the Log takes back. With `fresh`, a copy Laci can't reach now stays where it is and a new one starts in
+ * `dir`. `words` say it in the design's own words: `said` the toast for the engine's answer (helpers.ts
+ * `copyChangeSaid`). True once the folder changed.
+ */
+export async function moveCopy(
+  dir: string,
+  fresh: boolean,
+  words: { moving: string; note: string; said: (answer: CopyMoved) => string },
+  onError: (error: unknown) => void,
+) {
+  const done = await run(
+    async () => {
+      const change = await api<Change & CopyMoved>(
+        "backup/move",
+        fresh ? { dir, fresh } : { dir },
+      );
+      changed(change, words.said(change), words.note);
+      return true;
+    },
+    words.moving,
+    { history: true, onError },
+  );
+  return done === true;
+}
 interface BackupResult {
   copied: number;
   size: string;

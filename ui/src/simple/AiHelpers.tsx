@@ -4,7 +4,7 @@
 // chats needs "Select" first, or a chat's own sheet. Each change goes through the requests Detailed
 // sends.
 import "./ai-helpers.css";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent, RefObject } from "react";
 import { create } from "zustand";
 import { closeReportItem } from "../actions";
@@ -18,6 +18,7 @@ import {
   bytes,
   conversationIds,
   conversationKey,
+  copyChangeSaid,
   deletable,
   LOCALE,
   localDay,
@@ -40,9 +41,10 @@ import {
   acknowledge,
   changed,
   copyText,
-  external,
   goToProject,
   markReportsSeen,
+  moveCopy,
+  openCopy,
   refreshLog,
   rescan,
   run,
@@ -51,6 +53,7 @@ import {
   useApp,
 } from "../store";
 import type {
+  Backup,
   Change,
   McpStatus,
   Node,
@@ -867,22 +870,138 @@ function CopyCard({ snapshot }: { snapshot: Snapshot }) {
           ? said.copyLast(ago(backup.at), backup.sessions ?? 0, bytes(backup.bytes))
           : said.copyNone}
       </p>
+      {backup.error ? <Callout tone="act">{backup.error}</Callout> : null}
       <div className="s-actions">
         <Button kind="outline" small icon="copy" onClick={copyNow}>
           {said.copyNow}
         </Button>
-        {dest ? (
-          <Button
-            kind="text"
-            small
-            icon="folder-open"
-            onClick={() => external(dest, "files")}
-          >
+        {dest && backup.at && !backup.error ? (
+          <Button kind="text" small icon="folder-open" onClick={() => openCopy(dest)}>
             {said.openFolder}
           </Button>
         ) : null}
       </div>
+      <CopyPlace backup={backup} home={snapshot.home} />
     </Card>
+  );
+}
+
+/**
+ * "Where Laci keeps the copy": the folder, Change… and, for a chosen one, back to Laci's own folder. A copy Laci
+ * can't reach now isn't moved: a new one can start in the folder chosen instead, and the question says the old one
+ * stays where it is.
+ */
+function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
+  const historyPending = useApp((s) => s.historyPending);
+  const working = useApp((s) => s.working);
+  // The folder picked, waiting for the question to be answered; "" is Laci's own folder.
+  const [asking, setAsking] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const change = useRef<HTMLButtonElement>(null);
+  const question = useRef<HTMLDivElement>(null);
+  const row = useRef<HTMLDivElement>(null);
+  const told = useId();
+  const open = asking !== null;
+  const fresh = Boolean(backup.error);
+  const moving = working === said.copyMoving;
+  const busy = moving || historyPending;
+  const wasOpen = useRef(false);
+  const giveBack = useRef(false);
+  // The question takes the focus when it opens, and gives it back to Change… when it closes, as soon as Change… can
+  // take it: after a move it is disabled until history is read again. Not if the focus went somewhere else meanwhile.
+  useEffect(() => {
+    if (open) question.current?.focus();
+    giveBack.current = open ? false : giveBack.current || wasOpen.current;
+    wasOpen.current = open;
+    if (!giveBack.current || busy) return;
+    giveBack.current = false;
+    const at = document.activeElement;
+    if (!at || at === document.body || row.current?.contains(at)) change.current?.focus();
+  }, [open, busy]);
+  const where = (dir: string) => (dir ? tilde(dir, home) : said.copyPlaceOwnName);
+  const note = fresh ? said.copyFreshNote : said.copyMoveNote;
+  const ask = (dir: string) => {
+    setError("");
+    setAsking(dir);
+  };
+  const asked = (dir: string) =>
+    fresh
+      ? said.copyFreshAsk(where(dir))
+      : backup.bytes && !backup.packed
+        ? said.copyMovePlainAsk(where(dir))
+        : said.copyMoveAsk(where(dir), backup.bytes ? bytes(backup.bytes) : undefined);
+  const move = (dir: string) =>
+    void moveCopy(
+      dir,
+      fresh,
+      {
+        moving: said.copyMoving,
+        note,
+        said: (answer) =>
+          copyChangeSaid(dir, answer, {
+            moved: said.copyMoved,
+            kept: said.copyKept,
+            own: said.copyPlaceOwnName,
+          }),
+      },
+      (failure) => setError(errorText(failure)),
+    ).then((done) => {
+      if (done) setAsking(null);
+    });
+  const act = fresh ? said.copyFresh : said.copyMove;
+  return (
+    <div className="s-helpers-place" ref={row} data-ui="copy-place">
+      <p>
+        <b>{said.copyPlace}</b>
+        <span className="s-quiet s-mono">
+          {backup.chosen ? backup.dest : said.copyPlaceOwn}
+        </span>
+        <span className="s-quiet">{said.copyPlaceNote}</span>
+      </p>
+      {asking !== null ? (
+        <div ref={question} role="group" aria-label={act} aria-describedby={told} tabIndex={-1}>
+          <p id={told}>
+            {asked(asking)} {note}
+          </p>
+          <div className="s-actions">
+            <Button kind="text" small disabled={moving} onClick={() => setAsking(null)}>
+              {blocks.cancel}
+            </Button>
+            <Button kind="outline" small icon="move" disabled={busy} onClick={() => move(asking)}>
+              {moving ? said.copyMoving : act}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="s-actions">
+          <Button
+            ref={change}
+            kind="text"
+            small
+            icon="folder"
+            aria-label={said.copyPlaceChangeName}
+            disabled={busy}
+            onClick={() =>
+              void chooseFolder(
+                {
+                  title: said.copyPlaceTitle,
+                  defaultPath: backup.chosen && backup.dest ? backup.dest : "~",
+                },
+                ask,
+              )
+            }
+          >
+            {said.copyPlaceChange}
+          </Button>
+          {backup.chosen ? (
+            <Button kind="text" small disabled={busy} onClick={() => ask("")}>
+              {said.copyPlaceBack}
+            </Button>
+          ) : null}
+        </div>
+      )}
+      {error ? <Callout tone="act">{error}</Callout> : null}
+    </div>
   );
 }
 

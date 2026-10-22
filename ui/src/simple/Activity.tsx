@@ -271,6 +271,10 @@ const SAYS: Record<string, Telling> = {
     const name = text(ai);
     return name ? forms.restoredChat(name) : forms.restoredChatAny;
   },
+  // Laci's own folder is said by its name, as the AI helpers page says it, not by its path.
+  movedCopy: (parts) => (parts.own === true ? said.changes.movedCopyOwn : of("dir", forms.movedCopy)(parts)),
+  keptCopyIn: (parts) =>
+    parts.own === true ? said.changes.keptCopyInOwn : of("dir", forms.keptCopyIn)(parts),
   emptiedKept: () => forms.emptiedKept,
   removedOldUndo: () => forms.removedOldUndo,
   removedLaci1: () => forms.removedLaci1,

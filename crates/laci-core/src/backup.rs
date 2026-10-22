@@ -207,6 +207,13 @@ pub(crate) fn content_size(path: &Path) -> Option<u64> {
     zstd::zstd_safe::get_frame_content_size(&head).ok().flatten()
 }
 
+/// How long the chat the copy's file `path` holds is: what its frame header records once packed, or the file's own
+/// length while still plain. What the copy takes on the disk is the file's length (`storage`).
+pub(crate) fn chat_size(path: &Path) -> u64 {
+    let size = if is_packed(path) { content_size(path) } else { fs::metadata(path).ok().map(|meta| meta.len()) };
+    size.unwrap_or(0)
+}
+
 /// The chat log the copy's file `path` holds: unpacked as it is read, or read as it is while still plain.
 pub fn open(path: &Path) -> io::Result<Box<dyn Read>> {
     let file = File::open(path)?;

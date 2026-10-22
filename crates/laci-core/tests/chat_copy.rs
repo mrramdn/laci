@@ -180,6 +180,9 @@ fn a_session_only_the_packed_copy_holds_is_listed_and_comes_back_byte_for_byte()
     assert_eq!(kept[0]["sessionId"], ID);
     assert_eq!(kept[0]["restoreTo"], json!(file));
     assert!(kept[0]["file"].as_str().unwrap().ends_with(&format!("{ID}.jsonl.zst")));
+    // Its size is the chat's, as its tool's copy told it, not that of the packed file.
+    assert_eq!(kept[0]["bytes"], json!(bytes.len()));
+    assert!(fs::metadata(kept[0]["file"].as_str().unwrap()).unwrap().len() != bytes.len() as u64);
     service.request("backup/restore", &json!({"id":kept[0]["id"]})).unwrap();
     assert_eq!(fs::read(&file).unwrap(), bytes, "the restored log is the log as it was");
 }

@@ -251,7 +251,7 @@ fn the_copy_moves_to_a_folder_outside_home_and_undo_moves_it_back() {
     fs::rename(&away, &chosen).unwrap();
     service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
     assert!(before.is_file() && !after.exists());
-    assert_eq!(config::load(&env)["backupDir"], Value::Null, "the setting is as it was before the move");
+    assert_eq!(config::load(&env)["backupDir"], "", "the copy is in the default folder again");
     assert!(chosen.is_dir(), "the folder the copy left stays");
 }
 

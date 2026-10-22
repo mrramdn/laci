@@ -438,9 +438,12 @@ pub(crate) fn moving(env: &Env) -> Option<(Value, bool)> {
     let journal = ops::read_journal(&ops::data(env, "journal").ok()?.join(format!("{id}.json"))).ok()?;
     Some((journal, record["undo"] == true))
 }
-/// Notes that the move of the copy in the journal `id`, or with `undo` its Undo, starts.
+/// Notes that the move of the copy in the journal `id`, or with `undo` its Undo, starts, on the disk before anything
+/// moves.
 pub(crate) fn begin_moving(env: &Env, id: &str, undo: bool) -> Result<()> {
-    files::replace(&ops::data(env, MOVING)?, json!({"journal":id,"undo":undo}).to_string().as_bytes())
+    let file = ops::data(env, MOVING)?;
+    files::replace(&file, json!({"journal":id,"undo":undo}).to_string().as_bytes())?;
+    sync_dir(file.parent().ok_or("Missing folder")?)
 }
 /// Notes that no move of the copy runs any more.
 pub(crate) fn end_moving(env: &Env) -> Result<()> {

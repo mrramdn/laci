@@ -162,6 +162,10 @@ export interface StoragePart {
   bytes: number;
   /** How much `storage/free` would free now; 0 when this part is not freed from Laci. */
   free: number;
+  /** The copy of AI chats (`history`): where it is kept, with `~` for home. */
+  dir?: string | null;
+  /** Why the folder chosen for the copy can't be used now, as when its drive isn't connected. */
+  error?: string;
 }
 export interface Storage {
   parts: StoragePart[];
@@ -371,7 +375,10 @@ export interface Node {
   archivePlan?: ArchivePlan;
 }
 
-/** When agent history was last copied to Laci's own folder. `at` is missing until the first backup. */
+/**
+ * When agent history was last copied, packed with zstd, and where the copy is. `at` is missing until the first
+ * backup.
+ */
 export interface Backup {
   /** The user turned on automatic backups. */
   auto: boolean;
@@ -379,8 +386,14 @@ export interface Backup {
   /** Session logs the backup holds, including ones their tool has since deleted. */
   sessions?: number;
   files?: number;
+  /** What the copy takes on the disk, packed. */
   bytes?: number;
-  dest?: string;
+  /** Where the copy is, with `~` for home: Laci's data folder, or the folder chosen in Settings. */
+  dest?: string | null;
+  /** A folder was chosen for the copy (`backupDir`); false for Laci's own folder. */
+  chosen?: boolean;
+  /** Why the chosen folder can't take the copy now, as when its drive isn't connected. Nothing is copied then. */
+  error?: string;
   /** Sessions that changed after `at`. */
   pending?: number;
 }

@@ -799,7 +799,7 @@ export const glossary: Term[] = [
     id: "copy-chats",
     term: "Copy AI chats",
     also: "only in Laci’s copy, AI chats without a project",
-    info: "Claude Code deletes chats after 30 days by default. Laci keeps a copy on this computer.",
+    info: "Claude Code deletes chats after 30 days by default. Laci keeps a copy, packed small, in its own folder or in one you choose.",
     was: "Back up logs, backup only, detached history",
   },
   {
@@ -1103,6 +1103,8 @@ export const cleanup = {
     failed: "Laci couldn’t read how much space it uses.",
     tryAgain: "Try again",
     where: "Where it is",
+    /** Where the copy of AI chats is, under its row. */
+    keptIn: (dir: string) => `In ${dir}`,
     none: "Empty",
     freeable: (size: string) =>
       `${size} can be freed. This can’t be undone.`,
@@ -1134,7 +1136,7 @@ export const cleanup = {
       history: {
         label: "Copy of AI chats",
         about:
-          "Laci’s own copy of your AI chats, so a tool that deletes old chats can’t lose them. Laci never removes anything from it.",
+          "Laci’s own copy of your AI chats, packed to take little space, so a tool that deletes old chats can’t lose them. It can be in any folder, also on another drive. Laci never removes anything from it.",
         term: "copy-chats",
       },
       journal: {
@@ -1268,6 +1270,7 @@ export const activity = {
     copyOff: "Laci now copies chats only when you ask",
     putBack: (ai: string) => `Put back a ${ai} chat from Laci’s copy`,
     putBackAny: "Put back a chat from Laci’s copy",
+    movedCopy: (dir: string) => `Moved the copy of AI chats to ${dir}`,
     emptiedKept: "Emptied Kept for Undo",
     removedOldUndo: "Removed the old undo records",
     removedLaci1: "Removed the leftovers of Laci 1",
@@ -1329,6 +1332,7 @@ export const logForms = {
   autoBackupOff: told.copyOff,
   restoredChat: told.putBack,
   restoredChatAny: told.putBackAny,
+  movedCopy: told.movedCopy,
   emptiedKept: told.emptiedKept,
   removedOldUndo: told.removedOldUndo,
   removedLaci1: told.removedLaci1,
@@ -1461,6 +1465,22 @@ export const aiHelpers = {
   copyUpToDate: "The copy is up to date",
   copyWhere: (chats: number, where: string) => `${count(chats, "chat")} kept in ${where}`,
   openFolder: "Open folder",
+  copyPlace: "Where Laci keeps the copy",
+  copyPlaceOwn: "In Laci’s own folder",
+  copyPlaceNote:
+    "Laci packs the copy to take little space. It can be in any folder, also on another drive.",
+  copyPlaceChange: "Change…",
+  copyPlaceTitle: "Choose where Laci keeps the copy of your AI chats",
+  copyPlaceBack: "Use Laci’s own folder",
+  copyPlaceOwnName: "Laci’s own folder",
+  copyMoveAsk: (where: string, size?: string) =>
+    size
+      ? `Move the copy of your AI chats (${size}) to ${where}?`
+      : `Keep the copy of your AI chats in ${where} from now on?`,
+  copyMoveNote: "Undo in Activity moves it back.",
+  copyMove: "Move the copy",
+  copyMoving: "Moving the copy of your AI chats…",
+  copyMoved: (where: string) => `The copy of your AI chats is now in ${where}`,
 
   // Summaries
   searchSummaries: "Search summaries",
@@ -1947,6 +1967,25 @@ export const detailedSettings = {
   destinationTitle: (name: string) => `Choose where to archive ${name}`,
   locationTitle: "Choose where the new project goes",
   templateTitle: "Choose a folder to start new projects from",
+  backupFolderTitle: "Choose a folder for the history backup",
+  /** The row beside the automatic backup switch: where the backup is, and moving it. */
+  backupFolder: "Backup folder",
+  backupFolderDefault: "Laci's data folder",
+  backupFolderNote:
+    "The backup is compressed with zstd. It can be on another drive. Laci never makes a chosen folder and never removes anything from the backup.",
+  backupFolderChange: "Change…",
+  /** What a screen reader calls Change…: it starts with the button's own word. */
+  backupFolderChangeName: "Change the folder of the history backup",
+  backupFolderDefaultButton: "Use the default",
+  backupMoveAsk: (where: string, size?: string) =>
+    size
+      ? `Move the history backup (${size}) to ${where}?`
+      : `Keep the history backup in ${where} from now on?`,
+  backupMoveNote: "Undo in the Log moves it back.",
+  backupMove: "Move backup",
+  backupMoving: "Moving the history backup…",
+  backupMoved: (where: string) => `History backup moved to ${where}`,
+  cancel: "Cancel",
   /** A folder chosen that Laci doesn’t take as a place to keep projects. */
   wholeDisk:
     "Laci doesn’t look through a whole disk. Choose the folder where you keep projects.",

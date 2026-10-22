@@ -40,9 +40,10 @@ import {
   acknowledge,
   changed,
   copyText,
-  external,
   goToProject,
   markReportsSeen,
+  moveCopy,
+  openCopy,
   refreshLog,
   rescan,
   run,
@@ -51,6 +52,7 @@ import {
   useApp,
 } from "../store";
 import type {
+  Backup,
   Change,
   McpStatus,
   Node,
@@ -867,22 +869,96 @@ function CopyCard({ snapshot }: { snapshot: Snapshot }) {
           ? said.copyLast(ago(backup.at), backup.sessions ?? 0, bytes(backup.bytes))
           : said.copyNone}
       </p>
+      {backup.error ? <Callout tone="act">{backup.error}</Callout> : null}
       <div className="s-actions">
         <Button kind="outline" small icon="copy" onClick={copyNow}>
           {said.copyNow}
         </Button>
-        {dest ? (
-          <Button
-            kind="text"
-            small
-            icon="folder-open"
-            onClick={() => external(dest, "files")}
-          >
+        {dest && backup.at && !backup.error ? (
+          <Button kind="text" small icon="folder-open" onClick={() => openCopy(dest)}>
             {said.openFolder}
           </Button>
         ) : null}
       </div>
+      <CopyPlace backup={backup} home={snapshot.home} />
     </Card>
+  );
+}
+
+/** "Where Laci keeps the copy": the folder, Change… and, for a chosen one, back to Laci's own folder. */
+function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
+  const historyPending = useApp((s) => s.historyPending);
+  const working = useApp((s) => s.working);
+  // The folder picked, waiting for the question to be answered; "" is Laci's own folder.
+  const [asking, setAsking] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const moving = working === said.copyMoving;
+  const busy = moving || historyPending;
+  const where = (dir: string) => (dir ? tilde(dir, home) : said.copyPlaceOwnName);
+  const ask = (dir: string) => {
+    setError("");
+    setAsking(dir);
+  };
+  const move = (dir: string) =>
+    void moveCopy(
+      dir,
+      { moving: said.copyMoving, moved: said.copyMoved, note: said.copyMoveNote },
+      (failure) => setError(errorText(failure)),
+    ).then((done) => {
+      if (done) setAsking(null);
+    });
+  return (
+    <div className="s-helpers-place" data-ui="copy-place">
+      <p>
+        <b>{said.copyPlace}</b>
+        <span className="s-quiet s-mono">
+          {backup.chosen ? backup.dest : said.copyPlaceOwn}
+        </span>
+        <span className="s-quiet">{said.copyPlaceNote}</span>
+      </p>
+      {asking !== null ? (
+        <>
+          <p>
+            {said.copyMoveAsk(where(asking), backup.bytes ? bytes(backup.bytes) : undefined)}{" "}
+            {said.copyMoveNote}
+          </p>
+          <div className="s-actions">
+            <Button kind="text" small disabled={moving} onClick={() => setAsking(null)}>
+              {blocks.cancel}
+            </Button>
+            <Button kind="outline" small icon="move" disabled={busy} onClick={() => move(asking)}>
+              {moving ? said.copyMoving : said.copyMove}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <div className="s-actions">
+          <Button
+            kind="text"
+            small
+            icon="folder"
+            disabled={busy}
+            onClick={() =>
+              void chooseFolder(
+                {
+                  title: said.copyPlaceTitle,
+                  defaultPath: backup.chosen && backup.dest ? backup.dest : "~",
+                },
+                ask,
+              )
+            }
+          >
+            {said.copyPlaceChange}
+          </Button>
+          {backup.chosen ? (
+            <Button kind="text" small disabled={busy} onClick={() => ask("")}>
+              {said.copyPlaceBack}
+            </Button>
+          ) : null}
+        </div>
+      )}
+      {error ? <Callout tone="act">{error}</Callout> : null}
+    </div>
   );
 }
 

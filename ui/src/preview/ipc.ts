@@ -474,10 +474,12 @@ function closeItem(body: Body) {
   revision++;
   return { ok: true };
 }
+/** Where the engine keeps the copy of AI chats until a folder is chosen for it. */
+const OWN_COPY = "~/.local/share/laci/history";
 function backup(body: Body) {
   if (body.auto === true) return { skipped: true };
   const state = snapshot.backup ?? { auto: false };
-  const dest = "~/.local/share/laci/history";
+  const dest = state.dest ?? OWN_COPY;
   const copied = state.pending === 0 ? 0 : 3;
   snapshot.backup = {
     ...state,
@@ -505,6 +507,28 @@ function backup(body: Body) {
     sessions: 6,
     total: 40960,
   };
+}
+/**
+ * Moves the copy of AI chats to the folder asked for, or back to Laci's own for "", as one change Undo takes
+ * back. The preview's folder picker always picks ~/project, which the engine would refuse because it holds
+ * files; here it just shows a chosen folder.
+ */
+function moveBackup(body: Body) {
+  const state = snapshot.backup ?? fail("Connect an AI tool first");
+  const dir = text(body, "dir");
+  const home = fixtures.meta.home;
+  const dest = !dir ? OWN_COPY : dir === home || dir.startsWith(`${home}/`) ? `~${dir.slice(home.length)}` : dir;
+  if (dest === (state.dest ?? OWN_COPY)) fail("The copy of AI chats is in that folder already");
+  const was = { dest: state.dest, chosen: state.chosen };
+  const part = storage.parts.find((p) => p.id === "history");
+  const place = (where: { dest?: string | null; chosen?: boolean }) => {
+    if (snapshot.backup) snapshot.backup = { ...snapshot.backup, ...where };
+    if (part) part.dir = where.dest ?? OWN_COPY;
+  };
+  place({ dest, chosen: Boolean(dir) });
+  const change = changed(`Moved the copy of AI chats to ${dest}`, () => place(was));
+  log[0].say = { form: "movedCopy", dir: dest };
+  return { ...change, dest, bytes: state.bytes ?? 0 };
 }
 function backupAuto(body: Body) {
   const on = body.on === true;
@@ -839,6 +863,7 @@ const writes: Record<string, Handler> = {
   "secrets/keep-out": keepOut,
   "session/delete": deleteSessions,
   backup,
+  "backup/move": moveBackup,
   "backup/auto": backupAuto,
   "storage/free": free,
   "agent/mcp/apply": applyMcp,

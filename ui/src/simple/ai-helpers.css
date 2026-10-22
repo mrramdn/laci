@@ -143,6 +143,19 @@
   .s-helpers-copy p {
     margin: 12px 0;
   }
+  /* Where the copy is kept, below the card's own actions. */
+  .s-helpers-place {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+  }
+  .s-helpers-place > p:first-child {
+    display: grid;
+    gap: 2px;
+  }
+  .s-helpers-place .s-mono {
+    overflow-wrap: anywhere;
+  }
   .s-helpers-note {
     margin: 12px 0 0;
     color: var(--ink-2);

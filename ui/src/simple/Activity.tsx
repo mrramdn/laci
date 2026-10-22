@@ -271,6 +271,7 @@ const SAYS: Record<string, Telling> = {
     const name = text(ai);
     return name ? forms.restoredChat(name) : forms.restoredChatAny;
   },
+  movedCopy: of("dir", forms.movedCopy),
   emptiedKept: () => forms.emptiedKept,
   removedOldUndo: () => forms.removedOldUndo,
   removedLaci1: () => forms.removedLaci1,

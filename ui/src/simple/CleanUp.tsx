@@ -742,6 +742,8 @@ function SpacePart({
           {words?.term ? <Info term={words.term} /> : null}
         </span>
         <span className="s-quiet">{words?.about ?? part.about}</span>
+        {part.dir ? <span className="s-quiet s-mono">{said.laci.keptIn(part.dir)}</span> : null}
+        {part.error ? <Callout tone="soon">{part.error}</Callout> : null}
       </div>
       <span className="s-space-size">
         {part.bytes ? bytes(part.bytes) : said.laci.none}

@@ -322,6 +322,9 @@ export const projects = {
   },
   inAll: "All folders",
   inLabel: (folder: string) => `In: ${folder}`,
+  groupBy: "Group by folder",
+  noGroup: "Not in a group",
+  groupCount: (n: number) => `· ${count(n, "project")}`,
   lastChange: (when: string) => `Last change ${when}`,
   noChange: "No changes yet",
   chats: (n: number) => count(n, "AI chat"),
@@ -1276,6 +1279,25 @@ export const activity = {
       `Packed the copy of AI chats: ${grouped(files)} ${files === 1 ? "file" : "files"}, ${before} → ${after}`,
     copyOn: "Laci now copies new chats by itself",
     copyOff: "Laci now copies chats only when you ask",
+    /**
+     * The projects chosen for the copy, and whether chats outside them count. Said by projects, or by folders (projects
+     * and groups) when no project is chosen; an older entry that doesn't count projects says its folders as it did.
+     */
+    copyChosen: (projects: number | undefined, folders: number, outside: boolean) => {
+      const what = projects
+        ? `${count(projects, "project")} you chose`
+        : folders === 0
+          ? ""
+          : projects === undefined
+            ? count(folders, "chosen folder")
+            : `${count(folders, "folder")} you chose`;
+      return what
+        ? `Laci now copies only the chats of ${what}${outside ? ", and chats outside your projects" : ""}`
+        : outside
+          ? "Laci now copies only the chats outside your projects"
+          : "Laci now copies the chats of no project";
+    },
+    copyEveryProject: "Laci now copies the chats of every project",
     putBack: (ai: string) => `Put back a ${ai} chat from Laci’s copy`,
     putBackAny: "Put back a chat from Laci’s copy",
     movedCopy: (dir: string) => `Moved the copy of AI chats to ${dir}`,
@@ -1342,6 +1364,8 @@ export const logForms = {
   packedCopy: told.packedCopy,
   autoBackupOn: told.copyOn,
   autoBackupOff: told.copyOff,
+  copyChosen: told.copyChosen,
+  copyEveryProject: told.copyEveryProject,
   restoredChat: told.putBack,
   restoredChatAny: told.putBackAny,
   movedCopy: told.movedCopy,
@@ -1469,6 +1493,66 @@ export const aiHelpers = {
   copyAutoNote: "At most once an hour. Laci never removes anything from its copy.",
   copyOn: "Laci copies new chats by itself",
   copyOff: "Laci copies chats only when you ask",
+  /** Which chats the copy takes: every project's, or only the ones chosen. */
+  copyWhich: "Which chats",
+  copyEvery: "Every project",
+  /** By projects, as Activity says it; by folders when only groups are chosen; and the chats outside them. */
+  copyOnly: (projects: number, folders: number, outside: boolean) => {
+    const what =
+      projects > 0
+        ? `Only ${count(projects, "project")} you chose`
+        : folders > 0
+          ? `Only the chats of ${count(folders, "folder")} you chose`
+          : "";
+    return what
+      ? `${what}${outside ? ", and chats outside your projects" : ""}`
+      : outside
+        ? "Only chats outside your projects"
+        : "None of your projects";
+  },
+  /** Folders (projects and groups) that hold chats the copy doesn’t take, so a new project isn’t forgotten. */
+  copyLeft: (folders: number) =>
+    folders === 1
+      ? "1 folder with chats isn’t copied"
+      : `${folders} folders with chats aren’t copied`,
+  copyChoose: "Choose projects…",
+  /** What a screen reader calls Choose projects…: it starts with the button's own word. */
+  copyChooseName: "Choose projects for the copy of your AI chats",
+  copyChangeProjects: "Change projects…",
+  copyChangeProjectsName: "Change projects for the copy of your AI chats",
+  copyEveryButton: "Copy every project",
+  copyChosenDone: activity.changes.copyChosen,
+  copyEveryDone: activity.changes.copyEveryProject,
+  /** What stays true after a choice, as a toast says it. */
+  copyChosenNote: "What the copy already holds stays.",
+  copyEveryNote: "A new project is copied from now on.",
+  copyChooseTitle: "Which projects should Laci copy?",
+  copyChooseAbout:
+    "Laci copies the chats of the projects you tick. A project that appears later isn’t copied until you tick it.",
+  copyChooseKeeps:
+    "Unticking a project only stops new copies. What the copy already holds stays: Laci never removes anything from it.",
+  copyChooseList: "Projects and folders",
+  copyTickAll: "Tick all",
+  copyUntickAll: "Untick all",
+  copyChats: (n: number) => count(n, "chat"),
+  copyOutside: "Chats outside your projects",
+  /** Under a folder: the chats started in the folder itself, not in a project inside it. */
+  copyOwn: (name: string) => `Chats in ${name} itself`,
+  /**
+   * What a screen reader calls a row's box: the folder it is in, as two projects can share a name, and for a folder
+   * that holds projects, that its box ticks them too. It starts with the row's own words.
+   */
+  copyBoxName: (name: string, above: string | undefined, folder: boolean) =>
+    `${name}${above ? `, in ${above}` : ""}${folder ? ", and everything in it" : ""}`,
+  copyGone: "This folder is gone",
+  /** A chosen folder that is still there in your project folders, but no project now, as a folder emptied of them. */
+  copyNotListed: "Not a project now",
+  /** A chosen folder that is still there, but not in your project folders, as when one was removed in Settings. */
+  copyNotRead: "Outside your project folders",
+  /** The choice changed while the sheet was open: in another window, by your AI, or by Undo. */
+  copyChanged: "Which projects Laci copies changed meanwhile. The list now shows the new choice.",
+  copySave: "Save",
+  copySaving: "Saving…",
   copyLast: (when: string, chats: number, size: string) =>
     `Last copy ${when}: ${count(chats, "chat")}, ${size}.`,
   copyNone: "Laci hasn’t made a copy yet.",
@@ -1993,6 +2077,74 @@ export const detailedSettings = {
   locationTitle: "Choose where the new project goes",
   templateTitle: "Choose a folder to start new projects from",
   backupFolderTitle: "Choose a folder for the history backup",
+  /** Which projects the history backup takes, below the automatic backup switch. */
+  backupWhich: "Which projects to back up",
+  backupEvery: "Back up every project",
+  backupEveryNote: "Projects that appear later are backed up too.",
+  backupOnlyChosen: "Only the projects you chose",
+  /** By projects, as the toast and the Log count them; by folders when only groups are chosen. */
+  backupOnlySummary: (projects: number, folders: number, outside: boolean) =>
+    projects === 0 && folders === 0
+      ? outside
+        ? "Only chats outside your projects"
+        : "No project chosen"
+      : `${projects > 0 ? `${count(projects, "project")} chosen` : `${count(folders, "folder")} chosen`}${
+          outside ? ", and chats outside your projects" : ""
+        }`,
+  /** Folders (projects and groups) that hold chats the backup doesn't take, so a new project isn't forgotten. */
+  backupLeft: (folders: number) =>
+    folders === 1
+      ? "1 folder with chats isn't backed up"
+      : `${folders} folders with chats aren't backed up`,
+  /** Opens the chooser while the backup takes every project; Choose… once some are chosen. */
+  backupChooseProjects: "Choose projects…",
+  backupChoose: "Choose…",
+  /** What a screen reader calls Choose projects… and Choose…: it starts with the buttons' own word. */
+  backupChooseName: "Choose projects for the history backup",
+  /** By projects, as the Log counts them; by folders when only groups are chosen. */
+  backupChosenDone: (projects: number, folders: number, outside: boolean) => {
+    const what =
+      projects > 0
+        ? `${count(projects, "project")} you chose`
+        : folders > 0
+          ? `${count(folders, "folder")} you chose`
+          : "";
+    return what
+      ? `History backup now takes only ${what}${outside ? ", and chats outside your projects" : ""}`
+      : outside
+        ? "History backup now takes only chats outside your projects"
+        : "History backup now takes no project";
+  },
+  backupEveryDone: "History backup now takes every project",
+  backupChosenNote: "What the backup already holds stays.",
+  backupEveryNoteDone: "New projects are backed up from now on.",
+  backupChooseTitle: "Projects to back up",
+  backupChooseAbout:
+    "Tick the projects whose AI chats are backed up. A project that appears later isn't backed up until you tick it.",
+  backupChooseKeeps:
+    "Unticking a project only stops new backups of it. What the backup holds stays: Laci never removes anything from it.",
+  backupChooseList: "Projects and folders",
+  backupTickAll: "Tick all",
+  backupUntickAll: "Untick all",
+  backupChats: (n: number) => count(n, "chat"),
+  backupOutside: "Chats outside your projects",
+  /** Under a folder: the chats started in the folder itself, not in a project inside it. */
+  backupOwn: (name: string) => `Chats in ${name} itself`,
+  /**
+   * What a screen reader calls a row's box: the folder it is in, as two projects can share a name, and for a folder
+   * that holds projects, that its box ticks them too. It starts with the row's own words.
+   */
+  backupBoxName: (name: string, above: string | undefined, folder: boolean) =>
+    `${name}${above ? `, in ${above}` : ""}${folder ? ", and everything in it" : ""}`,
+  backupGone: "This folder is gone",
+  /** A chosen folder still there in the project folders, but no project or group now, as one emptied of them. */
+  backupNotListed: "Not a project or group now",
+  /** A chosen folder that is still there, but not in the project folders, as when one was removed above. */
+  backupNotRead: "Not in your project folders",
+  /** The choice changed while the chooser was open: in another window, by an AI, or by Undo. */
+  backupChanged: "The choice changed while this was open. The list now shows the new one.",
+  backupSave: "Save",
+  backupSaving: "Saving…",
   /** The row beside the automatic backup switch: where the backup is, and moving it. */
   backupFolder: "Backup folder",
   backupFolderDefault: "Laci's data folder",

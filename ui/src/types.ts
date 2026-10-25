@@ -398,8 +398,28 @@ export interface Backup {
   chosen?: boolean;
   /** Why the chosen folder can't take the copy now, as when its drive isn't connected. Nothing is copied then. */
   error?: string;
-  /** Sessions that changed after `at`. */
+  /** Sessions that changed after `at`: of the chosen projects only, when `only` is set. */
   pending?: number;
+  /**
+   * The projects chosen for the copy (`backupOnly`). Missing when the copy takes every project, including ones that
+   * appear later.
+   */
+  only?: CopyOnly;
+}
+/**
+ * The projects and groups the copy of AI chats takes. A chat is copied when the nearest of the scanned folders and the
+ * chosen ones that holds its folder is chosen, and one in none of them when `outside` is. Nothing is ever removed from
+ * the copy for leaving one out.
+ */
+export interface CopyOnly {
+  /** The chosen folders, projects and groups, as full paths like the nodes' own. */
+  paths: string[];
+  /** Chats started outside every project and group are copied. */
+  outside: boolean;
+  /** Scanned projects and groups that hold chats the copy doesn't take. */
+  notCopied: number;
+  /** Chosen paths that aren't on the disk now: a folder moved or deleted. */
+  missing: string[];
 }
 /** Whether an agent knows Laci's MCP server, and how it is added. From the `agent/mcp` request. */
 export interface McpStatus {

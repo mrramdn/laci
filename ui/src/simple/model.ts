@@ -1,6 +1,6 @@
 // What Simple's pages show, worked out from the scan: how safe a project is, which problems it shows
 // and how each is fixed, the project list, and what Home hides until tomorrow. Pure: it imports only
-// helpers.ts and selectors.ts, so the tests run it as it is.
+// helpers.ts, selectors.ts and words.ts, so the tests run it as it is.
 import {
   APP_NAMES,
   base,
@@ -37,6 +37,7 @@ import type {
   Suggestion,
   TerminalTarget,
 } from "../types";
+import { projects as said } from "../words";
 
 /** How a status reads: safe (leaf green), soon (amber), act now (red) or good to know. */
 export type Tone = "safe" | "soon" | "act" | "fyi";
@@ -208,9 +209,23 @@ export interface ProjectsQuery {
   folder: string | null;
 }
 
+/** A group of project cards: the folder they sit in, as the user keeps them. */
+export interface ProjectSection {
+  /** The nearest folder above the projects; null for projects that sit in no folder. */
+  group: Node | null;
+  /** Where the group is below its scan root ("freelance / devstudio"); the root's own name for the root. */
+  label: string;
+  projects: Node[];
+}
+
+/** What remembers a section: its folder's id. Projects outside any folder have none, so "none". */
+export const sectionKey = (section: ProjectSection) => section.group?.id ?? "none";
+
 export interface ProjectsModel {
   /** The projects the filter, the folder and the search let through, in the chosen order. */
   shown: Node[];
+  /** The same projects under their folders, with no empty folder. Each project is in one section. */
+  sections: ProjectSection[];
   /** How many each filter shows in the folder, before the search. */
   counts: Record<ProjectFilter, number>;
 }
@@ -257,12 +272,63 @@ export function projectsModel(
     due: (a, b) => dueDays(a, now) - dueDays(b, now) || recency(a, b),
     size: (a, b) => (b.size?.total ?? 0) - (a.size?.total ?? 0) || byName(a, b),
   };
-  return {
-    shown: inFolder
-      .filter((n) => shows[filter](n) && matchesQuery(n, query))
-      .sort(order[sort]),
-    counts,
-  };
+  const shown = inFolder
+    .filter((n) => shows[filter](n) && matchesQuery(n, query))
+    .sort(order[sort]);
+  return { shown, sections: projectSections(snapshot, shown, sort), counts };
+}
+
+/** The nearest folder above a project, which is what holds it in the user's layout. */
+function groupOf(snapshot: Snapshot, n: Node): Node | null {
+  // `seen` stops a scan whose parents loop.
+  const seen = new Set<string>([n.id]);
+  for (let at = n.parent; at && !seen.has(at); at = snapshot.nodes[at]?.parent) {
+    seen.add(at);
+    const above = snapshot.nodes[at];
+    if (!above) return null;
+    if (above.kind === "folder") return above;
+  }
+  return null;
+}
+
+/** A group's path below its scan root, joined with " / ". The root itself goes by its own name. */
+function groupLabel(snapshot: Snapshot, group: Node): string {
+  const root = snapshot.roots
+    .filter((r) => within(group.path, r))
+    .sort((a, b) => b.length - a.length)[0];
+  if (root === undefined || root === group.path) return group.label;
+  return group.path.slice(root.length).split("/").filter(Boolean).join(" / ");
+}
+
+/**
+ * `shown` under its folders. A nested folder is a section of its own, named by its path, so there are
+ * two levels: the group and the project. Cards keep the order they have in `shown`. By name the
+ * sections follow their labels; in any other order a section comes where its first card does, so the
+ * folder with the newest, the most due or the biggest project is first. Projects outside any folder
+ * come last.
+ */
+function projectSections(
+  snapshot: Snapshot,
+  shown: Node[],
+  sort: ProjectSort,
+): ProjectSection[] {
+  // A Map keeps the order each section was first met in, which is the order of `shown`.
+  const found = new Map<string, ProjectSection>();
+  for (const n of shown) {
+    const group = groupOf(snapshot, n);
+    const key = group?.id ?? "";
+    const section = found.get(key) ?? {
+      group,
+      label: group ? groupLabel(snapshot, group) : said.noGroup,
+      projects: [],
+    };
+    section.projects.push(n);
+    found.set(key, section);
+  }
+  const sections = [...found.values()];
+  const grouped = sections.filter((section) => section.group);
+  if (sort === "name") grouped.sort((a, b) => a.label.localeCompare(b.label));
+  return [...grouped, ...sections.filter((section) => !section.group)];
 }
 
 /** The folders "In:" offers: folders that hold projects, by path. */

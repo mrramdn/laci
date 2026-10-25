@@ -179,6 +179,7 @@ pub fn mutates(name: &str) -> bool {
             | "connector/remove"
             | "backup/restore"
             | "backup/move"
+            | "backup/only"
             | "session/delete"
             | "session/keep"
             | "storage/free"
@@ -284,13 +285,62 @@ fn backup_run(env: &Env, snap: &Value, by: &str, always: bool) -> Result<Value> 
         string(&result, "dest")
     ));
     if copied > 0 || always {
-        activity::record(
-            env,
-            json!({"by":by,"title":if copied > 0 {format!("Backed up {}",scan::plural(copied,"agent history file"))} else {"Agent history backup is up to date".into()},
-                "say":if copied > 0 {json!({"form":"backedUp","files":copied})} else {json!({"form":"backupUpToDate"})},"detail":result["kept"]}),
-        );
+        // With projects chosen, the Log says it is about those, as `laci backup` does.
+        let only = result["only"] == true;
+        let title = match (copied, only) {
+            (0, false) => "Agent history backup is up to date".to_owned(),
+            (0, true) => "Agent history backup of the projects you chose is up to date".to_owned(),
+            (_, false) => format!("Backed up {}", scan::plural(copied, "agent history file")),
+            (_, true) => format!("Backed up {} of the projects you chose", scan::plural(copied, "agent history file")),
+        };
+        let mut say =
+            if copied > 0 { json!({"form":"backedUp","files":copied}) } else { json!({"form":"backupUpToDate"}) };
+        if only {
+            say["only"] = json!(true);
+        }
+        activity::record(env, json!({"by":by,"title":title,"say":say,"detail":result["kept"]}));
     }
     Ok(result)
+}
+
+/// The Log's entry for a change of the projects the copy of AI chats takes, from `before` to `only` (`backup/only`),
+/// of which `projects` are scanned projects. Undo takes back what the change did (`copy_choice::undone`).
+fn chosen_entry(only: &Value, before: &Value, projects: usize, by: &str) -> Value {
+    let (title, say) = match only["paths"].as_array() {
+        None => ("History backup takes every project".to_owned(), json!({"form":"copyEveryProject"})),
+        Some(list) => {
+            let (folders, outside) = (list.len(), only["outside"] == true);
+            // As the window says it: by projects, else by folders, else the chats outside every project, or none.
+            let chosen = if projects > 0 {
+                format!("{} you chose", scan::plural(projects as u64, "project"))
+            } else {
+                format!("{} you chose", scan::plural(folders as u64, "folder"))
+            };
+            // In Detailed's words, as its Log shows the title; Simple tells the parts in its own.
+            let title = match (folders, outside) {
+                (0, true) => "History backup takes only chats outside your projects".to_owned(),
+                (0, false) => "History backup takes no project".to_owned(),
+                (_, true) => format!("History backup takes only {chosen}, and chats outside your projects"),
+                (_, false) => format!("History backup takes only {chosen}"),
+            };
+            (title, json!({"form":"copyChosen","folders":folders,"projects":projects,"outside":outside}))
+        }
+    };
+    json!({"by":by,"title":title,"say":say,"key":"copyChoice","undo":{"type":"copyChoice","only":before,"after":only}})
+}
+
+/// The most of the window's last scan [`kept_scan`] reads.
+const SNAPSHOT_BYTES: u64 = 128 * 1024 * 1024;
+/// The folders and sessions of the last scan the window kept, which tell the chats of a project chosen for the copy of
+/// AI chats from those of the group around it, and the folder each session is shown in, when `laci backup` runs
+/// without a scan. Empty when there is no such scan.
+fn kept_scan(env: &Env) -> (Value, Value) {
+    // A scan of many projects is megabytes: more than `files::text` reads.
+    files::read_limit(&env.cache_dir.join("snapshot-v2.json"), SNAPSHOT_BYTES)
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .filter(|v| v["home"] == env.home.to_string_lossy().as_ref())
+        .map(|mut v| (v["snapshot"]["nodes"].take(), v["snapshot"]["sessions"].take()))
+        .unwrap_or_else(|| (json!({}), json!([])))
 }
 
 /// `laci backup`: the backup "Back up now" makes, without the window and without a scan. It needs only the agents
@@ -298,11 +348,16 @@ fn backup_run(env: &Env, snap: &Value, by: &str, always: bool) -> Result<Value> 
 /// tells it, by `by`, only when it copied something, or packed the plain files a copy from before 3.1 holds. It runs
 /// whether or not automatic backups are on: running it is the user's choice. Gives the lines the command prints.
 pub fn backup_now(env: &Env, by: &str) -> Result<String> {
-    let snap = json!({"connectors":crate::agents::connectors(env, &config::load(env))});
+    let cfg = config::load(env);
+    // With projects chosen for the copy, the last scan's folders tell their chats; without one, only the chosen
+    // folders do, which copies more, never less.
+    let (nodes, sessions) = if cfg["backupOnly"].is_object() { kept_scan(env) } else { (json!({}), json!([])) };
+    let snap = json!({"connectors":crate::agents::connectors(env, &cfg),"nodes":nodes,"sessions":sessions});
     let _long = ops::LongRun::start(env, false);
     let result = backup_run(env, &snap, by, false)?;
     let copied = result["copied"].as_u64().unwrap_or(0);
-    let said = format!("Copied {} · {}", scan::plural(copied, "file"), string(&result, "kept"));
+    let only = if result["only"] == true { " of the projects you chose" } else { "" };
+    let said = format!("Copied {}{only} · {}", scan::plural(copied, "file"), string(&result, "kept"));
     Ok(match result["packing"]["said"].as_str() {
         Some(packed) => format!("{packed}\n{said}"),
         None => said,
@@ -526,7 +581,7 @@ impl Service {
             "connector/add" | "connector/remove" => Refresh { watches: true, ..Refresh::agents() },
             "apply" if matches!(apply_kind.as_deref(), Some("archive" | "trash" | "clear")) => Refresh::full(),
             "apply" => Refresh { watches: true, ..Refresh::agents() },
-            "backup/auto" | "backup/restore" | "session/keep" => Refresh::agents(),
+            "backup/auto" | "backup/only" | "backup/restore" | "session/keep" => Refresh::agents(),
             "session/delete" | "storage/free" => Refresh { watches: true, ..Refresh::agents() },
             "proposal/dismiss" => Refresh::agents(),
             "clean" => Refresh::full(),
@@ -940,6 +995,32 @@ impl Service {
                     json!({"by":by,"title":result["title"],"say":result["say"],"detail":format!("{} freed",scan::bytes(result["freed"].as_u64().unwrap_or(0)))}),
                 );
                 Ok(result)
+            }
+            // Which projects the copy of AI chats takes: `only` is null for every one, or the chosen folders and
+            // whether chats outside every project are copied (`copy_choice`). It changes nothing the copy holds.
+            "backup/only" => {
+                let only = crate::copy_choice::setting(&self.env, &b["only"])?;
+                // The projects among the chosen folders, by the scan the window shows: what the Log tells.
+                let projects = match &self.current {
+                    Some(snapshot) => crate::copy_choice::projects(&self.env, &only, &snapshot["nodes"]),
+                    None => 0,
+                };
+                ops::with_lock(&self.env, || {
+                    let mut c = config::load(&self.env);
+                    let before = c.get("backupOnly").cloned().unwrap_or(Value::Null);
+                    if before == only {
+                        return Ok(());
+                    }
+                    if only.is_null() {
+                        c.as_object_mut().ok_or("Invalid config")?.remove("backupOnly");
+                    } else {
+                        c["backupOnly"] = only.clone();
+                    }
+                    config::save(&self.env, &c)?;
+                    activity::record(&self.env, chosen_entry(&only, &before, projects, by));
+                    Ok(())
+                })?;
+                Ok(json!({"only":only}))
             }
             "backup/auto" => {
                 let on = b["on"].as_bool().ok_or("Choose on or off")?;

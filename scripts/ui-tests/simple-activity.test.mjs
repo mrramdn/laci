@@ -591,6 +591,26 @@ const FORMS = [
   ],
   [{ form: "autoBackupOn" }, "Laci now copies new chats by itself"],
   [{ form: "autoBackupOff" }, "Laci now copies chats only when you ask"],
+  // By projects, as the card and the toast count them; by folders when only groups are chosen.
+  [
+    { form: "copyChosen", folders: 8, projects: 6, outside: false },
+    "Laci now copies only the chats of 6 projects you chose",
+  ],
+  [
+    { form: "copyChosen", folders: 2, projects: 1, outside: true },
+    "Laci now copies only the chats of 1 project you chose, and chats outside your projects",
+  ],
+  [{ form: "copyChosen", folders: 2, projects: 0, outside: false }, "Laci now copies only the chats of 2 folders you chose"],
+  [{ form: "copyChosen", folders: 0, projects: 0, outside: true }, "Laci now copies only the chats outside your projects"],
+  [{ form: "copyChosen", folders: 0, projects: 0, outside: false }, "Laci now copies the chats of no project"],
+  // An entry from before the engine counted projects says its folders, as it did.
+  [{ form: "copyChosen", folders: 3, outside: false }, "Laci now copies only the chats of 3 chosen folders"],
+  [
+    { form: "copyChosen", folders: 1, outside: true },
+    "Laci now copies only the chats of 1 chosen folder, and chats outside your projects",
+  ],
+  [{ form: "copyChosen", folders: 0, outside: true }, "Laci now copies only the chats outside your projects"],
+  [{ form: "copyEveryProject" }, "Laci now copies the chats of every project"],
   [{ form: "restoredChat", ai: "Claude Code" }, "Put back a Claude Code chat from Laci’s copy"],
   [{ form: "restoredChat" }, "Put back a chat from Laci’s copy"],
   [{ form: "movedCopy", dir: "/mnt/archive/ai-chats" }, "Moved the copy of AI chats to /mnt/archive/ai-chats"],
@@ -651,7 +671,13 @@ export async function anEntryWithoutPartsItKnowsIsToldFromItsTitleAsBefore() {
     change("n4", "Backed up 3 agent history files"),
     // And a title nothing knows keeps the engine's words.
     change("n5", "Renamed kopi to kopi-landing", { say: { form: "renamed" } }),
+    // A choice for the copy that lost its count keeps the engine's title.
+    change("n6", "The copy of AI chats takes only the chats of 2 chosen folders", {
+      key: "copyChoice",
+      say: { form: "copyChosen", outside: true },
+    }),
   ]);
+  assert.equal(sentence("n6"), "The copy of AI chats takes only the chats of 2 chosen folders");
   assert.equal(sentence("n1"), "Archived habit-app");
   assert.equal(sentence("n2"), "Set the status of kopi-landing to Inactive");
   assert.equal(sentence("n3"), "Deleted 3 chats");

@@ -35,12 +35,13 @@ import { useFocusStays } from "../focus-stays";
 import { useReportSearch, useReportText } from "../hooks";
 import { loadMcp, useMcp } from "../mcp-setup";
 import { chooseFolder } from "../pick";
-import { sessionOwners } from "../selectors";
+import { copyProjects, sessionOwners } from "../selectors";
 import { requestResume } from "../session-ui";
 import type { Selection } from "../session-ui";
 import {
   acknowledge,
   changed,
+  chooseCopy,
   copyText,
   goToProject,
   markReportsSeen,
@@ -65,6 +66,7 @@ import type {
 } from "../types";
 import { ago, aiHelpers as said, blocks, engineSays, project, spent } from "../words";
 import { aiTools, editorName } from "./act";
+import { CopyChoice } from "./CopyChoice";
 import {
   canUseOf,
   chatsAtRisk,
@@ -813,8 +815,55 @@ function CopyCard({ snapshot }: { snapshot: Snapshot }) {
           </Button>
         ) : null}
       </div>
+      <CopyWhich snapshot={snapshot} backup={backup} />
       <CopyPlace backup={backup} home={snapshot.home} />
     </Card>
+  );
+}
+
+/**
+ * "Which chats": every project's, or only the ones chosen, with a warning when folders holding chats aren't copied,
+ * so a project that appeared later isn't forgotten. The sheet makes the choice; "Copy every project" goes back to
+ * the copy that takes all.
+ */
+function CopyWhich({ snapshot, backup }: { snapshot: Snapshot; backup: Backup }) {
+  const historyPending = useApp((s) => s.historyPending);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const only = backup.only;
+  const everyProject = async () => {
+    setSaving(true);
+    await chooseCopy(null, said.copyEveryDone, said.copyEveryNote);
+    setSaving(false);
+  };
+  return (
+    <div className="s-helpers-place" data-ui="copy-which">
+      <p>
+        <b>{said.copyWhich}</b>
+        <span className="s-quiet">
+          {only ? said.copyOnly(copyProjects(snapshot, only), only.paths.length, only.outside) : said.copyEvery}
+          {only && only.notCopied > 0 ? ` · ${said.copyLeft(only.notCopied)}` : ""}
+        </span>
+      </p>
+      <div className="s-actions">
+        <Button
+          kind="text"
+          small
+          icon="folder-kanban"
+          aria-label={only ? said.copyChangeProjectsName : said.copyChooseName}
+          disabled={historyPending || saving}
+          onClick={() => setOpen(true)}
+        >
+          {only ? said.copyChangeProjects : said.copyChoose}
+        </Button>
+        {only ? (
+          <Button kind="text" small disabled={historyPending || saving} onClick={() => void everyProject()}>
+            {said.copyEveryButton}
+          </Button>
+        ) : null}
+      </div>
+      {open ? <CopyChoice snapshot={snapshot} onClose={() => setOpen(false)} /> : null}
+    </div>
   );
 }
 

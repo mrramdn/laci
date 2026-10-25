@@ -604,6 +604,19 @@ impl<'a> Tx<'a> {
             .collect();
         self.config(|cfg| cfg["roots"] = json!(roots))
     }
+    /// Keeps a project chosen for the copy of AI chats chosen where `pairs` moved it, so its chats are still copied
+    /// there. Undo moves only the choice back, so settings changed since don't keep the move from being undone.
+    fn keep_chosen(&mut self, pairs: &[(PathBuf, PathBuf)]) -> Result<()> {
+        let mut cfg = crate::config::load(self.env);
+        let Some(moved) = crate::copy_choice::moved(self.env, &cfg, pairs) else {
+            return Ok(());
+        };
+        // Each chosen folder that moved, and those it moved to that were chosen already, which Undo leaves chosen.
+        let relocated: Vec<Value> = moved.relocated.iter().map(|(from, to)| json!([from, to])).collect();
+        self.log(json!({"kind":"chosen","pairs":relocated,"kept":moved.kept}))?;
+        cfg["backupOnly"] = moved.only;
+        crate::config::save(self.env, &cfg)
+    }
     /// Changes the settings in config.json, keeping a copy first, so Undo puts them back unless they changed since.
     fn config(&mut self, change: impl FnOnce(&mut Value)) -> Result<()> {
         let mut cfg = crate::config::load(self.env);
@@ -701,6 +714,7 @@ fn validate_entries(env: &Env, entries: &[Value]) -> Result<()> {
             Some("file") if e["existed"].as_bool() == Some(true) => &["path", "backup"],
             Some("file") if e["existed"].as_bool() == Some(false) => &["path"],
             Some("mkdir" | "rmdir" | "trash" | "cleared") => &["path"],
+            Some("chosen") if e["pairs"].is_array() => &[],
             _ => return Err("Unknown or incomplete journal entry".into()),
         };
         for key in required {
@@ -776,6 +790,20 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
             }
             "rmdir" => {
                 fs::create_dir_all(journal_path(env, e, "path")?).map_err(|e| e.to_string())?;
+            }
+            "chosen" => {
+                // The projects chosen for the copy that moved go back with their folders.
+                let relocated: Vec<(PathBuf, PathBuf)> = pairs(&e["pairs"])?
+                    .into_iter()
+                    .map(|(from, to)| (PathBuf::from(from), PathBuf::from(to)))
+                    .collect();
+                let kept: Vec<PathBuf> =
+                    e["kept"].as_array().into_iter().flatten().filter_map(Value::as_str).map(PathBuf::from).collect();
+                let mut cfg = crate::config::load(env);
+                if let Some(only) = crate::copy_choice::moved_back(env, &cfg, &relocated, &kept) {
+                    cfg["backupOnly"] = only;
+                    crate::config::save(env, &cfg)?;
+                }
             }
             "trash" => {}   // The system trash owns recovery, as in v1.
             "cleared" => {} // Build output comes back with the next install or build.
@@ -944,6 +972,36 @@ fn pairs(value: &Value) -> Result<Vec<(String, String)>> {
         .map(|p| Ok((p[0].as_str().ok_or("Invalid old path")?.into(), p[1].as_str().ok_or("Invalid new path")?.into())))
         .collect()
 }
+/// The folders a reconnect's `mapping` tells moved, from where the logs said to where the project is now.
+fn moves(mapping: &[(String, String)]) -> Vec<(PathBuf, PathBuf)> {
+    mapping.iter().map(|(from, to)| (PathBuf::from(from), PathBuf::from(to))).collect()
+}
+/// The folders Laci moved after `at`, in the order it moved them, by the journals of changes that still stand: a
+/// project's own move, and each folder chosen for the copy of AI chats that a move or reconnect carried along.
+pub(crate) fn moves_since(env: &Env, at: &str) -> Vec<(PathBuf, PathBuf)> {
+    let mut later: Vec<Value> =
+        journals(env, 200).into_iter().filter(|j| j["state"] == "applied" && j["at"].as_str() > Some(at)).collect();
+    later.sort_by(|a, b| a["at"].as_str().cmp(&b["at"].as_str()));
+    let mut out = Vec::new();
+    for e in later.iter().flat_map(|j| j["entries"].as_array().into_iter().flatten()) {
+        match e["kind"].as_str() {
+            // Moves of the copy itself are no project's.
+            Some("move") if e["scope"] != "copy" => {
+                if let (Some(from), Some(to)) = (e["from"].as_str(), e["to"].as_str()) {
+                    out.push((PathBuf::from(from), PathBuf::from(to)));
+                }
+            }
+            Some("chosen") => out.extend(
+                pairs(&e["pairs"])
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(from, to)| (PathBuf::from(from), PathBuf::from(to))),
+            ),
+            _ => {}
+        }
+    }
+    out
+}
 fn jsonl(dir: &Path) -> Vec<PathBuf> {
     walkdir::WalkDir::new(dir)
         .follow_links(false)
@@ -1028,6 +1086,7 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
             })
             .collect();
         tx.move_to(&src, &dest)?;
+        tx.keep_chosen(&[(src.clone(), dest.clone())])?;
         for (c, old, now) in claude {
             let from = value_path(env, &c["dir"])?;
             let target = from.parent().ok_or("Invalid Claude store")?.join(paths::enc(&now.to_string_lossy()));
@@ -1178,6 +1237,7 @@ fn apply_action_checked(
                 for f in jsonl(&target) {
                     tx.rewrite(&f, &mapping, "cwd")?;
                 }
+                tx.keep_chosen(&moves(&mapping))?;
             }
             "rewrite-claude" => {
                 for item in a["items"].as_array().ok_or("Missing history")? {
@@ -1186,6 +1246,7 @@ fn apply_action_checked(
                     for f in jsonl(&dir) {
                         tx.rewrite(&f, &mapping, "cwd")?;
                     }
+                    tx.keep_chosen(&moves(&mapping))?;
                 }
             }
             "rewrite-logs" => {
@@ -1193,6 +1254,7 @@ fn apply_action_checked(
                 for f in a["files"].as_array().ok_or("Missing log files")? {
                     tx.rewrite(&value_path(env, f)?, &mapping, a["field"].as_str().unwrap_or("cwd"))?;
                 }
+                tx.keep_chosen(&moves(&mapping))?;
             }
             "quarantine" => {
                 let quarantine = data(env, "orphans")?;
@@ -1222,7 +1284,8 @@ fn apply_action_checked(
     })
 }
 /// Copies agent histories into the copy of AI chats (`backup::dir`), each file packed with zstd, and says what the
-/// copy holds. Only files that grew since their last copy are copied again.
+/// copy holds. Only files that grew since their last copy are copied again, and with projects chosen for the copy only
+/// their chats ([`crate::copy_choice`]), told against the folders in `snap["nodes"]`; the result's `only` says so.
 /// A move of the copy that stopped part-way is finished first: the result names its journal as `settled`. What the
 /// plain files from before 3.1 that it packed first took before and take now is its `packing`.
 pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
@@ -1232,6 +1295,10 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
         // What runs that stopped part-way left goes first, and plain files from before 3.1 are packed.
         crate::backup::remove_leftovers(env, &dest);
         let packing = crate::backup::convert(env, &dest);
+        // Only the chats of the projects chosen for the copy, when some were, by the folders `snap` scanned and the
+        // folder it files each session under.
+        let mut choice = crate::copy_choice::Choice::load(env, &crate::config::load(env), &snap["nodes"])
+            .map(|choice| choice.filed(&snap["sessions"]));
         let mut copied = 0u64;
         let mut bytes = 0u64;
         for c in snap["connectors"]
@@ -1272,6 +1339,12 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
                 if crate::backup::content_size(&target) == Some(listed.len()) {
                     continue;
                 }
+                // A chat of a project that isn't chosen isn't copied, and what the copy holds of it stays as it is.
+                if let Some(choice) = choice.as_mut()
+                    && !choice.takes(env, c, &src, relative)
+                {
+                    continue;
+                }
                 fs::create_dir_all(target.parent().ok_or("Missing folder")?).map_err(|e| e.to_string())?;
                 // What is packed is the file as it is opened. One that got shorter while it was read keeps its last
                 // copy; the next run copies it again.
@@ -1286,12 +1359,13 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
         // What the backup holds now, including sessions their tool has since deleted.
         let (sessions, kept, total) = crate::backup::count(&dest);
         // Every file is packed after a run, so `bytes` is what a move of the copy carries.
-        let state =
-            json!({"at":files::now(),"copied":copied,"sessions":sessions,"files":kept,"bytes":total,"packed":true});
+        // `took` is the choice the run copied by, which tells a later scan the chats that weren't taken.
+        let state = json!({"at":files::now(),"copied":copied,"sessions":sessions,"files":kept,"bytes":total,"packed":true,
+            "took":choice.as_ref().map(crate::copy_choice::Choice::state)});
         files::replace(&data(env, BACKUP_STATE)?, state.to_string().as_bytes())?;
         Ok(
             json!({"copied":copied,"bytes":bytes,"size":bytes,"dest":dest,"sessions":sessions,"files":kept,"total":total,
-            "settled":settled,"packing":{"files":packing.files,"before":packing.before,"after":packing.after}}),
+            "only":choice.is_some(),"settled":settled,"packing":{"files":packing.files,"before":packing.before,"after":packing.after}}),
         )
     })
 }
@@ -1444,7 +1518,9 @@ const BACKUP_STATE: &str = "backup.json";
 /// When agent history was last backed up and what the backup holds, or nothing if it never ran. Where the copy is
 /// comes from `backup::dir`.
 pub fn backup_state(env: &Env) -> Option<Value> {
-    let state: Value = serde_json::from_str(&files::text(&data(env, BACKUP_STATE).ok()?)?).ok()?;
+    // With projects chosen, it names the folders the run told chats apart by: more than `files::text` reads, for many.
+    let text = files::read_limit(&data(env, BACKUP_STATE).ok()?, 64 * 1024 * 1024)?;
+    let state: Value = serde_json::from_str(&text).ok()?;
     state["at"].as_str()?;
     Some(state)
 }

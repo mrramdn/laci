@@ -20,7 +20,7 @@ export type Theme = "system" | "light" | "dark";
 export type ReportFilter = { sessions: string[] } | { project: string } | null;
 export type SortKey = "name" | "last" | "size" | "ai" | "priority" | "deadline";
 export type Modal =
-  | { kind: "shortcuts" | "connector" | "help" }
+  | { kind: "shortcuts" | "connector" | "help" | "copy-choice" }
   | { kind: "new"; job?: CreationJob }
   | { kind: "archive" | "delete" | "orphan" | "clean"; id: string }
   | { kind: "terminal-close"; id: string }
@@ -797,6 +797,30 @@ export async function moveCopy(
     },
     words.moving,
     { history: true, onError },
+  );
+  return done === true;
+}
+/**
+ * Chooses the projects the copy of AI chats takes, or every project for `null` (`backup/only`). One Log entry per
+ * call, which Undo in the Log takes back. `say` is the toast, in the design's own words, and `note` what stays true
+ * of the copy. True once the choice is saved; a refusal goes to `onError`, or a toast without it.
+ */
+export async function chooseCopy(
+  only: { paths: string[]; outside: boolean } | null,
+  say: string,
+  note: string,
+  onError?: (error: unknown) => void,
+) {
+  const done = await run(
+    async () => {
+      const result = await api<{ snapshot?: Snapshot }>("backup/only", { only });
+      if (result.snapshot) acknowledge({ snapshot: result.snapshot });
+      toast(say, note);
+      void refreshLog();
+      return true;
+    },
+    "",
+    { onError },
   );
   return done === true;
 }

@@ -384,6 +384,52 @@ fn log_facts(path: &Path, field: &str, claude: bool) -> Value {
     json!({"cwd":first,"cwds":cwds,"lines":lines,"title":title,"branch":branch,"ownershipComplete":complete && valid_locations})
 }
 
+/// How far into a log [`first_location`] and [`locations`] read: a tool names where it runs in its first records.
+const LOCATION_BYTES: u64 = 1024 * 1024;
+/// The most folders [`locations`] gives for one log.
+const LOCATIONS: usize = 1000;
+/// Each folder the log `path` names in `field`, in order, read only from the log's start (up to [`LOCATION_BYTES`]),
+/// until `enough` says so; and whether that was the whole log.
+fn named_folders(path: &Path, field: &str, mut enough: impl FnMut(PathBuf) -> bool) -> bool {
+    use std::io::BufRead;
+    let Ok(file) = fs::File::open(path) else { return false };
+    let whole = file.metadata().is_ok_and(|meta| meta.len() <= LOCATION_BYTES);
+    let field = field_regex(field);
+    for line in std::io::BufReader::new(file.take(LOCATION_BYTES)).lines() {
+        let Ok(line) = line else { return false };
+        for c in field.captures_iter(&line) {
+            if let Some(value) = decoded(&c[1]).filter(|value| Path::new(value).is_absolute())
+                && enough(paths::normalize(Path::new(&value)))
+            {
+                return false;
+            }
+        }
+    }
+    whole
+}
+/// The first folder the log `path` names in `field`, as [`log_facts`] finds it first, read only from the log's start:
+/// where the chat was started, for the copy of AI chats, which can't wait for a whole log to be read.
+pub(crate) fn first_location(path: &Path, field: &str) -> Option<PathBuf> {
+    let mut first = None;
+    named_folders(path, field, |folder| {
+        first = Some(folder);
+        true
+    });
+    first
+}
+/// Every folder the log `path` names in `field`, each once, read as [`first_location`] reads, and whether that was
+/// the whole log: a log that holds the chats of several folders, as Antigravity's one history does.
+pub(crate) fn locations(path: &Path, field: &str) -> (Vec<PathBuf>, bool) {
+    let mut found: Vec<PathBuf> = Vec::new();
+    let whole = named_folders(path, field, |folder| {
+        if !found.contains(&folder) {
+            found.push(folder);
+        }
+        found.len() >= LOCATIONS
+    });
+    (found, whole)
+}
+
 const METADATA_BYTES: u64 = 8 * 1024 * 1024;
 const METADATA_RECORDS: usize = 20_000;
 fn records(path: &Path, read: impl FnMut(Value)) -> bool {

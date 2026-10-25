@@ -23,6 +23,8 @@ import type {
   Storage,
   TerminalInfo,
 } from "../types";
+import { copyProjects, copyTree } from "../selectors";
+import { count } from "../words";
 import raw from "./fixtures.json";
 
 type Body = Record<string, unknown>;
@@ -541,6 +543,64 @@ function moveBackup(body: Body) {
   log[0].say = { form: moved ? "movedCopy" : "keptCopyIn", dir: dest, own: !dir };
   return { ...change, dest, moved, bytes: moved ? (state.bytes ?? 0) : 0 };
 }
+/**
+ * The Log's title for a choice, as the engine says it: in Detailed's words, as Detailed's Log shows the title
+ * (Simple's Activity says it from `say`). By projects, else by folders, else only the chats outside them or none,
+ * and the chats outside them when they are chosen too.
+ */
+function chosenTitle(projects: number, folders: number, outside: boolean) {
+  const what = projects > 0 ? count(projects, "project") : folders > 0 ? count(folders, "folder") : "";
+  return what
+    ? `History backup takes only ${what} you chose${outside ? ", and chats outside your projects" : ""}`
+    : outside
+      ? "History backup takes only chats outside your projects"
+      : "History backup takes no project";
+}
+/**
+ * Chooses the projects the copy of AI chats takes, `only: null` for every project, as one Log entry Undo takes
+ * back. The preview takes the full paths it is given, sorted and each once. `notCopied` counts the projects and
+ * groups that hold chats which aren't taken, and `missing` the chosen paths the demo disk (the folders `ls` knows)
+ * doesn't have.
+ */
+function backupOnly(body: Body) {
+  const sent = body.only as { paths?: unknown; outside?: unknown } | null;
+  const before = snapshot.backup?.only;
+  const list = sent && Array.isArray(sent.paths) ? [...new Set(sent.paths as string[])].sort() : null;
+  const now = list ? { paths: list, outside: sent?.outside === true } : undefined;
+  const set = (only: { paths: string[]; outside: boolean } | undefined) => {
+    if (!snapshot.backup) return;
+    if (!only) {
+      delete snapshot.backup.only;
+      return;
+    }
+    // A copy of the snapshot: copyTree keeps what it works out for each one, and the preview's changes in place.
+    const tree = copyTree({ ...snapshot }, only.paths);
+    snapshot.backup.only = {
+      paths: only.paths,
+      outside: only.outside,
+      notCopied: tree.rows.filter((row) => row.chats > 0 && !only.paths.includes(row.node.path)).length,
+      missing: tree.others
+        .filter((other) => !Object.hasOwn(fixtures.ls, other.path))
+        .map((other) => other.path),
+    };
+  };
+  const same = JSON.stringify(now) === JSON.stringify(before && { paths: before.paths, outside: before.outside });
+  if (same) return { only: now ?? null };
+  set(now);
+  const projects = now ? copyProjects(snapshot, now) : 0;
+  record(
+    now ? chosenTitle(projects, now.paths.length, now.outside) : "History backup takes every project",
+    () => set(before),
+    {
+      key: "copyChoice",
+      say: now
+        ? { form: "copyChosen", folders: now.paths.length, projects, outside: now.outside }
+        : { form: "copyEveryProject" },
+    },
+  );
+  revision++;
+  return { only: now ?? null, snapshot: stamped() };
+}
 function backupAuto(body: Body) {
   const on = body.on === true;
   if (snapshot.backup) snapshot.backup.auto = on;
@@ -876,6 +936,7 @@ const writes: Record<string, Handler> = {
   backup,
   "backup/move": moveBackup,
   "backup/auto": backupAuto,
+  "backup/only": backupOnly,
   "storage/free": free,
   "agent/mcp/apply": applyMcp,
   "setup/save": () => logged("Changed settings", () => {}),

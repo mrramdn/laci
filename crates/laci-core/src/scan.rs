@@ -590,20 +590,66 @@ fn link(
     snapshot["suggestions"] = json!(suggestions);
     // History kept in a store of its own can be copied; what lives inside a project travels with it.
     if on.iter().any(|c| c["link"]["dir"].is_string() && c["link"]["kind"] != "mentions") {
-        // Sessions that changed after the last backup are the ones still at risk.
-        let live: Vec<(String, String)> = array(&snapshot["sessions"])
-            .iter()
-            .filter(|s| s["backup"] != true)
-            .map(|s| (string(s, "provider").to_owned(), string(s, "updatedAt").to_owned()))
-            .collect();
+        let cfg = crate::config::load(env);
+        // With projects chosen for the copy, the chats of the others are neither copied nor at risk of being lost
+        // from it.
+        let choice = crate::copy_choice::Choice::load(env, &cfg, &snapshot["nodes"]);
         let mut backup = crate::ops::backup_state(env).unwrap_or_else(|| json!({}));
         let ran = backup["at"].is_string();
-        if ran {
-            let at = string(&backup, "at").to_owned();
-            backup["pending"] = json!(live.iter().filter(|(_, t)| t.as_str() > at.as_str()).count());
+        // The choice the last run copied by, told against the folders it knew. A run with none, or from before 3.2,
+        // took every chat.
+        let took = backup.as_object_mut().and_then(|state| state.remove("took"));
+        let took = took.and_then(|took| crate::copy_choice::Choice::taken(env, &took, &snapshot["nodes"]));
+        let copy = crate::backup::dir(env).ok();
+        let at = string(&backup, "at").to_owned();
+        let (live, pending) = {
+            let claude = &snapshot["claude"];
+            let sessions: Vec<&Value> = array(&snapshot["sessions"])
+                .iter()
+                .filter(|s| s["backup"] != true && copied_by(choice.as_ref(), claude, on, s))
+                .collect();
+            // At risk: what changed after the last run, and what is older but not in the copy as that run left it:
+            // one the run didn't take because it was chosen since, or one Laci moved into a chosen project since.
+            // One an earlier run copied as it is now is safe.
+            let taken = |s: &Value| {
+                let by_choice = copied_by(took.as_ref(), claude, on, s);
+                match copy.as_ref().and_then(|copy| packed_of(copy, on, s)) {
+                    Some(packed) => (by_choice && packed.exists()) || held(&packed, s),
+                    None => by_choice,
+                }
+            };
+            let pending = ran.then(|| {
+                sessions.iter().copied().filter(|&s| string(s, "updatedAt") > at.as_str() || !taken(s)).count()
+            });
+            let live: Vec<(String, String)> = sessions
+                .iter()
+                .map(|s| (string(s, "provider").to_owned(), string(s, "updatedAt").to_owned()))
+                .collect();
+            (live, pending)
+        };
+        if let Some(pending) = pending {
+            backup["pending"] = json!(pending);
         }
-        let cfg = crate::config::load(env);
         backup["auto"] = json!(cfg["autoBackup"] == true);
+        // The projects chosen, as full paths like the scan's, those of them that aren't there now, and how many
+        // scanned folders hold chats that aren't copied: a project that appeared since is one, until it is ticked.
+        if let Some(choice) = &choice {
+            // Sessions share few folders: each is looked up once.
+            let mut folders: BTreeMap<&str, Option<String>> = BTreeMap::new();
+            let claude = &snapshot["claude"];
+            for s in array(&snapshot["sessions"])
+                .iter()
+                .filter(|s| s["backup"] != true && !copied_by(Some(choice), claude, on, s))
+            {
+                if let Some(cwd) = s["cwd"].as_str() {
+                    folders.entry(cwd).or_insert_with(|| nearest(&snapshot["nodes"], cwd));
+                }
+            }
+            let left: BTreeSet<&String> = folders.values().flatten().collect();
+            let missing: Vec<&PathBuf> = choice.chosen().iter().filter(|path| !path.exists()).collect();
+            backup["only"] = json!({"paths":choice.chosen(),"outside":choice.outside(),"notCopied":left.len(),
+                "missing":missing});
+        }
         // Where the copy is, and, when the folder chosen for it can't be used now, why: nothing is copied then.
         let chosen = crate::backup::chosen(env, &cfg);
         match crate::backup::dir(env) {
@@ -647,6 +693,44 @@ fn link(
 
 fn array(v: &Value) -> &[Value] {
     v.as_array().map(Vec::as_slice).unwrap_or(&[])
+}
+/// Where the copy of AI chats in `copy` keeps the log of the session `s`, from the store of one of the connectors `on`.
+fn packed_of(copy: &Path, on: &[Value], s: &Value) -> Option<PathBuf> {
+    let file = Path::new(s["file"].as_str()?);
+    on.iter().filter(|c| c["link"]["kind"] != "mentions").find_map(|c| {
+        let relative = file.strip_prefix(c["link"]["dir"].as_str()?).ok()?;
+        Some(crate::backup::packed(&copy.join(c["id"].as_str()?).join(relative)))
+    })
+}
+/// Whether the copy holds the log of the session `s` at `packed` as long as it is now.
+fn held(packed: &Path, s: &Value) -> bool {
+    let Some(file) = s["file"].as_str() else { return false };
+    std::fs::metadata(file).is_ok_and(|meta| crate::backup::content_size(packed) == Some(meta.len()))
+}
+/// The folders the session `s` counts in, as the copy goes by them: the one it is shown in (its last), the one its
+/// Claude Code store folder is named after (the scan's `claude` by name), and every other one its Codex log names.
+fn session_folders<'a>(claude: &'a Value, on: &[Value], s: &'a Value) -> Vec<&'a str> {
+    let mut out: Vec<&str> = s["cwd"].as_str().into_iter().collect();
+    out.extend(s["cwds"].as_object().into_iter().flatten().map(|(cwd, _)| cwd.as_str()));
+    if let Some(file) = s["file"].as_str().map(Path::new) {
+        for c in on.iter().filter(|c| c["link"]["kind"] == "named") {
+            let named = c["link"]["dir"].as_str().and_then(|dir| file.strip_prefix(dir).ok()?.components().next());
+            if let Some(path) =
+                named.and_then(|name| claude[name.as_os_str().to_string_lossy().as_ref()]["path"].as_str())
+            {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+/// Whether the copy of AI chats takes the session `s` by `choice`, which takes every chat when there is none: when any
+/// folder it counts in is chosen ([`session_folders`]). A session with no folder on record is copied whatever is
+/// chosen.
+fn copied_by(choice: Option<&crate::copy_choice::Choice>, claude: &Value, on: &[Value], s: &Value) -> bool {
+    let Some(choice) = choice else { return true };
+    let folders = session_folders(claude, on, s);
+    folders.is_empty() || folders.iter().any(|folder| choice.wants(Path::new(folder)))
 }
 fn string<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or("")

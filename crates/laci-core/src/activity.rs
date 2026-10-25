@@ -89,6 +89,14 @@ fn steps(env: &Env, j: &Value) -> Value {
     if moves.len() > 20 {
         out.push(json!({"kind":"move","label":format!("And {} more moves",moves.len()-20)}));
     }
+    // A project chosen for the copy of AI chats stays chosen where it went.
+    for pair in entries
+        .iter()
+        .filter(|e| e["kind"] == "chosen")
+        .flat_map(|e| e["pairs"].as_array().cloned().unwrap_or_default())
+    {
+        out.push(json!({"kind":"write","label":"Kept it chosen for the copy of AI chats","from":tilde(&pair[0]),"to":tilde(&pair[1])}));
+    }
     let rewrites = entries.iter().filter(|e| e["kind"] == "rewrite").count();
     if rewrites > 0 {
         out.push(json!({"kind":"rewrite","label":format!("Rewrote the folder path in {rewrites} log file{}",if rewrites==1{""}else{"s"})}));
@@ -297,6 +305,25 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
                 }
             } else {
                 return Err("Invalid connector undo".into());
+            }
+            config::save(env, &c)?;
+            out["refresh"] = json!("all");
+        } else if kind == "copyChoice" {
+            // What the change ticked is unticked and what it unticked is ticked again, so a project Laci moved since
+            // stays ticked where it went. Nothing the copy holds changes.
+            let mut c = config::load(env);
+            let now = c.get("backupOnly").cloned().unwrap_or(Value::Null);
+            // The folders it ticked or unticked are told where Laci moved them since.
+            let moves = ops::moves_since(env, a["at"].as_str().unwrap_or(""));
+            let (before, after) = (
+                crate::copy_choice::followed(env, &undo["only"], &moves),
+                crate::copy_choice::followed(env, &undo["after"], &moves),
+            );
+            let only = crate::copy_choice::undone(env, &before, &after, &now);
+            if only.is_null() {
+                c.as_object_mut().ok_or("Invalid config")?.remove("backupOnly");
+            } else {
+                c["backupOnly"] = only;
             }
             config::save(env, &c)?;
             out["refresh"] = json!("all");

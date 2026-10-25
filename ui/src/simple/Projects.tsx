@@ -1,5 +1,5 @@
-// Projects: a card for each project, with search, a filter, a folder and an order. "+ New project"
-// is the filled button.
+// Projects: a card for each project, under the folder that holds it, with search, a filter, a folder
+// and an order. "+ New project" is the filled button.
 import { useId, useMemo } from "react";
 import { useNow } from "../clock";
 import { Icon } from "../common";
@@ -15,8 +15,10 @@ import {
   projectFolders,
   projectChats,
   projectsModel,
+  sectionKey,
 } from "./model";
-import { setSort, useSimple } from "./state";
+import type { ProjectSection } from "./model";
+import { setGrouped, setSort, toggleCollapsed, useSimple } from "./state";
 import { Button, EmptyState, MoreMenu, SafetyBadge, StatusChip } from "./ui";
 
 export function Projects() {
@@ -26,6 +28,8 @@ export function Projects() {
   const sort = useSimple((s) => s.sort);
   const query = useSimple((s) => s.query);
   const folder = useSimple((s) => s.folder);
+  const grouped = useSimple((s) => s.grouped);
+  const collapsed = useSimple((s) => s.collapsed);
   const day = now.toDateString();
   const model = useMemo(
     () => projectsModel(snapshot, { filter, query, sort, folder }, new Date(day)),
@@ -76,6 +80,16 @@ export function Projects() {
           ))}
         </div>
         <div className="s-toolbar-end">
+          <button
+            type="button"
+            role="switch"
+            className="s-switch"
+            aria-checked={grouped}
+            onClick={() => setGrouped(!grouped)}
+          >
+            <span className="s-switch-track" aria-hidden="true" />
+            {said.groupBy}
+          </button>
           {folders.length > 1 || folder ? (
             <MoreMenu
               label={said.inLabel(where?.label ?? said.inAll)}
@@ -114,14 +128,26 @@ export function Projects() {
           </MoreMenu>
         </div>
       </div>
-      {model.shown.length ? (
-        <ul className="s-grid" aria-label={said.title}>
-          {model.shown.map((n) => (
-            <li key={n.id}>
-              <ProjectCard n={n} snapshot={snapshot} now={now} />
-            </li>
+      {model.shown.length && grouped && model.sections.length > 1 ? (
+        // One section alone needs no header: its cards are the whole list.
+        <div className="s-groups">
+          {model.sections.map((section) => (
+            <Section
+              key={sectionKey(section)}
+              section={section}
+              open={!collapsed.includes(sectionKey(section))}
+              snapshot={snapshot}
+              now={now}
+            />
           ))}
-        </ul>
+        </div>
+      ) : model.shown.length ? (
+        <Cards
+          label={said.title}
+          projects={model.shown}
+          snapshot={snapshot}
+          now={now}
+        />
       ) : query.trim() ? (
         <EmptyState
           art="no-projects"
@@ -143,7 +169,87 @@ export function Projects() {
   );
 }
 
-function ProjectCard({ n, snapshot, now }: { n: Node; snapshot: Snapshot; now: Date }) {
+/** The cards in a grid. Under a group's heading they are one level lower than in the flat list. */
+function Cards({
+  label,
+  projects,
+  snapshot,
+  now,
+  heading,
+}: {
+  label: string;
+  projects: Node[];
+  snapshot: Snapshot;
+  now: Date;
+  heading?: "h3";
+}) {
+  return (
+    <ul className="s-grid" aria-label={label}>
+      {projects.map((n) => (
+        <li key={n.id}>
+          <ProjectCard n={n} snapshot={snapshot} now={now} heading={heading} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** A folder's heading, which folds its cards away, and the cards. */
+function Section({
+  section,
+  open,
+  snapshot,
+  now,
+}: {
+  section: ProjectSection;
+  open: boolean;
+  snapshot: Snapshot;
+  now: Date;
+}) {
+  const region = useId();
+  return (
+    <section className="s-group">
+      <h2 className="s-group-head">
+        <button
+          type="button"
+          className="s-group-toggle"
+          aria-expanded={open}
+          aria-controls={region}
+          onClick={() => toggleCollapsed(sectionKey(section))}
+        >
+          <Icon name="chevron-down" />
+          <span className="s-group-name">{section.label}</span>
+          <span className="s-group-count">
+            {said.groupCount(section.projects.length)}
+          </span>
+        </button>
+      </h2>
+      <div id={region} hidden={!open}>
+        {open ? (
+          <Cards
+            label={section.label}
+            projects={section.projects}
+            snapshot={snapshot}
+            now={now}
+            heading="h3"
+          />
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function ProjectCard({
+  n,
+  snapshot,
+  now,
+  heading: Heading = "h2",
+}: {
+  n: Node;
+  snapshot: Snapshot;
+  now: Date;
+  heading?: "h2" | "h3";
+}) {
   const apps = useApp((s) => s.apps);
   const due = deadlineInfo(n.meta.deadline, now);
   const chats = projectChats(snapshot, n, now.getTime()).total;
@@ -157,11 +263,11 @@ function ProjectCard({ n, snapshot, now }: { n: Node; snapshot: Snapshot; now: D
       aria-labelledby={title}
     >
       <div className="s-pcard-top">
-        <h2 className="s-pcard-name" id={title}>
+        <Heading className="s-pcard-name" id={title}>
           <button type="button" className="s-pcard-open" onClick={() => goToProject(n.id)}>
             {n.label}
           </button>
-        </h2>
+        </Heading>
         <MoreMenu
           label={blocks.moreFor(n.label)}
           items={[

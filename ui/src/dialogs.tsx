@@ -19,6 +19,7 @@ import {
   plural,
   tilde,
 } from "./helpers";
+import { CopyChoice } from "./copy-choice";
 import { ChooseFolder } from "./pick";
 import { detailedList } from "./shortcuts";
 import { Icon, Ops, restoreFocus, SeverityGlyph } from "./common";
@@ -275,6 +276,8 @@ export function Dialogs() {
     >
       <NewProject key={modal.job?.id ?? "draft"} restored={modal.job} />
     </Suspense>
+  ) : modal?.kind === "copy-choice" ? (
+    <CopyChoice />
   ) : modal?.kind === "connector" ? (
     <ConnectorDialog />
   ) : modal?.kind === "terminal-close" ? (

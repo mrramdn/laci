@@ -3,7 +3,8 @@ import { api, errorText } from "./api";
 import { Icon } from "./common";
 import { bytes, copyChangeSaid, plural, tilde, when } from "./helpers";
 import { ChooseFolder } from "./pick";
-import { acknowledge, backup, moveCopy, openCopy, run, useApp } from "./store";
+import { copyProjects } from "./selectors";
+import { acknowledge, backup, chooseCopy, moveCopy, openCopy, run, useApp } from "./store";
 import type { Backup, Snapshot } from "./types";
 import { detailedSettings as said, engineSays } from "./words";
 
@@ -232,6 +233,65 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
         </p>
       ) : null}
       <small>{said.backupFolderNote}</small>
+    </div>
+  );
+}
+
+/**
+ * Settings: which projects the history backup takes, below the automatic backup switch. It says what is true now:
+ * every project, or how many are chosen and how many folders holding chats are left out. Only a button changes it,
+ * never the focus or an arrow key: Choose projects… opens the chooser, with everything ticked; with a choice,
+ * Choose… opens it on the choice and "Back up every project" sends that back at once.
+ */
+export function BackupWhich({ state }: { state: Backup }) {
+  const snapshot = useApp((s) => s.snapshot);
+  const historyPending = useApp((s) => s.historyPending);
+  const [saving, setSaving] = useState(false);
+  const label = useId();
+  const only = state.only;
+  const open = () => useApp.setState({ modal: { kind: "copy-choice" } });
+  const every = async () => {
+    setSaving(true);
+    await chooseCopy(null, said.backupEveryDone, said.backupEveryNoteDone);
+    setSaving(false);
+  };
+  const busy = saving || historyPending;
+  return (
+    <div className="fld" role="group" aria-labelledby={label} data-ui="backup-which">
+      <span id={label}>{said.backupWhich}</span>
+      <div className="which-now">
+        <b>{only ? said.backupOnlyChosen : said.backupEvery}</b>
+        <p>
+          {only
+            ? `${said.backupOnlySummary(
+                snapshot ? copyProjects(snapshot, only) : 0,
+                only.paths.length,
+                only.outside,
+              )}${only.notCopied > 0 ? ` · ${said.backupLeft(only.notCopied)}` : ""}`
+            : said.backupEveryNote}
+        </p>
+      </div>
+      <div className="row-acts">
+        <button
+          type="button"
+          className="btn sm"
+          aria-label={said.backupChooseName}
+          disabled={busy}
+          onClick={open}
+        >
+          {only ? said.backupChoose : said.backupChooseProjects}
+        </button>
+        {only ? (
+          <button
+            type="button"
+            className="btn sm"
+            disabled={busy}
+            onClick={() => void every()}
+          >
+            {said.backupEvery}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

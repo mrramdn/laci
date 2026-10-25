@@ -305,7 +305,13 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
             // stays ticked where it went. Nothing the copy holds changes.
             let mut c = config::load(env);
             let now = c.get("backupOnly").cloned().unwrap_or(Value::Null);
-            let only = crate::copy_choice::undone(env, &undo["only"], &undo["after"], &now);
+            // The folders it ticked or unticked are told where Laci moved them since.
+            let moves = ops::moves_since(env, a["at"].as_str().unwrap_or(""));
+            let (before, after) = (
+                crate::copy_choice::followed(env, &undo["only"], &moves),
+                crate::copy_choice::followed(env, &undo["after"], &moves),
+            );
+            let only = crate::copy_choice::undone(env, &before, &after, &now);
             if only.is_null() {
                 c.as_object_mut().ok_or("Invalid config")?.remove("backupOnly");
             } else {

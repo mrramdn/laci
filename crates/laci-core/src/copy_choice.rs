@@ -62,17 +62,28 @@ impl Choice {
         Self::of(env, &cfg["backupOnly"], nodes)
     }
 
-    /// The choice `only`, as `backupOnly` or as [`Choice::state`] keeps it, told against `nodes`.
+    /// The choice `only`, as `backupOnly` keeps it, told against `nodes`.
     pub fn of(env: &Env, only: &Value, nodes: &Value) -> Option<Self> {
-        let Only { chosen, outside } = read(env, only)?;
-        let mut known: Vec<PathBuf> = nodes
-            .as_object()
-            .into_iter()
-            .flatten()
-            .filter_map(|(_, n)| n["path"].as_str())
-            .map(PathBuf::from)
-            .chain(chosen.iter().cloned())
-            .collect();
+        let folders =
+            nodes.as_object().into_iter().flatten().filter_map(|(_, n)| n["path"].as_str()).map(PathBuf::from);
+        Self::with(read(env, only)?, folders)
+    }
+
+    /// The choice a run copied by, as [`Choice::state`] recorded it, told against the folders that run knew: a folder
+    /// scanned then but renamed or gone since still kept its chats out. A record without them, from before, is told
+    /// against `nodes`.
+    pub fn taken(env: &Env, state: &Value, nodes: &Value) -> Option<Self> {
+        match state["known"].as_array() {
+            Some(known) => {
+                let folders = known.iter().filter_map(Value::as_str).map(PathBuf::from);
+                Self::with(read(env, state)?, folders)
+            }
+            None => Self::of(env, state, nodes),
+        }
+    }
+
+    fn with(Only { chosen, outside }: Only, folders: impl Iterator<Item = PathBuf>) -> Option<Self> {
+        let mut known: Vec<PathBuf> = folders.chain(chosen.iter().cloned()).collect();
         known.sort();
         known.dedup();
         Some(Self { chosen, outside, known, named: HashMap::new() })
@@ -88,9 +99,10 @@ impl Choice {
         self.outside
     }
 
-    /// The choice as a run of the copy records it, with full paths, so a later scan knows which chats it took.
+    /// The choice as a run of the copy records it, with full paths and the folders it told chats apart by, so a later
+    /// scan knows which chats it took ([`Choice::taken`]).
     pub fn state(&self) -> Value {
-        json!({"paths":self.chosen,"outside":self.outside})
+        json!({"paths":self.chosen,"outside":self.outside,"known":self.known})
     }
 
     /// Whether a chat started in `folder` is copied.
@@ -233,11 +245,11 @@ pub(crate) fn moved(env: &Env, cfg: &Value, pairs: &[(PathBuf, PathBuf)]) -> Opt
 /// nothing changes.
 pub(crate) fn moved_back(env: &Env, cfg: &Value, relocated: &[(PathBuf, PathBuf)], kept: &[PathBuf]) -> Option<Value> {
     let Only { mut chosen, outside } = read(env, &cfg["backupOnly"])?;
+    // Whether a folder it moved to is still chosen is asked of the choice as it is, before any goes back: two that
+    // were joined in one come back both.
+    let still = chosen.clone();
     let mut changed = false;
-    for (from, to) in relocated {
-        if !chosen.contains(to) {
-            continue;
-        }
+    for (from, to) in relocated.iter().filter(|(_, to)| still.contains(to)) {
         if !kept.contains(to) {
             chosen.retain(|path| path != to);
         }
@@ -245,6 +257,17 @@ pub(crate) fn moved_back(env: &Env, cfg: &Value, relocated: &[(PathBuf, PathBuf)
         changed = true;
     }
     changed.then(|| saved(env, chosen, outside))
+}
+
+/// The choice `only` with each folder it names carried through `moves` (from where to where, in order), as Laci moved
+/// them since it was made; `null` stays `null`, and one that can't be read stays as it is.
+pub(crate) fn followed(env: &Env, only: &Value, moves: &[(PathBuf, PathBuf)]) -> Value {
+    let Some(Only { chosen, outside }) = read(env, only) else { return only.clone() };
+    let chosen = chosen
+        .into_iter()
+        .map(|path| moves.iter().fold(path, |path, (from, to)| relocate(from, to, &path).unwrap_or(path)))
+        .collect();
+    saved(env, chosen, outside)
 }
 
 /// The choice once the change from `before` to `after` is undone, with `now` the choice as it is: what the change
@@ -295,8 +318,9 @@ mod tests {
         assert!(Choice::load(&env, &json!({"backupOnly":null}), &scanned).is_none());
         // What a run records reads back as the same choice.
         let state = choice.state();
-        assert_eq!(state, json!({"paths":["/home/me/project/app","/home/me/project/app/fe"],"outside":false}));
-        assert!(!Choice::of(&env, &state, &scanned).unwrap().wants(Path::new("/home/me/project/app/be")));
+        assert_eq!(state["paths"], json!(["/home/me/project/app", "/home/me/project/app/fe"]));
+        assert_eq!(state["known"].as_array().unwrap().len(), 4);
+        assert!(!Choice::taken(&env, &state, &json!({})).unwrap().wants(Path::new("/home/me/project/app/be")));
     }
 
     #[test]
@@ -385,6 +409,48 @@ mod tests {
         // Unticked since the move: Undo leaves it unticked.
         let unticked = json!({"backupOnly":{"paths":[],"outside":false}});
         assert_eq!(moved_back(&env, &unticked, &done.relocated, &done.kept), None);
+    }
+
+    #[test]
+    fn undoing_a_move_that_joined_two_ticked_folders_in_one_ticks_both_again() {
+        let env = home();
+        // A reconnect of chats started in two folders that are gone, both ticked, to the project they are now in.
+        let cfg = json!({"backupOnly":{"paths":["~/mid/app","~/old/app"]}});
+        let pairs = [
+            (PathBuf::from("/home/me/old/app"), PathBuf::from("/home/me/project/app")),
+            (PathBuf::from("/home/me/mid/app"), PathBuf::from("/home/me/project/app")),
+        ];
+        let done = moved(&env, &cfg, &pairs).unwrap();
+        assert_eq!(done.only, json!({"paths":["~/project/app"],"outside":false}));
+        let back = moved_back(&env, &json!({"backupOnly":done.only}), &done.relocated, &done.kept);
+        assert_eq!(back, Some(json!({"paths":["~/mid/app","~/old/app"],"outside":false})));
+    }
+
+    #[test]
+    fn a_choice_follows_the_folders_laci_moved_since() {
+        let env = home();
+        let moves = [
+            (PathBuf::from("/home/me/project/x"), PathBuf::from("/home/me/archive/x")),
+            (PathBuf::from("/home/me/archive/x"), PathBuf::from("/home/me/archive/x-2026")),
+        ];
+        let only = json!({"paths":["~/a","~/project/x/docs"],"outside":true});
+        assert_eq!(followed(&env, &only, &moves), json!({"paths":["~/a","~/archive/x-2026/docs"],"outside":true}));
+        assert_eq!(followed(&env, &Value::Null, &moves), Value::Null);
+    }
+
+    #[test]
+    fn a_run_s_choice_is_told_against_the_folders_it_knew() {
+        let env = home();
+        let cfg = json!({"backupOnly":{"paths":["~/project/app"]}});
+        let then = nodes(&["/home/me/project/app", "/home/me/project/app/fe"]);
+        let state = Choice::load(&env, &cfg, &then).unwrap().state();
+        // fe was renamed by hand since: today's scan doesn't have it, but the run kept fe's chats out.
+        let now = nodes(&["/home/me/project/app", "/home/me/project/app/fe2"]);
+        assert!(!Choice::taken(&env, &state, &now).unwrap().wants(Path::new("/home/me/project/app/fe")));
+        assert!(Choice::load(&env, &cfg, &now).unwrap().wants(Path::new("/home/me/project/app/fe")));
+        // A record from before the folders were kept goes by today's.
+        let old = json!({"paths":["/home/me/project/app"],"outside":false});
+        assert!(Choice::taken(&env, &old, &now).unwrap().wants(Path::new("/home/me/project/app/fe")));
     }
 
     #[test]

@@ -976,6 +976,32 @@ fn pairs(value: &Value) -> Result<Vec<(String, String)>> {
 fn moves(mapping: &[(String, String)]) -> Vec<(PathBuf, PathBuf)> {
     mapping.iter().map(|(from, to)| (PathBuf::from(from), PathBuf::from(to))).collect()
 }
+/// The folders Laci moved after `at`, in the order it moved them, by the journals of changes that still stand: a
+/// project's own move, and each folder chosen for the copy of AI chats that a move or reconnect carried along.
+pub(crate) fn moves_since(env: &Env, at: &str) -> Vec<(PathBuf, PathBuf)> {
+    let mut later: Vec<Value> =
+        journals(env, 200).into_iter().filter(|j| j["state"] == "applied" && j["at"].as_str() > Some(at)).collect();
+    later.sort_by(|a, b| a["at"].as_str().cmp(&b["at"].as_str()));
+    let mut out = Vec::new();
+    for e in later.iter().flat_map(|j| j["entries"].as_array().into_iter().flatten()) {
+        match e["kind"].as_str() {
+            // Moves of the copy itself are no project's.
+            Some("move") if e["scope"] != "copy" => {
+                if let (Some(from), Some(to)) = (e["from"].as_str(), e["to"].as_str()) {
+                    out.push((PathBuf::from(from), PathBuf::from(to)));
+                }
+            }
+            Some("chosen") => out.extend(
+                pairs(&e["pairs"])
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(from, to)| (PathBuf::from(from), PathBuf::from(to))),
+            ),
+            _ => {}
+        }
+    }
+    out
+}
 fn jsonl(dir: &Path) -> Vec<PathBuf> {
     walkdir::WalkDir::new(dir)
         .follow_links(false)

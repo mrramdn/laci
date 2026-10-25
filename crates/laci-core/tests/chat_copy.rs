@@ -604,6 +604,10 @@ fn only_the_chats_of_the_chosen_projects_and_groups_are_copied() {
     // Undo takes back the choice alone.
     let entry = activity::read_log(&env, 10).into_iter().find(|e| e["key"] == "copyChoice").unwrap();
     assert_eq!(entry["say"], json!({"form":"copyChosen","folders":2,"projects":1,"outside":true}));
+    assert_eq!(
+        entry["title"],
+        "The copy of AI chats takes only the chats of 1 project you chose, and chats outside your projects"
+    );
     service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
     assert_eq!(config::load(&env)["backupOnly"]["outside"], false);
     assert!(copied(&env, &env.home), "what the copy holds stays");
@@ -723,11 +727,12 @@ fn chats_a_run_did_not_take_wait_for_the_copy_once_they_are_chosen() {
     service.request("backup", &json!({})).unwrap();
     assert!(copied(&env, &be));
     assert_eq!(service.rescan().unwrap()["backup"]["pending"], 0);
-    // Back to every project after a run that took only fe: be's chat is in the copy, and nothing else waits.
+    // Back to every project after a run that took only fe: be's chat is in the copy from the run before, as it is
+    // now, so nothing waits.
     service.request("backup/only", &json!({"only":{"paths":[&fe]}})).unwrap();
     service.request("backup", &json!({})).unwrap();
     service.request("backup/only", &json!({"only":null})).unwrap();
-    assert_eq!(service.rescan().unwrap()["backup"]["pending"], 1, "the last run didn't take be");
+    assert_eq!(service.rescan().unwrap()["backup"]["pending"], 0);
 }
 
 #[test]
@@ -791,4 +796,31 @@ fn undoing_a_choice_after_a_move_keeps_the_project_ticked_where_it_went() {
     let entry = activity::read_log(&env, 10).into_iter().find(|e| e["key"] == "copyChoice").unwrap();
     service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
     assert_eq!(config::load(&env)["backupOnly"], json!({"paths":["~/project/web"],"outside":false}));
+}
+
+#[test]
+fn undoing_a_choice_follows_the_folders_laci_moved_since() {
+    let (_temp, env, _) = home();
+    let [_, fe, _, demo] = group(&env);
+    let mut service = Service::new(env.clone());
+    service.rescan().unwrap();
+    let newest = |env: &Env| activity::read_log(env, 20).into_iter().find(|e| e["key"] == "copyChoice").unwrap();
+    // fe is ticked, then moved by Laci: undoing the tick unticks it where it went.
+    service.request("backup/only", &json!({"only":{"paths":[&demo]}})).unwrap();
+    service.request("backup/only", &json!({"only":{"paths":[&demo, &fe]}})).unwrap();
+    let web = env.home.join("project/web");
+    service.request("move", &json!({"id":fe.to_str().unwrap(),"destination":web})).unwrap();
+    assert_eq!(config::load(&env)["backupOnly"]["paths"], json!(["~/project/demo", "~/project/web"]));
+    service.request("log/undo", &json!({"id":newest(&env)["id"]})).unwrap();
+    assert_eq!(config::load(&env)["backupOnly"]["paths"], json!(["~/project/demo"]));
+    // web is ticked and unticked, then moved: undoing the untick ticks it where it went.
+    service.request("backup/only", &json!({"only":{"paths":[&demo, &web]}})).unwrap();
+    service.request("backup/only", &json!({"only":{"paths":[&demo]}})).unwrap();
+    let site = env.home.join("project/site");
+    service.request("move", &json!({"id":web.to_str().unwrap(),"destination":site})).unwrap();
+    service.request("log/undo", &json!({"id":newest(&env)["id"]})).unwrap();
+    assert_eq!(config::load(&env)["backupOnly"]["paths"], json!(["~/project/demo", "~/project/site"]));
+    // Only the chats outside every project: the Log says so, as the window does.
+    service.request("backup/only", &json!({"only":{"paths":[],"outside":true}})).unwrap();
+    assert_eq!(newest(&env)["title"], "The copy of AI chats takes only the chats outside your projects");
 }

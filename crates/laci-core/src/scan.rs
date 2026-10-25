@@ -596,15 +596,20 @@ fn link(
         let choice = crate::copy_choice::Choice::load(env, &cfg, &snapshot["nodes"]);
         let mut backup = crate::ops::backup_state(env).unwrap_or_else(|| json!({}));
         let ran = backup["at"].is_string();
-        // The choice the last run copied by. A run with none, or from before 3.2, took every chat.
+        // The choice the last run copied by, told against the folders it knew. A run with none, or from before 3.2,
+        // took every chat.
         let took = backup.as_object_mut().and_then(|state| state.remove("took"));
-        let took = took.and_then(|took| crate::copy_choice::Choice::of(env, &took, &snapshot["nodes"]));
+        let took = took.and_then(|took| crate::copy_choice::Choice::taken(env, &took, &snapshot["nodes"]));
         // The sessions still at risk: those that changed after the last backup, and those it didn't take because
-        // they were chosen since.
+        // they were chosen since, unless the copy holds them as they are from an earlier run.
+        let copy = crate::backup::dir(env).ok();
         let live: Vec<(String, String, bool)> = array(&snapshot["sessions"])
             .iter()
             .filter(|s| s["backup"] != true && copied_by(choice.as_ref(), s))
-            .map(|s| (string(s, "provider").to_owned(), string(s, "updatedAt").to_owned(), copied_by(took.as_ref(), s)))
+            .map(|s| {
+                let taken = copied_by(took.as_ref(), s) || copy.as_ref().is_some_and(|copy| held(copy, on, s));
+                (string(s, "provider").to_owned(), string(s, "updatedAt").to_owned(), taken)
+            })
             .collect();
         if ran {
             let at = string(&backup, "at").to_owned();
@@ -670,6 +675,19 @@ fn link(
 
 fn array(v: &Value) -> &[Value] {
     v.as_array().map(Vec::as_slice).unwrap_or(&[])
+}
+/// Whether the copy of AI chats in `copy` holds the log of the session `s` as long as it is now, in the store of one
+/// of the connectors `on`.
+fn held(copy: &Path, on: &[Value], s: &Value) -> bool {
+    let Some(file) = s["file"].as_str().map(Path::new) else { return false };
+    let Ok(meta) = std::fs::metadata(file) else { return false };
+    on.iter()
+        .filter(|c| c["link"]["kind"] != "mentions")
+        .find_map(|c| {
+            let relative = file.strip_prefix(c["link"]["dir"].as_str()?).ok()?;
+            Some(crate::backup::packed(&copy.join(c["id"].as_str()?).join(relative)))
+        })
+        .is_some_and(|packed| crate::backup::content_size(&packed) == Some(meta.len()))
 }
 /// Whether the copy of AI chats takes the session `s` by `choice`, which takes every chat when there is none. A
 /// session with no folder on record is copied whatever is chosen.

@@ -300,16 +300,22 @@ fn chosen_entry(only: &Value, before: &Value, projects: usize, by: &str) -> Valu
     let (title, say) = match only["paths"].as_array() {
         None => ("The copy of AI chats takes every project's chats".to_owned(), json!({"form":"copyEveryProject"})),
         Some(list) => {
-            let folders = list.len();
+            let (folders, outside) = (list.len(), only["outside"] == true);
+            // As the window says it: by projects, else by folders, else the chats outside every project, or none.
             let chosen = if projects > 0 {
                 format!("{} you chose", scan::plural(projects as u64, "project"))
             } else {
-                format!("{folders} chosen folder{}", if folders == 1 { "" } else { "s" })
+                format!("{} you chose", scan::plural(folders as u64, "folder"))
             };
-            (
-                format!("The copy of AI chats takes only the chats of {chosen}"),
-                json!({"form":"copyChosen","folders":folders,"projects":projects,"outside":only["outside"] == true}),
-            )
+            let title = match (folders, outside) {
+                (0, true) => "The copy of AI chats takes only the chats outside your projects".to_owned(),
+                (0, false) => "The copy of AI chats takes the chats of no project".to_owned(),
+                (_, true) => {
+                    format!("The copy of AI chats takes only the chats of {chosen}, and chats outside your projects")
+                }
+                (_, false) => format!("The copy of AI chats takes only the chats of {chosen}"),
+            };
+            (title, json!({"form":"copyChosen","folders":folders,"projects":projects,"outside":outside}))
         }
     };
     json!({"by":by,"title":title,"say":say,"key":"copyChoice","undo":{"type":"copyChoice","only":before,"after":only}})

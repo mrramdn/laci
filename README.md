@@ -11,7 +11,7 @@ laci shows every folder like a file manager, and for each project it adds its gi
   <img alt="Simple's Home: the one project that needs you most, the others that need you, what's next and where you left off" src="docs/screenshots/simple-light.png">
 </picture>
 
-> Status: 3.1.0 is the [latest release](https://github.com/mrramdn/laci/releases/latest), for Linux on x86-64. Rust + Tauri 2, with a React interface. See the [changelog](CHANGELOG.md).
+> Status: 3.2.0 is the [latest release](https://github.com/mrramdn/laci/releases/latest), for Linux on x86-64. Rust + Tauri 2, with a React interface. See the [changelog](CHANGELOG.md).
 
 ## Contents
 
@@ -419,7 +419,7 @@ laci backup    # copy new and changed AI chats into the backup, as "Back up logs
 
 The window copies AI chats only while it is open, but a tool that deletes old chats (Claude Code, after 30 days by default) deletes them whether or not Laci was open. `laci backup` makes the same backup as **Back up logs now** without the window and without scanning your projects, whether or not automatic backup is on in Settings. It prints one line, such as `Copied 3 files · 912 sessions kept · 1.0 GB in /mnt/archive/ai-chats`, or `Copied 3 files of the projects you chose · …` when you chose some in Settings: it tells them apart by the last scan the window made. Without one it goes by the folders you ticked alone and where each chat was started: a chat started elsewhere and continued in a ticked project then waits for the window's next backup. It adds the line to the Log when it copied something, and exits with 1 and the reason when the backup folder can't be used, as when its drive isn't connected. The first backup after the upgrade to 3.1 also packs a backup from before, and says so on a line of its own and in the Log, such as `Packed the copy of AI chats: 1,785 files, 5.0 GB → 1.0 GB`. It waits for nothing: while the window is changing files, it says so and stops.
 
-To run it every hour with systemd, save these two files in `~/.config/systemd/user/`. Use the path of your Laci in `ExecStart`: `/usr/bin/laci` for the .deb and .rpm packages, `%h/.local/bin/laci` for a build installed with `scripts/install-desktop.sh`, or the full path of the AppImage, such as `%h/Applications/laci_3.1.0_amd64.AppImage` (it keeps its name when Laci updates it). The AppImage needs FUSE 2 here too.
+To run it every hour with systemd, save these two files in `~/.config/systemd/user/`. Use the path of your Laci in `ExecStart`: `/usr/bin/laci` for the .deb and .rpm packages, `%h/.local/bin/laci` for a build installed with `scripts/install-desktop.sh`, or the full path of the AppImage, such as `%h/Applications/laci_3.2.0_amd64.AppImage` (it keeps its name when Laci updates it). The AppImage needs FUSE 2 here too.
 
 ```ini
 # laci-backup.service

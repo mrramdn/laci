@@ -1340,8 +1340,108 @@
   .s-toolbar-end {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 4px;
     margin-left: auto;
+  }
+  /* "Group by folder": a switch, so it reads as a setting and not as a filter. */
+  .s-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    padding: 6px 12px;
+    border: 0;
+    border-radius: var(--radius-control);
+    background: none;
+    color: var(--ink-2);
+    font: var(--text-button);
+    cursor: pointer;
+  }
+  .s-switch:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
+  .s-switch-track {
+    position: relative;
+    flex: none;
+    width: 32px;
+    height: 18px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-chip);
+    background: var(--surface);
+    transition: background-color var(--time-press) var(--ease-in);
+  }
+  .s-switch-track::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--ink-3);
+    transition: transform var(--time-press) var(--ease-in);
+  }
+  .s-switch[aria-checked="true"] .s-switch-track {
+    border-color: var(--brand-fill);
+    background: var(--brand-fill);
+  }
+  .s-switch[aria-checked="true"] .s-switch-track::after {
+    background: var(--on-brand);
+    transform: translateX(14px);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .s-switch-track,
+    .s-switch-track::after {
+      transition: none;
+    }
+  }
+  /* A folder's cards: its heading is a button that folds them. */
+  .s-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+  .s-group-head {
+    margin: 0 0 8px;
+    font: var(--text-section);
+  }
+  .s-group-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    min-height: 40px;
+    margin-left: -8px;
+    padding: 4px 8px;
+    border: 0;
+    border-radius: var(--radius-control);
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .s-group-toggle:hover {
+    background: var(--hover);
+  }
+  .s-group-toggle .i {
+    flex: none;
+    color: var(--ink-2);
+  }
+  .s-group-toggle[aria-expanded="false"] .i {
+    transform: rotate(-90deg);
+  }
+  .s-group-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .s-group-count {
+    flex: none;
+    color: var(--ink-3);
+    font: var(--text-caption);
+    white-space: nowrap;
   }
   .s-grid {
     display: grid;

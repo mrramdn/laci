@@ -12,6 +12,10 @@ interface SimpleState {
   query: string;
   /** Projects in this folder only; null for every project folder. */
   folder: string | null;
+  /** Cards sit under the folder that holds them; off is one flat list. */
+  grouped: boolean;
+  /** The sections the viewer folded, by `sectionKey`. */
+  collapsed: string[];
   /** The problem the fix sheet is open for. */
   fixing: { id: string; code: string } | null;
   /** Counts the changes to what "Not now" hides, so Home and its count in the sidebar draw again. */
@@ -19,12 +23,20 @@ interface SimpleState {
 }
 
 const savedSort = pref<string>("simple-sort", "recent");
+const GROUPED = "simple-grouped";
+const COLLAPSED = "simple-collapsed";
+const savedCollapsed = pref<unknown>(COLLAPSED, []);
 
 export const useSimple = create<SimpleState>(() => ({
   filter: "all",
   sort: PROJECT_SORTS.find((sort) => sort === savedSort) ?? "recent",
   query: "",
   folder: null,
+  // Only a saved "off" turns it off: anything else, or nothing, is the default.
+  grouped: pref<unknown>(GROUPED, true) !== false,
+  collapsed: Array.isArray(savedCollapsed)
+    ? savedCollapsed.filter((key): key is string => typeof key === "string")
+    : [],
   fixing: null,
   notNow: 0,
 }));
@@ -32,6 +44,22 @@ export const useSimple = create<SimpleState>(() => ({
 export function setSort(sort: ProjectSort) {
   savePref("simple-sort", sort);
   useSimple.setState({ sort });
+}
+
+/** Turns "Group by folder" on or off. */
+export function setGrouped(grouped: boolean) {
+  savePref(GROUPED, grouped);
+  useSimple.setState({ grouped });
+}
+
+/** Folds a section, or opens it again. */
+export function toggleCollapsed(key: string) {
+  const { collapsed } = useSimple.getState();
+  const next = collapsed.includes(key)
+    ? collapsed.filter((k) => k !== key)
+    : [...collapsed, key];
+  savePref(COLLAPSED, next);
+  useSimple.setState({ collapsed: next });
 }
 
 /** Shows Projects with this filter, as "See all" on Home does. */

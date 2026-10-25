@@ -187,10 +187,14 @@ export async function theCopyCanTakeOnlyTheProjectsChosenForIt() {
     const saved = await request("backup/only", { only: chosen });
     assert.deepEqual(saved.only, { paths: ["/home/demo/project/clients", ACME], outside: true });
     // The folders holding chats that aren't taken: the top folder, kopi-landing, infra-notes and campus-lms.
-    assert.deepEqual((await request("snapshot")).backup.only, { ...saved.only, notCopied: 4 });
-    assert.deepEqual(saved.snapshot.backup.only, { ...saved.only, notCopied: 4 });
+    assert.deepEqual((await request("snapshot")).backup.only, { ...saved.only, notCopied: 4, missing: [] });
+    assert.deepEqual(saved.snapshot.backup.only, { ...saved.only, notCopied: 4, missing: [] });
     const [entry] = (await request("log")).entries;
-    assert.deepEqual([entry.key, entry.say], ["copyChoice", { form: "copyChosen", folders: 2, outside: true }]);
+    // Two folders, of which one is a project, as the engine says them.
+    assert.deepEqual(
+      [entry.key, entry.say],
+      ["copyChoice", { form: "copyChosen", folders: 2, projects: 1, outside: true }],
+    );
     // The same choice again is no change, and no entry.
     await request("backup/only", { only: chosen });
     assert.equal((await request("log")).entries[0].id, entry.id);
@@ -200,6 +204,30 @@ export async function theCopyCanTakeOnlyTheProjectsChosenForIt() {
     assert.deepEqual((await request("log")).entries[0].say, { form: "copyEveryProject" });
     await request("undo", { id: (await request("log")).entries[0].id });
     assert.equal((await request("snapshot")).backup.only.paths.length, 2);
+  });
+}
+
+export async function aChosenFolderTheDemoDiskLacksIsMissingAndCountsFollowTheChats() {
+  await onPreview(async ({ request }) => {
+    const gone = "/home/demo/project/old-name";
+    const there = "/home/demo/Documents";
+    await request("backup/only", { only: { paths: [ACME, gone, there], outside: false } });
+    // Only a folder the demo disk doesn't have is missing; a scanned one or one outside the project folders isn't.
+    assert.deepEqual((await request("snapshot")).backup.only.missing, [gone]);
+    assert.deepEqual((await request("log")).entries[0].say, {
+      form: "copyChosen",
+      folders: 3,
+      projects: 1,
+      outside: false,
+    });
+    // The chats of kopi-landing and infra-notes deleted, the next choice counts what is left: the top folder and
+    // campus-lms, not the folders whose chats are gone.
+    const files = (await request("snapshot")).sessions
+      .filter((s) => /kopi-landing|infra-notes/.test(s.cwd))
+      .map((s) => s.file);
+    await request("session/delete", { files });
+    await request("backup/only", { only: { paths: [ACME], outside: false } });
+    assert.equal((await request("snapshot")).backup.only.notCopied, 2);
   });
 }
 

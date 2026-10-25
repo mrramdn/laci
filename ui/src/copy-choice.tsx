@@ -1,9 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import { errorText } from "./api";
+import { useCopyPick } from "./copy-pick";
 import { DialogFrame } from "./dialogs";
 import { tilde } from "./helpers";
-import { copyAllTicked, copyNoneTicked, copyTick, copyTree, toggleCopy } from "./selectors";
-import type { CopyPick } from "./selectors";
+import { copyAllTicked, copyNoneTicked, copyProjects, copyTick, toggleCopy, toggleCopyOne } from "./selectors";
+import type { CopyTick } from "./selectors";
 import { chooseCopy, useApp } from "./store";
 import { detailedSettings as said } from "./words";
 
@@ -13,57 +14,55 @@ function close() {
 
 /**
  * Settings: the projects the history backup takes. A box for each project and folder that holds projects; a
- * folder's box ticks and unticks everything in it, and shows a dash when only some of it is ticked. It starts from
- * the choice made, or with everything ticked when the backup took every project, so nothing stops by surprise.
- * Nothing is sent before Save, which is one change in the Log.
+ * folder's box ticks and unticks everything in it, and shows a dash when only some of it is ticked, with a row for
+ * the chats in the folder itself whenever those decide it. It starts from the choice made, or with everything ticked
+ * when the backup took every project, so nothing stops by surprise. Nothing is sent before Save, which is one change
+ * in the Log.
  */
 export function CopyChoice() {
   const snapshot = useApp((s) => s.snapshot);
-  const only = snapshot?.backup?.only;
-  // The chosen folders that are gone are listed as they were when this opened, so one unticked can be ticked again.
-  const chosen = useRef(only?.paths ?? []);
-  const tree = useMemo(
-    () => (snapshot ? copyTree(snapshot, chosen.current) : { rows: [], outside: 0, gone: [] }),
-    [snapshot],
-  );
-  const [pick, setPick] = useState<CopyPick>(() =>
-    only ? { paths: only.paths, outside: only.outside } : copyAllTicked(tree),
-  );
   const [saving, setSaving] = useState(false);
+  const { tree, pick, choose, own, changed } = useCopyPick(snapshot, saving);
   const [error, setError] = useState("");
   const save = async () => {
     setError("");
     setSaving(true);
     const done = await chooseCopy(
       pick,
-      said.backupChosenDone(pick.paths.length, pick.outside),
+      said.backupChosenDone(snapshot ? copyProjects(snapshot, pick) : 0, pick.paths.length, pick.outside),
       said.backupChosenNote,
       (failure) => setError(errorText(failure)),
     );
-    setSaving(false);
+    // Saved, it closes: the choice it just made is no change from elsewhere.
     if (done) close();
+    else setSaving(false);
   };
-  const row = (path: string, name: string, quiet: string, depth: number, gone = false) => {
-    const tick = copyTick(tree, pick, path);
-    return (
-      <li key={path}>
-        <label className="opt" style={{ paddingInlineStart: 8 + depth * 22 }}>
-          <input
-            type="checkbox"
-            className="cb"
-            checked={tick === "on"}
-            ref={(box) => {
-              if (box) box.indeterminate = tick === "mixed";
-            }}
-            disabled={saving}
-            onChange={() => setPick(toggleCopy(tree, pick, path))}
-          />
-          <span className={gone ? "mono" : undefined}>{name}</span>
-          <span className="r">{quiet}</span>
-        </label>
-      </li>
-    );
-  };
+  const box = (
+    key: string,
+    name: string,
+    quiet: string,
+    depth: number,
+    tick: CopyTick,
+    toggle: () => void,
+    mono = false,
+  ) => (
+    <li key={key}>
+      <label className="opt" style={{ paddingInlineStart: 8 + depth * 22 }}>
+        <input
+          type="checkbox"
+          className="cb"
+          checked={tick === "on"}
+          ref={(input) => {
+            if (input) input.indeterminate = tick === "mixed";
+          }}
+          disabled={saving}
+          onChange={toggle}
+        />
+        <span className={mono ? "mono" : undefined}>{name}</span>
+        <span className="r">{quiet}</span>
+      </label>
+    </li>
+  );
   return (
     <DialogFrame
       title={said.backupChooseTitle}
@@ -92,33 +91,50 @@ export function CopyChoice() {
         </>
       }
     >
+      {/* There from the start and empty until the choice changes elsewhere, so what it then says is read out. */}
+      <div role="status">{changed ? <p className="muted">{said.backupChanged}</p> : null}</div>
       <div className="row-acts">
-        <button type="button" className="btn sm" disabled={saving} onClick={() => setPick(copyAllTicked(tree))}>
+        <button type="button" className="btn sm" disabled={saving} onClick={() => choose(copyAllTicked(tree))}>
           {said.backupTickAll}
         </button>
-        <button type="button" className="btn sm" disabled={saving} onClick={() => setPick(copyNoneTicked())}>
+        <button type="button" className="btn sm" disabled={saving} onClick={() => choose(copyNoneTicked())}>
           {said.backupUntickAll}
         </button>
       </div>
       <ul className="copy-tree" aria-label={said.backupChooseList}>
-        {tree.rows.map(({ node, depth, chats }) =>
-          row(node.path, node.name, said.backupChats(chats), depth),
+        {tree.rows.flatMap(({ node, depth, chats, total, group }) => {
+          const path = node.path;
+          const row = box(path, node.name, said.backupChats(group ? total : chats), depth, copyTick(tree, pick, path), () =>
+            choose(toggleCopy(tree, pick, path)),
+          );
+          // The folder's own chats, first under it, so a dash on its box is always told by a row.
+          return group && own.has(path)
+            ? [
+                row,
+                box(
+                  `own:${path}`,
+                  said.backupOwn(node.name),
+                  said.backupChats(chats),
+                  depth + 1,
+                  pick.paths.includes(path) ? "on" : "off",
+                  () => choose(toggleCopyOne(pick, path)),
+                ),
+              ]
+            : [row];
+        })}
+        {box("outside", said.backupOutside, said.backupChats(tree.outside), 0, pick.outside ? "on" : "off", () =>
+          choose({ ...pick, outside: !pick.outside }),
         )}
-        <li>
-          <label className="opt">
-            <input
-              type="checkbox"
-              className="cb"
-              checked={pick.outside}
-              disabled={saving}
-              onChange={() => setPick({ ...pick, outside: !pick.outside })}
-            />
-            <span>{said.backupOutside}</span>
-            <span className="r">{said.backupChats(tree.outside)}</span>
-          </label>
-        </li>
-        {tree.gone.map((path) =>
-          row(path, tilde(path, snapshot?.home ?? ""), said.backupGone, 0, true),
+        {tree.others.map((other) =>
+          box(
+            other.path,
+            tilde(other.path, snapshot?.home ?? ""),
+            `${other.gone ? said.backupGone : said.backupNotRead} · ${said.backupChats(other.chats)}`,
+            0,
+            copyTick(tree, pick, other.path),
+            () => choose(toggleCopy(tree, pick, other.path)),
+            true,
+          ),
         )}
       </ul>
     </DialogFrame>

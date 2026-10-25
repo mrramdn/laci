@@ -841,7 +841,7 @@ function CopyWhich({ snapshot, backup }: { snapshot: Snapshot; backup: Backup })
       <p>
         <b>{said.copyWhich}</b>
         <span className="s-quiet">
-          {only ? said.copyOnly(copyProjects(snapshot, only)) : said.copyEvery}
+          {only ? said.copyOnly(copyProjects(snapshot, only), only.paths.length) : said.copyEvery}
           {only && only.notCopied > 0 ? ` · ${said.copyLeft(only.notCopied)}` : ""}
         </span>
       </p>

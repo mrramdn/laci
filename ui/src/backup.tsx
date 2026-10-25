@@ -238,10 +238,10 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
 }
 
 /**
- * Settings: which projects the history backup takes, below the automatic backup switch. "Only the projects I
- * choose" opens the chooser, with everything ticked when there was no choice; with one it says how many are chosen,
- * and how many folders holding sessions are left out, and Choose… changes it. "Back up every project" sends the
- * choice back at once.
+ * Settings: which projects the history backup takes, below the automatic backup switch. It says what is true now:
+ * every project, or how many are chosen and how many folders holding chats are left out. Only a button changes it,
+ * never the focus or an arrow key: Choose projects… opens the chooser, with everything ticked; with a choice,
+ * Choose… opens it on the choice and "Back up every project" sends that back at once.
  */
 export function BackupWhich({ state }: { state: Backup }) {
   const snapshot = useApp((s) => s.snapshot);
@@ -257,55 +257,41 @@ export function BackupWhich({ state }: { state: Backup }) {
   };
   const busy = saving || historyPending;
   return (
-    <div className="fld" data-ui="backup-which">
+    <div className="fld" role="group" aria-labelledby={label} data-ui="backup-which">
       <span id={label}>{said.backupWhich}</span>
-      <div className="choices" role="radiogroup" aria-labelledby={label}>
-        <label className="choice">
-          <input
-            type="radio"
-            name="backup-which"
-            checked={!only}
-            disabled={busy}
-            onChange={() => void every()}
-          />
-          <div>
-            <b>{said.backupEvery}</b>
-            <p>{said.backupEveryNote}</p>
-          </div>
-        </label>
-        <label className="choice">
-          <input
-            type="radio"
-            name="backup-which"
-            checked={Boolean(only)}
-            disabled={busy}
-            onChange={open}
-          />
-          <div>
-            <b>{said.backupOnlyChosen}</b>
-            <p>
-              {only && snapshot
-                ? `${said.backupOnlySummary(copyProjects(snapshot, only), only.outside)}${
-                    only.notCopied > 0 ? ` · ${said.backupLeft(only.notCopied)}` : ""
-                  }`
-                : said.backupOnlyNote}
-            </p>
-          </div>
-        </label>
+      <div className="which-now">
+        <b>{only ? said.backupOnlyChosen : said.backupEvery}</b>
+        <p>
+          {only
+            ? `${said.backupOnlySummary(
+                snapshot ? copyProjects(snapshot, only) : 0,
+                only.paths.length,
+                only.outside,
+              )}${only.notCopied > 0 ? ` · ${said.backupLeft(only.notCopied)}` : ""}`
+            : said.backupEveryNote}
+        </p>
       </div>
-      {only ? (
-        <div className="row-acts">
+      <div className="row-acts">
+        <button
+          type="button"
+          className="btn sm"
+          aria-label={said.backupChooseName}
+          disabled={busy}
+          onClick={open}
+        >
+          {only ? said.backupChoose : said.backupChooseProjects}
+        </button>
+        {only ? (
           <button
             type="button"
             className="btn sm"
-            aria-label={said.backupChooseName}
             disabled={busy}
-            onClick={open}
+            onClick={() => void every()}
           >
-            {said.backupChoose}
+            {said.backupEvery}
           </button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -1319,23 +1319,30 @@ export async function theCopyCardSaysWhichChatsItTakes() {
   assert.equal(every.which().textContent, `${said.copyWhich}${said.copyEvery}${said.copyChoose}`);
   assert.equal(every.button(said.copyEveryButton), undefined, "it takes every project already");
   assert.equal(every.button(said.copyChoose).props["aria-label"], said.copyChooseName);
-  assert.ok(said.copyChooseName.startsWith(said.copyChoose.replace("…", "").split(" ")[0]));
+  // The name a screen reader or voice control goes by starts with the words on the button.
+  assert.ok(said.copyChooseName.startsWith(said.copyChoose.replace("…", "")));
+  assert.ok(said.copyChangeProjectsName.startsWith(said.copyChangeProjects.replace("…", "")));
   // Projects chosen: how many projects, not folders, and the way back.
-  const only = whichPage({ snapshot: withChoice({ paths: [ACME, KOPI, `${ROOT}/clients`], outside: false, notCopied: 0 }) });
+  const only = whichPage({
+    snapshot: withChoice({ paths: [ACME, KOPI, `${ROOT}/clients`], outside: false, notCopied: 0, missing: [] }),
+  });
   assert.equal(
     only.which().textContent,
     `${said.copyWhich}Only 2 projects you chose${said.copyChangeProjects}${said.copyEveryButton}`,
   );
   assert.equal(only.button(said.copyChangeProjects).props["aria-label"], said.copyChangeProjectsName);
-  assert.equal(said.copyOnly(1), "Only 1 project you chose");
-  assert.equal(said.copyOnly(0), "None of your projects");
+  assert.equal(said.copyOnly(1, 3), "Only 1 project you chose");
+  assert.equal(said.copyOnly(0, 0), "None of your projects");
+  // Only groups chosen: said by folders, as Activity says it.
+  const groups = whichPage({ snapshot: withChoice({ paths: [`${ROOT}/clients`, `${ROOT}/side`], outside: false, notCopied: 0, missing: [] }) });
+  assert.ok(groups.which().textContent.includes("Only the chats of 2 folders you chose"), groups.which().textContent);
   // Folders holding chats that aren't copied are told, so a new project isn't forgotten.
-  const left = whichPage({ snapshot: withChoice({ paths: [ACME], outside: true, notCopied: 3 }) });
+  const left = whichPage({ snapshot: withChoice({ paths: [ACME], outside: true, notCopied: 3, missing: [] }) });
   assert.ok(left.which().textContent.includes("Only 1 project you chose · 3 folders with chats aren’t copied"));
-  const one = whichPage({ snapshot: withChoice({ paths: [ACME], outside: true, notCopied: 1 }) });
+  const one = whichPage({ snapshot: withChoice({ paths: [ACME], outside: true, notCopied: 1, missing: [] }) });
   assert.ok(one.which().textContent.includes("· 1 folder with chats isn’t copied"));
   // A choice that updates while the card is open is read again. (A page at a time: they share one stand-in.)
-  one.app.setState({ snapshot: withChoice({ paths: [ACME], outside: false, notCopied: 2 }) });
+  one.app.setState({ snapshot: withChoice({ paths: [ACME], outside: false, notCopied: 2, missing: [] }) });
   await one.settle();
   assert.ok(one.which().textContent.includes("Only 1 project you chose · 2 folders"));
   one.app.setState({ snapshot: scan() });
@@ -1354,12 +1361,16 @@ export async function theChooserStartsWithEverythingTickedWhenTheCopyTookEveryPr
   assert.ok(said.copyChooseKeeps.includes("never removes anything"));
   assert.ok(said.copyChooseAbout.includes("A project that appears later isn’t copied until you tick it."));
   const boxes = page.boxes();
-  // Twelve folders and the chats outside them.
-  assert.equal(boxes.length, 13);
+  // Twelve folders, the chats in the top folder itself, and the chats outside them.
+  assert.equal(boxes.length, 14);
   assert.ok(boxes.every((b) => b.props.checked && !b.indeterminate));
-  // Each row says how many chats it holds, and the group around it its own.
+  // Each row says how many chats it holds, a folder all those in it, and the folder's own chats have a row of their
+  // own when it holds some.
   assert.equal(page.box("kopi-landing").parent.textContent, "kopi-landing2 chats");
   assert.equal(page.box("acme-store").parent.textContent, "acme-store1 chat");
+  assert.equal(page.box("clients").parent.textContent, "clients3 chats");
+  assert.equal(page.box(said.copyOwn("project")).parent.textContent, `${said.copyOwn("project")}2 chats`);
+  assert.equal(page.box(said.copyOwn("clients")), undefined);
   assert.equal(page.box("Chats outside your projects").parent.textContent, `${said.copyOutside}0 chats`);
   // Nothing is sent before Save.
   assert.deepEqual(page.asked("backup/only"), []);
@@ -1388,6 +1399,30 @@ export async function aFoldersBoxTicksItsProjectsAndShowsMixedWhenOnlySomeAre() 
   assert.equal(page.box("Chats outside").props.checked, true);
 }
 
+export async function aFoldersOwnChatsHaveARowWheneverTheyDecideItsBox() {
+  const page = whichPage();
+  const own = said.copyOwn("side");
+  await page.click(page.button(said.copyChoose));
+  assert.equal(page.box(own), undefined);
+  // side's own box now differs from one below it: its row shows, ticked, under side, and stays while the sheet is open.
+  await page.tick("dotfiles");
+  assert.equal(page.box("side").indeterminate, true);
+  assert.equal(page.box(own).props.checked, true);
+  assert.equal(page.box(own).closest(".s-copy-row").props.style.paddingInlineStart, 48);
+  await page.tick("dotfiles");
+  assert.ok(page.box(own));
+  // Its own box goes alone, and side's box shows the mix that row tells.
+  await page.tick(own);
+  assert.equal(page.box("side").indeterminate, true);
+  assert.deepEqual(
+    [page.box("dotfiles").props.checked, page.box("habit-app").props.checked, page.box(own).props.checked],
+    [true, true, false],
+  );
+  await page.click(page.button(said.copySave));
+  assert.ok(!sent(page).paths.includes(`${ROOT}/side`));
+  assert.ok(sent(page).paths.includes(`${ROOT}/side/dotfiles`));
+}
+
 export async function saveSendsTheChosenFoldersAndOneToastTellsIt() {
   const page = whichPage();
   await page.click(page.button(said.copyChoose));
@@ -1398,9 +1433,15 @@ export async function saveSendsTheChosenFoldersAndOneToastTellsIt() {
   const wanted = Object.keys(everything).filter((path) => path !== ACME);
   assert.equal(page.asked("backup/only").length, 1);
   assert.deepEqual(sent(page), { paths: wanted.sort(), outside: false });
-  assert.deepEqual(page.toasts.at(-1), [said.copyChosenDone(wanted.length, false), said.copyChosenNote]);
+  // By projects, as the card and Activity count them: six of the seven.
+  assert.deepEqual(page.toasts.at(-1), [said.copyChosenDone(6, wanted.length, false), said.copyChosenNote]);
+  assert.equal(page.toasts.at(-1)[0], "Laci now copies only the chats of 6 projects you chose");
   assert.equal(page.sheet(), undefined, "saved, the sheet goes");
-  assert.equal(said.copyChosenDone(2, true), "Laci now copies only the chats of 2 chosen folders, and chats outside your projects");
+  assert.equal(
+    said.copyChosenDone(2, 3, true),
+    "Laci now copies only the chats of 2 projects you chose, and chats outside your projects",
+  );
+  assert.equal(said.copyChosenDone(0, 2, false), "Laci now copies only the chats of 2 folders you chose");
 }
 
 export async function cancelSendsNothing() {
@@ -1416,27 +1457,59 @@ export async function cancelSendsNothing() {
   assert.equal(page.box("acme-store").props.checked, true);
 }
 
-export async function theChooserStartsFromTheChoiceAndListsAFolderThatIsGone() {
+export async function theChooserStartsFromTheChoiceAndListsChosenFoldersOutsideTheScan() {
   const gone = `${HOME}/old-client`;
-  const page = whichPage({ snapshot: withChoice({ paths: [ACME, gone], outside: false, notCopied: 3 }) });
+  const there = `${HOME}/Documents`;
+  const snapshot = withChoice({ paths: [ACME, gone, there], outside: false, notCopied: 3, missing: [gone] });
+  snapshot.sessions.push({ ...snapshot.sessions[1], sessionId: "d1", cwd: `${there}/notes`, file: "/logs/d1.jsonl" });
+  const page = whichPage({ snapshot });
   await page.click(page.button(said.copyChangeProjects));
   assert.equal(page.box("acme-store").props.checked, true);
   assert.equal(page.box("kopi-landing").props.checked, false);
   assert.equal(page.box("clients").indeterminate, true);
   assert.equal(page.box("Chats outside").props.checked, false);
-  // A folder chosen that Laci no longer finds says so, with its path, and can be unticked.
-  assert.equal(page.box("~/old-client").parent.textContent, `~/old-client${said.copyGone}`);
+  // A folder chosen that is gone says so, with its path and its chats, and can be unticked; one still there but
+  // outside your project folders says that instead.
+  assert.equal(page.box("~/old-client").parent.textContent, `~/old-client${said.copyGone} · 0 chats`);
   assert.equal(page.box("~/old-client").props.checked, true);
+  assert.equal(page.box("~/Documents").parent.textContent, `~/Documents${said.copyNotRead} · 1 chat`);
   await page.tick("~/old-client");
+  await page.tick("~/Documents");
   await page.tick("Chats outside");
   await page.tick("kopi-landing");
   await page.click(page.button(said.copySave));
   assert.deepEqual(sent(page), { paths: [ACME, KOPI].sort(), outside: true });
   // Unticked once, it is listed still until the sheet closes, so that it can be ticked again.
-  const again = whichPage({ snapshot: withChoice({ paths: [gone], outside: false, notCopied: 0 }) });
+  const again = whichPage({ snapshot: withChoice({ paths: [gone], outside: false, notCopied: 0, missing: [gone] }) });
   await again.click(again.button(said.copyChangeProjects));
   await again.tick("~/old-client");
   assert.equal(again.box("~/old-client").props.checked, false);
+}
+
+export async function aChoiceChangedElsewhereWhileTheSheetIsOpenIsWhatItShows() {
+  const page = whichPage();
+  await page.click(page.button(said.copyChoose));
+  await page.tick("kopi-landing");
+  const notice = () => page.sheet().descendants().find((n) => n.props["data-tone"] === "fyi");
+  assert.equal(notice(), undefined);
+  // A new scan with the same choice keeps what is ticked.
+  page.app.setState({ snapshot: scan() });
+  await page.settle();
+  assert.equal(page.box("kopi-landing").props.checked, false);
+  assert.equal(notice(), undefined);
+  // Chosen meanwhile, in another window or by your AI: the sheet starts again from that, and says so.
+  page.app.setState({ snapshot: withChoice({ paths: [ACME], outside: true, notCopied: 4, missing: [] }) });
+  await page.settle();
+  assert.equal(notice().textContent, said.copyChanged);
+  // In the live region that was there from the start, so it is read out.
+  assert.equal(notice().parent.props.role, "status");
+  assert.deepEqual(
+    [page.box("acme-store").props.checked, page.box("kopi-landing").props.checked, page.box("Chats outside").props.checked],
+    [true, false, true],
+  );
+  await page.tick("kopi-landing");
+  await page.click(page.button(said.copySave));
+  assert.deepEqual(sent(page), { paths: [ACME, KOPI].sort(), outside: true });
 }
 
 export async function aRefusedChoiceKeepsTheSheetOpenAndSaysWhy() {

@@ -10,9 +10,9 @@ import {
   dayLabel,
   deadlinesOf,
   deletable,
-  globalSessions,
   latestReport,
   logKind,
+  parentOf,
   providerName,
   recency,
   reportList,
@@ -211,16 +211,30 @@ export interface CopyRow {
   node: Node;
   /** 0 for a folder at the top, one more for each folder above it. */
   depth: number;
-  /** The live chats whose nearest project or group is this one: what unticking it stops copying. */
+  /**
+   * The live chats whose nearest known folder is this one: what unticking its own box stops copying. For a group,
+   * the chats started in the group's folder itself.
+   */
+  chats: number;
+  /** Its chats and those of every row below it. */
+  total: number;
+  /** Rows follow it, one level deeper: its box ticks them too, and its own chats can have a row of their own. */
+  group: boolean;
+}
+/** A chosen path that is no scanned project or group, with the chats that go with it. */
+export interface CopyOther {
+  path: string;
+  /** Not on the disk now (the engine's `missing`); else it is there, outside the folders Laci reads. */
+  gone: boolean;
   chats: number;
 }
 export interface CopyTree {
   /** Groups with what they hold below them, each level by label. */
   rows: CopyRow[];
-  /** Live chats started in no project or group. A chat whose folder is unknown is copied anyway, so it isn't here. */
+  /** Live chats started in no known folder. A chat whose folder is unknown is copied anyway, so it isn't here. */
   outside: number;
-  /** Chosen paths no scanned project or group has now: a folder moved or deleted. */
-  gone: string[];
+  /** Chosen paths no scanned project or group has now, sorted: a folder moved or deleted, or one no longer read. */
+  others: CopyOther[];
 }
 /** What the chooser holds, as `backup/only` takes it. */
 export interface CopyPick {
@@ -228,21 +242,40 @@ export interface CopyPick {
   outside: boolean;
 }
 export type CopyTick = "on" | "off" | "mixed";
-const copyBase = new WeakMap<Snapshot, Omit<CopyTree, "gone">>();
 /**
- * The projects and groups the copy of AI chats can take, as a tree to tick, and how many chats each holds. A chat
- * counts for the nearest project or group holding its folder, which is the rule that decides whether it is copied.
- * Chats only Laci's copy holds count nowhere: there is nothing left to copy. `chosen` are the paths now chosen, which
- * tells the ones that no longer match a folder.
+ * The nearest of `known` that is `cwd` or holds it, by whole names, as the engine compares them: /a/b holds /a/b/c,
+ * not /a/bc.
+ */
+function nearestKnown(cwd: string, known: ReadonlySet<string>) {
+  let at = cwd.length > 1 ? cwd.replace(/\/+$/, "") : cwd;
+  for (;;) {
+    if (known.has(at)) return at;
+    const above = parentOf(at);
+    // A root is its own parent.
+    if (above === at) return undefined;
+    at = above;
+  }
+}
+const copyCache = cache<Snapshot, CopyTree>();
+/**
+ * The projects and groups the copy of AI chats can take, as a tree to tick, and how many chats each holds. `chosen`
+ * are the paths now chosen. A chat goes with the nearest of the scanned folders and the chosen ones that is its folder
+ * or holds it, which is the rule the engine copies by: a chosen folder that isn't scanned keeps its chats, and the
+ * home folder, when it is scanned, holds the chats started in it. Chats only Laci's copy holds count nowhere: there is
+ * nothing left to copy.
  */
 export function copyTree(snapshot: Snapshot, chosen: readonly string[] = []): CopyTree {
-  let base = copyBase.get(snapshot);
-  if (!base) {
-    const owners = sessionOwners(snapshot);
+  const scanned = new Set(Object.values(snapshot.nodes).map((node) => node.path));
+  const extra = [...new Set(chosen)].filter((path) => !scanned.has(path)).sort();
+  return copyCache(snapshot, extra.join("\n"), () => {
+    const known = new Set([...scanned, ...extra]);
     const counts = new Map<string, number>();
+    let outside = 0;
     for (const session of allSessions(snapshot)) {
-      const owner = session.backup ? undefined : owners.get(sessionKey(session));
-      if (owner) counts.set(owner.id, (counts.get(owner.id) ?? 0) + 1);
+      if (session.backup || !session.cwd) continue;
+      const folder = nearestKnown(session.cwd, known);
+      if (folder === undefined) outside++;
+      else counts.set(folder, (counts.get(folder) ?? 0) + 1);
     }
     const under = new Map<string, Node[]>();
     for (const node of Object.values(snapshot.nodes)) {
@@ -250,21 +283,28 @@ export function copyTree(snapshot: Snapshot, chosen: readonly string[] = []): Co
       under.set(above, [...(under.get(above) ?? []), node]);
     }
     const rows: CopyRow[] = [];
-    const add = (above: string, depth: number) => {
+    // Adds the rows below `above`, and gives back how many chats they hold.
+    const add = (above: string, depth: number): number => {
+      let sum = 0;
       for (const node of (under.get(above) ?? []).sort((a, b) => a.label.localeCompare(b.label))) {
-        rows.push({ node, depth, chats: counts.get(node.id) ?? 0 });
-        add(node.id, depth + 1);
+        const chats = counts.get(node.path) ?? 0;
+        const row: CopyRow = { node, depth, chats, total: chats, group: false };
+        rows.push(row);
+        const first = rows.length;
+        row.total += add(node.id, depth + 1);
+        row.group = rows.length > first;
+        sum += row.total;
       }
+      return sum;
     };
     add("", 0);
-    base = {
+    const missing = new Set(snapshot.backup?.only?.missing ?? []);
+    return {
       rows,
-      outside: globalSessions(snapshot).filter((s) => !s.backup && s.cwd).length,
+      outside,
+      others: extra.map((path) => ({ path, gone: missing.has(path), chats: counts.get(path) ?? 0 })),
     };
-    copyBase.set(snapshot, base);
-  }
-  const known = new Set(base.rows.map((row) => row.node.path));
-  return { ...base, gone: [...new Set(chosen)].filter((path) => !known.has(path)).sort() };
+  });
 }
 /** The row at `index` and every row below it: they follow it, one level deeper or more. */
 function copySubtree(tree: CopyTree, index: number) {
@@ -293,9 +333,32 @@ export function toggleCopy(tree: CopyTree, pick: CopyPick, path: string): CopyPi
   const rest = pick.paths.filter((p) => !covered.has(p));
   return { ...pick, paths: on ? [...rest, ...covered] : rest };
 }
+/** Ticks or unticks `path` alone: a group's own chats, without what is below it. */
+export function toggleCopyOne(pick: CopyPick, path: string): CopyPick {
+  return pick.paths.includes(path)
+    ? { ...pick, paths: pick.paths.filter((p) => p !== path) }
+    : { ...pick, paths: [...pick.paths, path] };
+}
+/**
+ * The groups whose own chats need a row of their own under them: ones that hold chats themselves, and ones whose own
+ * box differs from a box below them, so a group shown mixed always has a row to say why.
+ */
+export function copyOwnRows(tree: CopyTree, pick: CopyPick): string[] {
+  return tree.rows.flatMap((row, index) => {
+    if (!row.group) return [];
+    const own = pick.paths.includes(row.node.path);
+    const differs = copySubtree(tree, index)
+      .slice(1)
+      .some((below) => pick.paths.includes(below.node.path) !== own);
+    return row.chats > 0 || differs ? [row.node.path] : [];
+  });
+}
 /** Every project and group ticked, and chats outside them, so a list that starts from "every project" stops nothing. */
 export function copyAllTicked(tree: CopyTree): CopyPick {
-  return { paths: [...tree.rows.map((row) => row.node.path), ...tree.gone], outside: true };
+  return {
+    paths: [...tree.rows.map((row) => row.node.path), ...tree.others.map((other) => other.path)],
+    outside: true,
+  };
 }
 /** Nothing ticked. */
 export const copyNoneTicked = (): CopyPick => ({ paths: [], outside: false });

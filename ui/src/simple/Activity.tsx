@@ -273,9 +273,10 @@ const SAYS: Record<string, Telling> = {
   },
   autoBackupOn: () => forms.autoBackupOn,
   autoBackupOff: () => forms.autoBackupOff,
-  copyChosen: ({ folders, outside }) => {
+  // By projects; an entry from before the engine counted them says its folders.
+  copyChosen: ({ folders, projects, outside }) => {
     const n = number(folders);
-    return n === undefined ? undefined : forms.copyChosen(n, outside === true);
+    return n === undefined ? undefined : forms.copyChosen(number(projects), n, outside === true);
   },
   copyEveryProject: () => forms.copyEveryProject,
   restoredChat: ({ ai }) => {

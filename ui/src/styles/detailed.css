@@ -1122,6 +1122,17 @@ kbd {
 .copy-tree .opt .mono {
   overflow-wrap: anywhere;
 }
+/* Which projects the history backup takes now, in Settings, as a choice's own words. */
+.which-now b {
+  display: block;
+  font-weight: 500;
+  font-size: 13px;
+}
+.which-now p {
+  margin: 1px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
 .item.done .t {
   text-decoration: line-through;
   color: var(--faint);

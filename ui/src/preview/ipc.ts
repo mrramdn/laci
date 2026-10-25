@@ -23,7 +23,7 @@ import type {
   Storage,
   TerminalInfo,
 } from "../types";
-import { copyTree } from "../selectors";
+import { copyProjects, copyTree } from "../selectors";
 import raw from "./fixtures.json";
 
 type Body = Record<string, unknown>;
@@ -545,7 +545,8 @@ function moveBackup(body: Body) {
 /**
  * Chooses the projects the copy of AI chats takes, `only: null` for every project, as one Log entry Undo takes
  * back. The preview takes the full paths it is given, sorted and each once. `notCopied` counts the projects and
- * groups that hold chats which aren't taken.
+ * groups that hold chats which aren't taken, and `missing` the chosen paths the demo disk (the folders `ls` knows)
+ * doesn't have.
  */
 function backupOnly(body: Body) {
   const sent = body.only as { paths?: unknown; outside?: unknown } | null;
@@ -554,15 +555,20 @@ function backupOnly(body: Body) {
   const now = list ? { paths: list, outside: sent?.outside === true } : undefined;
   const set = (only: { paths: string[]; outside: boolean } | undefined) => {
     if (!snapshot.backup) return;
-    if (!only) delete snapshot.backup.only;
-    else
-      snapshot.backup.only = {
-        paths: only.paths,
-        outside: only.outside,
-        notCopied: copyTree(snapshot).rows.filter(
-          (row) => row.chats > 0 && !only.paths.includes(row.node.path),
-        ).length,
-      };
+    if (!only) {
+      delete snapshot.backup.only;
+      return;
+    }
+    // A copy of the snapshot: copyTree keeps what it works out for each one, and the preview's changes in place.
+    const tree = copyTree({ ...snapshot }, only.paths);
+    snapshot.backup.only = {
+      paths: only.paths,
+      outside: only.outside,
+      notCopied: tree.rows.filter((row) => row.chats > 0 && !only.paths.includes(row.node.path)).length,
+      missing: tree.others
+        .filter((other) => !Object.hasOwn(fixtures.ls, other.path))
+        .map((other) => other.path),
+    };
   };
   const same = JSON.stringify(now) === JSON.stringify(before && { paths: before.paths, outside: before.outside });
   if (same) return { only: now ?? null };
@@ -575,7 +581,12 @@ function backupOnly(body: Body) {
     {
       key: "copyChoice",
       say: now
-        ? { form: "copyChosen", folders: now.paths.length, outside: now.outside }
+        ? {
+            form: "copyChosen",
+            folders: now.paths.length,
+            projects: copyProjects(snapshot, now),
+            outside: now.outside,
+          }
         : { form: "copyEveryProject" },
     },
   );

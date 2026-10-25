@@ -407,8 +407,9 @@ export interface Backup {
   only?: CopyOnly;
 }
 /**
- * The projects and groups the copy of AI chats takes. A chat is copied when the nearest of them holding its folder
- * is chosen, and one in none of them when `outside` is. Nothing is ever removed from the copy for leaving one out.
+ * The projects and groups the copy of AI chats takes. A chat is copied when the nearest of the scanned folders and the
+ * chosen ones that holds its folder is chosen, and one in none of them when `outside` is. Nothing is ever removed from
+ * the copy for leaving one out.
  */
 export interface CopyOnly {
   /** The chosen folders, projects and groups, as full paths like the nodes' own. */
@@ -417,6 +418,8 @@ export interface CopyOnly {
   outside: boolean;
   /** Scanned projects and groups that hold chats the copy doesn't take. */
   notCopied: number;
+  /** Chosen paths that aren't on the disk now: a folder moved or deleted. */
+  missing: string[];
 }
 /** Whether an agent knows Laci's MCP server, and how it is added. From the `agent/mcp` request. */
 export interface McpStatus {

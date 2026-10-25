@@ -543,6 +543,23 @@ function moveBackup(body: Body) {
   return { ...change, dest, moved, bytes: moved ? (state.bytes ?? 0) : 0 };
 }
 /**
+ * The Log's title for a choice, as the engine says it: by projects, else by folders, else only the chats outside
+ * them or none, and the chats outside them when they are chosen too (words.activity.changes.copyChosen).
+ */
+function chosenTitle(projects: number, folders: number, outside: boolean) {
+  const what =
+    projects > 0
+      ? `${projects} project${projects === 1 ? "" : "s"} you chose`
+      : folders > 0
+        ? `${folders} folder${folders === 1 ? "" : "s"} you chose`
+        : "";
+  return what
+    ? `The copy of AI chats takes only the chats of ${what}${outside ? ", and chats outside your projects" : ""}`
+    : outside
+      ? "The copy of AI chats takes only the chats outside your projects"
+      : "The copy of AI chats takes the chats of no project";
+}
+/**
  * Chooses the projects the copy of AI chats takes, `only: null` for every project, as one Log entry Undo takes
  * back. The preview takes the full paths it is given, sorted and each once. `notCopied` counts the projects and
  * groups that hold chats which aren't taken, and `missing` the chosen paths the demo disk (the folders `ls` knows)
@@ -573,20 +590,14 @@ function backupOnly(body: Body) {
   const same = JSON.stringify(now) === JSON.stringify(before && { paths: before.paths, outside: before.outside });
   if (same) return { only: now ?? null };
   set(now);
+  const projects = now ? copyProjects(snapshot, now) : 0;
   record(
-    now
-      ? `The copy of AI chats takes only the chats of ${now.paths.length} chosen folder${now.paths.length === 1 ? "" : "s"}`
-      : "The copy of AI chats takes every project's chats",
+    now ? chosenTitle(projects, now.paths.length, now.outside) : "The copy of AI chats takes every project's chats",
     () => set(before),
     {
       key: "copyChoice",
       say: now
-        ? {
-            form: "copyChosen",
-            folders: now.paths.length,
-            projects: copyProjects(snapshot, now),
-            outside: now.outside,
-          }
+        ? { form: "copyChosen", folders: now.paths.length, projects, outside: now.outside }
         : { form: "copyEveryProject" },
     },
   );

@@ -1496,13 +1496,20 @@ export const aiHelpers = {
   /** Which chats the copy takes: every project's, or only the ones chosen. */
   copyWhich: "Which chats",
   copyEvery: "Every project",
-  /** By projects, as Activity says it; by folders when only groups are chosen. */
-  copyOnly: (projects: number, folders: number) =>
-    projects > 0
-      ? `Only ${count(projects, "project")} you chose`
-      : folders > 0
-        ? `Only the chats of ${count(folders, "folder")} you chose`
-        : "None of your projects",
+  /** By projects, as Activity says it; by folders when only groups are chosen; and the chats outside them. */
+  copyOnly: (projects: number, folders: number, outside: boolean) => {
+    const what =
+      projects > 0
+        ? `Only ${count(projects, "project")} you chose`
+        : folders > 0
+          ? `Only the chats of ${count(folders, "folder")} you chose`
+          : "";
+    return what
+      ? `${what}${outside ? ", and chats outside your projects" : ""}`
+      : outside
+        ? "Only chats outside your projects"
+        : "None of your projects";
+  },
   /** Folders (projects and groups) that hold chats the copy doesn’t take, so a new project isn’t forgotten. */
   copyLeft: (folders: number) =>
     folders === 1
@@ -1532,6 +1539,8 @@ export const aiHelpers = {
   /** Under a folder: the chats started in the folder itself, not in a project inside it. */
   copyOwn: (name: string) => `Chats in ${name} itself`,
   copyGone: "This folder is gone",
+  /** A chosen folder that is still there in your project folders, but no project now, as a folder emptied of them. */
+  copyNotListed: "Not a project now",
   /** A chosen folder that is still there, but not in your project folders, as when one was removed in Settings. */
   copyNotRead: "Outside your project folders",
   /** The choice changed while the sheet was open: in another window, by your AI, or by Undo. */
@@ -2069,13 +2078,13 @@ export const detailedSettings = {
   backupOnlyChosen: "Only the projects you chose",
   /** By projects, as the toast and the Log count them; by folders when only groups are chosen. */
   backupOnlySummary: (projects: number, folders: number, outside: boolean) =>
-    `${
-      projects > 0
-        ? `${count(projects, "project")} chosen`
-        : folders > 0
-          ? `${count(folders, "folder")} chosen`
-          : "No project chosen"
-    }${outside ? ", and chats outside your projects" : ""}`,
+    projects === 0 && folders === 0
+      ? outside
+        ? "Only chats outside your projects"
+        : "No project chosen"
+      : `${projects > 0 ? `${count(projects, "project")} chosen` : `${count(folders, "folder")} chosen`}${
+          outside ? ", and chats outside your projects" : ""
+        }`,
   /** Folders (projects and groups) that hold chats the backup doesn't take, so a new project isn't forgotten. */
   backupLeft: (folders: number) =>
     folders === 1
@@ -2116,6 +2125,8 @@ export const detailedSettings = {
   /** Under a folder: the chats started in the folder itself, not in a project inside it. */
   backupOwn: (name: string) => `Chats in ${name} itself`,
   backupGone: "This folder is gone",
+  /** A chosen folder still there in the project folders, but no project or group now, as one emptied of them. */
+  backupNotListed: "Not a project or group now",
   /** A chosen folder that is still there, but not in the project folders, as when one was removed above. */
   backupNotRead: "Not in your project folders",
   /** The choice changed while the chooser was open: in another window, by an AI, or by Undo. */

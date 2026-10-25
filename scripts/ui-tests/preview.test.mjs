@@ -195,6 +195,11 @@ export async function theCopyCanTakeOnlyTheProjectsChosenForIt() {
       [entry.key, entry.say],
       ["copyChoice", { form: "copyChosen", folders: 2, projects: 1, outside: true }],
     );
+    // The title follows what Activity says: by projects, and the chats outside them.
+    assert.equal(
+      entry.title,
+      "The copy of AI chats takes only the chats of 1 project you chose, and chats outside your projects",
+    );
     // The same choice again is no change, and no entry.
     await request("backup/only", { only: chosen });
     assert.equal((await request("log")).entries[0].id, entry.id);
@@ -204,6 +209,30 @@ export async function theCopyCanTakeOnlyTheProjectsChosenForIt() {
     assert.deepEqual((await request("log")).entries[0].say, { form: "copyEveryProject" });
     await request("undo", { id: (await request("log")).entries[0].id });
     assert.equal((await request("snapshot")).backup.only.paths.length, 2);
+  });
+}
+
+export async function theLogSaysAChoiceByProjectsElseFoldersElseTheChatsOutsideThem() {
+  await onPreview(async ({ request }) => {
+    const said = async (only) => {
+      await request("backup/only", { only });
+      const [entry] = (await request("log")).entries;
+      return [entry.title, entry.say];
+    };
+    // Only groups: by folders.
+    assert.deepEqual(await said({ paths: ["/home/demo/project/clients"], outside: false }), [
+      "The copy of AI chats takes only the chats of 1 folder you chose",
+      { form: "copyChosen", folders: 1, projects: 0, outside: false },
+    ]);
+    // No folder, and the chats outside them: those alone, not "0 chosen folders".
+    assert.deepEqual(await said({ paths: [], outside: true }), [
+      "The copy of AI chats takes only the chats outside your projects",
+      { form: "copyChosen", folders: 0, projects: 0, outside: true },
+    ]);
+    assert.deepEqual(await said({ paths: [], outside: false }), [
+      "The copy of AI chats takes the chats of no project",
+      { form: "copyChosen", folders: 0, projects: 0, outside: false },
+    ]);
   });
 }
 

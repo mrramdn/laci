@@ -410,6 +410,8 @@ export async function theBackupTakesEveryProjectUntilTheUserChoosesWhich() {
   await p.settle();
   assert.ok(row().textContent.includes("1 folder chosen"), row().textContent);
   assert.equal(said.backupOnlySummary(0, 0, false), "No project chosen");
+  // As the toast and the Log say it.
+  assert.equal(said.backupOnlySummary(0, 0, true), "Only chats outside your projects");
   // Back to every project is sent at once, and says what is true after.
   p.act(() => buttons()[1].props.onClick());
   await p.done();
@@ -508,30 +510,36 @@ export async function theBackupChooserStartsWithEverythingTickedAndSaysWhatStays
   assert.deepEqual(c.asked, []);
 }
 
-export async function aGroupsOwnChatsHaveARowWheneverTheyDecideItsBox() {
+export async function aGroupHasARowForItsOwnChatsOnlyWhenItHoldsSomeAndNoClickMovesTheRows() {
   const c = choicePage();
-  const own = said.backupOwn("clients");
+  const rows = () => c.boxes().map((b) => b.parent.textContent);
+  const listed = rows();
+  // Unticking a project of clients: clients shows the dash, and no row comes in above the one clicked.
   await c.tick("acme-store");
-  // clients' own box now differs from a box below it: its row shows, ticked, and stays while the list is open.
   assert.equal(c.box("clients").indeterminate, true);
-  assert.equal(c.box(own).props.checked, true);
-  assert.equal(c.box(own).parent.textContent, `${own}0 chats`);
+  assert.equal(c.box(said.backupOwn("clients")), undefined, "clients holds no chats of its own");
+  assert.deepEqual(rows(), listed);
+  // Its last project unticked, clients is off with them; ticked again, on with them.
+  await c.tick("kopi-landing");
+  assert.deepEqual([c.box("clients").props.checked, c.box("clients").indeterminate], [false, false]);
   await c.tick("acme-store");
+  assert.deepEqual([c.box("clients").props.checked, c.box("clients").indeterminate], [false, true]);
+  await c.tick("kopi-landing");
   assert.equal(c.box("clients").props.checked, true);
-  assert.ok(c.box(own), "the row doesn't move under the pointer");
-  // Its own box goes alone, and the folder's box shows the dash, told by that row.
+  assert.deepEqual(rows(), listed);
+  // The top folder holds chats of its own: their row goes alone, and the top folder's box shows the dash it tells.
+  const own = said.backupOwn("project");
   await c.tick(own);
-  assert.deepEqual(
-    [c.box(own).props.checked, c.box("acme-store").props.checked, c.box("kopi-landing").props.checked],
-    [false, true, true],
-  );
-  assert.equal(c.box("clients").indeterminate, true);
+  assert.deepEqual([c.box(own).props.checked, c.box("clients").props.checked], [false, true]);
+  assert.equal(c.box("project").indeterminate, true);
   // The folder's box still ticks everything in it.
-  await c.tick("clients");
+  await c.tick("project");
   assert.equal(c.box(own).props.checked, true);
-  assert.equal(c.box("clients").props.checked, true);
+  await c.click(c.button(said.backupUntickAll));
+  await c.tick("acme-store");
   await c.click(c.button(said.backupSave));
-  assert.ok(c.asked[0][1].only.paths.includes(CLIENTS));
+  // clients goes with acme-store; the top folder, whose own row is unticked, doesn't.
+  assert.deepEqual([...c.asked[0][1].only.paths].sort(), [ACME, CLIENTS].sort());
 }
 
 export async function aGroupsBoxTicksItsProjectsAndShowsMixedWhenOnlySomeAre() {
@@ -592,8 +600,9 @@ export async function saveSendsTheChoiceOnceAndCancelSendsNothing() {
 export async function theChooserStartsFromTheChoiceAndListsChosenFoldersOutsideTheScan() {
   const gone = `${HOME}/old-client`;
   const there = `${HOME}/Documents`;
+  const emptied = `${HOME}/project/emptied`;
   const snapshot = withBackup({
-    only: { paths: [ACME, gone, there], outside: true, notCopied: 3, missing: [gone] },
+    only: { paths: [ACME, gone, there, emptied], outside: true, notCopied: 3, missing: [gone] },
   });
   snapshot.sessions.push({ ...snapshot.sessions[1], sessionId: "d1", cwd: `${there}/notes`, file: "/logs/d1.jsonl" });
   const c = choicePage({ snapshot });
@@ -601,13 +610,27 @@ export async function theChooserStartsFromTheChoiceAndListsChosenFoldersOutsideT
   assert.equal(c.box("kopi-landing").props.checked, false);
   assert.equal(c.box("clients").indeterminate, true);
   assert.equal(c.box("Chats outside").props.checked, true);
-  // A folder that is gone says so; one still there but outside the project folders says that, and each its chats.
+  // A folder that is gone says so; one still there in the project folders but no project or group now says that;
+  // one outside the project folders says that, and each its chats.
   assert.equal(c.box("~/old-client").parent.textContent, `~/old-client${said.backupGone} · 0 chats`);
+  assert.equal(c.box("~/project/emptied").parent.textContent, `~/project/emptied${said.backupNotListed} · 0 chats`);
   assert.equal(c.box("~/Documents").parent.textContent, `~/Documents${said.backupNotRead} · 1 chat`);
+  assert.equal(c.box("Chats outside").parent.textContent, `${said.backupOutside}0 chats`);
   await c.tick("~/old-client");
+  await c.tick("~/project/emptied");
+  // Unticked, ~/Documents is listed still, so it can be ticked again; once saved the backup doesn't know it, so its
+  // chat is one outside your projects.
+  await c.tick("~/Documents");
+  assert.equal(c.box("~/Documents").props.checked, false);
+  assert.equal(c.box("~/Documents").parent.textContent, `~/Documents${said.backupNotRead} · 0 chats`);
+  assert.equal(c.box("Chats outside").parent.textContent, `${said.backupOutside}1 chat`);
+  await c.tick("~/Documents");
+  assert.equal(c.box("~/Documents").parent.textContent, `~/Documents${said.backupNotRead} · 1 chat`);
+  assert.equal(c.box("Chats outside").parent.textContent, `${said.backupOutside}0 chats`);
   await c.click(c.button(said.backupSave));
   const [[, { only }]] = c.asked;
-  assert.deepEqual(only, { paths: [ACME, there], outside: true });
+  // clients is ticked with acme-store, as a group without chats of its own is.
+  assert.deepEqual({ ...only, paths: [...only.paths].sort() }, { paths: [ACME, CLIENTS, there].sort(), outside: true });
 }
 
 export async function aChoiceChangedElsewhereWhileTheChooserIsOpenIsWhatItShows() {
@@ -633,8 +656,9 @@ export async function aChoiceChangedElsewhereWhileTheChooserIsOpenIsWhatItShows(
   await c.tick("infra-notes");
   await c.click(c.button(said.backupSave));
   const [[, { only }]] = c.asked;
+  // clients with acme-store, as the list started again: a group without chats of its own is ticked as they are.
   assert.deepEqual({ ...only, paths: [...only.paths].sort() }, {
-    paths: [ACME, `${HOME}/old-client`, `${HOME}/project/infra-notes`].sort(),
+    paths: [ACME, CLIENTS, `${HOME}/old-client`, `${HOME}/project/infra-notes`].sort(),
     outside: false,
   });
 }

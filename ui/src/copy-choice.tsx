@@ -3,8 +3,16 @@ import { errorText } from "./api";
 import { useCopyPick } from "./copy-pick";
 import { DialogFrame } from "./dialogs";
 import { tilde } from "./helpers";
-import { copyAllTicked, copyNoneTicked, copyProjects, copyTick, toggleCopy, toggleCopyOne } from "./selectors";
-import type { CopyTick } from "./selectors";
+import {
+  copyAllTicked,
+  copyChosen,
+  copyNoneTicked,
+  copyProjects,
+  copyTick,
+  toggleCopy,
+  toggleCopyOne,
+} from "./selectors";
+import type { CopyOther, CopyTick } from "./selectors";
 import { chooseCopy, useApp } from "./store";
 import { detailedSettings as said } from "./words";
 
@@ -15,7 +23,7 @@ function close() {
 /**
  * Settings: the projects the history backup takes. A box for each project and folder that holds projects; a
  * folder's box ticks and unticks everything in it, and shows a dash when only some of it is ticked, with a row for
- * the chats in the folder itself whenever those decide it. It starts from the choice made, or with everything ticked
+ * the chats in the folder itself when it holds some. It starts from the choice made, or with everything ticked
  * when the backup took every project, so nothing stops by surprise. Nothing is sent before Save, which is one change
  * in the Log.
  */
@@ -37,6 +45,9 @@ export function CopyChoice() {
     if (done) close();
     else setSaving(false);
   };
+  // A chosen folder that is no project or group now: gone, still in the folders Laci reads, or outside them.
+  const where = (other: CopyOther) =>
+    other.gone ? said.backupGone : other.inside ? said.backupNotListed : said.backupNotRead;
   const box = (
     key: string,
     name: string,
@@ -107,7 +118,7 @@ export function CopyChoice() {
           const row = box(path, node.name, said.backupChats(group ? total : chats), depth, copyTick(tree, pick, path), () =>
             choose(toggleCopy(tree, pick, path)),
           );
-          // The folder's own chats, first under it, so a dash on its box is always told by a row.
+          // The folder's own chats, first under it. No click adds or takes away a row, so none moves.
           return group && own.has(path)
             ? [
                 row,
@@ -116,7 +127,7 @@ export function CopyChoice() {
                   said.backupOwn(node.name),
                   said.backupChats(chats),
                   depth + 1,
-                  pick.paths.includes(path) ? "on" : "off",
+                  copyChosen(pick).has(path) ? "on" : "off",
                   () => choose(toggleCopyOne(pick, path)),
                 ),
               ]
@@ -129,7 +140,7 @@ export function CopyChoice() {
           box(
             other.path,
             tilde(other.path, snapshot?.home ?? ""),
-            `${other.gone ? said.backupGone : said.backupNotRead} · ${said.backupChats(other.chats)}`,
+            `${where(other)} · ${said.backupChats(other.chats)}`,
             0,
             copyTick(tree, pick, other.path),
             () => choose(toggleCopy(tree, pick, other.path)),

@@ -4,8 +4,16 @@ import { useState } from "react";
 import { errorText } from "../api";
 import { useCopyPick } from "../copy-pick";
 import { tilde } from "../helpers";
-import { copyAllTicked, copyNoneTicked, copyProjects, copyTick, toggleCopy, toggleCopyOne } from "../selectors";
-import type { CopyTick } from "../selectors";
+import {
+  copyAllTicked,
+  copyChosen,
+  copyNoneTicked,
+  copyProjects,
+  copyTick,
+  toggleCopy,
+  toggleCopyOne,
+} from "../selectors";
+import type { CopyOther, CopyTick } from "../selectors";
 import { chooseCopy } from "../store";
 import type { Snapshot } from "../types";
 import { aiHelpers as said, blocks } from "../words";
@@ -13,8 +21,8 @@ import { Button, Callout, Sheet } from "./ui";
 
 /**
  * The sheet: a box for each project and folder that holds projects, a folder's box ticks and unticks everything
- * in it, and a mixed one when only some of it is, with a row for the chats in the folder itself whenever those decide
- * it. It starts from the choice made, or with everything ticked when the copy took every project, so that nothing
+ * in it, and a mixed one when only some of it is, with a row for the chats in the folder itself when it holds some.
+ * It starts from the choice made, or with everything ticked when the copy took every project, so that nothing
  * stops by surprise.
  */
 export function CopyChoice({ snapshot, onClose }: { snapshot: Snapshot; onClose: () => void }) {
@@ -34,6 +42,9 @@ export function CopyChoice({ snapshot, onClose }: { snapshot: Snapshot; onClose:
     if (done) onClose();
     else setSaving(false);
   };
+  // A chosen folder that is no project or group now: gone, still in the folders Laci reads, or outside them.
+  const where = (other: CopyOther) =>
+    other.gone ? said.copyGone : other.inside ? said.copyNotListed : said.copyNotRead;
   const box = (
     key: string,
     name: string,
@@ -93,7 +104,7 @@ export function CopyChoice({ snapshot, onClose }: { snapshot: Snapshot; onClose:
           const row = box(path, node.name, said.copyChats(group ? total : chats), depth, copyTick(tree, pick, path), () =>
             choose(toggleCopy(tree, pick, path)),
           );
-          // The folder's own chats, first under it, so a mixed box is always told by a row.
+          // The folder's own chats, first under it. No click adds or takes away a row, so none moves.
           return group && own.has(path)
             ? [
                 row,
@@ -102,7 +113,7 @@ export function CopyChoice({ snapshot, onClose }: { snapshot: Snapshot; onClose:
                   said.copyOwn(node.name),
                   said.copyChats(chats),
                   depth + 1,
-                  pick.paths.includes(path) ? "on" : "off",
+                  copyChosen(pick).has(path) ? "on" : "off",
                   () => choose(toggleCopyOne(pick, path)),
                 ),
               ]
@@ -115,7 +126,7 @@ export function CopyChoice({ snapshot, onClose }: { snapshot: Snapshot; onClose:
           box(
             other.path,
             tilde(other.path, snapshot.home),
-            `${other.gone ? said.copyGone : said.copyNotRead} · ${said.copyChats(other.chats)}`,
+            `${where(other)} · ${said.copyChats(other.chats)}`,
             0,
             copyTick(tree, pick, other.path),
             () => choose(toggleCopy(tree, pick, other.path)),

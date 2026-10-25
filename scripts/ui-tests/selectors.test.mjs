@@ -1154,8 +1154,8 @@ export async function aChosenFolderThatIsNotScannedKeepsItsChatsAndSaysWhetherIt
   // Each once and sorted; a folder that is scanned is a row, not one of these. Their chats are their own, as the
   // engine copies them, not the folder's around them; one still on the disk is outside the project folders, not gone.
   assert.deepEqual(tree.others, [
-    { path: `${HOME}/away`, gone: false, chats: 1 },
-    { path: `${ROOT}/old-name`, gone: true, chats: 2 },
+    { path: `${HOME}/away`, gone: false, inside: false, chats: 1 },
+    { path: `${ROOT}/old-name`, gone: true, inside: true, chats: 2 },
   ]);
   assert.equal(chatsIn(tree, ROOT), 2);
   assert.equal(tree.outside, 0);
@@ -1164,21 +1164,126 @@ export async function aChosenFolderThatIsNotScannedKeepsItsChatsAndSaysWhetherIt
   assert.equal(selectors.copyTree(s).outside, 1);
 }
 
-export async function aGroupsOwnChatsGetARowWhenTheyHoldChatsOrDecideItsBox() {
+export async function anUntickedChosenFolderIsListedStillButItsChatsGoWhereTheEngineWouldTakeThem() {
+  const s = withChats(`${ROOT}/old-name`, `${ROOT}/old-name/src`, `${HOME}/Documents/notes`);
+  const chosen = [ACME, `${ROOT}/old-name`, `${HOME}/Documents`];
+  // Both ticked, each keeps its chats.
+  const ticked = selectors.copyTree(s, chosen);
+  assert.deepEqual(
+    ticked.others.map((other) => [other.path, other.chats]),
+    [
+      [`${HOME}/Documents`, 1],
+      [`${ROOT}/old-name`, 2],
+    ],
+  );
+  assert.deepEqual([chatsIn(ticked, ROOT), ticked.outside], [2, 0]);
+  // Unticked, they stay listed, so they can be ticked again, but once saved the engine doesn't know them: their chats
+  // count for the folder around them, or outside every project.
+  const unticked = selectors.copyTree(s, chosen, [ACME]);
+  assert.deepEqual(
+    unticked.others.map((other) => [other.path, other.chats]),
+    [
+      [`${HOME}/Documents`, 0],
+      [`${ROOT}/old-name`, 0],
+    ],
+  );
+  assert.deepEqual([chatsIn(unticked, ROOT), unticked.outside], [4, 1]);
+  // What a group can hold itself counts as if no chosen folder inside it were ticked, so its row doesn't come and go.
+  assert.equal(ticked.rows.find((row) => row.node.path === ROOT).loose, 4);
+  assert.equal(unticked.rows.find((row) => row.node.path === ROOT).loose, 4);
+}
+
+export async function aChosenFolderInsideTheProjectFoldersThatIsNoProjectNowSaysSo() {
+  const s = fixture();
+  s.backup.only = { paths: [], outside: false, notCopied: 0, missing: [`${ROOT}/old-name`] };
+  const tree = selectors.copyTree(s, [`${ROOT}/old-name`, `${ROOT}/emptied`, `${HOME}/Documents`, `${ROOT}-other`]);
+  // Gone; there, in a folder Laci reads; there, outside them (by whole names: project-other is no part of project).
+  assert.deepEqual(
+    tree.others.map((other) => [other.path, other.gone, other.inside]),
+    [
+      [`${HOME}/Documents`, false, false],
+      [`${ROOT}-other`, false, false],
+      [`${ROOT}/emptied`, false, true],
+      [`${ROOT}/old-name`, true, true],
+    ],
+  );
+}
+
+export async function aGroupsOwnChatsGetARowOnlyWhenItHoldsChats() {
   const tree = selectors.copyTree(fixture());
-  const pick = (...paths) => ({ paths, outside: false });
+  // The top folder holds chats of its own; the others hold none, so no row comes and goes with what is ticked.
+  assert.deepEqual(selectors.copyOwnRows(tree), [ROOT]);
   const every = selectors.copyAllTicked(tree);
-  // The top folder holds chats of its own; the others get a row when their own box differs from one below them.
-  assert.deepEqual(selectors.copyOwnRows(tree, every), [ROOT]);
-  assert.deepEqual(selectors.copyOwnRows(tree, pick(ACME, KOPI)), [ROOT, CLIENTS]);
-  assert.deepEqual(selectors.copyOwnRows(tree, pick(CLIENTS)), [ROOT, CLIENTS]);
-  assert.deepEqual(selectors.copyOwnRows(tree, pick(ACME)), [ROOT, CLIENTS]);
-  assert.deepEqual(selectors.copyOwnRows(tree, pick()), [ROOT]);
   // Its own box goes alone, and the folder's box shows the dash.
-  const own = selectors.toggleCopyOne(every, CLIENTS);
-  assert.deepEqual(own.paths, every.paths.filter((path) => path !== CLIENTS));
-  assert.equal(selectors.copyTick(tree, own, CLIENTS), "mixed");
-  assert.equal(selectors.copyTick(tree, selectors.toggleCopyOne(own, CLIENTS), CLIENTS), "on");
+  const own = selectors.toggleCopyOne(every, ROOT);
+  assert.deepEqual(own.paths, every.paths.filter((path) => path !== ROOT));
+  assert.equal(selectors.copyTick(tree, own, ROOT), "mixed");
+  assert.equal(selectors.copyTick(tree, selectors.toggleCopyOne(own, ROOT), ROOT), "on");
+}
+
+export async function aGroupWithoutChatsOfItsOwnIsTickedAsWhatIsInItIs() {
+  const tree = selectors.copyTree(fixture());
+  const own = new Set(selectors.copyOwnRows(tree));
+  const pick = (...paths) => ({ paths, outside: false });
+  const sorted = (p) => [...p.paths].sort();
+  // One project ticked: the groups around it come on, so they show a dash and not "off"; the top folder, which holds
+  // chats of its own, stays as its own row has it.
+  assert.deepEqual(sorted(selectors.copyInStep(tree, pick(ACME), own)), [ACME, CLIENTS].sort());
+  // Nothing ticked below a group: it goes off too, all the way up.
+  assert.deepEqual(sorted(selectors.copyInStep(tree, pick(CLIENTS, `${ROOT}/_archive`), own)), []);
+  // The top folder's own tick is the user's either way.
+  assert.deepEqual(sorted(selectors.copyInStep(tree, pick(ROOT), own)), [ROOT]);
+  // A group whose own row ticks it alone counts as ticked for the group around it.
+  const nested = new Set([...own, CLIENTS]);
+  assert.deepEqual(sorted(selectors.copyInStep(tree, pick(CLIENTS), nested)), [CLIENTS]);
+  // Nothing to change gives the same pick back, so nothing draws again for it.
+  const every = selectors.copyAllTicked(tree);
+  assert.equal(selectors.copyInStep(tree, every, own), every);
+  // Unticking a project of a group in step keeps the group on while another is ticked, and off after the last.
+  let p = selectors.copyInStep(tree, selectors.toggleCopy(tree, every, ACME), own);
+  assert.ok(p.paths.includes(CLIENTS));
+  assert.equal(selectors.copyTick(tree, p, CLIENTS), "mixed");
+  p = selectors.copyInStep(tree, selectors.toggleCopy(tree, p, KOPI), own);
+  assert.ok(!p.paths.includes(CLIENTS));
+  assert.equal(selectors.copyTick(tree, p, CLIENTS), "off");
+}
+
+/** A scan of `n` projects in groups of ten under one folder, each with a chat. */
+function bigScan(n) {
+  const s = fixture();
+  const top = s.nodes[ROOT];
+  s.nodes = { [ROOT]: { ...top, children: [] } };
+  s.sessions = [];
+  for (let g = 0; g < n / 10; g++) {
+    const group = `${ROOT}/g${g}`;
+    s.nodes[group] = { ...top, id: group, path: group, name: `g${g}`, label: `g${g}`, kind: "folder", parent: ROOT };
+    for (let i = 0; i < 10; i++) {
+      const path = `${group}/p${i}`;
+      s.nodes[path] = { ...top, id: path, path, name: `p${i}`, label: `p${i}`, kind: "project", parent: group };
+      s.sessions.push({ ...fixtures.snapshot.sessions[1], sessionId: path, cwd: path, file: `${path}.jsonl` });
+    }
+  }
+  return s;
+}
+
+export async function aListOfThousandsTicksInWellUnderATenthOfASecond() {
+  const s = bigScan(2000);
+  const tree = selectors.copyTree(s);
+  assert.ok(tree.rows.length > 2000, `${tree.rows.length} rows`);
+  const every = selectors.copyAllTicked(tree);
+  const own = new Set(selectors.copyOwnRows(tree));
+  // What a click does and what a draw reads: a box, keeping the groups in step, and every row's box.
+  const started = performance.now();
+  const pick = selectors.copyInStep(tree, selectors.toggleCopy(tree, every, `${ROOT}/g7/p3`), own);
+  for (const row of tree.rows) selectors.copyTick(tree, pick, row.node.path);
+  selectors.copyOwnRows(tree);
+  const took = performance.now() - started;
+  assert.ok(took < 100, `${took} ms`);
+  assert.equal(selectors.copyTick(tree, pick, `${ROOT}/g7`), "mixed");
+  assert.equal(selectors.copyTick(tree, pick, `${ROOT}/g8`), "on");
+  assert.equal(selectors.copyTick(tree, pick, ROOT), "mixed");
+  // Worked out once for the tree and the pick.
+  assert.equal(selectors.copyTicks(tree, pick), selectors.copyTicks(tree, pick));
 }
 
 export async function aFoldersBoxIsMixedWhenItAndWhatIsInItDiffer() {

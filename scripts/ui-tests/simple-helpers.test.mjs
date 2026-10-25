@@ -1538,12 +1538,85 @@ export async function aChoiceChangedElsewhereWhileTheSheetIsOpenIsWhatItShows() 
   assert.deepEqual(sent(page), { paths: [ACME, `${ROOT}/clients`, KOPI].sort(), outside: true });
 }
 
+/** `snapshot` with a folder a scan found: a project, or a folder holding projects when `kind` says so. */
+const withFolder = (snapshot, path, kind = "project") => {
+  const parent = path.slice(0, path.lastIndexOf("/"));
+  const name = path.slice(parent.length + 1);
+  const node = { ...structuredClone(snapshot.nodes[`${ROOT}/clients`]), id: path, path, name, label: name, kind, parent, children: [] };
+  snapshot.nodes[path] = node;
+  snapshot.nodes[parent]?.children.push(path);
+  return snapshot;
+};
+
+export async function aProjectFoundWhileTheSheetIsOpenIsTickedOnlyWhileTheCopyTakesEveryProject() {
+  const LABS = `${ROOT}/labs`;
+  const found = (snapshot) =>
+    withFolder(withFolder(withFolder(snapshot, `${ROOT}/clients/new-shop`), LABS, "folder"), `${LABS}/robot`);
+  const page = whichPage();
+  await page.click(page.button(said.copyChoose));
+  await page.tick("kopi-landing");
+  // A scan finds a project in clients, and a folder with one: the copy takes them now, so they come ticked.
+  page.app.setState({ snapshot: found(scan()) });
+  await page.settle();
+  assert.deepEqual(
+    ["new-shop", "labs", "robot", "kopi-landing"].map((name) => page.box(name).props.checked),
+    [true, true, true, false],
+  );
+  assert.equal(page.box("clients").indeterminate, true);
+  // Unticked once seen, a row stays unticked through the next scan.
+  await page.tick("robot");
+  page.app.setState({ snapshot: found(scan()) });
+  await page.settle();
+  assert.deepEqual([page.box("robot").props.checked, page.box("labs").props.checked], [false, false]);
+  await page.click(page.button(said.copySave));
+  assert.ok(sent(page).paths.includes(`${ROOT}/clients/new-shop`));
+  assert.ok(!sent(page).paths.includes(`${LABS}/robot`) && !sent(page).paths.includes(LABS));
+  // With a choice saved, a project that appears later isn't copied until it is ticked.
+  const chosen = whichPage({ snapshot: withChoice({ paths: [ACME], outside: false, notCopied: 0, missing: [] }) });
+  await chosen.click(chosen.button(said.copyChangeProjects));
+  chosen.app.setState({ snapshot: found(withChoice({ paths: [ACME], outside: false, notCopied: 0, missing: [] })) });
+  await chosen.settle();
+  assert.deepEqual(["new-shop", "labs", "robot"].map((name) => chosen.box(name).props.checked), [false, false, false]);
+  await chosen.click(chosen.button(said.copySave));
+  // clients goes with acme-store, as a folder without chats of its own does.
+  assert.deepEqual(sent(chosen), { paths: [ACME, `${ROOT}/clients`].sort(), outside: false });
+}
+
+export async function eachBoxIsNamedByWhereItIsAndWhatItTicks() {
+  const page = whichPage({ snapshot: withFolder(withFolder(scan(), `${ROOT}/clients/docs`), `${ROOT}/side/docs`) });
+  await page.click(page.button(said.copyChoose));
+  const name = (box) => box.props["aria-label"];
+  // The words on the row stay as they are; the name starts with them.
+  assert.equal(page.box("acme-store").parent.textContent, "acme-store1 chat");
+  assert.equal(name(page.box("acme-store")), "acme-store, in clients");
+  assert.equal(name(page.box("clients")), "clients, in project, and everything in it");
+  assert.equal(name(page.box("project")), "project, and everything in it");
+  assert.equal(name(page.box(said.copyOwn("project"))), said.copyOwn("project"));
+  assert.equal(name(page.box("Chats outside")), said.copyOutside);
+  // Two projects of the same name read apart.
+  const docs = page.boxes().filter((b) => b.parent.textContent.startsWith("docs"));
+  assert.deepEqual(docs.map((b) => b.parent.textContent), ["docs0 chats", "docs0 chats"]);
+  assert.deepEqual(docs.map(name).sort(), ["docs, in clients", "docs, in side"]);
+  const names = page.boxes().map(name);
+  assert.equal(new Set(names).size, names.length, names.join(" | "));
+  // How many chats a row holds is told after its name.
+  const told = page.box("acme-store").props["aria-describedby"];
+  assert.equal(page.find((n) => n.props.id === told).textContent, "1 chat");
+  assert.equal(said.copyBoxName("docs", "clients", true), "docs, in clients, and everything in it");
+}
+
 export async function aRefusedChoiceKeepsTheSheetOpenAndSaysWhy() {
   const replies = { "backup/only": new Error("Choose at most 10000 projects to copy") };
   const page = whichPage({ replies });
   await page.click(page.button(said.copyChoose));
   await page.click(page.button(said.copySave));
-  assert.match(page.sheet().textContent, /Choose at most 10000 projects to copy/);
+  // Beside Save, in sight however far the list is scrolled, and read out as it comes.
+  const alert = page.sheet().descendants().find((n) => n.props.role === "alert");
+  assert.match(alert.textContent, /Choose at most 10000 projects to copy/);
+  assert.equal(alert.descendants().find((n) => n.props["data-tone"])?.props["data-tone"], "act");
+  const beside = alert.parent.children;
+  assert.ok(beside.indexOf(alert) < beside.indexOf(page.button(said.copySave)));
+  assert.equal(alert.closest(".s-copy-tree"), null);
   assert.deepEqual(page.toasts, []);
   delete replies["backup/only"];
   await page.click(page.button(said.copySave));

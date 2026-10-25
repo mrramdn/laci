@@ -1,6 +1,6 @@
 // "Which projects should Laci copy?": the sheet where the copy of AI chats takes only the projects you tick
 // (CopyCard in AiHelpers.tsx opens it). Nothing is sent until Save, so one choice is one entry in Activity.
-import { useState } from "react";
+import { useId, useState } from "react";
 import { errorText } from "../api";
 import { useCopyPick } from "../copy-pick";
 import { tilde } from "../helpers";
@@ -45,6 +45,8 @@ export function CopyChoice({ snapshot, onClose }: { snapshot: Snapshot; onClose:
   // A chosen folder that is no project or group now: gone, still in the folders Laci reads, or outside them.
   const where = (other: CopyOther) =>
     other.gone ? said.copyGone : other.inside ? said.copyNotListed : said.copyNotRead;
+  // A row's box is named by where it is and what it ticks; its chats are told after the name.
+  const quietId = useId();
   const box = (
     key: string,
     name: string,
@@ -53,6 +55,7 @@ export function CopyChoice({ snapshot, onClose }: { snapshot: Snapshot; onClose:
     tick: CopyTick,
     toggle: () => void,
     mono = false,
+    named = name,
   ) => (
     <li key={key} className="s-copy-row" style={{ paddingInlineStart: depth * 24 }}>
       <label>
@@ -63,11 +66,15 @@ export function CopyChoice({ snapshot, onClose }: { snapshot: Snapshot; onClose:
           ref={(input) => {
             if (input) input.indeterminate = tick === "mixed";
           }}
+          aria-label={named}
+          aria-describedby={`${quietId}${encodeURIComponent(key)}`}
           disabled={saving}
           onChange={toggle}
         />
         <span className={mono ? "s-mono" : undefined}>{name}</span>
-        <span className="s-quiet">{quiet}</span>
+        <span id={`${quietId}${encodeURIComponent(key)}`} className="s-quiet">
+          {quiet}
+        </span>
       </label>
     </li>
   );
@@ -79,6 +86,12 @@ export function CopyChoice({ snapshot, onClose }: { snapshot: Snapshot; onClose:
       dismissible={!saving}
       footer={
         <>
+          {/* Beside Save, which stays in sight however far the list is scrolled, and read out as it comes. */}
+          {error ? (
+            <div className="s-copy-error" role="alert">
+              <Callout tone="act">{error}</Callout>
+            </div>
+          ) : null}
           <Button kind="text" disabled={saving} onClick={onClose}>
             {blocks.cancel}
           </Button>
@@ -101,8 +114,16 @@ export function CopyChoice({ snapshot, onClose }: { snapshot: Snapshot; onClose:
       <ul className="s-copy-tree" aria-label={said.copyChooseList}>
         {tree.rows.flatMap(({ node, depth, chats, total, group }) => {
           const path = node.path;
-          const row = box(path, node.name, said.copyChats(group ? total : chats), depth, copyTick(tree, pick, path), () =>
-            choose(toggleCopy(tree, pick, path)),
+          const above = node.parent ? snapshot.nodes[node.parent]?.name : undefined;
+          const row = box(
+            path,
+            node.name,
+            said.copyChats(group ? total : chats),
+            depth,
+            copyTick(tree, pick, path),
+            () => choose(toggleCopy(tree, pick, path)),
+            false,
+            said.copyBoxName(node.name, above, group),
           );
           // The folder's own chats, first under it. No click adds or takes away a row, so none moves.
           return group && own.has(path)
@@ -135,7 +156,6 @@ export function CopyChoice({ snapshot, onClose }: { snapshot: Snapshot; onClose:
         )}
       </ul>
       <p className="s-quiet">{said.copyChooseKeeps}</p>
-      {error ? <Callout tone="act">{error}</Callout> : null}
     </Sheet>
   );
 }

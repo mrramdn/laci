@@ -1538,6 +1538,12 @@ export const aiHelpers = {
   copyOutside: "Chats outside your projects",
   /** Under a folder: the chats started in the folder itself, not in a project inside it. */
   copyOwn: (name: string) => `Chats in ${name} itself`,
+  /**
+   * What a screen reader calls a row's box: the folder it is in, as two projects can share a name, and for a folder
+   * that holds projects, that its box ticks them too. It starts with the row's own words.
+   */
+  copyBoxName: (name: string, above: string | undefined, folder: boolean) =>
+    `${name}${above ? `, in ${above}` : ""}${folder ? ", and everything in it" : ""}`,
   copyGone: "This folder is gone",
   /** A chosen folder that is still there in your project folders, but no project now, as a folder emptied of them. */
   copyNotListed: "Not a project now",
@@ -2124,6 +2130,12 @@ export const detailedSettings = {
   backupOutside: "Chats outside your projects",
   /** Under a folder: the chats started in the folder itself, not in a project inside it. */
   backupOwn: (name: string) => `Chats in ${name} itself`,
+  /**
+   * What a screen reader calls a row's box: the folder it is in, as two projects can share a name, and for a folder
+   * that holds projects, that its box ticks them too. It starts with the row's own words.
+   */
+  backupBoxName: (name: string, above: string | undefined, folder: boolean) =>
+    `${name}${above ? `, in ${above}` : ""}${folder ? ", and everything in it" : ""}`,
   backupGone: "This folder is gone",
   /** A chosen folder still there in the project folders, but no project or group now, as one emptied of them. */
   backupNotListed: "Not a project or group now",

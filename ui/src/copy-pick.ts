@@ -2,7 +2,7 @@
 // in Detailed, simple/CopyChoice.tsx in Simple): the list to tick, what is ticked, the groups whose own chats have a
 // row, and whether the choice changed elsewhere meanwhile.
 import { useMemo, useState } from "react";
-import { copyAllTicked, copyInStep, copyOwnRows, copyTree } from "./selectors";
+import { copyAllTicked, copyChosen, copyInStep, copyOwnRows, copyTree } from "./selectors";
 import type { CopyPick, CopyTree } from "./selectors";
 import type { CopyOnly, Snapshot } from "./types";
 
@@ -21,6 +21,11 @@ interface Held {
   own: string[];
   /** The choice changed elsewhere while the chooser was open, and the list started again from it. */
   changed: boolean;
+  /**
+   * While the copy takes every project, the rows listed so far: one a scan finds later comes ticked, as the copy
+   * takes it now. Null with a choice saved, where a project that appears later waits to be ticked.
+   */
+  seen: ReadonlySet<string> | null;
 }
 /**
  * The list as it starts: from the choice made, or with everything ticked when the copy took every project, so that
@@ -37,7 +42,8 @@ function start(snapshot: Snapshot | null | undefined, changed: boolean, shown: s
     only ? { paths: only.paths, outside: only.outside } : copyAllTicked(tree),
     new Set(own),
   );
-  return { key: choiceKey(only), chosen, pick, own, changed };
+  const seen = only ? null : new Set(tree.rows.map((row) => row.node.path));
+  return { key: choiceKey(only), chosen, pick, own, changed, seen };
 }
 
 /**
@@ -47,12 +53,27 @@ function start(snapshot: Snapshot | null | undefined, changed: boolean, shown: s
  */
 export function useCopyPick(snapshot: Snapshot | null | undefined, saving: boolean) {
   const [held, setHeld] = useState(() => start(snapshot, false));
-  if (!saving && choiceKey(snapshot?.backup?.only) !== held.key) setHeld(start(snapshot, true, held.own));
+  const restart = !saving && choiceKey(snapshot?.backup?.only) !== held.key;
+  if (restart) setHeld(start(snapshot, true, held.own));
   // Counted as the engine would copy once saved: a chosen folder that isn't scanned keeps its chats only while ticked.
   const tree = useMemo(
     () => (snapshot ? copyTree(snapshot, held.chosen, held.pick.paths) : EMPTY),
     [snapshot, held.chosen, held.pick],
   );
+  // Rows a scan found while the list was open. With the copy taking every project they come ticked, so Save doesn't
+  // stop copying them; a row the user unticked was seen already, so it stays unticked.
+  const found = useMemo(
+    () => (held.seen ? tree.rows.map((row) => row.node.path).filter((path) => !held.seen?.has(path)) : []),
+    [tree, held.seen],
+  );
+  if (!restart && !saving && held.seen && found.length > 0) {
+    const ticked = copyChosen(held.pick);
+    setHeld({
+      ...held,
+      pick: { ...held.pick, paths: [...held.pick.paths, ...found.filter((path) => !ticked.has(path))] },
+      seen: new Set([...held.seen, ...found]),
+    });
+  }
   // A group that gains chats of its own in a new scan gets its row too; a click adds or takes away none.
   const own = useMemo(() => new Set([...held.own, ...copyOwnRows(tree)]), [held.own, tree]);
   const choose = (pick: CopyPick) =>

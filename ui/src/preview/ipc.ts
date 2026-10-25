@@ -24,6 +24,7 @@ import type {
   TerminalInfo,
 } from "../types";
 import { copyProjects, copyTree } from "../selectors";
+import { count } from "../words";
 import raw from "./fixtures.json";
 
 type Body = Record<string, unknown>;
@@ -543,21 +544,17 @@ function moveBackup(body: Body) {
   return { ...change, dest, moved, bytes: moved ? (state.bytes ?? 0) : 0 };
 }
 /**
- * The Log's title for a choice, as the engine says it: by projects, else by folders, else only the chats outside
- * them or none, and the chats outside them when they are chosen too (words.activity.changes.copyChosen).
+ * The Log's title for a choice, as the engine says it: in Detailed's words, as Detailed's Log shows the title
+ * (Simple's Activity says it from `say`). By projects, else by folders, else only the chats outside them or none,
+ * and the chats outside them when they are chosen too.
  */
 function chosenTitle(projects: number, folders: number, outside: boolean) {
-  const what =
-    projects > 0
-      ? `${projects} project${projects === 1 ? "" : "s"} you chose`
-      : folders > 0
-        ? `${folders} folder${folders === 1 ? "" : "s"} you chose`
-        : "";
+  const what = projects > 0 ? count(projects, "project") : folders > 0 ? count(folders, "folder") : "";
   return what
-    ? `The copy of AI chats takes only the chats of ${what}${outside ? ", and chats outside your projects" : ""}`
+    ? `History backup takes only ${what} you chose${outside ? ", and chats outside your projects" : ""}`
     : outside
-      ? "The copy of AI chats takes only the chats outside your projects"
-      : "The copy of AI chats takes the chats of no project";
+      ? "History backup takes only chats outside your projects"
+      : "History backup takes no project";
 }
 /**
  * Chooses the projects the copy of AI chats takes, `only: null` for every project, as one Log entry Undo takes
@@ -592,7 +589,7 @@ function backupOnly(body: Body) {
   set(now);
   const projects = now ? copyProjects(snapshot, now) : 0;
   record(
-    now ? chosenTitle(projects, now.paths.length, now.outside) : "The copy of AI chats takes every project's chats",
+    now ? chosenTitle(projects, now.paths.length, now.outside) : "History backup takes every project",
     () => set(before),
     {
       key: "copyChoice",

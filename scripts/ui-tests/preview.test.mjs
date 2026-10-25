@@ -195,19 +195,17 @@ export async function theCopyCanTakeOnlyTheProjectsChosenForIt() {
       [entry.key, entry.say],
       ["copyChoice", { form: "copyChosen", folders: 2, projects: 1, outside: true }],
     );
-    // The title follows what Activity says: by projects, and the chats outside them.
-    assert.equal(
-      entry.title,
-      "The copy of AI chats takes only the chats of 1 project you chose, and chats outside your projects",
-    );
+    // The title is in Detailed's words, as its Log shows it: by projects, and the chats outside them.
+    assert.equal(entry.title, "History backup takes only 1 project you chose, and chats outside your projects");
     // The same choice again is no change, and no entry.
     await request("backup/only", { only: chosen });
     assert.equal((await request("log")).entries[0].id, entry.id);
     // Every project again, which Undo of the first choice would also give.
     assert.equal((await request("backup/only", { only: null })).only, null);
     assert.equal((await request("snapshot")).backup.only, undefined);
-    assert.deepEqual((await request("log")).entries[0].say, { form: "copyEveryProject" });
-    await request("undo", { id: (await request("log")).entries[0].id });
+    const [every] = (await request("log")).entries;
+    assert.deepEqual([every.title, every.say], ["History backup takes every project", { form: "copyEveryProject" }]);
+    await request("undo", { id: every.id });
     assert.equal((await request("snapshot")).backup.only.paths.length, 2);
   });
 }
@@ -219,18 +217,27 @@ export async function theLogSaysAChoiceByProjectsElseFoldersElseTheChatsOutsideT
       const [entry] = (await request("log")).entries;
       return [entry.title, entry.say];
     };
+    // By projects, without the chats outside them.
+    assert.deepEqual(await said({ paths: [ACME, "/home/demo/project/clients/kopi-landing"], outside: false }), [
+      "History backup takes only 2 projects you chose",
+      { form: "copyChosen", folders: 2, projects: 2, outside: false },
+    ]);
     // Only groups: by folders.
     assert.deepEqual(await said({ paths: ["/home/demo/project/clients"], outside: false }), [
-      "The copy of AI chats takes only the chats of 1 folder you chose",
+      "History backup takes only 1 folder you chose",
       { form: "copyChosen", folders: 1, projects: 0, outside: false },
+    ]);
+    assert.deepEqual(await said({ paths: ["/home/demo/project/clients", "/home/demo/Documents"], outside: true }), [
+      "History backup takes only 2 folders you chose, and chats outside your projects",
+      { form: "copyChosen", folders: 2, projects: 0, outside: true },
     ]);
     // No folder, and the chats outside them: those alone, not "0 chosen folders".
     assert.deepEqual(await said({ paths: [], outside: true }), [
-      "The copy of AI chats takes only the chats outside your projects",
+      "History backup takes only chats outside your projects",
       { form: "copyChosen", folders: 0, projects: 0, outside: true },
     ]);
     assert.deepEqual(await said({ paths: [], outside: false }), [
-      "The copy of AI chats takes the chats of no project",
+      "History backup takes no project",
       { form: "copyChosen", folders: 0, projects: 0, outside: false },
     ]);
   });

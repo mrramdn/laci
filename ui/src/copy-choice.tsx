@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { errorText } from "./api";
 import { useCopyPick } from "./copy-pick";
 import { DialogFrame } from "./dialogs";
@@ -48,6 +48,8 @@ export function CopyChoice() {
   // A chosen folder that is no project or group now: gone, still in the folders Laci reads, or outside them.
   const where = (other: CopyOther) =>
     other.gone ? said.backupGone : other.inside ? said.backupNotListed : said.backupNotRead;
+  // A row's box is named by where it is and what it ticks; its chats are told after the name.
+  const quietId = useId();
   const box = (
     key: string,
     name: string,
@@ -56,6 +58,7 @@ export function CopyChoice() {
     tick: CopyTick,
     toggle: () => void,
     mono = false,
+    named = name,
   ) => (
     <li key={key}>
       <label className="opt" style={{ paddingInlineStart: 8 + depth * 22 }}>
@@ -66,11 +69,15 @@ export function CopyChoice() {
           ref={(input) => {
             if (input) input.indeterminate = tick === "mixed";
           }}
+          aria-label={named}
+          aria-describedby={`${quietId}${encodeURIComponent(key)}`}
           disabled={saving}
           onChange={toggle}
         />
         <span className={mono ? "mono" : undefined}>{name}</span>
-        <span className="r">{quiet}</span>
+        <span id={`${quietId}${encodeURIComponent(key)}`} className="r">
+          {quiet}
+        </span>
       </label>
     </li>
   );
@@ -115,8 +122,16 @@ export function CopyChoice() {
       <ul className="copy-tree" aria-label={said.backupChooseList}>
         {tree.rows.flatMap(({ node, depth, chats, total, group }) => {
           const path = node.path;
-          const row = box(path, node.name, said.backupChats(group ? total : chats), depth, copyTick(tree, pick, path), () =>
-            choose(toggleCopy(tree, pick, path)),
+          const above = node.parent ? snapshot?.nodes[node.parent]?.name : undefined;
+          const row = box(
+            path,
+            node.name,
+            said.backupChats(group ? total : chats),
+            depth,
+            copyTick(tree, pick, path),
+            () => choose(toggleCopy(tree, pick, path)),
+            false,
+            said.backupBoxName(node.name, above, group),
           );
           // The folder's own chats, first under it. No click adds or takes away a row, so none moves.
           return group && own.has(path)

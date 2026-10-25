@@ -663,6 +663,73 @@ export async function aChoiceChangedElsewhereWhileTheChooserIsOpenIsWhatItShows(
   });
 }
 
+/** `snapshot` with a folder a scan found: a project, or a group when `kind` says so, empty of chats. */
+const withFolder = (snapshot, path, kind = "project") => {
+  const parent = path.slice(0, path.lastIndexOf("/"));
+  const name = path.slice(parent.length + 1);
+  const node = { ...structuredClone(snapshot.nodes[CLIENTS]), id: path, path, name, label: name, kind, parent, children: [] };
+  snapshot.nodes[path] = node;
+  snapshot.nodes[parent]?.children.push(path);
+  return snapshot;
+};
+
+export async function aProjectFoundWhileTheChooserIsOpenIsTickedOnlyWhileTheBackupTakesEveryProject() {
+  const LABS = `${HOME}/project/labs`;
+  const found = (snapshot) =>
+    withFolder(withFolder(withFolder(snapshot, `${CLIENTS}/new-shop`), LABS, "folder"), `${LABS}/robot`);
+  const c = choicePage();
+  await c.tick("kopi-landing");
+  // A scan finds a project in clients, and a group with one: the backup takes them now, so they come ticked.
+  c.app.setState({ snapshot: found(structuredClone(c.app.getState().snapshot)) });
+  await c.settle();
+  assert.deepEqual(
+    ["new-shop", "labs", "robot", "kopi-landing"].map((name) => c.box(name).props.checked),
+    [true, true, true, false],
+  );
+  assert.equal(c.box("clients").indeterminate, true);
+  // Unticked once seen, a row stays unticked through the next scan.
+  await c.tick("robot");
+  c.app.setState({ snapshot: structuredClone(c.app.getState().snapshot) });
+  await c.settle();
+  assert.deepEqual([c.box("robot").props.checked, c.box("labs").props.checked], [false, false]);
+  await c.click(c.button(said.backupSave));
+  const [[, { only }]] = c.asked;
+  assert.ok(only.paths.includes(`${CLIENTS}/new-shop`));
+  assert.ok(!only.paths.includes(`${LABS}/robot`) && !only.paths.includes(LABS));
+  // With a choice saved, a project that appears later isn't backed up until it is ticked.
+  const chosen = choicePage({ snapshot: withBackup({ only: ONLY }) });
+  chosen.app.setState({ snapshot: found(structuredClone(chosen.app.getState().snapshot)) });
+  await chosen.settle();
+  assert.deepEqual(["new-shop", "labs", "robot"].map((name) => chosen.box(name).props.checked), [false, false, false]);
+  await chosen.click(chosen.button(said.backupSave));
+  // clients goes with acme-store, as a group without chats of its own does.
+  const [[, { only: saved }]] = chosen.asked;
+  assert.deepEqual({ ...saved, paths: [...saved.paths].sort() }, { paths: [ACME, CLIENTS].sort(), outside: false });
+}
+
+export async function eachBoxIsNamedByWhereItIsAndWhatItTicks() {
+  const snapshot = withFolder(withFolder(structuredClone(fixtures.snapshot), `${CLIENTS}/docs`), `${HOME}/project/side/docs`);
+  const c = choicePage({ snapshot });
+  const name = (box) => box.props["aria-label"];
+  // The words on the row stay as they are; the name starts with them.
+  assert.equal(c.box("acme-store").parent.textContent, "acme-store1 chat");
+  assert.equal(name(c.box("acme-store")), "acme-store, in clients");
+  assert.equal(name(c.box("clients")), "clients, in project, and everything in it");
+  assert.equal(name(c.box("project")), "project, and everything in it");
+  assert.equal(name(c.box(said.backupOwn("project"))), said.backupOwn("project"));
+  assert.equal(name(c.box("Chats outside")), said.backupOutside);
+  // Two projects of the same name read apart.
+  const docs = c.boxes().filter((b) => b.parent.textContent.startsWith("docs"));
+  assert.deepEqual(docs.map((b) => b.parent.textContent), ["docs0 chats", "docs0 chats"]);
+  assert.deepEqual(docs.map(name).sort(), ["docs, in clients", "docs, in side"]);
+  const names = c.boxes().map(name);
+  assert.equal(new Set(names).size, names.length, names.join(" | "));
+  // How many chats a row holds is told after its name.
+  const told = c.box("acme-store").props["aria-describedby"];
+  assert.equal(c.find((n) => n.props.id === told).textContent, "1 chat");
+  assert.equal(said.backupBoxName("docs", "clients", true), "docs, in clients, and everything in it");
+}
+
 export async function aRefusedBackupChoiceKeepsTheChooserOpenAndSaysWhy() {
   const refuse = { why: "Choose at most 10000 projects to copy" };
   const c = choicePage({ refuse });

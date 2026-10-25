@@ -181,6 +181,11 @@
   .s-copy-row .s-mono {
     overflow-wrap: anywhere;
   }
+  /* A refused Save, on a line of its own above the sheet's buttons. */
+  .s-copy-error {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
 
   /* A quote from a chat. */
   .s-said {

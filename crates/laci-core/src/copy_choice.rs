@@ -3,11 +3,13 @@
 //! a project or a group, is one that was ticked, and a chat in none of them when `outside` was ticked. A project that
 //! appears later is its own folder, not ticked, so it is copied only once it is ticked. A file whose folder Laci can't
 //! tell, as an index a tool keeps for all its chats, is copied, and so is a setting Laci can't read: the choice errs on
-//! keeping. Unticking a project only stops new copies; nothing is removed from the copy.
+//! keeping. A chat that moved to another folder as it went on is copied when either folder is chosen: the one it was
+//! started in, or the one the scan files it under, its last. Unticking a project only stops new copies; nothing is
+//! removed from the copy.
 use crate::{Result, agents, env::Env, paths, platform::path::relocate};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -51,8 +53,13 @@ pub struct Choice {
     outside: bool,
     /// The scanned folders and the chosen ones: a chosen folder that is gone still holds its chats.
     known: Vec<PathBuf>,
+    /// [`Choice::known`] and [`Choice::chosen`] to look up, so telling a chat's folder costs its depth, not the scan.
+    known_set: HashSet<PathBuf>,
+    chosen_set: HashSet<PathBuf>,
     /// Where the chats in each folder of a store that names its folders after a project were started.
     named: HashMap<String, Option<PathBuf>>,
+    /// The folder the scan files each session log under ([`Choice::filed`]): the last one it ran in.
+    filed: HashMap<PathBuf, PathBuf>,
 }
 
 impl Choice {
@@ -86,7 +93,23 @@ impl Choice {
         let mut known: Vec<PathBuf> = folders.chain(chosen.iter().cloned()).collect();
         known.sort();
         known.dedup();
-        Some(Self { chosen, outside, known, named: HashMap::new() })
+        let (known_set, chosen_set) = (known.iter().cloned().collect(), chosen.iter().cloned().collect());
+        Some(Self { chosen, outside, known, known_set, chosen_set, named: HashMap::new(), filed: HashMap::new() })
+    }
+
+    /// The choice, with the folder the scan `sessions` (the scan's, each with its `file` and `cwd`) files each log
+    /// under, so a chat Laci shows in a chosen project is copied though it was started elsewhere.
+    pub fn filed(mut self, sessions: &Value) -> Self {
+        self.filed = sessions
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| {
+                let (file, cwd) = (s["file"].as_str()?, s["cwd"].as_str()?);
+                Some((paths::normalize(Path::new(file)), paths::normalize(Path::new(cwd))))
+            })
+            .collect();
+        self
     }
 
     /// The chosen folders, as full paths.
@@ -102,26 +125,31 @@ impl Choice {
     /// The choice as a run of the copy records it, with full paths and the folders it told chats apart by, so a later
     /// scan knows which chats it took ([`Choice::taken`]).
     pub fn state(&self) -> Value {
-        json!({"paths":self.chosen,"outside":self.outside,"known":self.known})
+        // The chosen folders are in `paths` already.
+        let known: Vec<&PathBuf> = self.known.iter().filter(|path| !self.chosen_set.contains(*path)).collect();
+        json!({"paths":self.chosen,"outside":self.outside,"known":known})
     }
 
-    /// Whether a chat started in `folder` is copied.
+    /// Whether a chat started in `folder` is copied: by the nearest scanned or chosen folder that is it or holds it.
     pub fn wants(&self, folder: &Path) -> bool {
-        match self.known.iter().filter(|known| paths::within(folder, known)).max_by_key(|known| known.as_os_str().len())
-        {
-            Some(nearest) => self.chosen.contains(nearest),
+        match folder.ancestors().find(|ancestor| self.known_set.contains(*ancestor)) {
+            Some(nearest) => self.chosen_set.contains(nearest),
             None => self.outside,
         }
     }
 
-    /// Whether the file `relative`, in the history store `store` of the connector `c`, is copied.
+    /// Whether the file `relative`, in the history store `store` of the connector `c`, is copied: when the scan files
+    /// its chat under a chosen folder, or when the folder it was started in is chosen.
     pub(crate) fn takes(&mut self, env: &Env, c: &Value, store: &Path, relative: &Path) -> bool {
+        let file = paths::normalize(&store.join(relative));
+        if self.filed.get(&file).is_some_and(|folder| self.wants(folder)) {
+            return true;
+        }
         let link = &c["link"];
         match link["kind"].as_str() {
             Some("cwd") => {
-                let file = store.join(relative);
                 let field = link["field"].as_str().unwrap_or("cwd");
-                // A Codex session names the folder it runs in first, and the scan files it there: so does the copy.
+                // A Codex session names the folder it was started in first; tool calls naming others don't count.
                 if c["provider"] == "codex" {
                     return agents::first_location(&file, field).is_none_or(|folder| self.wants(&folder));
                 }
@@ -319,8 +347,31 @@ mod tests {
         // What a run records reads back as the same choice.
         let state = choice.state();
         assert_eq!(state["paths"], json!(["/home/me/project/app", "/home/me/project/app/fe"]));
-        assert_eq!(state["known"].as_array().unwrap().len(), 4);
+        // The scanned folders it told chats apart by, past the chosen ones `paths` names.
+        assert_eq!(state["known"], json!(["/home/me/project", "/home/me/project/app/be"]));
         assert!(!Choice::taken(&env, &state, &json!({})).unwrap().wants(Path::new("/home/me/project/app/be")));
+    }
+
+    #[test]
+    fn a_chat_is_copied_when_the_scan_files_it_under_a_chosen_folder() {
+        let env = home();
+        let temp = tempfile::tempdir().unwrap();
+        let store = temp.path().join("sessions");
+        let file = store.join("2026/10/s.jsonl");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        // Started in be, which isn't ticked, and resumed in fe, which is: the scan shows it in fe.
+        let lines = [
+            json!({"type":"session_meta","payload":{"id":"s","cwd":"/home/me/project/app/be"}}),
+            json!({"type":"turn_context","payload":{"cwd":"/home/me/project/app/fe"}}),
+        ];
+        std::fs::write(&file, format!("{}\n{}\n", lines[0], lines[1])).unwrap();
+        let cfg = json!({"backupOnly":{"paths":["~/project/app/fe"]}});
+        let scanned = nodes(&["/home/me/project/app", "/home/me/project/app/fe", "/home/me/project/app/be"]);
+        let codex = json!({"id":"codex","provider":"codex","link":{"kind":"cwd","dir":store,"field":"cwd"}});
+        let relative = Path::new("2026/10/s.jsonl");
+        assert!(!Choice::load(&env, &cfg, &scanned).unwrap().takes(&env, &codex, &store, relative));
+        let sessions = json!([{"file":file,"cwd":"/home/me/project/app/fe"}]);
+        assert!(Choice::load(&env, &cfg, &scanned).unwrap().filed(&sessions).takes(&env, &codex, &store, relative));
     }
 
     #[test]

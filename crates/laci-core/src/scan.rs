@@ -619,11 +619,15 @@ fn link(
         // The projects chosen, as full paths like the scan's, those of them that aren't there now, and how many
         // scanned folders hold chats that aren't copied: a project that appeared since is one, until it is ticked.
         if let Some(choice) = &choice {
-            let left: BTreeSet<String> = array(&snapshot["sessions"])
-                .iter()
-                .filter(|s| s["backup"] != true && !copied_by(Some(choice), s))
-                .filter_map(|s| nearest(&snapshot["nodes"], s["cwd"].as_str()?))
-                .collect();
+            // Sessions share few folders: each is looked up once.
+            let mut folders: BTreeMap<&str, Option<String>> = BTreeMap::new();
+            for s in array(&snapshot["sessions"]).iter().filter(|s| s["backup"] != true && !copied_by(Some(choice), s))
+            {
+                if let Some(cwd) = s["cwd"].as_str() {
+                    folders.entry(cwd).or_insert_with(|| nearest(&snapshot["nodes"], cwd));
+                }
+            }
+            let left: BTreeSet<&String> = folders.values().flatten().collect();
             let missing: Vec<&PathBuf> = choice.chosen().iter().filter(|path| !path.exists()).collect();
             backup["only"] = json!({"paths":choice.chosen(),"outside":choice.outside(),"notCopied":left.len(),
                 "missing":missing});

@@ -582,7 +582,8 @@ fn only_the_chats_of_the_chosen_projects_and_groups_are_copied() {
     // The Log counts the projects among the chosen folders: fe, not the group.
     let entry = &activity::read_log(&env, 5)[0];
     assert_eq!(entry["say"], json!({"form":"copyChosen","folders":2,"projects":1,"outside":false}));
-    assert_eq!(entry["title"], "The copy of AI chats takes only the chats of 1 project you chose");
+    // In Detailed's words, as its Log shows the title.
+    assert_eq!(entry["title"], "History backup takes only 1 project you chose");
     service.request("backup", &json!({})).unwrap();
     // The group's own chats and those of its ticked project; not those of the project of the group left out, of
     // another project, or of home, which is in no project.
@@ -604,10 +605,7 @@ fn only_the_chats_of_the_chosen_projects_and_groups_are_copied() {
     // Undo takes back the choice alone.
     let entry = activity::read_log(&env, 10).into_iter().find(|e| e["key"] == "copyChoice").unwrap();
     assert_eq!(entry["say"], json!({"form":"copyChosen","folders":2,"projects":1,"outside":true}));
-    assert_eq!(
-        entry["title"],
-        "The copy of AI chats takes only the chats of 1 project you chose, and chats outside your projects"
-    );
+    assert_eq!(entry["title"], "History backup takes only 1 project you chose, and chats outside your projects");
     service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
     assert_eq!(config::load(&env)["backupOnly"]["outside"], false);
     assert!(copied(&env, &env.home), "what the copy holds stays");
@@ -822,5 +820,46 @@ fn undoing_a_choice_follows_the_folders_laci_moved_since() {
     assert_eq!(config::load(&env)["backupOnly"]["paths"], json!(["~/project/demo", "~/project/site"]));
     // Only the chats outside every project: the Log says so, as the window does.
     service.request("backup/only", &json!({"only":{"paths":[],"outside":true}})).unwrap();
-    assert_eq!(newest(&env)["title"], "The copy of AI chats takes only the chats outside your projects");
+    assert_eq!(newest(&env)["title"], "History backup takes only chats outside your projects");
+}
+
+#[test]
+fn a_chat_shown_in_a_chosen_project_is_copied_though_it_was_started_elsewhere() {
+    let (_temp, env, _) = home();
+    let [app, fe, be, _] = group(&env);
+    let mut cfg = config::load(&env);
+    cfg["presets"] = json!(["claude", "codex"]);
+    config::save(&env, &cfg).unwrap();
+    // A Codex session started in be, which isn't ticked, and resumed in fe, which is.
+    let codex = env.home.join(".codex/sessions/2026/10/resumed.jsonl");
+    let lines = [
+        json!({"type":"session_meta","payload":{"id":"resumed","cwd":be}}),
+        json!({"type":"turn_context","payload":{"cwd":fe}}),
+    ];
+    write(&codex, &format!("{}\n{}\n", lines[0], lines[1]));
+    // A Claude Code session started in the group, which isn't ticked, that went on in fe.
+    let store = env.home.join(".claude/projects").join(laci_core::paths::enc(&app.to_string_lossy()));
+    let claude = store.join(format!("{ID}.jsonl"));
+    let records = [
+        json!({"type":"user","cwd":app,"sessionId":ID,"message":{"role":"user","content":"Look at both apps"}}),
+        json!({"type":"assistant","cwd":fe,"sessionId":ID}),
+    ];
+    write(&claude, &format!("{}\n{}\n", records[0], records[1]));
+    let mut service = Service::new(env.clone());
+    let snap = service.rescan().unwrap();
+    // Laci shows both in fe.
+    for file in [&codex, &claude] {
+        let shown = snap["sessions"].as_array().unwrap().iter().find(|s| s["file"] == json!(file)).unwrap();
+        assert_eq!(shown["cwd"], json!(fe), "{}", file.display());
+    }
+    service.request("backup/only", &json!({"only":{"paths":[&fe]}})).unwrap();
+    service.request("backup", &json!({})).unwrap();
+    let kept = env.data_dir.join("history");
+    assert!(kept.join("codex/2026/10/resumed.jsonl.zst").is_file());
+    assert!(copied(&env, &app), "the Claude Code session goes with fe, where it is shown");
+    assert_eq!(service.rescan().unwrap()["backup"]["pending"], 0);
+    // `laci backup` tells the same from the scan the window kept.
+    fs::remove_dir_all(&kept).unwrap();
+    let said = laci_core::service::backup_now(&env, "cli").unwrap();
+    assert!(said.starts_with("Copied 2 files of the projects you chose · "), "{said}");
 }

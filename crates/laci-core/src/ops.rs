@@ -1295,8 +1295,10 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
         // What runs that stopped part-way left goes first, and plain files from before 3.1 are packed.
         crate::backup::remove_leftovers(env, &dest);
         let packing = crate::backup::convert(env, &dest);
-        // Only the chats of the projects chosen for the copy, when some were, by the folders `snap` scanned.
-        let mut choice = crate::copy_choice::Choice::load(env, &crate::config::load(env), &snap["nodes"]);
+        // Only the chats of the projects chosen for the copy, when some were, by the folders `snap` scanned and the
+        // folder it files each session under.
+        let mut choice = crate::copy_choice::Choice::load(env, &crate::config::load(env), &snap["nodes"])
+            .map(|choice| choice.filed(&snap["sessions"]));
         let mut copied = 0u64;
         let mut bytes = 0u64;
         for c in snap["connectors"]
@@ -1516,7 +1518,9 @@ const BACKUP_STATE: &str = "backup.json";
 /// When agent history was last backed up and what the backup holds, or nothing if it never ran. Where the copy is
 /// comes from `backup::dir`.
 pub fn backup_state(env: &Env) -> Option<Value> {
-    let state: Value = serde_json::from_str(&files::text(&data(env, BACKUP_STATE).ok()?)?).ok()?;
+    // With projects chosen, it names the folders the run told chats apart by: more than `files::text` reads, for many.
+    let text = files::read_limit(&data(env, BACKUP_STATE).ok()?, 64 * 1024 * 1024)?;
+    let state: Value = serde_json::from_str(&text).ok()?;
     state["at"].as_str()?;
     Some(state)
 }

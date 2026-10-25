@@ -298,7 +298,7 @@ fn backup_run(env: &Env, snap: &Value, by: &str, always: bool) -> Result<Value> 
 /// of which `projects` are scanned projects. Undo takes back what the change did (`copy_choice::undone`).
 fn chosen_entry(only: &Value, before: &Value, projects: usize, by: &str) -> Value {
     let (title, say) = match only["paths"].as_array() {
-        None => ("The copy of AI chats takes every project's chats".to_owned(), json!({"form":"copyEveryProject"})),
+        None => ("History backup takes every project".to_owned(), json!({"form":"copyEveryProject"})),
         Some(list) => {
             let (folders, outside) = (list.len(), only["outside"] == true);
             // As the window says it: by projects, else by folders, else the chats outside every project, or none.
@@ -307,13 +307,12 @@ fn chosen_entry(only: &Value, before: &Value, projects: usize, by: &str) -> Valu
             } else {
                 format!("{} you chose", scan::plural(folders as u64, "folder"))
             };
+            // In Detailed's words, as its Log shows the title; Simple tells the parts in its own.
             let title = match (folders, outside) {
-                (0, true) => "The copy of AI chats takes only the chats outside your projects".to_owned(),
-                (0, false) => "The copy of AI chats takes the chats of no project".to_owned(),
-                (_, true) => {
-                    format!("The copy of AI chats takes only the chats of {chosen}, and chats outside your projects")
-                }
-                (_, false) => format!("The copy of AI chats takes only the chats of {chosen}"),
+                (0, true) => "History backup takes only chats outside your projects".to_owned(),
+                (0, false) => "History backup takes no project".to_owned(),
+                (_, true) => format!("History backup takes only {chosen}, and chats outside your projects"),
+                (_, false) => format!("History backup takes only {chosen}"),
             };
             (title, json!({"form":"copyChosen","folders":folders,"projects":projects,"outside":outside}))
         }
@@ -321,17 +320,18 @@ fn chosen_entry(only: &Value, before: &Value, projects: usize, by: &str) -> Valu
     json!({"by":by,"title":title,"say":say,"key":"copyChoice","undo":{"type":"copyChoice","only":before,"after":only}})
 }
 
-/// The most of the window's last scan [`kept_nodes`] reads.
+/// The most of the window's last scan [`kept_scan`] reads.
 const SNAPSHOT_BYTES: u64 = 128 * 1024 * 1024;
-/// The folders of the last scan the window kept, which tell the chats of a project chosen for the copy of AI chats
-/// from those of the group around it when `laci backup` runs without a scan. None when there is no such scan.
-fn kept_nodes(env: &Env) -> Value {
+/// The folders and sessions of the last scan the window kept, which tell the chats of a project chosen for the copy of
+/// AI chats from those of the group around it, and the folder each session is shown in, when `laci backup` runs
+/// without a scan. Empty when there is no such scan.
+fn kept_scan(env: &Env) -> (Value, Value) {
     // A scan of many projects is megabytes: more than `files::text` reads.
     files::read_limit(&env.cache_dir.join("snapshot-v2.json"), SNAPSHOT_BYTES)
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .filter(|v| v["home"] == env.home.to_string_lossy().as_ref())
-        .map(|mut v| v["snapshot"]["nodes"].take())
-        .unwrap_or_else(|| json!({}))
+        .map(|mut v| (v["snapshot"]["nodes"].take(), v["snapshot"]["sessions"].take()))
+        .unwrap_or_else(|| (json!({}), json!([])))
 }
 
 /// `laci backup`: the backup "Back up now" makes, without the window and without a scan. It needs only the agents
@@ -342,8 +342,8 @@ pub fn backup_now(env: &Env, by: &str) -> Result<String> {
     let cfg = config::load(env);
     // With projects chosen for the copy, the last scan's folders tell their chats; without one, only the chosen
     // folders do, which copies more, never less.
-    let nodes = if cfg["backupOnly"].is_object() { kept_nodes(env) } else { json!({}) };
-    let snap = json!({"connectors":crate::agents::connectors(env, &cfg),"nodes":nodes});
+    let (nodes, sessions) = if cfg["backupOnly"].is_object() { kept_scan(env) } else { (json!({}), json!([])) };
+    let snap = json!({"connectors":crate::agents::connectors(env, &cfg),"nodes":nodes,"sessions":sessions});
     let _long = ops::LongRun::start(env, false);
     let result = backup_run(env, &snap, by, false)?;
     let copied = result["copied"].as_u64().unwrap_or(0);

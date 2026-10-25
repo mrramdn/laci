@@ -301,9 +301,11 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
             config::save(env, &c)?;
             out["refresh"] = json!("all");
         } else if kind == "copyChoice" {
-            // The projects the copy of AI chats took before; nothing the copy holds changes.
-            let only = crate::copy_choice::setting(env, &undo["only"])?;
+            // What the change ticked is unticked and what it unticked is ticked again, so a project Laci moved since
+            // stays ticked where it went. Nothing the copy holds changes.
             let mut c = config::load(env);
+            let now = c.get("backupOnly").cloned().unwrap_or(Value::Null);
+            let only = crate::copy_choice::undone(env, &undo["only"], &undo["after"], &now);
             if only.is_null() {
                 c.as_object_mut().ok_or("Invalid config")?.remove("backupOnly");
             } else {

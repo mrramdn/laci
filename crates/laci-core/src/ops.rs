@@ -608,13 +608,13 @@ impl<'a> Tx<'a> {
     /// there. Undo moves only the choice back, so settings changed since don't keep the move from being undone.
     fn keep_chosen(&mut self, pairs: &[(PathBuf, PathBuf)]) -> Result<()> {
         let mut cfg = crate::config::load(self.env);
-        let Some(only) = crate::copy_choice::moved(self.env, &cfg, pairs) else {
+        let Some(moved) = crate::copy_choice::moved(self.env, &cfg, pairs) else {
             return Ok(());
         };
-        self.log(
-            json!({"kind":"chosen","pairs":pairs.iter().map(|(from, to)| json!([from, to])).collect::<Vec<_>>()}),
-        )?;
-        cfg["backupOnly"] = only;
+        // Each chosen folder that moved, and those it moved to that were chosen already, which Undo leaves chosen.
+        let relocated: Vec<Value> = moved.relocated.iter().map(|(from, to)| json!([from, to])).collect();
+        self.log(json!({"kind":"chosen","pairs":relocated,"kept":moved.kept}))?;
+        cfg["backupOnly"] = moved.only;
         crate::config::save(self.env, &cfg)
     }
     /// Changes the settings in config.json, keeping a copy first, so Undo puts them back unless they changed since.
@@ -793,12 +793,14 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
             }
             "chosen" => {
                 // The projects chosen for the copy that moved go back with their folders.
-                let back: Vec<(PathBuf, PathBuf)> = pairs(&e["pairs"])?
+                let relocated: Vec<(PathBuf, PathBuf)> = pairs(&e["pairs"])?
                     .into_iter()
-                    .map(|(from, to)| (PathBuf::from(to), PathBuf::from(from)))
+                    .map(|(from, to)| (PathBuf::from(from), PathBuf::from(to)))
                     .collect();
+                let kept: Vec<PathBuf> =
+                    e["kept"].as_array().into_iter().flatten().filter_map(Value::as_str).map(PathBuf::from).collect();
                 let mut cfg = crate::config::load(env);
-                if let Some(only) = crate::copy_choice::moved(env, &cfg, &back) {
+                if let Some(only) = crate::copy_choice::moved_back(env, &cfg, &relocated, &kept) {
                     cfg["backupOnly"] = only;
                     crate::config::save(env, &cfg)?;
                 }
@@ -1329,8 +1331,9 @@ pub fn backup_history(env: &Env, snap: &Value) -> Result<Value> {
         // What the backup holds now, including sessions their tool has since deleted.
         let (sessions, kept, total) = crate::backup::count(&dest);
         // Every file is packed after a run, so `bytes` is what a move of the copy carries.
-        let state =
-            json!({"at":files::now(),"copied":copied,"sessions":sessions,"files":kept,"bytes":total,"packed":true});
+        // `took` is the choice the run copied by, which tells a later scan the chats that weren't taken.
+        let state = json!({"at":files::now(),"copied":copied,"sessions":sessions,"files":kept,"bytes":total,"packed":true,
+            "took":choice.as_ref().map(crate::copy_choice::Choice::state)});
         files::replace(&data(env, BACKUP_STATE)?, state.to_string().as_bytes())?;
         Ok(
             json!({"copied":copied,"bytes":bytes,"size":bytes,"dest":dest,"sessions":sessions,"files":kept,"total":total,

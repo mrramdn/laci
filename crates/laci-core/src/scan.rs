@@ -592,39 +592,36 @@ fn link(
     if on.iter().any(|c| c["link"]["dir"].is_string() && c["link"]["kind"] != "mentions") {
         let cfg = crate::config::load(env);
         // With projects chosen for the copy, the chats of the others are neither copied nor at risk of being lost
-        // from it; a session with no folder on record is copied.
+        // from it.
         let choice = crate::copy_choice::Choice::load(env, &cfg, &snapshot["nodes"]);
-        let copied = |s: &Value| {
-            choice.as_ref().is_none_or(|choice| s["cwd"].as_str().is_none_or(|cwd| choice.wants(Path::new(cwd))))
-        };
-        // Sessions that changed after the last backup are the ones still at risk.
-        let live: Vec<(String, String)> = array(&snapshot["sessions"])
-            .iter()
-            .filter(|s| s["backup"] != true && copied(s))
-            .map(|s| (string(s, "provider").to_owned(), string(s, "updatedAt").to_owned()))
-            .collect();
         let mut backup = crate::ops::backup_state(env).unwrap_or_else(|| json!({}));
         let ran = backup["at"].is_string();
+        // The choice the last run copied by. A run with none, or from before 3.2, took every chat.
+        let took = backup.as_object_mut().and_then(|state| state.remove("took"));
+        let took = took.and_then(|took| crate::copy_choice::Choice::of(env, &took, &snapshot["nodes"]));
+        // The sessions still at risk: those that changed after the last backup, and those it didn't take because
+        // they were chosen since.
+        let live: Vec<(String, String, bool)> = array(&snapshot["sessions"])
+            .iter()
+            .filter(|s| s["backup"] != true && copied_by(choice.as_ref(), s))
+            .map(|s| (string(s, "provider").to_owned(), string(s, "updatedAt").to_owned(), copied_by(took.as_ref(), s)))
+            .collect();
         if ran {
             let at = string(&backup, "at").to_owned();
-            backup["pending"] = json!(live.iter().filter(|(_, t)| t.as_str() > at.as_str()).count());
+            backup["pending"] = json!(live.iter().filter(|(_, t, taken)| !taken || t.as_str() > at.as_str()).count());
         }
         backup["auto"] = json!(cfg["autoBackup"] == true);
-        // The projects chosen, as full paths like the scan's, and how many scanned folders hold chats that aren't
-        // copied: a project that appeared since is one, until it is ticked.
-        if choice.is_some() {
+        // The projects chosen, as full paths like the scan's, those of them that aren't there now, and how many
+        // scanned folders hold chats that aren't copied: a project that appeared since is one, until it is ticked.
+        if let Some(choice) = &choice {
             let left: BTreeSet<String> = array(&snapshot["sessions"])
                 .iter()
-                .filter(|s| s["backup"] != true && !copied(s))
+                .filter(|s| s["backup"] != true && !copied_by(Some(choice), s))
                 .filter_map(|s| nearest(&snapshot["nodes"], s["cwd"].as_str()?))
                 .collect();
-            let chosen: Vec<String> = array(&cfg["backupOnly"]["paths"])
-                .iter()
-                .filter_map(Value::as_str)
-                .map(|raw| paths::expand(raw, &env.home).to_string_lossy().into_owned())
-                .collect();
-            backup["only"] =
-                json!({"paths":chosen,"outside":cfg["backupOnly"]["outside"] == true,"notCopied":left.len()});
+            let missing: Vec<&PathBuf> = choice.chosen().iter().filter(|path| !path.exists()).collect();
+            backup["only"] = json!({"paths":choice.chosen(),"outside":choice.outside(),"notCopied":left.len(),
+                "missing":missing});
         }
         // Where the copy is, and, when the folder chosen for it can't be used now, why: nothing is copied then.
         let chosen = crate::backup::chosen(env, &cfg);
@@ -653,8 +650,12 @@ fn link(
             if keep >= 3650 {
                 continue;
             }
-            let oldest =
-                live.iter().filter(|(owner, _)| *owner == provider.id).map(|(_, t)| t.as_str()).min().unwrap_or("—");
+            let oldest = live
+                .iter()
+                .filter(|(owner, ..)| *owner == provider.id)
+                .map(|(_, t, _)| t.as_str())
+                .min()
+                .unwrap_or("—");
             let behind = if ran {
                 let changed = count(u(&backup, "pending"), "session has changed", "sessions have changed");
                 format!(" {changed} since the last backup.")
@@ -669,6 +670,11 @@ fn link(
 
 fn array(v: &Value) -> &[Value] {
     v.as_array().map(Vec::as_slice).unwrap_or(&[])
+}
+/// Whether the copy of AI chats takes the session `s` by `choice`, which takes every chat when there is none. A
+/// session with no folder on record is copied whatever is chosen.
+fn copied_by(choice: Option<&crate::copy_choice::Choice>, s: &Value) -> bool {
+    choice.is_none_or(|choice| s["cwd"].as_str().is_none_or(|cwd| choice.wants(Path::new(cwd))))
 }
 fn string<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or("")

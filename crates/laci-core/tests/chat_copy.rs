@@ -576,9 +576,13 @@ fn only_the_chats_of_the_chosen_projects_and_groups_are_copied() {
         .map(|folder| session(&env, folder, ID, "Fix the login page"))
         .collect();
     let mut service = Service::new(env.clone());
+    service.rescan().unwrap();
     service.request("backup/only", &json!({"only":{"paths":[&app, &fe]}})).unwrap();
     assert_eq!(config::load(&env)["backupOnly"], json!({"paths":["~/project/app","~/project/app/fe"],"outside":false}));
-    assert_eq!(activity::read_log(&env, 5)[0]["say"], json!({"form":"copyChosen","folders":2,"outside":false}));
+    // The Log counts the projects among the chosen folders: fe, not the group.
+    let entry = &activity::read_log(&env, 5)[0];
+    assert_eq!(entry["say"], json!({"form":"copyChosen","folders":2,"projects":1,"outside":false}));
+    assert_eq!(entry["title"], "The copy of AI chats takes only the chats of 1 project you chose");
     service.request("backup", &json!({})).unwrap();
     // The group's own chats and those of its ticked project; not those of the project of the group left out, of
     // another project, or of home, which is in no project.
@@ -599,7 +603,7 @@ fn only_the_chats_of_the_chosen_projects_and_groups_are_copied() {
     assert!(copied(&env, &env.home), "chats outside every project are copied once that is ticked");
     // Undo takes back the choice alone.
     let entry = activity::read_log(&env, 10).into_iter().find(|e| e["key"] == "copyChoice").unwrap();
-    assert_eq!(entry["say"], json!({"form":"copyChosen","folders":2,"outside":true}));
+    assert_eq!(entry["say"], json!({"form":"copyChosen","folders":2,"projects":1,"outside":true}));
     service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
     assert_eq!(config::load(&env)["backupOnly"]["outside"], false);
     assert!(copied(&env, &env.home), "what the copy holds stays");
@@ -664,6 +668,11 @@ fn laci_backup_tells_the_chosen_projects_apart_by_the_last_scan() {
     cfg["backupOnly"] = json!({"paths":[&app]});
     config::save(&env, &cfg).unwrap();
     Service::new(env.clone()).rescan().unwrap();
+    // The scan of a real home is megabytes.
+    let cache = env.cache_dir.join("snapshot-v2.json");
+    let mut kept: Value = serde_json::from_str(&fs::read_to_string(&cache).unwrap()).unwrap();
+    kept["snapshot"]["padding"] = json!("x".repeat(3_000_000));
+    fs::write(&cache, kept.to_string()).unwrap();
     let said = laci_core::service::backup_now(&env, "cli").unwrap();
     assert!(said.starts_with("Copied 1 file of the projects you chose · "), "{said}");
     // The last scan found fe and be, projects of their own that weren't ticked: only the group's own chats go.
@@ -687,4 +696,99 @@ fn a_chosen_project_stays_chosen_where_it_moves_and_undo_takes_that_back_too() {
     let cfg = config::load(&env);
     assert_eq!(cfg["backupOnly"]["paths"], json!(["~/project/app/fe", "~/project/demo"]));
     assert_eq!(cfg["theme"], "dark");
+}
+
+#[test]
+fn chats_a_run_did_not_take_wait_for_the_copy_once_they_are_chosen() {
+    let (_temp, env, _) = home();
+    let [_, fe, be, _] = group(&env);
+    for folder in [&fe, &be] {
+        session(&env, folder, ID, "Fix the login page");
+    }
+    let gone = env.home.join("project/gone");
+    let mut service = Service::new(env.clone());
+    service.rescan().unwrap();
+    service.request("backup/only", &json!({"only":{"paths":[&fe, &gone]}})).unwrap();
+    service.request("backup", &json!({})).unwrap();
+    let cleanup = |snap: &Value| snap["warnings"].as_array().unwrap().iter().any(|w| w["code"] == "claude-cleanup");
+    let snap = service.rescan().unwrap();
+    assert_eq!(snap["backup"]["pending"], 0);
+    assert!(!cleanup(&snap), "every chosen chat is in the copy");
+    assert_eq!(snap["backup"]["only"]["missing"], json!([gone]));
+    // be is ticked: its chat is older than the last run, which didn't take it, so it waits for the next one.
+    service.request("backup/only", &json!({"only":{"paths":[&fe, &be]}})).unwrap();
+    let snap = service.rescan().unwrap();
+    assert_eq!(snap["backup"]["pending"], 1);
+    assert!(cleanup(&snap), "Claude Code can delete it before it is copied");
+    service.request("backup", &json!({})).unwrap();
+    assert!(copied(&env, &be));
+    assert_eq!(service.rescan().unwrap()["backup"]["pending"], 0);
+    // Back to every project after a run that took only fe: be's chat is in the copy, and nothing else waits.
+    service.request("backup/only", &json!({"only":{"paths":[&fe]}})).unwrap();
+    service.request("backup", &json!({})).unwrap();
+    service.request("backup/only", &json!({"only":null})).unwrap();
+    assert_eq!(service.rescan().unwrap()["backup"]["pending"], 1, "the last run didn't take be");
+}
+
+#[test]
+fn a_log_that_holds_the_chats_of_several_folders_is_copied_when_one_of_them_is_chosen() {
+    let (_temp, env, _) = home();
+    let [_, fe, be, _] = group(&env);
+    let store = env.home.join(".gemini/antigravity-cli");
+    let prompt = |workspace: &Path| json!({"display":"hi","timestamp":1,"workspace":workspace}).to_string();
+    // One history for every workspace, its oldest prompt in home.
+    write(&store.join("history.jsonl"), &format!("{}\n{}\n", prompt(&env.home), prompt(&fe)));
+    write(&store.join("brain/one.jsonl"), &format!("{}\n", prompt(&be)));
+    let snap = json!({"connectors":[{"id":"antigravity","provider":"antigravity","name":"Antigravity",
+        "link":{"kind":"cwd","dir":store,"field":"workspace"}}]});
+    let mut cfg = config::load(&env);
+    cfg["backupOnly"] = json!({"paths":[&fe]});
+    config::save(&env, &cfg).unwrap();
+    ops::backup_history(&env, &snap).unwrap();
+    let kept = env.data_dir.join("history/antigravity");
+    assert!(kept.join("history.jsonl.zst").is_file(), "it holds fe's prompt");
+    assert!(!kept.join("brain/one.jsonl.zst").exists(), "only be's");
+    // A Codex session goes by the folder it runs in, whatever its tool calls name later.
+    let codex = env.home.join(".codex/sessions");
+    let lines = [
+        json!({"type":"session_meta","payload":{"id":"a","cwd":be}}),
+        json!({"type":"response_item","payload":{"type":"function_call","arguments":{"cwd":fe}}}),
+    ];
+    write(&codex.join("2026/10/be.jsonl"), &format!("{}\n{}\n", lines[0], lines[1]));
+    let snap =
+        json!({"connectors":[{"id":"codex","provider":"codex","name":"Codex","link":{"kind":"cwd","dir":codex}}]});
+    ops::backup_history(&env, &snap).unwrap();
+    assert!(!env.data_dir.join("history/codex/2026/10/be.jsonl.zst").exists());
+}
+
+#[test]
+fn a_choice_settings_could_not_have_saved_copies_every_chat() {
+    let (_temp, env, _) = home();
+    let [_, fe, be, _] = group(&env);
+    let store = env.home.join(".codex/sessions");
+    for (name, cwd) in [("fe", &fe), ("be", &be)] {
+        let line = json!({"type":"session_meta","payload":{"id":name,"cwd":cwd}});
+        write(&store.join(format!("2026/10/{name}.jsonl")), &format!("{line}\n"));
+    }
+    let mut cfg = config::load(&env);
+    cfg["backupOnly"] = json!({"paths":"~/project/app/fe"});
+    config::save(&env, &cfg).unwrap();
+    let done = ops::backup_history(&env, &codex(&store)).unwrap();
+    assert_eq!((&done["copied"], &done["only"]), (&json!(2), &json!(false)));
+}
+
+#[test]
+fn undoing_a_choice_after_a_move_keeps_the_project_ticked_where_it_went() {
+    let (_temp, env, _) = home();
+    let [_, fe, _, demo] = group(&env);
+    let mut service = Service::new(env.clone());
+    service.rescan().unwrap();
+    service.request("backup/only", &json!({"only":{"paths":[&fe]}})).unwrap();
+    service.request("backup/only", &json!({"only":{"paths":[&fe, &demo]}})).unwrap();
+    let web = env.home.join("project/web");
+    service.request("move", &json!({"id":fe.to_str().unwrap(),"destination":web})).unwrap();
+    // Undo of ticking demo unticks demo, and leaves fe ticked where it went.
+    let entry = activity::read_log(&env, 10).into_iter().find(|e| e["key"] == "copyChoice").unwrap();
+    service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
+    assert_eq!(config::load(&env)["backupOnly"], json!({"paths":["~/project/web"],"outside":false}));
 }

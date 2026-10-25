@@ -6,6 +6,8 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-10-25
+
 ### Added
 
 - **Choose which projects the copy of AI chats takes.** Settings › *Which projects to back up* in Detailed, *Which chats* under AI helpers in Simple: every project, as before, or only the projects and groups you tick; a group's box ticks its projects, and a row covers chats started outside every project. A project that appears later isn't copied until you tick it, and Laci says how many folders hold chats that aren't copied. Unticking a project only stops new copies: Laci still never removes a chat from the copy. A project you move or reconnect in Laci stays ticked where it went, and Undo takes that back too. `laci backup` follows the choice and tells projects apart by the last scan the window made.

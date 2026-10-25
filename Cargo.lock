@@ -2329,7 +2329,7 @@ dependencies = [
 
 [[package]]
 name = "laci"
-version = "3.1.0"
+version = "3.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2353,7 +2353,7 @@ dependencies = [
 
 [[package]]
 name = "laci-core"
-version = "3.1.0"
+version = "3.2.0"
 dependencies = [
  "chrono",
  "rayon",

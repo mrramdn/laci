@@ -1061,3 +1061,120 @@ export async function chatsAreWorkedOutAgainEachMinuteButNotForEachKey() {
     true,
   );
 }
+
+// ── The chooser of the copy of AI chats ────────────────────────────────────────────────────────────
+
+const CLIENTS = `${ROOT}/clients`;
+const ACME = `${CLIENTS}/acme-store`;
+const KOPI = `${CLIENTS}/kopi-landing`;
+const SIDE = `${ROOT}/side`;
+const allPaths = (tree) => tree.rows.map((row) => row.node.path);
+
+export async function theCopyTreeNestsFoldersUnderTheirParentWithTheChatsOfEach() {
+  const tree = selectors.copyTree(fixture());
+  // Each level by label; a chat counts for the nearest project or folder holding its folder, so the two chats whose
+  // project moved away belong to the folder they were in.
+  assert.deepEqual(
+    tree.rows.map((row) => [row.depth, row.node.name, row.chats]),
+    [
+      [0, "project", 2],
+      [1, "_archive", 0],
+      [2, "old-portfolio", 0],
+      [1, "clients", 0],
+      [2, "acme-store", 1],
+      [2, "kopi-landing", 2],
+      [1, "infra-notes", 1],
+      [1, "side", 0],
+      [2, "dotfiles", 0],
+      [2, "habit-app", 0],
+      [1, "thesis", 0],
+      [2, "campus-lms", 1],
+    ],
+  );
+  assert.deepEqual([tree.outside, tree.gone], [0, []]);
+  // The same scan gives the same tree back.
+  const snapshot = fixture();
+  assert.equal(selectors.copyTree(snapshot).rows, selectors.copyTree(snapshot).rows);
+}
+
+export async function chatsInNoProjectAreCountedOutsideAndOnesOnlyTheCopyHoldsAreNot() {
+  const s = fixture();
+  const chat = (more) => ({ ...s.sessions[1], ...more });
+  s.sessions.push(
+    chat({ sessionId: "away", cwd: "/elsewhere", file: "/elsewhere/away.jsonl" }),
+    // Started in the home folder itself, which is no project.
+    chat({ sessionId: "home", cwd: HOME, file: `${HOME}/home.jsonl` }),
+    // A chat whose folder Laci can't tell is copied whatever is chosen, so it is not "outside".
+    chat({ sessionId: "unknown", cwd: null, file: "/elsewhere/unknown.jsonl" }),
+    // A chat only the copy holds has nothing left to copy.
+    chat({ sessionId: "kept", cwd: KOPI, file: "/copy/kept.jsonl", backup: true }),
+    chat({ sessionId: "kept-away", cwd: "/elsewhere", file: "/copy/kept-away.jsonl", backup: true }),
+  );
+  const tree = selectors.copyTree(s);
+  assert.equal(tree.outside, 2);
+  assert.equal(tree.rows.find((row) => row.node.path === KOPI).chats, 2);
+}
+
+export async function aChosenFolderThatIsNoLongerScannedIsAGoneRow() {
+  const tree = selectors.copyTree(fixture(), [`${ROOT}/old-name`, ACME, `${ROOT}/old-name`, `${HOME}/away`]);
+  // Each once and sorted; a folder that is scanned is a row, not gone.
+  assert.deepEqual(tree.gone, [`${HOME}/away`, `${ROOT}/old-name`]);
+}
+
+export async function aFoldersBoxIsMixedWhenItAndWhatIsInItDiffer() {
+  const tree = selectors.copyTree(fixture());
+  const pick = (...paths) => ({ paths, outside: false });
+  assert.equal(selectors.copyTick(tree, pick(), CLIENTS), "off");
+  assert.equal(selectors.copyTick(tree, pick(ACME), CLIENTS), "mixed");
+  // The folder's own box on its own is mixed too: what is in it isn't ticked.
+  assert.equal(selectors.copyTick(tree, pick(CLIENTS), CLIENTS), "mixed");
+  assert.equal(selectors.copyTick(tree, pick(CLIENTS, ACME, KOPI), CLIENTS), "on");
+  assert.equal(selectors.copyTick(tree, pick(ACME), ACME), "on");
+  assert.equal(selectors.copyTick(tree, pick(ACME), KOPI), "off");
+  // A level up, a folder ticked among the others is mixed all the way to the top.
+  assert.equal(selectors.copyTick(tree, pick(CLIENTS, ACME, KOPI), ROOT), "mixed");
+  // A path no folder has is its own box.
+  assert.equal(selectors.copyTick(tree, pick("/gone"), "/gone"), "on");
+  assert.equal(selectors.copyTick(tree, pick(), "/gone"), "off");
+}
+
+export async function aFoldersBoxTicksAndUnticksEverythingInIt() {
+  const tree = selectors.copyTree(fixture());
+  const sorted = (pick) => ({ ...pick, paths: [...pick.paths].sort() });
+  // Off, or mixed, comes on with its whole subtree; the choices elsewhere stay.
+  let pick = selectors.toggleCopy(tree, { paths: [SIDE], outside: true }, CLIENTS);
+  assert.deepEqual(sorted(pick), { paths: [ACME, CLIENTS, KOPI, SIDE].sort(), outside: true });
+  assert.equal(selectors.copyTick(tree, pick, CLIENTS), "on");
+  // One project unticked makes its folder mixed, and the folder's box then ticks it again.
+  pick = selectors.toggleCopy(tree, pick, KOPI);
+  assert.equal(selectors.copyTick(tree, pick, CLIENTS), "mixed");
+  assert.deepEqual(sorted(pick).paths, [ACME, CLIENTS, SIDE].sort());
+  pick = selectors.toggleCopy(tree, pick, CLIENTS);
+  assert.equal(selectors.copyTick(tree, pick, KOPI), "on");
+  // On goes off with everything in it, and nothing is listed twice.
+  pick = selectors.toggleCopy(tree, pick, CLIENTS);
+  assert.deepEqual(pick, { paths: [SIDE], outside: true });
+  // The top folder takes the whole tree.
+  const everything = selectors.toggleCopy(tree, { paths: [ACME], outside: false }, ROOT);
+  assert.deepEqual(sorted(everything).paths, allPaths(tree).sort());
+  assert.deepEqual(selectors.toggleCopy(tree, everything, ROOT).paths, []);
+  // A gone row is toggled alone.
+  assert.deepEqual(selectors.toggleCopy(tree, { paths: ["/gone", ACME], outside: false }, "/gone").paths, [ACME]);
+  assert.deepEqual(selectors.toggleCopy(tree, { paths: [ACME], outside: false }, "/gone").paths, [ACME, "/gone"]);
+}
+
+export async function everythingTickedIsEveryFolderAndTheChatsOutsideThem() {
+  const tree = selectors.copyTree(fixture());
+  assert.deepEqual(selectors.copyAllTicked(tree), { paths: allPaths(tree), outside: true });
+  assert.equal(selectors.copyTick(tree, selectors.copyAllTicked(tree), ROOT), "on");
+  // The folders of a choice that are gone stay ticked: ticking all stops nothing.
+  const withGone = selectors.copyTree(fixture(), ["/gone"]);
+  assert.deepEqual(selectors.copyAllTicked(withGone).paths, [...allPaths(withGone), "/gone"]);
+  assert.deepEqual(selectors.copyNoneTicked(), { paths: [], outside: false });
+}
+
+export async function onlyProjectsAreCountedInAChoiceNotFoldersOrGoneOnes() {
+  const s = fixture();
+  assert.equal(selectors.copyProjects(s, { paths: [ROOT, CLIENTS, ACME, KOPI, "/gone"] }), 2);
+  assert.equal(selectors.copyProjects(s, { paths: [] }), 0);
+}

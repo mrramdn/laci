@@ -3,7 +3,8 @@ import { api, errorText } from "./api";
 import { Icon } from "./common";
 import { bytes, copyChangeSaid, plural, tilde, when } from "./helpers";
 import { ChooseFolder } from "./pick";
-import { acknowledge, backup, moveCopy, openCopy, run, useApp } from "./store";
+import { copyProjects } from "./selectors";
+import { acknowledge, backup, chooseCopy, moveCopy, openCopy, run, useApp } from "./store";
 import type { Backup, Snapshot } from "./types";
 import { detailedSettings as said, engineSays } from "./words";
 
@@ -232,6 +233,79 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
         </p>
       ) : null}
       <small>{said.backupFolderNote}</small>
+    </div>
+  );
+}
+
+/**
+ * Settings: which projects the history backup takes, below the automatic backup switch. "Only the projects I
+ * choose" opens the chooser, with everything ticked when there was no choice; with one it says how many are chosen,
+ * and how many folders holding sessions are left out, and Choose… changes it. "Back up every project" sends the
+ * choice back at once.
+ */
+export function BackupWhich({ state }: { state: Backup }) {
+  const snapshot = useApp((s) => s.snapshot);
+  const historyPending = useApp((s) => s.historyPending);
+  const [saving, setSaving] = useState(false);
+  const label = useId();
+  const only = state.only;
+  const open = () => useApp.setState({ modal: { kind: "copy-choice" } });
+  const every = async () => {
+    setSaving(true);
+    await chooseCopy(null, said.backupEveryDone, said.backupEveryNoteDone);
+    setSaving(false);
+  };
+  const busy = saving || historyPending;
+  return (
+    <div className="fld" data-ui="backup-which">
+      <span id={label}>{said.backupWhich}</span>
+      <div className="choices" role="radiogroup" aria-labelledby={label}>
+        <label className="choice">
+          <input
+            type="radio"
+            name="backup-which"
+            checked={!only}
+            disabled={busy}
+            onChange={() => void every()}
+          />
+          <div>
+            <b>{said.backupEvery}</b>
+            <p>{said.backupEveryNote}</p>
+          </div>
+        </label>
+        <label className="choice">
+          <input
+            type="radio"
+            name="backup-which"
+            checked={Boolean(only)}
+            disabled={busy}
+            onChange={open}
+          />
+          <div>
+            <b>{said.backupOnlyChosen}</b>
+            <p>
+              {only && snapshot
+                ? `${said.backupOnlySummary(copyProjects(snapshot, only), only.outside)}${
+                    only.notCopied > 0 ? ` · ${said.backupLeft(only.notCopied)}` : ""
+                  }`
+                : said.backupOnlyNote}
+            </p>
+          </div>
+        </label>
+      </div>
+      {only ? (
+        <div className="row-acts">
+          <button
+            type="button"
+            className="btn sm"
+            aria-label={said.backupChooseName}
+            disabled={busy}
+            onClick={open}
+          >
+            {said.backupChoose}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

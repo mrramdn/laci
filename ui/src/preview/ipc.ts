@@ -23,6 +23,7 @@ import type {
   Storage,
   TerminalInfo,
 } from "../types";
+import { copyTree } from "../selectors";
 import raw from "./fixtures.json";
 
 type Body = Record<string, unknown>;
@@ -541,6 +542,46 @@ function moveBackup(body: Body) {
   log[0].say = { form: moved ? "movedCopy" : "keptCopyIn", dir: dest, own: !dir };
   return { ...change, dest, moved, bytes: moved ? (state.bytes ?? 0) : 0 };
 }
+/**
+ * Chooses the projects the copy of AI chats takes, `only: null` for every project, as one Log entry Undo takes
+ * back. The preview takes the full paths it is given, sorted and each once. `notCopied` counts the projects and
+ * groups that hold chats which aren't taken.
+ */
+function backupOnly(body: Body) {
+  const sent = body.only as { paths?: unknown; outside?: unknown } | null;
+  const before = snapshot.backup?.only;
+  const list = sent && Array.isArray(sent.paths) ? [...new Set(sent.paths as string[])].sort() : null;
+  const now = list ? { paths: list, outside: sent?.outside === true } : undefined;
+  const set = (only: { paths: string[]; outside: boolean } | undefined) => {
+    if (!snapshot.backup) return;
+    if (!only) delete snapshot.backup.only;
+    else
+      snapshot.backup.only = {
+        paths: only.paths,
+        outside: only.outside,
+        notCopied: copyTree(snapshot).rows.filter(
+          (row) => row.chats > 0 && !only.paths.includes(row.node.path),
+        ).length,
+      };
+  };
+  const same = JSON.stringify(now) === JSON.stringify(before && { paths: before.paths, outside: before.outside });
+  if (same) return { only: now ?? null };
+  set(now);
+  record(
+    now
+      ? `The copy of AI chats takes only the chats of ${now.paths.length} chosen folder${now.paths.length === 1 ? "" : "s"}`
+      : "The copy of AI chats takes every project's chats",
+    () => set(before),
+    {
+      key: "copyChoice",
+      say: now
+        ? { form: "copyChosen", folders: now.paths.length, outside: now.outside }
+        : { form: "copyEveryProject" },
+    },
+  );
+  revision++;
+  return { only: now ?? null, snapshot: stamped() };
+}
 function backupAuto(body: Body) {
   const on = body.on === true;
   if (snapshot.backup) snapshot.backup.auto = on;
@@ -876,6 +917,7 @@ const writes: Record<string, Handler> = {
   backup,
   "backup/move": moveBackup,
   "backup/auto": backupAuto,
+  "backup/only": backupOnly,
   "storage/free": free,
   "agent/mcp/apply": applyMcp,
   "setup/save": () => logged("Changed settings", () => {}),

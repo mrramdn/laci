@@ -121,6 +121,7 @@ async function settingsPage({
     prefs: () => ({ ...desk.prefs }),
     "setup/save": (body) => (saved.push(body), { revision: 2 }),
     "backup/move": (body) => ({ revision: 3, dest: body.dir || "~/.local/share/laci/history", moved: !body.fresh }),
+    "backup/only": (body) => ({ only: body.only }),
     "update/status": () => desk.status,
     "update/check": () => (desk.status = desk.found),
     "update/install": () => ({ started: true }),
@@ -195,6 +196,17 @@ async function settingsPage({
         acknowledge: noop,
         changed: noop,
         chooseDesign: () => true,
+        // As the store chooses the projects of the backup: the request, a refusal to `onError`, or a toast.
+        chooseCopy: async (only, say, note, onError) => {
+          try {
+            await api("backup/only", { only });
+            toasts.push([say, note]);
+            return true;
+          } catch (error) {
+            onError?.(error);
+            return false;
+          }
+        },
         copyText: noop,
         // As the store moves the copy: through `run`, which hands a failure to `onError`, and a toast in the words
         // the store chooses.
@@ -346,6 +358,193 @@ export async function aHistoryBackupLaciCantReachIsNotMovedButANewOneCanStart() 
   p.app.setState({ historyPending: false });
   await p.settle();
   assert.ok(p.document.activeElement === change(), p.focused());
+}
+
+// --- Which projects the history backup takes -----------------------------------------------------
+
+const ONLY = { paths: [ACME], outside: false, notCopied: 3 };
+const withBackup = (more) => {
+  const snapshot = structuredClone(fixtures.snapshot);
+  snapshot.backup = { ...snapshot.backup, ...more };
+  return snapshot;
+};
+
+export async function theBackupTakesEveryProjectUntilTheUserChoosesWhich() {
+  const p = await settingsPage();
+  const radios = () => p.all((n) => n.type === "input" && n.props.name === "backup-which");
+  const row = () => p.find((n) => n.props["data-ui"] === "backup-which");
+  const choose = () => p.button(said.backupChooseName);
+  assert.deepEqual(radios().map((r) => r.props.checked), [true, false]);
+  assert.deepEqual(
+    radios().map((r) => r.parent.children[1].children[0].textContent),
+    [said.backupEvery, said.backupOnlyChosen],
+  );
+  assert.ok(row().textContent.includes(said.backupOnlyNote), "a project that appears later isn't backed up, said first");
+  assert.equal(choose(), undefined);
+  // "Only the projects I choose" opens the chooser. Nothing is saved before it says so.
+  p.act(() => radios()[1].props.onChange());
+  assert.deepEqual(p.app.getState().modal, { kind: "copy-choice" });
+  assert.deepEqual(p.asked("backup/only"), []);
+  assert.deepEqual(radios().map((r) => r.props.checked), [true, false]);
+  // With a choice, the summary says how many are chosen and how many folders holding chats are left out, and
+  // Choose… opens the chooser again.
+  p.app.setState({ modal: null, snapshot: withBackup({ only: ONLY }) });
+  await p.settle();
+  assert.deepEqual(radios().map((r) => r.props.checked), [false, true]);
+  assert.ok(row().textContent.includes(`${said.backupOnlySummary(1, false)} · ${said.backupLeft(3)}`), row().textContent);
+  assert.equal(said.backupOnlySummary(2, true), "2 projects chosen, and chats outside your projects");
+  assert.equal(said.backupLeft(1), "1 folder with chats isn't backed up");
+  assert.equal(choose().textContent, said.backupChoose);
+  assert.ok(choose().props["aria-label"].startsWith("Choose"));
+  p.act(() => choose().props.onClick());
+  assert.deepEqual(p.app.getState().modal, { kind: "copy-choice" });
+  // Back to every project is sent at once, and says what is true after.
+  p.app.setState({ modal: null });
+  p.act(() => radios()[0].props.onChange());
+  await p.done();
+  assert.deepEqual(p.asked("backup/only"), [["backup/only", { only: null }]]);
+  assert.deepEqual(p.toasts.at(-1), [said.backupEveryDone, said.backupEveryNoteDone]);
+  // Not while history is read again.
+  p.app.setState({ historyPending: true });
+  await p.settle();
+  assert.ok(radios().every((r) => r.props.disabled));
+}
+
+/** Detailed's chooser (ui/src/copy-choice.tsx) in its dialog frame, on the engine's answers in `refuse`. */
+function choicePage({ snapshot = structuredClone(fixtures.snapshot), refuse = {} } = {}) {
+  const page = standIn();
+  const asked = [];
+  const toasts = [];
+  const app = page.store({ snapshot, modal: { kind: "copy-choice" } });
+  const module = load(
+    "copy-choice.tsx",
+    {
+      react: page.react,
+      "./api": { errorText },
+      "./dialogs": {
+        DialogFrame: ({ title, description, children, footer, dismissible }) =>
+          createElement("div", { role: "dialog", "data-dismissible": dismissible }, title, description, children, footer),
+      },
+      "./store": {
+        useApp: app,
+        chooseCopy: async (only, say, note, onError) => {
+          asked.push(["backup/only", { only }]);
+          if (refuse.why) {
+            onError(new Error(refuse.why));
+            return false;
+          }
+          toasts.push([say, note]);
+          return true;
+        },
+      },
+    },
+    held,
+  );
+  page.mount(createElement(module.CopyChoice));
+  const box = (label) =>
+    page.find((n) => n.type === "input" && n.props.type === "checkbox" && n.parent?.textContent.startsWith(label));
+  return {
+    ...page,
+    app,
+    asked,
+    toasts,
+    box,
+    boxes: () => page.all((n) => n.type === "input" && n.props.type === "checkbox"),
+    button: (text) => page.find((n) => n.type === "button" && n.textContent === text),
+    tick: async (label) => {
+      page.act(() => box(label).props.onChange());
+      await page.settle();
+    },
+    click: async (host) => {
+      page.act(() => host.props.onClick());
+      await page.settle();
+    },
+  };
+}
+
+export async function theBackupChooserStartsWithEverythingTickedAndSaysWhatStays() {
+  const c = choicePage();
+  const text = c.find((n) => n.props.role === "dialog").textContent;
+  assert.ok(text.includes(said.backupChooseTitle) && text.includes(said.backupChooseAbout), text);
+  // Where the choice is made: unticking stops new backups, and nothing is removed from what is held.
+  assert.ok(text.includes(said.backupChooseKeeps), text);
+  assert.ok(said.backupChooseKeeps.includes("never removes anything"));
+  assert.ok(said.backupChooseAbout.includes("A project that appears later isn't backed up until you tick it."));
+  assert.equal(c.boxes().length, 13);
+  assert.ok(c.boxes().every((b) => b.props.checked && !b.indeterminate));
+  assert.equal(c.box("kopi-landing").parent.textContent, "kopi-landing2 chats");
+  assert.equal(c.box("Chats outside your projects").parent.textContent, `${said.backupOutside}0 chats`);
+  // Indented by level: the folder holding the projects, then the projects.
+  assert.deepEqual(
+    ["project", "clients", "kopi-landing"].map((name) => c.box(name).parent.props.style.paddingInlineStart),
+    [8, 30, 52],
+  );
+  assert.deepEqual(c.asked, []);
+}
+
+export async function aGroupsBoxTicksItsProjectsAndShowsMixedWhenOnlySomeAre() {
+  const c = choicePage();
+  await c.click(c.button(said.backupUntickAll));
+  assert.ok(c.boxes().every((b) => !b.props.checked));
+  await c.tick("habit-app");
+  assert.equal(c.box("side").indeterminate, true);
+  assert.equal(c.box("project").indeterminate, true);
+  assert.equal(c.box("thesis").indeterminate, false);
+  await c.tick("side");
+  assert.deepEqual([c.box("side"), c.box("dotfiles"), c.box("habit-app")].map((b) => b.props.checked), [true, true, true]);
+  await c.tick("side");
+  assert.deepEqual([c.box("side"), c.box("dotfiles"), c.box("habit-app")].map((b) => b.props.checked), [false, false, false]);
+  await c.click(c.button(said.backupTickAll));
+  assert.ok(c.boxes().every((b) => b.props.checked));
+}
+
+export async function saveSendsTheChoiceOnceAndCancelSendsNothing() {
+  const c = choicePage();
+  await c.tick("kopi-landing");
+  await c.tick("Chats outside");
+  // Cancel closes and sends nothing.
+  await c.click(c.button(said.cancel));
+  assert.equal(c.app.getState().modal, null);
+  assert.deepEqual([c.asked, c.toasts], [[], []]);
+  c.app.setState({ modal: { kind: "copy-choice" } });
+  await c.click(c.button(said.backupSave));
+  // One request: every folder but kopi-landing, and the chats outside left out.
+  const wanted = Object.keys(fixtures.snapshot.nodes).filter((path) => path !== `${HOME}/project/clients/kopi-landing`);
+  assert.equal(c.asked.length, 1);
+  const [[, { only }]] = c.asked;
+  assert.deepEqual({ ...only, paths: [...only.paths].sort() }, { paths: wanted.sort(), outside: false });
+  assert.deepEqual(c.toasts.at(-1), [said.backupChosenDone(wanted.length, false), said.backupChosenNote]);
+  assert.equal(c.app.getState().modal, null);
+  assert.equal(
+    said.backupChosenDone(2, true),
+    "History backup now takes only 2 chosen folders, and chats outside your projects",
+  );
+}
+
+export async function theChooserStartsFromTheChoiceAndListsAFolderThatIsGone() {
+  const gone = `${HOME}/old-client`;
+  const c = choicePage({ snapshot: withBackup({ only: { paths: [ACME, gone], outside: true, notCopied: 3 } }) });
+  assert.equal(c.box("acme-store").props.checked, true);
+  assert.equal(c.box("kopi-landing").props.checked, false);
+  assert.equal(c.box("clients").indeterminate, true);
+  assert.equal(c.box("Chats outside").props.checked, true);
+  assert.equal(c.box("~/old-client").parent.textContent, `~/old-client${said.backupGone}`);
+  await c.tick("~/old-client");
+  await c.click(c.button(said.backupSave));
+  const [[, { only }]] = c.asked;
+  assert.deepEqual(only, { paths: [ACME], outside: true });
+}
+
+export async function aRefusedBackupChoiceKeepsTheChooserOpenAndSaysWhy() {
+  const refuse = { why: "Choose at most 10000 projects to copy" };
+  const c = choicePage({ refuse });
+  await c.click(c.button(said.backupSave));
+  assert.equal(c.find((n) => n.props.role === "alert").textContent, refuse.why);
+  assert.notEqual(c.app.getState().modal, null);
+  assert.deepEqual(c.toasts, []);
+  delete refuse.why;
+  await c.click(c.button(said.backupSave));
+  assert.equal(c.app.getState().modal, null);
 }
 
 export async function aChooseButtonSitsBesideEachFolderFieldOfSettings() {

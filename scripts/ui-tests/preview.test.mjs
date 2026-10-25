@@ -180,6 +180,29 @@ export async function theCopyOfChatsMovesToAChosenFolderAndUndoBringsItBack() {
   });
 }
 
+export async function theCopyCanTakeOnlyTheProjectsChosenForIt() {
+  await onPreview(async ({ request }) => {
+    assert.equal((await request("snapshot")).backup.only, undefined);
+    const chosen = { paths: [ACME, "/home/demo/project/clients"], outside: true };
+    const saved = await request("backup/only", { only: chosen });
+    assert.deepEqual(saved.only, { paths: ["/home/demo/project/clients", ACME], outside: true });
+    // The folders holding chats that aren't taken: the top folder, kopi-landing, infra-notes and campus-lms.
+    assert.deepEqual((await request("snapshot")).backup.only, { ...saved.only, notCopied: 4 });
+    assert.deepEqual(saved.snapshot.backup.only, { ...saved.only, notCopied: 4 });
+    const [entry] = (await request("log")).entries;
+    assert.deepEqual([entry.key, entry.say], ["copyChoice", { form: "copyChosen", folders: 2, outside: true }]);
+    // The same choice again is no change, and no entry.
+    await request("backup/only", { only: chosen });
+    assert.equal((await request("log")).entries[0].id, entry.id);
+    // Every project again, which Undo of the first choice would also give.
+    assert.equal((await request("backup/only", { only: null })).only, null);
+    assert.equal((await request("snapshot")).backup.only, undefined);
+    assert.deepEqual((await request("log")).entries[0].say, { form: "copyEveryProject" });
+    await request("undo", { id: (await request("log")).entries[0].id });
+    assert.equal((await request("snapshot")).backup.only.paths.length, 2);
+  });
+}
+
 export async function aReportIsFoundByTheWordsInIt() {
   await onPreview(async ({ request }) => {
     const hits = await request("reports/search", { query: "checkout safari" });

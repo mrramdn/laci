@@ -20,7 +20,7 @@ import {
   trimSep,
 } from "./helpers";
 import { Select } from "./select";
-import { BackupFolder } from "./backup";
+import { BackupFolder, BackupWhich } from "./backup";
 import { LaciMark } from "./brand";
 import { Icon } from "./common";
 import { useMarkdown } from "./hooks";
@@ -554,6 +554,9 @@ export function Settings({ first = false }: { first?: boolean }) {
                   backup.
                 </span>
               </label>
+            ) : null}
+            {!first && snapshot.backup ? (
+              <BackupWhich state={snapshot.backup} />
             ) : null}
             {!first && snapshot.backup ? (
               <BackupFolder state={snapshot.backup} home={snapshot.home} />

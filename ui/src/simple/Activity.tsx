@@ -273,6 +273,11 @@ const SAYS: Record<string, Telling> = {
   },
   autoBackupOn: () => forms.autoBackupOn,
   autoBackupOff: () => forms.autoBackupOff,
+  copyChosen: ({ folders, outside }) => {
+    const n = number(folders);
+    return n === undefined ? undefined : forms.copyChosen(n, outside === true);
+  },
+  copyEveryProject: () => forms.copyEveryProject,
   restoredChat: ({ ai }) => {
     const name = text(ai);
     return name ? forms.restoredChat(name) : forms.restoredChatAny;

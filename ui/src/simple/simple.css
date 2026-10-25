@@ -1018,6 +1018,17 @@
     border-right: 0;
     transform: translateY(-1px) rotate(-45deg);
   }
+  /* A folder with some of what is in it ticked: a dash, not a tick. */
+  .s-cb:indeterminate {
+    background: var(--brand-fill);
+    border-color: var(--brand-fill);
+  }
+  .s-cb:indeterminate::after {
+    content: "";
+    width: 11px;
+    height: 0;
+    border-top: 2px solid var(--on-brand);
+  }
 
   /* --- Home ------------------------------------------------------------------------------------- */
   /* Each part keeps 32 px from the one before it, so a part that isn't there leaves no gap. */

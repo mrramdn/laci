@@ -377,6 +377,7 @@ function helpersOnce() {
   const appStore = {
     acknowledge: noop,
     changed: live("changed"),
+    chooseCopy: live("chooseCopy"),
     copyText: live("copyText"),
     external: noop,
     goToProject: live("goToProject"),
@@ -517,6 +518,17 @@ function helpersPage({ view = "agents", snapshot = scan(), replies = {}, mcp = {
       return true;
     },
     openCopy: (dest) => void navigated.push(`copy:${dest}`),
+    // As the store chooses the projects: the request, a refusal to `onError`, or a toast in the words given.
+    chooseCopy: async (only, say, note, onError) => {
+      asked.push(["backup/only", { only }]);
+      const reply = replies["backup/only"];
+      if (reply instanceof Error) {
+        onError?.(reply);
+        return false;
+      }
+      toasts.push([say, note]);
+      return true;
+    },
   };
   const exports = helpersOnce();
   exports.useHelpers.reset();
@@ -1264,6 +1276,224 @@ export async function startAChatOffersEachAiLaciCanStart() {
   const more = page.find((n) => n.props.role === "menu" && n.props["aria-label"] === words.blocks.moreFor(said.title));
   page.act(() => more.children[0].props.onClick());
   assert.deepEqual(page.navigated, ["design:detailed"]);
+}
+
+// ── Which projects the copy takes ──────────────────────────────────────────────────────────────────
+
+/** The Which chats part of the copy card, and the boxes of the sheet that chooses. */
+function whichPage(args) {
+  const page = helpersPage(args);
+  const which = () => page.find((n) => n.props["data-ui"] === "copy-which");
+  const button = (text) => page.find((n) => n.type === "button" && n.textContent === text);
+  const sheet = () => page.find((n) => n.props.role === "dialog");
+  /** The boxes of the sheet, not the card's own. */
+  const boxes = () =>
+    page.all((n) => n.type === "input" && n.props.type === "checkbox" && n.closest(".s-copy-tree"));
+  /** The box of a row, by the start of its words. */
+  const box = (label) =>
+    page.find((n) => n.type === "input" && n.props.type === "checkbox" && n.parent?.textContent.startsWith(label));
+  const click = async (host) => {
+    page.act(() => host.props.onClick());
+    await page.settle();
+  };
+  const tick = async (label) => {
+    page.act(() => box(label).props.onChange());
+    await page.settle();
+  };
+  return { ...page, which, button, sheet, box, boxes, click, tick };
+}
+const withChoice = (only, more = {}) => {
+  const s = scan();
+  s.backup = { ...s.backup, only, ...more };
+  return s;
+};
+/** Sorted, as the engine sorts what it saves. */
+const sent = (page) => {
+  const [[, { only }]] = page.asked("backup/only").slice(-1);
+  return only && { ...only, paths: [...only.paths].sort() };
+};
+
+export async function theCopyCardSaysWhichChatsItTakes() {
+  // Every project, unless projects were chosen.
+  const every = whichPage();
+  assert.equal(every.which().textContent, `${said.copyWhich}${said.copyEvery}${said.copyChoose}`);
+  assert.equal(every.button(said.copyEveryButton), undefined, "it takes every project already");
+  assert.equal(every.button(said.copyChoose).props["aria-label"], said.copyChooseName);
+  assert.ok(said.copyChooseName.startsWith(said.copyChoose.replace("…", "").split(" ")[0]));
+  // Projects chosen: how many projects, not folders, and the way back.
+  const only = whichPage({ snapshot: withChoice({ paths: [ACME, KOPI, `${ROOT}/clients`], outside: false, notCopied: 0 }) });
+  assert.equal(
+    only.which().textContent,
+    `${said.copyWhich}Only 2 projects you chose${said.copyChangeProjects}${said.copyEveryButton}`,
+  );
+  assert.equal(only.button(said.copyChangeProjects).props["aria-label"], said.copyChangeProjectsName);
+  assert.equal(said.copyOnly(1), "Only 1 project you chose");
+  assert.equal(said.copyOnly(0), "None of your projects");
+  // Folders holding chats that aren't copied are told, so a new project isn't forgotten.
+  const left = whichPage({ snapshot: withChoice({ paths: [ACME], outside: true, notCopied: 3 }) });
+  assert.ok(left.which().textContent.includes("Only 1 project you chose · 3 folders with chats aren’t copied"));
+  const one = whichPage({ snapshot: withChoice({ paths: [ACME], outside: true, notCopied: 1 }) });
+  assert.ok(one.which().textContent.includes("· 1 folder with chats isn’t copied"));
+  // A choice that updates while the card is open is read again. (A page at a time: they share one stand-in.)
+  one.app.setState({ snapshot: withChoice({ paths: [ACME], outside: false, notCopied: 2 }) });
+  await one.settle();
+  assert.ok(one.which().textContent.includes("Only 1 project you chose · 2 folders"));
+  one.app.setState({ snapshot: scan() });
+  await one.settle();
+  assert.equal(one.which().textContent, `${said.copyWhich}${said.copyEvery}${said.copyChoose}`);
+}
+
+export async function theChooserStartsWithEverythingTickedWhenTheCopyTookEveryProject() {
+  const page = whichPage();
+  assert.equal(page.sheet(), undefined);
+  await page.click(page.button(said.copyChoose));
+  const text = page.sheet().textContent;
+  assert.ok(text.includes(said.copyChooseTitle), text);
+  // The note about what stays is where the choice is made.
+  assert.ok(text.includes(said.copyChooseKeeps), text);
+  assert.ok(said.copyChooseKeeps.includes("never removes anything"));
+  assert.ok(said.copyChooseAbout.includes("A project that appears later isn’t copied until you tick it."));
+  const boxes = page.boxes();
+  // Twelve folders and the chats outside them.
+  assert.equal(boxes.length, 13);
+  assert.ok(boxes.every((b) => b.props.checked && !b.indeterminate));
+  // Each row says how many chats it holds, and the group around it its own.
+  assert.equal(page.box("kopi-landing").parent.textContent, "kopi-landing2 chats");
+  assert.equal(page.box("acme-store").parent.textContent, "acme-store1 chat");
+  assert.equal(page.box("Chats outside your projects").parent.textContent, `${said.copyOutside}0 chats`);
+  // Nothing is sent before Save.
+  assert.deepEqual(page.asked("backup/only"), []);
+}
+
+export async function aFoldersBoxTicksItsProjectsAndShowsMixedWhenOnlySomeAre() {
+  const page = whichPage();
+  await page.click(page.button(said.copyChoose));
+  await page.click(page.button(said.copyUntickAll));
+  assert.ok(page.boxes().every((b) => !b.props.checked));
+  await page.tick("dotfiles");
+  assert.equal(page.box("side").props.checked, false);
+  assert.equal(page.box("side").indeterminate, true, "a folder with one of its projects ticked is mixed");
+  assert.equal(page.box("project").indeterminate, true, "and so is the one around it");
+  assert.equal(page.box("clients").indeterminate, false);
+  // The folder's own box ticks all its projects; a click on a mixed box ticks, not unticks.
+  await page.tick("side");
+  assert.equal(page.box("side").props.checked, true);
+  assert.equal(page.box("habit-app").props.checked, true);
+  await page.tick("side");
+  assert.equal(page.box("dotfiles").props.checked, false);
+  assert.equal(page.box("side").indeterminate, false);
+  // Tick all and Untick all.
+  await page.click(page.button(said.copyTickAll));
+  assert.equal(page.box("project").props.checked, true);
+  assert.equal(page.box("Chats outside").props.checked, true);
+}
+
+export async function saveSendsTheChosenFoldersAndOneToastTellsIt() {
+  const page = whichPage();
+  await page.click(page.button(said.copyChoose));
+  await page.tick("acme-store");
+  await page.tick("Chats outside");
+  await page.click(page.button(said.copySave));
+  const everything = page.app.getState().snapshot.nodes;
+  const wanted = Object.keys(everything).filter((path) => path !== ACME);
+  assert.equal(page.asked("backup/only").length, 1);
+  assert.deepEqual(sent(page), { paths: wanted.sort(), outside: false });
+  assert.deepEqual(page.toasts.at(-1), [said.copyChosenDone(wanted.length, false), said.copyChosenNote]);
+  assert.equal(page.sheet(), undefined, "saved, the sheet goes");
+  assert.equal(said.copyChosenDone(2, true), "Laci now copies only the chats of 2 chosen folders, and chats outside your projects");
+}
+
+export async function cancelSendsNothing() {
+  const page = whichPage();
+  await page.click(page.button(said.copyChoose));
+  await page.tick("acme-store");
+  await page.click(page.button(words.blocks.cancel));
+  assert.equal(page.sheet(), undefined);
+  assert.deepEqual(page.asked("backup/only"), []);
+  assert.deepEqual(page.toasts, []);
+  // Opened again, it starts from what was saved, not from what was ticked.
+  await page.click(page.button(said.copyChoose));
+  assert.equal(page.box("acme-store").props.checked, true);
+}
+
+export async function theChooserStartsFromTheChoiceAndListsAFolderThatIsGone() {
+  const gone = `${HOME}/old-client`;
+  const page = whichPage({ snapshot: withChoice({ paths: [ACME, gone], outside: false, notCopied: 3 }) });
+  await page.click(page.button(said.copyChangeProjects));
+  assert.equal(page.box("acme-store").props.checked, true);
+  assert.equal(page.box("kopi-landing").props.checked, false);
+  assert.equal(page.box("clients").indeterminate, true);
+  assert.equal(page.box("Chats outside").props.checked, false);
+  // A folder chosen that Laci no longer finds says so, with its path, and can be unticked.
+  assert.equal(page.box("~/old-client").parent.textContent, `~/old-client${said.copyGone}`);
+  assert.equal(page.box("~/old-client").props.checked, true);
+  await page.tick("~/old-client");
+  await page.tick("Chats outside");
+  await page.tick("kopi-landing");
+  await page.click(page.button(said.copySave));
+  assert.deepEqual(sent(page), { paths: [ACME, KOPI].sort(), outside: true });
+  // Unticked once, it is listed still until the sheet closes, so that it can be ticked again.
+  const again = whichPage({ snapshot: withChoice({ paths: [gone], outside: false, notCopied: 0 }) });
+  await again.click(again.button(said.copyChangeProjects));
+  await again.tick("~/old-client");
+  assert.equal(again.box("~/old-client").props.checked, false);
+}
+
+export async function aRefusedChoiceKeepsTheSheetOpenAndSaysWhy() {
+  const replies = { "backup/only": new Error("Choose at most 10000 projects to copy") };
+  const page = whichPage({ replies });
+  await page.click(page.button(said.copyChoose));
+  await page.click(page.button(said.copySave));
+  assert.match(page.sheet().textContent, /Choose at most 10000 projects to copy/);
+  assert.deepEqual(page.toasts, []);
+  delete replies["backup/only"];
+  await page.click(page.button(said.copySave));
+  assert.equal(page.sheet(), undefined);
+}
+
+export async function copyEveryProjectGoesBackAtOnce() {
+  const page = whichPage({ snapshot: withChoice({ paths: [ACME], outside: false, notCopied: 2 }) });
+  await page.click(page.button(said.copyEveryButton));
+  assert.deepEqual(page.asked("backup/only"), [["backup/only", { only: null }]]);
+  assert.deepEqual(page.toasts.at(-1), [said.copyEveryDone, said.copyEveryNote]);
+  assert.equal(said.copyEveryDone, "Laci now copies the chats of every project");
+}
+
+export async function theStoreSendsTheChoiceAndSaysItInTheWordsItIsGiven() {
+  const asked = [];
+  const api = async (name, body) => {
+    asked.push([name, body]);
+    if (name === "backup/only" && body.only?.paths.length === 99) throw new Error("Too many");
+    return name === "log" ? { entries: [] } : { only: body.only };
+  };
+  const { chooseCopy, useApp } = load(
+    "store.ts",
+    { "./api": { api, errorText: (e) => (e instanceof Error ? e.message : String(e)) } },
+    {
+      document: { documentElement: { dataset: {} } },
+      localStorage: { getItem: () => null, setItem: () => {} },
+      setTimeout: () => 0,
+      clearTimeout: () => {},
+    },
+  );
+  const only = { paths: [ACME], outside: true };
+  assert.equal(await chooseCopy(only, "Said", "Noted"), true);
+  assert.deepEqual(asked[0], ["backup/only", { only }]);
+  assert.deepEqual(useApp.getState().toast, { title: "Said", message: "Noted" });
+  // The Log is read again, for the entry the change made.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(asked.some(([name]) => name === "log"));
+  // Every project is `null`.
+  assert.equal(await chooseCopy(null, "Every", ""), true);
+  assert.deepEqual(asked.filter(([name]) => name === "backup/only").at(-1), ["backup/only", { only: null }]);
+  // A refusal goes to the caller, or to a toast without one.
+  const refused = { paths: Array.from({ length: 99 }, (_, i) => `/p${i}`), outside: false };
+  const failures = [];
+  assert.equal(await chooseCopy(refused, "No", "", (e) => failures.push(e.message)), false);
+  assert.deepEqual(failures, ["Too many"]);
+  assert.equal(useApp.getState().toast.title, "Every");
+  assert.equal(await chooseCopy(refused, "No", ""), false);
+  assert.deepEqual(useApp.getState().toast, { title: "Couldn’t finish", message: "Too many", error: true });
 }
 
 /**

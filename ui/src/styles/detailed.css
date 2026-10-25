@@ -1098,9 +1098,29 @@ kbd {
   border-right: 0;
   transform: translateY(-1px) rotate(-45deg);
 }
+/* A folder with some of what is in it ticked: a dash, not a tick. */
+.cb:indeterminate {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.cb:indeterminate::after {
+  content: "";
+  width: 8px;
+  height: 0;
+  border-top: 2px solid var(--on-accent);
+}
 .cb:disabled {
   opacity: 0.5;
   cursor: default;
+}
+/* The projects the history backup takes, in a dialog: one row each, indented by level. */
+.copy-tree {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.copy-tree .opt .mono {
+  overflow-wrap: anywhere;
 }
 .item.done .t {
   text-decoration: line-through;

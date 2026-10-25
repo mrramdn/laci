@@ -691,6 +691,14 @@ fn a_chosen_project_stays_chosen_where_it_moves_and_undo_takes_that_back_too() {
     let web = env.home.join("project/web");
     let moved = service.request("move", &json!({"id":fe.to_str().unwrap(),"destination":web})).unwrap();
     assert_eq!(config::load(&env)["backupOnly"]["paths"], json!(["~/project/demo", "~/project/web"]));
+    // The Log tells it among the move's steps.
+    let steps = journal_entry(&env, &moved["journal"])["steps"].clone();
+    assert!(
+        steps.as_array().unwrap().iter().any(|step| step["label"] == "Kept it chosen for the copy of AI chats"
+            && step["from"] == "~/project/app/fe"
+            && step["to"] == "~/project/web"),
+        "{steps}"
+    );
     // A setting changed since doesn't keep the move from being undone.
     service.request("theme", &json!({"theme":"dark"})).unwrap();
     service.request("undo", &json!({"id":moved["journal"]["id"]})).unwrap();
@@ -862,4 +870,69 @@ fn a_chat_shown_in_a_chosen_project_is_copied_though_it_was_started_elsewhere() 
     fs::remove_dir_all(&kept).unwrap();
     let said = laci_core::service::backup_now(&env, "cli").unwrap();
     assert!(said.starts_with("Copied 2 files of the projects you chose · "), "{said}");
+}
+
+#[test]
+fn a_chat_copied_by_the_folder_it_was_started_in_waits_for_the_copy_when_it_grows() {
+    let (_temp, env, _) = home();
+    let [app, fe, be, _] = group(&env);
+    // Started in fe, which is ticked, and went on in be, which isn't: the copy takes it by fe, Laci shows it in be.
+    let store = env.home.join(".claude/projects").join(laci_core::paths::enc(&fe.to_string_lossy()));
+    let log = store.join(format!("{ID}.jsonl"));
+    let records = [
+        json!({"type":"user","cwd":fe,"sessionId":ID,"message":{"role":"user","content":"Fix the form"}}),
+        json!({"type":"assistant","cwd":be,"sessionId":ID}),
+    ];
+    write(&log, &format!("{}\n{}\n", records[0], records[1]));
+    // A subagent of a session started in the group, which isn't ticked, that went on in fe goes with its session.
+    let group = env.home.join(".claude/projects").join(laci_core::paths::enc(&app.to_string_lossy()));
+    let main = json!({"type":"user","cwd":fe,"sessionId":"22222222-2222-3333-4444-555555555555"});
+    write(
+        &group.join("22222222-2222-3333-4444-555555555555.jsonl"),
+        &format!("{}\n{main}\n", json!({"type":"user","cwd":app})),
+    );
+    let agent = group.join("22222222-2222-3333-4444-555555555555/subagents/agent-a.jsonl");
+    write(&agent, &format!("{}\n", json!({"type":"user","cwd":app,"sessionId":"agent-a"})));
+    let mut service = Service::new(env.clone());
+    service.rescan().unwrap();
+    service.request("backup/only", &json!({"only":{"paths":[&fe]}})).unwrap();
+    service.request("backup", &json!({})).unwrap();
+    let kept = env.data_dir.join("history/claude");
+    assert!(copied(&env, &fe));
+    let name = laci_core::paths::enc(&app.to_string_lossy());
+    assert!(kept.join(&name).join("22222222-2222-3333-4444-555555555555/subagents/agent-a.jsonl.zst").is_file());
+    // The Log says the run was of the projects chosen.
+    let entry = &activity::read_log(&env, 5)[0];
+    assert_eq!(entry["say"], json!({"form":"backedUp","files":3,"only":true}));
+    assert_eq!(entry["title"], "Backed up 3 agent history files of the projects you chose");
+    assert_eq!(service.rescan().unwrap()["backup"]["pending"], 0);
+    // It grows: it waits for the next run, though Laci shows it in be.
+    write(&log, &format!("{}\n{}\n{}\n", records[0], records[1], records[1]));
+    later(&log);
+    assert_eq!(service.rescan().unwrap()["backup"]["pending"], 1);
+}
+
+#[test]
+fn chats_laci_reconnects_into_a_chosen_project_wait_for_the_copy() {
+    let (_temp, env, _) = home();
+    claude(&env);
+    let site = env.home.join("project/site");
+    write(&site.join("package.json"), "{}");
+    // Chats of a folder in the project folders that is gone, of the same name as a project that is ticked.
+    let old = env.home.join("project/old-sites/site");
+    session(&env, &old, ID, "Fix the old site");
+    let mut service = Service::new(env.clone());
+    service.rescan().unwrap();
+    service.request("backup/only", &json!({"only":{"paths":[&site]}})).unwrap();
+    service.request("backup", &json!({})).unwrap();
+    assert!(!copied(&env, &old), "no chosen folder holds where they were started");
+    let snap = service.rescan().unwrap();
+    assert_eq!(snap["backup"]["pending"], 0);
+    let proposal = snap["proposals"].as_array().unwrap().iter().find(|p| p["category"] == "reconnect").unwrap().clone();
+    service.request("apply", &json!({"id":proposal["id"]})).unwrap();
+    // They are site's now, with their old times, and the copy has none of them: they wait for the next run.
+    assert_eq!(service.rescan().unwrap()["backup"]["pending"], 1);
+    service.request("backup", &json!({})).unwrap();
+    assert!(copied(&env, &site));
+    assert_eq!(service.rescan().unwrap()["backup"]["pending"], 0);
 }

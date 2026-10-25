@@ -89,6 +89,14 @@ fn steps(env: &Env, j: &Value) -> Value {
     if moves.len() > 20 {
         out.push(json!({"kind":"move","label":format!("And {} more moves",moves.len()-20)}));
     }
+    // A project chosen for the copy of AI chats stays chosen where it went.
+    for pair in entries
+        .iter()
+        .filter(|e| e["kind"] == "chosen")
+        .flat_map(|e| e["pairs"].as_array().cloned().unwrap_or_default())
+    {
+        out.push(json!({"kind":"write","label":"Kept it chosen for the copy of AI chats","from":tilde(&pair[0]),"to":tilde(&pair[1])}));
+    }
     let rewrites = entries.iter().filter(|e| e["kind"] == "rewrite").count();
     if rewrites > 0 {
         out.push(json!({"kind":"rewrite","label":format!("Rewrote the folder path in {rewrites} log file{}",if rewrites==1{""}else{"s"})}));

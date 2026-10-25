@@ -285,11 +285,20 @@ fn backup_run(env: &Env, snap: &Value, by: &str, always: bool) -> Result<Value> 
         string(&result, "dest")
     ));
     if copied > 0 || always {
-        activity::record(
-            env,
-            json!({"by":by,"title":if copied > 0 {format!("Backed up {}",scan::plural(copied,"agent history file"))} else {"Agent history backup is up to date".into()},
-                "say":if copied > 0 {json!({"form":"backedUp","files":copied})} else {json!({"form":"backupUpToDate"})},"detail":result["kept"]}),
-        );
+        // With projects chosen, the Log says it is about those, as `laci backup` does.
+        let only = result["only"] == true;
+        let title = match (copied, only) {
+            (0, false) => "Agent history backup is up to date".to_owned(),
+            (0, true) => "Agent history backup of the projects you chose is up to date".to_owned(),
+            (_, false) => format!("Backed up {}", scan::plural(copied, "agent history file")),
+            (_, true) => format!("Backed up {} of the projects you chose", scan::plural(copied, "agent history file")),
+        };
+        let mut say =
+            if copied > 0 { json!({"form":"backedUp","files":copied}) } else { json!({"form":"backupUpToDate"}) };
+        if only {
+            say["only"] = json!(true);
+        }
+        activity::record(env, json!({"by":by,"title":title,"say":say,"detail":result["kept"]}));
     }
     Ok(result)
 }

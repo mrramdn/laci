@@ -146,6 +146,16 @@ impl Choice {
             return true;
         }
         let link = &c["link"];
+        // A Claude Code session's subagent logs (`<folder>/<id>/…`) go with the session they belong to.
+        let mut parts = relative.components();
+        if link["kind"] == "named"
+            && let (Some(folder), Some(id), Some(_)) = (parts.next(), parts.next(), parts.next())
+        {
+            let session = store.join(folder).join(format!("{}.jsonl", id.as_os_str().to_string_lossy()));
+            if self.filed.get(&paths::normalize(&session)).is_some_and(|folder| self.wants(folder)) {
+                return true;
+            }
+        }
         match link["kind"].as_str() {
             Some("cwd") => {
                 let field = link["field"].as_str().unwrap_or("cwd");

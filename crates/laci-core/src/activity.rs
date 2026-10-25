@@ -300,6 +300,17 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
             }
             config::save(env, &c)?;
             out["refresh"] = json!("all");
+        } else if kind == "copyChoice" {
+            // The projects the copy of AI chats took before; nothing the copy holds changes.
+            let only = crate::copy_choice::setting(env, &undo["only"])?;
+            let mut c = config::load(env);
+            if only.is_null() {
+                c.as_object_mut().ok_or("Invalid config")?.remove("backupOnly");
+            } else {
+                c["backupOnly"] = only;
+            }
+            config::save(env, &c)?;
+            out["refresh"] = json!("all");
         } else if kind == "report-item" {
             crate::reports::restore_item(env, undo)?;
             out["refresh"] = json!("all");

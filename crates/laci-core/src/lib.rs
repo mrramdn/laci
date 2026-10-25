@@ -4,6 +4,7 @@ pub mod agents;
 pub mod assistant;
 pub mod backup;
 pub mod config;
+pub mod copy_choice;
 pub mod create;
 pub mod deletion;
 pub mod env;

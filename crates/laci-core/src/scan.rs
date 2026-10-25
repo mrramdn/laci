@@ -590,10 +590,17 @@ fn link(
     snapshot["suggestions"] = json!(suggestions);
     // History kept in a store of its own can be copied; what lives inside a project travels with it.
     if on.iter().any(|c| c["link"]["dir"].is_string() && c["link"]["kind"] != "mentions") {
+        let cfg = crate::config::load(env);
+        // With projects chosen for the copy, the chats of the others are neither copied nor at risk of being lost
+        // from it; a session with no folder on record is copied.
+        let choice = crate::copy_choice::Choice::load(env, &cfg, &snapshot["nodes"]);
+        let copied = |s: &Value| {
+            choice.as_ref().is_none_or(|choice| s["cwd"].as_str().is_none_or(|cwd| choice.wants(Path::new(cwd))))
+        };
         // Sessions that changed after the last backup are the ones still at risk.
         let live: Vec<(String, String)> = array(&snapshot["sessions"])
             .iter()
-            .filter(|s| s["backup"] != true)
+            .filter(|s| s["backup"] != true && copied(s))
             .map(|s| (string(s, "provider").to_owned(), string(s, "updatedAt").to_owned()))
             .collect();
         let mut backup = crate::ops::backup_state(env).unwrap_or_else(|| json!({}));
@@ -602,8 +609,23 @@ fn link(
             let at = string(&backup, "at").to_owned();
             backup["pending"] = json!(live.iter().filter(|(_, t)| t.as_str() > at.as_str()).count());
         }
-        let cfg = crate::config::load(env);
         backup["auto"] = json!(cfg["autoBackup"] == true);
+        // The projects chosen, as full paths like the scan's, and how many scanned folders hold chats that aren't
+        // copied: a project that appeared since is one, until it is ticked.
+        if choice.is_some() {
+            let left: BTreeSet<String> = array(&snapshot["sessions"])
+                .iter()
+                .filter(|s| s["backup"] != true && !copied(s))
+                .filter_map(|s| nearest(&snapshot["nodes"], s["cwd"].as_str()?))
+                .collect();
+            let chosen: Vec<String> = array(&cfg["backupOnly"]["paths"])
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|raw| paths::expand(raw, &env.home).to_string_lossy().into_owned())
+                .collect();
+            backup["only"] =
+                json!({"paths":chosen,"outside":cfg["backupOnly"]["outside"] == true,"notCopied":left.len()});
+        }
         // Where the copy is, and, when the folder chosen for it can't be used now, why: nothing is copied then.
         let chosen = crate::backup::chosen(env, &cfg);
         match crate::backup::dir(env) {

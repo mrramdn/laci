@@ -545,3 +545,146 @@ fn laci_backup_copies_without_a_scan_and_tells_the_log_only_when_it_copied() {
     let refused = laci_core::service::backup_now(&env, "cli").unwrap_err();
     assert!(refused.contains("isn't there"), "{refused}");
 }
+
+/// Settings as [`claude`] makes them, with the group `~/project/app` holding the projects `fe` and `be` beside `demo`.
+/// Gives the group, its two projects and `demo`.
+fn group(env: &Env) -> [PathBuf; 4] {
+    let demo = claude(env);
+    let app = env.home.join("project/app");
+    let (fe, be) = (app.join("fe"), app.join("be"));
+    for project in [&fe, &be] {
+        write(&project.join("package.json"), "{}");
+    }
+    [app, fe, be, demo]
+}
+/// Whether the copy holds the Claude Code session [`session`] wrote in `folder`.
+fn copied(env: &Env, folder: &Path) -> bool {
+    let name = laci_core::paths::enc(&folder.to_string_lossy());
+    env.data_dir.join("history/claude").join(name).join(format!("{ID}.jsonl.zst")).is_file()
+}
+fn later(file: &Path) {
+    let soon = SystemTime::now() + Duration::from_secs(3600);
+    fs::File::options().write(true).open(file).unwrap().set_modified(soon).unwrap();
+}
+
+#[test]
+fn only_the_chats_of_the_chosen_projects_and_groups_are_copied() {
+    let (_temp, env, _) = home();
+    let [app, fe, be, demo] = group(&env);
+    let files: Vec<PathBuf> = [&app, &fe, &be, &demo, &env.home]
+        .iter()
+        .map(|folder| session(&env, folder, ID, "Fix the login page"))
+        .collect();
+    let mut service = Service::new(env.clone());
+    service.request("backup/only", &json!({"only":{"paths":[&app, &fe]}})).unwrap();
+    assert_eq!(config::load(&env)["backupOnly"], json!({"paths":["~/project/app","~/project/app/fe"],"outside":false}));
+    assert_eq!(activity::read_log(&env, 5)[0]["say"], json!({"form":"copyChosen","folders":2,"outside":false}));
+    service.request("backup", &json!({})).unwrap();
+    // The group's own chats and those of its ticked project; not those of the project of the group left out, of
+    // another project, or of home, which is in no project.
+    assert!(copied(&env, &app) && copied(&env, &fe));
+    assert!(!copied(&env, &be) && !copied(&env, &demo) && !copied(&env, &env.home));
+    let snap = service.rescan().unwrap();
+    let only = &snap["backup"]["only"];
+    assert_eq!(only["paths"], json!([&app, &fe]));
+    assert_eq!((&only["outside"], &only["notCopied"]), (&json!(false), &json!(2)), "be and demo aren't copied");
+    // A chat that isn't copied isn't waiting for the copy; one that is, is.
+    later(&files[2]);
+    assert_eq!(service.rescan().unwrap()["backup"]["pending"], 0);
+    later(&files[1]);
+    assert_eq!(service.rescan().unwrap()["backup"]["pending"], 1);
+
+    service.request("backup/only", &json!({"only":{"paths":[&app, &fe],"outside":true}})).unwrap();
+    service.request("backup", &json!({})).unwrap();
+    assert!(copied(&env, &env.home), "chats outside every project are copied once that is ticked");
+    // Undo takes back the choice alone.
+    let entry = activity::read_log(&env, 10).into_iter().find(|e| e["key"] == "copyChoice").unwrap();
+    assert_eq!(entry["say"], json!({"form":"copyChosen","folders":2,"outside":true}));
+    service.request("log/undo", &json!({"id":entry["id"]})).unwrap();
+    assert_eq!(config::load(&env)["backupOnly"]["outside"], false);
+    assert!(copied(&env, &env.home), "what the copy holds stays");
+
+    service.request("backup/only", &json!({"only":null})).unwrap();
+    assert!(config::load(&env).get("backupOnly").is_none());
+    assert_eq!(activity::read_log(&env, 5)[0]["say"], json!({"form":"copyEveryProject"}));
+    service.request("backup", &json!({})).unwrap();
+    assert!(copied(&env, &be) && copied(&env, &demo));
+    assert!(service.request("backup/only", &json!({"only":{"paths":["project/app"]}})).is_err());
+}
+
+#[test]
+fn a_project_that_appears_later_is_copied_only_once_it_is_ticked() {
+    let (_temp, env, _) = home();
+    let [app, fe, be, _] = group(&env);
+    let mut service = Service::new(env.clone());
+    service.rescan().unwrap();
+    service.request("backup/only", &json!({"only":{"paths":[&app, &fe, &be]}})).unwrap();
+    let new = app.join("new");
+    write(&new.join("package.json"), "{}");
+    session(&env, &new, ID, "Start the new app");
+    let snap = service.rescan().unwrap();
+    assert_eq!(snap["backup"]["only"]["notCopied"], 1);
+    service.request("backup", &json!({})).unwrap();
+    assert!(!copied(&env, &new), "a ticked group doesn't tick a project that appears in it");
+    service.request("backup/only", &json!({"only":{"paths":[&app, &fe, &be, &new]}})).unwrap();
+    service.request("backup", &json!({})).unwrap();
+    assert!(copied(&env, &new));
+}
+
+#[test]
+fn a_chat_in_a_store_of_dated_logs_goes_by_the_folder_its_log_names() {
+    let (_temp, env, _) = home();
+    let [_, fe, be, _] = group(&env);
+    let store = env.home.join(".codex/sessions");
+    for (name, cwd) in [("fe", fe.join("src")), ("be", be.clone())] {
+        let line = json!({"type":"session_meta","payload":{"id":name,"cwd":cwd}});
+        write(&store.join(format!("2026/10/{name}.jsonl")), &format!("{line}\n"));
+    }
+    // A file that names no folder belongs to no chat alone: it is copied.
+    write(&store.join("index.json"), "{\"sessions\":[]}\n");
+    let mut cfg = config::load(&env);
+    cfg["backupOnly"] = json!({"paths":[&fe]});
+    config::save(&env, &cfg).unwrap();
+    // Without the folders of a scan, the chosen ones alone are known.
+    let done = ops::backup_history(&env, &codex(&store)).unwrap();
+    assert_eq!((&done["copied"], &done["only"]), (&json!(2), &json!(true)));
+    let kept = env.data_dir.join("history/codex");
+    assert!(kept.join("2026/10/fe.jsonl.zst").is_file() && kept.join("index.json.zst").is_file());
+    assert!(!kept.join("2026/10/be.jsonl.zst").exists());
+}
+
+#[test]
+fn laci_backup_tells_the_chosen_projects_apart_by_the_last_scan() {
+    let (_temp, env, _) = home();
+    let [app, fe, be, _] = group(&env);
+    for folder in [&app, &fe, &be] {
+        session(&env, folder, ID, "Fix the login page");
+    }
+    let mut cfg = config::load(&env);
+    cfg["backupOnly"] = json!({"paths":[&app]});
+    config::save(&env, &cfg).unwrap();
+    Service::new(env.clone()).rescan().unwrap();
+    let said = laci_core::service::backup_now(&env, "cli").unwrap();
+    assert!(said.starts_with("Copied 1 file of the projects you chose · "), "{said}");
+    // The last scan found fe and be, projects of their own that weren't ticked: only the group's own chats go.
+    assert!(copied(&env, &app) && !copied(&env, &fe) && !copied(&env, &be));
+}
+
+#[test]
+fn a_chosen_project_stays_chosen_where_it_moves_and_undo_takes_that_back_too() {
+    let (_temp, env, _) = home();
+    let [_, fe, _, demo] = group(&env);
+    let mut service = Service::new(env.clone());
+    service.rescan().unwrap();
+    service.request("backup/only", &json!({"only":{"paths":[&fe, &demo]}})).unwrap();
+    let web = env.home.join("project/web");
+    let moved = service.request("move", &json!({"id":fe.to_str().unwrap(),"destination":web})).unwrap();
+    assert_eq!(config::load(&env)["backupOnly"]["paths"], json!(["~/project/demo", "~/project/web"]));
+    // A setting changed since doesn't keep the move from being undone.
+    service.request("theme", &json!({"theme":"dark"})).unwrap();
+    service.request("undo", &json!({"id":moved["journal"]["id"]})).unwrap();
+    assert!(fe.join("package.json").is_file());
+    let cfg = config::load(&env);
+    assert_eq!(cfg["backupOnly"]["paths"], json!(["~/project/app/fe", "~/project/demo"]));
+    assert_eq!(cfg["theme"], "dark");
+}

@@ -384,6 +384,25 @@ fn log_facts(path: &Path, field: &str, claude: bool) -> Value {
     json!({"cwd":first,"cwds":cwds,"lines":lines,"title":title,"branch":branch,"ownershipComplete":complete && valid_locations})
 }
 
+/// How far into a log [`first_location`] reads: a tool names where it runs in its first records.
+const LOCATION_BYTES: u64 = 1024 * 1024;
+/// The first folder the log `path` names in `field`, as [`log_facts`] finds it first, read only from the log's start:
+/// where the chat was started, for the copy of AI chats, which can't wait for a whole log to be read.
+pub(crate) fn first_location(path: &Path, field: &str) -> Option<PathBuf> {
+    use std::io::BufRead;
+    let file = fs::File::open(path).ok()?;
+    let field = field_regex(field);
+    for line in std::io::BufReader::new(file.take(LOCATION_BYTES)).lines() {
+        let line = line.ok()?;
+        for c in field.captures_iter(&line) {
+            if let Some(value) = decoded(&c[1]).filter(|value| Path::new(value).is_absolute()) {
+                return Some(paths::normalize(Path::new(&value)));
+            }
+        }
+    }
+    None
+}
+
 const METADATA_BYTES: u64 = 8 * 1024 * 1024;
 const METADATA_RECORDS: usize = 20_000;
 fn records(path: &Path, read: impl FnMut(Value)) -> bool {

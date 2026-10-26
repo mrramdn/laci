@@ -49,6 +49,7 @@ Everything in `src/` is written by `scripts/brand-icons.mjs` from one descriptio
 | `laci-symbolic.svg` | One colour on a 16 px grid, `currentColor`: GNOME's symbolic icon, tinted places |
 | `laci-wordmark.svg` | "laci" in Plus Jakarta Sans Bold, −0.02 em, as outlines |
 | `laci-lockup.svg`, `laci-lockup-dark.svg` | Mark and wordmark, for light and dark backgrounds |
+| `laci-social.svg` | GitHub's social preview, 1280×640: the lockup over the tagline on santan, inside a centred 1200×600 safe area. `--social FILE` renders the PNG to upload in Settings › Social preview; it stays out of the repo |
 
 The script also writes `ui/public/favicon.svg` and `ui/src/brand-marks.ts`, which the app's `LaciMark` draws inline.
 
@@ -56,7 +57,8 @@ The script also writes `ui/public/favicon.svg` and `ui/src/brand-marks.ts`, whic
 node scripts/brand-icons.mjs                          # the sources above
 node scripts/brand-icons.mjs --icons src-tauri/icons  # the app icon set: PNG, SVG
 node scripts/brand-icons.mjs --sheet /tmp/laci.png    # a review sheet on light and dark
-node scripts/brand-icons.mjs --font PlusJakartaSans-Bold.ttf  # outline the wordmark again
+node scripts/brand-icons.mjs --social /tmp/social.png # the social preview, a 1280×640 PNG
+node scripts/brand-icons.mjs --font PlusJakartaSans-Bold.ttf  # outline the wordmark and the tagline again
 ```
 
 Rendering needs `resvg` and ImageMagick's `magick`. The icon set holds PNGs from 16 to 512 px, where 16, 24 and 32 px are the pixel-grid drawings, and the SVG and symbolic icons.

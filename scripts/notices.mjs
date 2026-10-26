@@ -215,10 +215,11 @@ function webUrl(url) {
   return /^https?:\/\/[^\s()|<>]+$/.test(plain) ? plain : null;
 }
 
-// Authors for the standard texts: names only, no addresses.
+// Authors for the standard texts: names only, no addresses. A "<" or ">" left after the addresses go (one
+// without its pair) goes too.
 const holders = (names, fallback) =>
   names
-    .map((name) => name.replace(/\s*<[^>]*>/g, "").replace(/\s*\([^)]*\)/g, "").trim())
+    .map((name) => name.replace(/\s*<[^>]*>/g, "").replace(/[<>]/g, "").replace(/\s*\([^)]*\)/g, "").trim())
     .filter(Boolean)
     .join(", ") || `the authors of ${fallback}`;
 
@@ -350,7 +351,8 @@ function grouped(entries) {
   return { groups: sorted, missing };
 }
 
-const cell = (text) => String(text).replace(/\|/g, "\\|");
+// Backslashes first, so a "\" already in the text can't turn the escape of a pipe into a literal backslash.
+const cell = (text) => String(text).replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
 const link = (url) => `[source](${url.replace(/ /g, "%20")})`;
 // A fence one backtick longer than any run inside the text, so no license can close it early.
 function fenced(text) {

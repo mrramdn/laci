@@ -215,11 +215,24 @@ function webUrl(url) {
   return /^https?:\/\/[^\s()|<>]+$/.test(plain) ? plain : null;
 }
 
-// Authors for the standard texts: names only, no addresses. A "<" or ">" left after the addresses go (one
-// without its pair) goes too.
+// Drops everything between "<" and ">" (the addresses in "Name <name@example.com>"), the brackets themselves, and
+// the rest of the string after a "<" that never closes. A scan, not a replace, so nothing it removes can rejoin into
+// a new "<...>".
+const withoutAddresses = (text) => {
+  let out = "";
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "<") depth += 1;
+    else if (ch === ">") depth = Math.max(0, depth - 1);
+    else if (depth === 0) out += ch;
+  }
+  return out;
+};
+
+// Authors for the standard texts: names only, no addresses or links in brackets.
 const holders = (names, fallback) =>
   names
-    .map((name) => name.replace(/\s*<[^>]*>/g, "").replace(/[<>]/g, "").replace(/\s*\([^)]*\)/g, "").trim())
+    .map((name) => withoutAddresses(name).replace(/\s*\([^)]*\)/g, "").replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .join(", ") || `the authors of ${fallback}`;
 

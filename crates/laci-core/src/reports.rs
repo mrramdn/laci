@@ -644,8 +644,8 @@ impl Linker {
     }
 }
 
-/// Whether `text` names a project called `name`, as a word or the end of a path: "ubunkii-infra" and
-/// "~/project/ubunkii-infra/nginx" name ubunkii-infra, but "infra" alone, "cloud.mrramdn.com" (for mrramdn.com) and
+/// Whether `text` names a project called `name`, as a word or the end of a path: "home-infra" and
+/// "~/project/home-infra/nginx" name home-infra, but "infra" alone, "docs.example.com" (for example.com) and
 /// "lacing" (for laci) don't.
 fn names(text: &str, name: &str) -> bool {
     let (text, name) = (text.to_lowercase(), name.to_lowercase());
@@ -1065,12 +1065,12 @@ mod tests {
     #[test]
     fn nested_items_under_a_label_read_as_one_sentence() {
         let text = "## Open\n- **rifkii:**\n  - merges of the open PRs;\n  - one real test message, answered from Gmail;\n  \
-            - the Umami login.\n- **Next:**\n  - the review results for #42\n  - Bing import.\n- Ship it\n  - with notes\n";
+            - the Umami login.\n- **Next:**\n  - the review results for #42\n  - Sitemap import.\n- Ship it\n  - with notes\n";
         assert_eq!(
             parse("t.md", text, MODIFIED)["open"],
             json!([
                 "rifkii: merges of the open PRs; one real test message, answered from Gmail; the Umami login.",
-                "Next: the review results for #42; Bing import.",
+                "Next: the review results for #42; Sitemap import.",
                 "Ship it; with notes"
             ])
         );
@@ -1081,33 +1081,33 @@ mod tests {
     #[test]
     fn an_item_belongs_to_the_project_it_names_or_to_where_the_session_worked() {
         let env = Env::for_home(PathBuf::from("/h"));
-        let (uts, infra, site) = ("/h/tugas/pre-uts", "/h/project/ubunkii-infra", "/h/project/mrramdn.com");
+        let (thesis, infra, site) = ("/h/school/thesis", "/h/project/home-infra", "/h/project/example.com");
         let mut nodes = json!({});
-        for path in [uts, infra, site] {
+        for path in [thesis, infra, site] {
             nodes[path] = json!({"kind":"project","path":path});
         }
         let linker = Linker::new(&env, &json!({"nodes":nodes,"sessions":[],"items":{}}));
-        let facts = json!({"projectPaths":[uts, infra],"sessionPaths":[uts],"sessions":[]});
+        let facts = json!({"projectPaths":[thesis, infra],"sessionPaths":[thesis],"sessions":[]});
         let projects = linker.link(&env, &facts);
         let items = [
             "Team data: README team table and roles are placeholders.",
-            "Database changes after UTS: no backup cron for /srv/kumpul yet.",
-            "ubunkii-infra still has no remote.",
+            "Database changes after the defence: no backup cron for /srv/app yet.",
+            "home-infra still has no remote.",
         ]
         .map(str::to_owned);
         let by = linker.items_by_project(&env, &facts, &projects, &items);
-        assert_eq!(by[uts], json!({"open":[items[0], items[1]],"openCount":2}));
+        assert_eq!(by[thesis], json!({"open":[items[0], items[1]],"openCount":2}));
         assert_eq!(by[infra], json!({"open":[items[2]],"openCount":1}));
         // Started above both projects, the session tells nothing: an item that names neither is about neither.
         let facts = json!({"projectPaths":[site, infra],"sessionPaths":["/h/project"],"sessions":[]});
         let projects = linker.link(&env, &facts);
-        let items = ["Next: cloud.mrramdn.com OG; nginx rate limit", "mrramdn.com contact card", "Bing import"]
+        let items = ["Next: docs.example.com OG; nginx rate limit", "example.com contact card", "Sitemap import"]
             .map(str::to_owned);
         let by = linker.items_by_project(&env, &facts, &projects, &items);
         assert_eq!(by[site], json!({"open":[items[1]],"openCount":1}));
         assert_eq!(by[infra], json!({"open":[],"openCount":0}));
-        assert!(names("see ~/project/ubunkii-infra/nginx.", "ubunkii-infra"));
-        assert!(names("Laci 3.0 is out", "laci") && !names("lacing", "laci") && !names("ubunkii-infra", "infra"));
+        assert!(names("see ~/project/home-infra/nginx.", "home-infra"));
+        assert!(names("Laci 3.0 is out", "laci") && !names("lacing", "laci") && !names("home-infra", "infra"));
     }
 
     #[test]

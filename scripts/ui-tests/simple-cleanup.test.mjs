@@ -390,13 +390,13 @@ export async function theSpaceLaciUsesIsReadWhenThePageOpensAndOnceAChangeIsIn()
 export async function aCopyLaciCantReachSaysWhyInSimplesWords() {
   const storage = structuredClone(fixtures.storage);
   const why =
-    "The folder for the copy of AI chats isn't there: /mnt/archive/ai-chats. Connect its drive, or choose another folder for the copy.";
-  Object.assign(storage.parts.find((p) => p.id === "history"), { dir: "/mnt/archive/ai-chats", error: why });
+    "The folder for the copy of AI chats isn't there: /media/backup/ai-chats. Connect its drive, or choose another folder for the copy.";
+  Object.assign(storage.parts.find((p) => p.id === "history"), { dir: "/media/backup/ai-chats", error: why });
   const page = cleanUpPage({ storage });
   await page.settle();
   const row = page.find((n) => n.props["data-ui"] === "space-part" && n.props["data-id"] === "history");
   const told = row.descendants().find((n) => n.props["data-tone"] === "soon");
-  assert.equal(told.textContent, words.engineWords.simple.copyMissing("/mnt/archive/ai-chats"));
+  assert.equal(told.textContent, words.engineWords.simple.copyMissing("/media/backup/ai-chats"));
 }
 
 export async function theOpenCardHoldsTheOneFilledButtonAndChangesAsDetailedDoes() {

@@ -1473,7 +1473,7 @@ mod tests {
                     "lastCommitAt":at(i),"remotes":[{"web":"https://github.com/example/p"}]},
                 "tasks":tasks,"notes":"Notes about the project. ".repeat(120),
                 "readme":{"raw":"readme text ".repeat(5000),"title":"P","tagline":"A tagline","file":"README.md","sections":["Install"]},
-                "stack":{"labels":["Rust","React"]},"archivePlan":{"dest":"/mnt/archive/p"},
+                "stack":{"labels":["Rust","React"]},"archivePlan":{"dest":"/media/backup/p"},
                 "agents":{"claude":[format!("claude-{i}")],
                     "items":if i == 0 { json!((0..20).map(|k| format!("codex:{k}")).collect::<Vec<_>>()) } else { json!([]) }}}));
         }

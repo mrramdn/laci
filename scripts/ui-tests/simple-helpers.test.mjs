@@ -497,7 +497,7 @@ function helpersPage({ view = "agents", snapshot = scan(), replies = {}, mcp = {
     goToProject: (id) => void navigated.push(`project:${id}`),
     setDesign: (design) => void navigated.push(`design:${design}`),
     // The system's picker hands over a folder on another drive.
-    chooseFolder: (_options, onPick) => onPick("/mnt/archive/ai-chats"),
+    chooseFolder: (_options, onPick) => onPick("/media/backup/ai-chats"),
     // As the store moves the copy: a refusal goes to `onError`, the engine's answer to a toast with its Undo, in
     // the words the store chooses for it.
     moveCopy: async (dir, fresh, words, onError) => {
@@ -1018,7 +1018,7 @@ export async function theCopyOfChatsMovesToAnotherFolderOnlyOnceAskedWhere() {
   page.act(() => button(said.copyPlaceChange).props.onClick());
   await page.settle();
   assert.deepEqual(page.asked("backup/move"), [], "a folder picked only asks");
-  assert.ok(place().textContent.includes(said.copyMoveAsk("/mnt/archive/ai-chats")), place().textContent);
+  assert.ok(place().textContent.includes(said.copyMoveAsk("/media/backup/ai-chats")), place().textContent);
   assert.ok(place().textContent.includes(said.copyMoveNote));
   // Refused, the question stays, and says why.
   replies["backup/move"] = new Error("That folder already holds files.");
@@ -1028,15 +1028,15 @@ export async function theCopyOfChatsMovesToAnotherFolderOnlyOnceAskedWhere() {
   delete replies["backup/move"];
   page.act(() => button(said.copyMove).props.onClick());
   await page.settle();
-  assert.deepEqual(page.asked("backup/move").at(-1), ["backup/move", { dir: "/mnt/archive/ai-chats" }]);
-  assert.deepEqual(page.toasts.at(-1), [said.copyMoved("/mnt/archive/ai-chats"), said.copyMoveNote]);
+  assert.deepEqual(page.asked("backup/move").at(-1), ["backup/move", { dir: "/media/backup/ai-chats" }]);
+  assert.deepEqual(page.toasts.at(-1), [said.copyMoved("/media/backup/ai-chats"), said.copyMoveNote]);
   assert.equal(button(said.copyMove), undefined, "moved, the question goes");
   // A chosen folder shows, and the copy can go back to Laci’s own folder, asked the same way.
   const s = scan();
-  page.app.setState({ snapshot: { ...s, backup: { ...s.backup, chosen: true, dest: "/mnt/archive/ai-chats" } } });
+  page.app.setState({ snapshot: { ...s, backup: { ...s.backup, chosen: true, dest: "/media/backup/ai-chats" } } });
   await page.settle();
-  assert.ok(place().textContent.includes("/mnt/archive/ai-chats"));
-  assert.equal(shown("/mnt/archive/ai-chats").props.className, "s-quiet s-mono");
+  assert.ok(place().textContent.includes("/media/backup/ai-chats"));
+  assert.equal(shown("/media/backup/ai-chats").props.className, "s-quiet s-mono");
   page.act(() => button(said.copyPlaceBack).props.onClick());
   await page.settle();
   assert.ok(place().textContent.includes(said.copyMoveAsk(said.copyPlaceOwnName)), place().textContent);
@@ -1050,15 +1050,15 @@ export async function theCopyOfChatsMovesToAnotherFolderOnlyOnceAskedWhere() {
 export async function aCopyLaciCantReachIsNotMovedButANewOneCanStart() {
   const replies = { "backup/move": ({ dir }) => ({ dest: dir, moved: false }) };
   const s = scan();
-  const why = "The folder for the copy of AI chats isn't there: /mnt/archive/ai-chats. Connect its drive, or choose another folder for the copy.";
-  const snapshot = { ...s, backup: { ...s.backup, chosen: true, dest: "/mnt/archive/ai-chats", bytes: 1e9, packed: true, error: why } };
+  const why = "The folder for the copy of AI chats isn't there: /media/backup/ai-chats. Connect its drive, or choose another folder for the copy.";
+  const snapshot = { ...s, backup: { ...s.backup, chosen: true, dest: "/media/backup/ai-chats", bytes: 1e9, packed: true, error: why } };
   const page = helpersPage({ snapshot, replies });
   const place = () => page.find((n) => n.props["data-ui"] === "copy-place");
   const button = (words) => page.find((n) => n.type === "button" && n.textContent === words);
   // Why, in Simple's words, and where to choose another folder.
   assert.equal(
     page.find((n) => n.props["data-tone"] === "act").textContent,
-    words.engineWords.simple.copyMissing("/mnt/archive/ai-chats"),
+    words.engineWords.simple.copyMissing("/media/backup/ai-chats"),
   );
   const change = button(said.copyPlaceChange);
   assert.equal(change.props["aria-label"], said.copyPlaceChangeName);
@@ -1067,7 +1067,7 @@ export async function aCopyLaciCantReachIsNotMovedButANewOneCanStart() {
   await page.settle();
   // The question says no move happens, and takes the focus.
   const asked = place().textContent;
-  assert.ok(asked.includes(said.copyFreshAsk("/mnt/archive/ai-chats")), asked);
+  assert.ok(asked.includes(said.copyFreshAsk("/media/backup/ai-chats")), asked);
   assert.ok(asked.includes(said.copyFreshNote), asked);
   assert.ok(!asked.includes("1.0 GB"), "nothing is said to move");
   assert.equal(button(said.copyMove), undefined);
@@ -1083,12 +1083,12 @@ export async function aCopyLaciCantReachIsNotMovedButANewOneCanStart() {
   assert.ok(page.document.activeElement === button(words.blocks.cancel), "the focus stays on Cancel");
   // What it says is what a screen reader tells with the group.
   const told = page.find((n) => n.props.id === group.props["aria-describedby"]);
-  assert.ok(told.textContent.includes(said.copyFreshAsk("/mnt/archive/ai-chats")), told.textContent);
+  assert.ok(told.textContent.includes(said.copyFreshAsk("/media/backup/ai-chats")), told.textContent);
   assert.ok(told.textContent.includes(said.copyFreshNote), told.textContent);
   page.act(() => button(said.copyFresh).props.onClick());
   await page.settle();
-  assert.deepEqual(page.asked("backup/move").at(-1), ["backup/move", { dir: "/mnt/archive/ai-chats", fresh: true }]);
-  assert.deepEqual(page.toasts.at(-1), [said.copyKept("/mnt/archive/ai-chats"), said.copyFreshNote]);
+  assert.deepEqual(page.asked("backup/move").at(-1), ["backup/move", { dir: "/media/backup/ai-chats", fresh: true }]);
+  assert.deepEqual(page.toasts.at(-1), [said.copyKept("/media/backup/ai-chats"), said.copyFreshNote]);
   // Answered, the focus goes back to Change… once history is read again and Change… can take it.
   assert.equal(button(said.copyPlaceChange).props.disabled, true);
   // Compared as booleans: a failed compare of two elements would print the whole page.
@@ -1106,7 +1106,7 @@ export async function theSizeOfACopyIsSaidOnlyOnceItIsPacked() {
   const button = (words) => page.find((n) => n.type === "button" && n.textContent === words);
   page.act(() => button(said.copyPlaceChange).props.onClick());
   await page.settle();
-  assert.ok(place().textContent.includes(said.copyMovePlainAsk("/mnt/archive/ai-chats")), place().textContent);
+  assert.ok(place().textContent.includes(said.copyMovePlainAsk("/media/backup/ai-chats")), place().textContent);
   assert.ok(!place().textContent.includes("5.2 GB"));
   page.act(() => button(words.blocks.cancel).props.onClick());
   await page.settle();
@@ -1114,7 +1114,7 @@ export async function theSizeOfACopyIsSaidOnlyOnceItIsPacked() {
   await page.settle();
   page.act(() => button(said.copyPlaceChange).props.onClick());
   await page.settle();
-  assert.ok(place().textContent.includes(said.copyMoveAsk("/mnt/archive/ai-chats", "1.0 GB")), place().textContent);
+  assert.ok(place().textContent.includes(said.copyMoveAsk("/media/backup/ai-chats", "1.0 GB")), place().textContent);
 }
 
 export async function stillToDoItemsAreClosedInLaciNotInTheFile() {

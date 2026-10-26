@@ -39,7 +39,7 @@ export async function theSavedSettingsAreTheDraftToChange() {
   assert.equal(model.draftChanged(saved, model.draftOf(INFO)), false);
   // Each field counts; the order of folders and of tools doesn't.
   const changed = (patch) => model.draftChanged({ ...saved, ...patch }, saved);
-  assert.equal(changed({ archiveDir: "/mnt/archive" }), true);
+  assert.equal(changed({ archiveDir: "/media/backup" }), true);
   assert.equal(changed({ reportsDir: "" }), true);
   assert.equal(changed({ apps: { ...saved.apps, editor: "zed" } }), true);
   assert.equal(changed({ terminalTarget: "external" }), true);

@@ -54,6 +54,17 @@ jobs:
           fi
           echo "code=$code" | tee -a "$GITHUB_OUTPUT"
 
+  # Raster images only in docs/screenshots and src-tauri/icons (scripts/image-check.mjs). It runs for every pull
+  # request, including those that only change docs and skip the build jobs.
+  images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: node scripts/image-check.mjs
+
   linux:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -258,7 +269,7 @@ jobs:
   # The one check to require. List every job in needs, except window-smoke, which only reports and can take an hour.
   # A skipped job is fine; a failed or cancelled one is not.
   ci-ok:
-    needs: [changes, linux]
+    needs: [changes, images, linux]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

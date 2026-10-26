@@ -213,7 +213,7 @@ export interface ProjectsQuery {
 export interface ProjectSection {
   /** The nearest folder above the projects; null for projects that sit in no folder. */
   group: Node | null;
-  /** Where the group is below its scan root ("freelance / devstudio"); the root's own name for the root. */
+  /** Where the group is below its scan root ("freelance / acme"); the root's own name for the root. */
   label: string;
   projects: Node[];
 }

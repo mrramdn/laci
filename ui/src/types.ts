@@ -348,7 +348,7 @@ export interface Node {
   kind: "project" | "folder";
   type?: "code" | "docs";
   name: string;
-  /** Name that stays unambiguous in a flat list: `19sixtyfive/docs` instead of `docs`. */
+  /** Name that stays unambiguous in a flat list: `acme/docs` instead of `docs`. */
   label: string;
   path: string;
   parent?: string;

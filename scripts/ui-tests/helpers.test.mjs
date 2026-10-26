@@ -28,6 +28,6 @@ export async function homeBecomesATildeOnlyAtAFolderBoundary() {
     tilde("/home/demonic/project", "/home/demo"),
     "/home/demonic/project",
   );
-  assert.equal(tilde("/mnt/archive", "/home/demo"), "/mnt/archive");
+  assert.equal(tilde("/media/backup", "/home/demo"), "/media/backup");
   assert.equal(tilde(undefined, "/home/demo"), "");
 }

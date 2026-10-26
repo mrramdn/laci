@@ -859,13 +859,13 @@ mod tests {
         };
         assert_eq!(
             readme(
-                "# cloud\n\n[![ci](https://x/badge.svg)](https://x)\n\nSource for cloud.mrramdn.com, the infrastructure site of\n[the owner](https://mrramdn.com), built with Astro.\n\n- a list\n"
+                "# docs\n\n[![ci](https://x/badge.svg)](https://x)\n\nSource for docs.example.com, the documentation site of\n[the owner](https://example.com), built with Astro.\n\n- a list\n"
             ),
-            "Source for cloud.mrramdn.com, the infrastructure site of the owner, built with Astro."
+            "Source for docs.example.com, the documentation site of the owner, built with Astro."
         );
         assert_eq!(
-            readme("Frontend untuk site — creative agency &\nstudio.\n## Setup\nmore\n"),
-            "Frontend untuk site — creative agency & studio."
+            readme("Frontend untuk toko — katalog &\ncheckout.\n## Setup\nmore\n"),
+            "Frontend untuk toko — katalog & checkout."
         );
         assert_eq!(readme("# T\n\nFirst line\n- a list item\n"), "First line");
         let long = format!("{} When you move or archive a project, its history moves with it.", "word ".repeat(50));

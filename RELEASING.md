@@ -65,9 +65,17 @@ The example is `3.0.0-rc.1`. For a final version, use `3.0.0`.
 
 3. **Check the notices** if the lockfiles changed since the last release: `node scripts/notices.mjs --check`, or `pnpm notices` to write them again.
 
-4. **Open a pull request** with `Cargo.toml`, `Cargo.lock`, `package.json`, `ui/package.json`, `CHANGELOG.md` and any notices. Wait for CI. Optionally, run a dry run on the branch (`gh workflow run release.yml --ref release-3.0.0-rc.1`). Then merge it.
+4. **Look at every new image.** List the images added since the last tag, and open each one:
 
-5. **Tag `main`** at that merge, and push the tag:
+   ```sh
+   git diff --name-only --diff-filter=A v<last>..HEAD -- "*.png" "*.jpg" "*.jpeg" "*.webp" "*.gif"
+   ```
+
+   Screenshots come only from the demo home (`node scripts/demo.ts <dir>`, then `LACI_HOME=<dir> pnpm dev`), never from a real desktop. CI's `images` job (`scripts/image-check.mjs`) only checks where an image is, not what it shows.
+
+5. **Open a pull request** with `Cargo.toml`, `Cargo.lock`, `package.json`, `ui/package.json`, `CHANGELOG.md` and any notices. Wait for CI. Optionally, run a dry run on the branch (`gh workflow run release.yml --ref release-3.0.0-rc.1`). Then merge it.
+
+6. **Tag `main`** at that merge, and push the tag:
 
    ```sh
    git switch main && git pull --ff-only
@@ -75,14 +83,14 @@ The example is `3.0.0-rc.1`. For a final version, use `3.0.0`.
    git push origin v3.0.0-rc.1
    ```
 
-6. **Approve the environment.** Follow the run with `gh run watch`, or under Actions → Release. The checks and the build take about ten minutes. Then the sign job waits for **Review deployments → release → Approve and deploy**. Reject it if anything in the run looks wrong.
+7. **Approve the environment.** Follow the run with `gh run watch`, or under Actions → Release. The checks and the build take about ten minutes. Then the sign job waits for **Review deployments → release → Approve and deploy**. Reject it if anything in the run looks wrong.
 
-7. **Check the draft.**
+8. **Check the draft.**
    - Run `gh release view v3.0.0-rc.1`. It should be a draft holding 7 assets, and a pre-release if the version has a `-`.
    - Download the assets and verify them as in [Verify a download](#verify-a-download).
    - Start the AppImage once.
 
-8. **Publish** under Releases → the draft → Edit → Publish release:
+9. **Publish** under Releases → the draft → Edit → Publish release:
    - A release candidate stays a pre-release, and is never the latest release.
    - A final version on the newest line (from `main`) is published with "Set as the latest release" checked. From then on every installed final Laci finds it.
    - A final version from an older line's `release/*` branch, such as a 2.5.x fix after 3.0.0, is published with "Set as the latest release" **unchecked**. Checked, it would take over `releases/latest`, and every newer Laci would read its feed (or none), find nothing newer and say nothing. If it happens anyway, mark the newest release as the latest again: `gh release edit v<newest> --latest`.
@@ -106,7 +114,7 @@ Every release, final or candidate, carries a `latest.json` for its own assets. I
 
 - **A final version only ever sees final versions.** Release candidates are pre-releases, so `latest` never points at one. Laci also refuses a pre-release on a final version, whatever a feed says (`src-tauri/src/app/update.rs`). This guards against a release candidate marked as the latest release by mistake.
 - **A release candidate is offered the final version that follows it** (3.0.0 is newer than 3.0.0-rc.2). 3.0.0 is the first final version with a feed: 2.5.2 and older have no `latest.json`, so while one of them was the latest release the feed answered 404, and Laci said nothing.
-- **The latest release is the newest line's.** A fix for an older line, published from a `release/*` branch, must not be marked as the latest (step 8). Installed copies would read its feed, which is older or missing, so none would be offered an update until the newest release is marked as the latest again, and nothing would show an error.
+- **The latest release is the newest line's.** A fix for an older line, published from a `release/*` branch, must not be marked as the latest (step 9). Installed copies would read its feed, which is older or missing, so none would be offered an update until the newest release is marked as the latest again, and nothing would show an error.
 - **The deb and rpm of a release candidate rank above the final version.** Tauri writes the version as it is, and both dpkg and rpm sort `3.0.0-rc.2` after `3.0.0` (dpkg reads `rc.2` as a Debian revision; rpm counts it as more segments). To both, installing 3.0.0 over a candidate is a downgrade: apt asks first (and `apt-get install -y` refuses it without `--allow-downgrades`), and dnf lists it under Downgrading. Testers of a deb or rpm candidate remove it first (`sudo apt remove laci` or `sudo dnf remove laci`; settings and data stay), then install the final version. A release candidate's notes say so. Candidates among themselves (rc.1 to rc.2) and the AppImage are not affected.
 - **A release candidate is not offered the next candidate by itself.** A tester points it at the next candidate's feed with `LACI_UPDATE_ENDPOINT`, which must be an https address. Everything after that is the real update path:
   1. The feed is read the same way.

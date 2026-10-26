@@ -613,10 +613,10 @@ const FORMS = [
   [{ form: "copyEveryProject" }, "Laci now copies the chats of every project"],
   [{ form: "restoredChat", ai: "Claude Code" }, "Put back a Claude Code chat from Laci’s copy"],
   [{ form: "restoredChat" }, "Put back a chat from Laci’s copy"],
-  [{ form: "movedCopy", dir: "/mnt/archive/ai-chats" }, "Moved the copy of AI chats to /mnt/archive/ai-chats"],
+  [{ form: "movedCopy", dir: "/media/backup/ai-chats" }, "Moved the copy of AI chats to /media/backup/ai-chats"],
   // Laci's own folder is said by its name, not by its path.
   [{ form: "movedCopy", dir: "~/.local/share/laci/history", own: true }, "Moved the copy of AI chats to Laci’s own folder"],
-  [{ form: "keptCopyIn", dir: "/mnt/archive/ai-chats" }, "Laci keeps the copy of AI chats in /mnt/archive/ai-chats from now on"],
+  [{ form: "keptCopyIn", dir: "/media/backup/ai-chats" }, "Laci keeps the copy of AI chats in /media/backup/ai-chats from now on"],
   [
     { form: "keptCopyIn", dir: "~/.local/share/laci/history", own: true },
     "Laci keeps the copy of AI chats in its own folder from now on",

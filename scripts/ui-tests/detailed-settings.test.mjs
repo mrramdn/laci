@@ -290,11 +290,11 @@ export async function theHistoryBackupMovesOnlyOnceSettingsHasAskedWhere() {
   assert.equal(p.find((n) => n.type === "button" && n.textContent === said.backupFolderDefaultButton), undefined);
   const move = () => p.find((n) => n.type === "button" && n.textContent === said.backupMove);
   const question = () => p.find((n) => n.props.role === "group" && n.props["aria-label"] === said.backupMove);
-  p.box.picked = "/mnt/archive/ai-chats";
+  p.box.picked = "/media/backup/ai-chats";
   p.act(() => change.props.onClick());
   assert.deepEqual(p.asked("backup/move"), [], "a pick only asks");
   const asked = question().textContent;
-  assert.ok(asked.includes(said.backupMoveAsk("/mnt/archive/ai-chats")), asked);
+  assert.ok(asked.includes(said.backupMoveAsk("/media/backup/ai-chats")), asked);
   assert.ok(asked.includes(said.backupMoveNote), asked);
   // Refused, as for a folder that holds files: the reason shows beside the question, which stays.
   const why = "That folder already holds files. Choose an empty folder, or one that holds a copy Laci made.";
@@ -306,28 +306,28 @@ export async function theHistoryBackupMovesOnlyOnceSettingsHasAskedWhere() {
   delete p.desk.refuse["backup/move"];
   p.act(() => move().props.onClick());
   await p.done();
-  assert.deepEqual(p.asked("backup/move").at(-1), ["backup/move", { dir: "/mnt/archive/ai-chats" }]);
+  assert.deepEqual(p.asked("backup/move").at(-1), ["backup/move", { dir: "/media/backup/ai-chats" }]);
   assert.equal(question(), undefined, "moved, the question goes");
-  assert.deepEqual(p.toasts.at(-1), [said.backupMoved("/mnt/archive/ai-chats"), said.backupMoveNote]);
+  assert.deepEqual(p.toasts.at(-1), [said.backupMoved("/media/backup/ai-chats"), said.backupMoveNote]);
 }
 
 export async function aHistoryBackupLaciCantReachIsNotMovedButANewOneCanStart() {
   const p = await settingsPage();
   const why =
-    "The folder for the copy of AI chats isn't there: /mnt/archive/ai-chats. Connect its drive, or choose another folder for the copy.";
+    "The folder for the copy of AI chats isn't there: /media/backup/ai-chats. Connect its drive, or choose another folder for the copy.";
   const snapshot = structuredClone(fixtures.snapshot);
-  snapshot.backup = { ...snapshot.backup, chosen: true, dest: "/mnt/archive/ai-chats", bytes: 1e9, packed: true, error: why };
+  snapshot.backup = { ...snapshot.backup, chosen: true, dest: "/media/backup/ai-chats", bytes: 1e9, packed: true, error: why };
   p.app.setState({ snapshot });
   await p.settle();
   const row = () => p.find((n) => n.props["data-ui"] === "backup-folder");
   // Why, in Detailed's words, and where to choose another folder.
   assert.equal(
     row().descendants().find((n) => n.props.role === "alert").textContent,
-    words.engineWords.detailed.copyMissing("/mnt/archive/ai-chats"),
+    words.engineWords.detailed.copyMissing("/media/backup/ai-chats"),
   );
   // The folder is a labelled output, not a span a screen reader skips the name of.
   const shown = row().descendants().find((n) => n.type === "output");
-  assert.equal(shown.textContent, "/mnt/archive/ai-chats");
+  assert.equal(shown.textContent, "/media/backup/ai-chats");
   assert.equal(p.find((n) => n.props.id === shown.props["aria-labelledby"]).textContent, said.backupFolder);
   p.box.picked = `${HOME}/ai-chats`;
   p.act(() => picker(p, said.backupFolderTitle).props.onClick());

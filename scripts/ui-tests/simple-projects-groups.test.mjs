@@ -45,7 +45,7 @@ const sectionsOf = (snapshot, more) =>
 /** The demo home with two groups inside `clients/`, one inside the other. */
 function nested() {
   const s = scan();
-  const dev = `${ROOT}/clients/devstudio`;
+  const dev = `${ROOT}/clients/acme`;
   add(s, dev, "folder", { parent: `${ROOT}/clients` });
   add(s, `${dev}/portal`, "project", { parent: dev });
   add(s, `${dev}/apps`, "folder", { parent: dev });
@@ -76,8 +76,8 @@ export async function everyProjectIsInTheSectionOfItsFolder() {
 export async function aNestedFolderIsASectionNamedByItsPathBelowTheRoot() {
   assert.deepEqual(sectionsOf(nested(), { sort: "name" }), [
     ["clients", ["acme-store", "kopi-landing"]],
-    ["clients / devstudio", ["portal"]],
-    ["clients / devstudio / apps", ["mobile"]],
+    ["clients / acme", ["portal"]],
+    ["clients / acme / apps", ["mobile"]],
     ["project", ["infra-notes"]],
     ["side", ["dotfiles", "habit-app"]],
     ["thesis", ["campus-lms"]],
@@ -189,16 +189,16 @@ export async function theFolderFilterNarrowsTheSections() {
   // A folder shows itself and what is inside it, each folder as a section of its own.
   assert.deepEqual(sectionsOf(s, { folder: `${ROOT}/clients`, sort: "name" }), [
     ["clients", ["acme-store", "kopi-landing"]],
-    ["clients / devstudio", ["portal"]],
-    ["clients / devstudio / apps", ["mobile"]],
+    ["clients / acme", ["portal"]],
+    ["clients / acme / apps", ["mobile"]],
   ]);
-  assert.deepEqual(sectionsOf(s, { folder: `${ROOT}/clients/devstudio/apps` }), [
-    ["clients / devstudio / apps", ["mobile"]],
+  assert.deepEqual(sectionsOf(s, { folder: `${ROOT}/clients/acme/apps` }), [
+    ["clients / acme / apps", ["mobile"]],
   ]);
   assert.deepEqual(sectionsOf(s, { folder: `${ROOT}/side` }), [["side", ["dotfiles", "habit-app"]]]);
   // The folder with the search.
   assert.deepEqual(sectionsOf(s, { folder: `${ROOT}/clients`, query: "portal" }), [
-    ["clients / devstudio", ["portal"]],
+    ["clients / acme", ["portal"]],
   ]);
   assert.deepEqual(sectionsOf(s, { folder: `${ROOT}/side`, query: "coffee" }), []);
   // The root as the folder shows every section, the same as no folder.

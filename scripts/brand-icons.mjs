@@ -1,14 +1,16 @@
 // Laci's mark from one description: the glyph on a 1024 grid, its plates, pixel maps for small sizes, the
-// symbolic glyph and the lockups. Writes the SVG sources in docs/brand/src; renders on request.
+// symbolic glyph, the lockups and the social preview. Writes the SVG sources in docs/brand/src; renders on request.
 //   node scripts/brand-icons.mjs                  SVG sources only
 //   node scripts/brand-icons.mjs --icons DIR      also the app icon set (PNG, SVG) into DIR
 //   node scripts/brand-icons.mjs --sheet FILE     also a review sheet (PNG)
-//   node scripts/brand-icons.mjs --font TTF       outline the wordmark again from Plus Jakarta Sans Bold
+//   node scripts/brand-icons.mjs --social FILE    also the social preview (PNG, 1280x640), outside the repository
+//   node scripts/brand-icons.mjs --font TTF       outline the wordmark and the tagline again from Plus Jakarta Sans Bold
 // Rendering needs resvg and ImageMagick (magick); --font needs usvg.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -124,21 +126,41 @@ for (const [size, spec] of Object.entries(PIXEL)) masters[`laci-${size}.svg`] = 
 // The wordmark: lowercase "laci" in Plus Jakarta Sans Bold, −0.02 em, as outlines. At font size 1000 the
 // "l" runs from y 243 to the baseline at 1000, and the word from x 61, 1511 wide.
 const wordmarkFile = path.join(src, "laci-wordmark.svg");
+// The social preview's tagline, from the repository's description, in the same font. laci-social.svg keeps its
+// outline at font size 1000, centred on x 0 with the baseline on y 0; --font draws it again.
+const TAGLINE = "Project-aware file manager";
+const socialFile = path.join(src, "laci-social.svg");
+const xml = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+let tagline = null;
 const font = option("--font");
 if (font) {
   const dir = mkdtempSync(path.join(tmpdir(), "laci-wordmark-"));
-  writeFileSync(
-    path.join(dir, "text.svg"),
-    svg("0 0 3000 1400", `<text x="0" y="1000" font-family="Plus Jakarta Sans" font-weight="700" font-size="1000" letter-spacing="-20" fill="${LIGHT.frame}">laci</text>`),
-  );
-  run("usvg", ["--use-font-file", font, "--skip-system-fonts", path.join(dir, "text.svg"), path.join(dir, "out.svg")]);
-  const d = readFileSync(path.join(dir, "out.svg"), "utf8").match(/ d="([^"]+)"/)?.[1];
-  assert.ok(d, "usvg wrote no outline");
+  const outline = (text, attributes) => {
+    writeFileSync(
+      path.join(dir, "text.svg"),
+      svg("0 0 3000 1400", `<text ${attributes} font-family="Plus Jakarta Sans" font-weight="700" font-size="1000" fill="${LIGHT.frame}">${xml(text)}</text>`),
+    );
+    run("usvg", ["--use-font-file", font, "--skip-system-fonts", path.join(dir, "text.svg"), path.join(dir, "out.svg")]);
+    const d = readFileSync(path.join(dir, "out.svg"), "utf8").match(/ d="([^"]+)"/)?.[1];
+    assert.ok(d, `usvg wrote no outline for "${text}"`);
+    return d;
+  };
+  const d = outline("laci", `x="0" y="1000" letter-spacing="-20"`);
   writeFileSync(wordmarkFile, svg("40 220 1560 820", `<path fill="${LIGHT.frame}" d="${d}"/>`));
+  tagline = outline(TAGLINE, `x="0" y="0" text-anchor="middle"`);
   rmSync(dir, { recursive: true });
 }
 const word = readFileSync(wordmarkFile, "utf8").match(/ d="([^"]+)"/)?.[1];
 assert.ok(word, `Missing wordmark outline in ${wordmarkFile}`);
+if (!tagline) {
+  const kept = existsSync(socialFile)
+    ? readFileSync(socialFile, "utf8").match(/<path id="tagline" aria-label="([^"]*)"[^>]* d="([^"]+)"/)
+    : null;
+  const again = "outline it again with --font PlusJakartaSans-Bold.ttf";
+  assert.ok(kept, `Missing the tagline's outline in ${socialFile}; ${again}`);
+  assert.equal(kept[1], xml(TAGLINE), `The outline in ${socialFile} isn't the tagline "${TAGLINE}"; ${again}`);
+  tagline = kept[2];
+}
 
 // Lockup: the tight mark at height H; the "l" is 0.70 H tall and sits on the drawer's bottom edge (0.77 H);
 // the gap and the clear space around it are 0.25 H.
@@ -158,6 +180,46 @@ function lockup(ink) {
 }
 masters["laci-lockup.svg"] = lockup(LIGHT.frame);
 masters["laci-lockup-dark.svg"] = lockup(LIGHT.folder);
+
+// GitHub's social preview (Settings > Social preview), 1280x640: the lockup over the tagline, on santan. Some
+// places crop the edges, so everything stays inside the centred 1200x600 safe area. The lockup keeps its
+// proportions at a 304 px mark; the tagline is 52 px in Simple's link colour (7.8:1 on santan) and keeps the
+// lockup's clear space above it; what is drawn is centred both ways.
+function socialPreview() {
+  const [width, height, safeWidth, safeHeight] = [1280, 640, 1200, 600];
+  const [H, size, link] = [304, 52, "#6B4423"];
+  const scale = (0.7 * H) / 757;
+  const inset = (32 / 1024) * H; // the plate inside the mark's square
+  // The tagline's extent: usvg writes absolute M, L, Q and C commands, so the numbers come in x y pairs.
+  const numbers = tagline.match(/-?[\d.]+/g).map((n) => (Number(n) * size) / 1000);
+  const xs = numbers.filter((_, i) => i % 2 === 0);
+  const ys = numbers.filter((_, i) => i % 2 === 1);
+  const x = (width - (1.25 * H + 1511 * scale - inset)) / 2 - inset;
+  const y = (height - (1.25 * H - inset + Math.max(...ys) - Math.min(...ys))) / 2 - inset;
+  const baseline = y + 1.25 * H - Math.min(...ys);
+  // What is drawn: the plate's left and top edges, the wordmark's right edge, the tagline's ends and descenders.
+  const left = Math.min(x + inset, width / 2 + Math.min(...xs));
+  const right = Math.max(x + 1.25 * H + 1511 * scale, width / 2 + Math.max(...xs));
+  const [top, bottom] = [y + inset, baseline + Math.max(...ys)];
+  const [marginX, marginY] = [(width - safeWidth) / 2, (height - safeHeight) / 2];
+  assert.ok(
+    left >= marginX && right <= width - marginX && top >= marginY && bottom <= height - marginY,
+    `The social preview leaves its ${safeWidth}x${safeHeight} safe area; shorten the tagline`,
+  );
+  const mark = masters["laci-icon-tight.svg"].replace(/^<svg[^>]*>/, "").replace(/<\/svg>\s*$/, "");
+  const wx = x + 1.25 * H - 61 * scale;
+  const wy = y + 0.77 * H - 1000 * scale;
+  return svg(
+    `0 0 ${width} ${height}`,
+    `<!-- GitHub's social preview, ${width}x${height}. Some places crop the edges, so everything stays inside the centred ` +
+      `${safeWidth}x${safeHeight} safe area: x ${marginX} to ${width - marginX}, y ${marginY} to ${height - marginY}. -->` +
+      `<rect width="${width}" height="${height}" fill="${LIGHT.folder}"/>` +
+      `<svg x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${H}" height="${H}" viewBox="0 0 1024 1024">${mark}</svg>` +
+      `<path fill="${LIGHT.frame}" transform="translate(${wx.toFixed(2)} ${wy.toFixed(2)}) scale(${scale.toFixed(5)})" d="${word}"/>` +
+      `<path id="tagline" aria-label="${xml(TAGLINE)}" fill="${link}" transform="translate(${width / 2} ${baseline.toFixed(2)}) scale(${size / 1000})" d="${tagline}"/>`,
+  );
+}
+masters["laci-social.svg"] = socialPreview();
 
 mkdirSync(src, { recursive: true });
 for (const [name, text] of Object.entries(masters)) writeFileSync(path.join(src, name), text);
@@ -227,5 +289,19 @@ if (sheet) {
   }
   run("magick", [...rows, "-background", "#FBF8F3", "-gravity", "west", "-append", sheet]);
   console.log(`Review sheet: ${sheet}`);
+}
+
+// The social preview as a PNG, for GitHub's Settings > Social preview. Only outside the repository:
+// scripts/image-check.mjs refuses raster images outside docs/screenshots and src-tauri/icons.
+const socialPng = option("--social");
+if (socialPng) {
+  const relative = path.relative(root, socialPng);
+  assert.ok(
+    relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative),
+    `--social ${socialPng} is inside the repository; write the PNG outside it`,
+  );
+  mkdirSync(path.dirname(socialPng), { recursive: true });
+  run("resvg", ["-w", "1280", "-h", "640", socialFile, socialPng]);
+  console.log(`Social preview: ${socialPng}`);
 }
 rmSync(temp, { recursive: true });

@@ -2,3 +2,6 @@ packages:
   - ui
 allowBuilds:
   esbuild: true
+overrides:
+  # typescript-eslint 8.72 still asks for minimatch ^10, and GHSA-g3hv-75wg-m249 is fixed only in 11.0.1
+  '@typescript-eslint/typescript-estree>minimatch': ^11.0.1

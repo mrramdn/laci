@@ -25,7 +25,8 @@ import type {
   TerminalInfo,
 } from "../types";
 import { copyProjects, copyTree } from "../selectors";
-import { count } from "../words";
+import { isArchivedGroup, tilde, within } from "../helpers";
+import { count, unlinkStep } from "../words";
 import raw from "./fixtures.json";
 
 type Body = Record<string, unknown>;
@@ -140,8 +141,12 @@ function record(
   return entry;
 }
 /** The answer to a journaled change: its toast can undo it, as well as the Log. */
-function changed(title: string, undo: () => void = () => {}): Change {
-  const entry = record(title, undo);
+function changed(
+  title: string,
+  undo: () => void = () => {},
+  extra: Partial<LogEntry> = {},
+): Change {
+  const entry = record(title, undo, extra);
   entry.journal = entry.id;
   return {
     revision: ++revision,
@@ -288,38 +293,88 @@ function archive(body: Body): Change {
   Object.assign(n, now);
   return changed(`Archived ${n.name}`, () => void Object.assign(n, was));
 }
-/** Takes a project out of the archive. The preview moves no folder: it clears the mark in place. */
+/**
+ * Takes a project, or an archived group with everything in it, out of the archive. The preview moves
+ * no folder: it clears the marks in place. Its Log entry has the steps the engine's would, the old
+ * link it removed at the origin among them.
+ */
 function restore(body: Body): Change {
   const n = node(text(body, "id"));
   if (!n.archived) fail("This project isn't archived");
-  const was = {
-    archived: n.archived,
-    inArchive: n.inArchive,
-    status: { ...n.status },
-    meta: { ...n.meta },
-    restorePlan: n.restorePlan,
-  };
-  const meta = { ...n.meta };
-  delete meta.status;
-  delete meta.archivedFrom;
-  delete meta.archivedAt;
-  Object.assign(n, {
-    archived: false,
-    inArchive: false,
-    status: { value: "idle", auto: true },
-    meta,
-    restorePlan: undefined,
-  });
-  return changed(`Restore ${n.name}`, () => void Object.assign(n, was));
+  const destination = text(body, "destination");
+  const plan =
+    destination && n.inArchive && n.restorePlan
+      ? restoreTo(n, n.restorePlan, destination)
+      : n.restorePlan;
+  if (plan?.error) fail(plan.error);
+  // Its folder moves only from the archive; one only marked archived stays where it is.
+  const moves = n.inArchive;
+  // An archived group goes back whole: what it holds leaves the archive with it.
+  const moved = isArchivedGroup(n)
+    ? Object.values(snapshot.nodes).filter((o) => within(o.path, n.path))
+    : [n];
+  const was = moved.map((o) => ({
+    o,
+    fields: {
+      archived: o.archived,
+      inArchive: o.inArchive,
+      status: { ...o.status },
+      meta: { ...o.meta },
+      restorePlan: o.restorePlan,
+    },
+  }));
+  for (const o of moved) {
+    const meta = { ...o.meta };
+    if (o === n) {
+      delete meta.status;
+      delete meta.archivedFrom;
+      delete meta.archivedAt;
+    }
+    Object.assign(o, {
+      archived: false,
+      inArchive: false,
+      status: { value: "idle", auto: true },
+      meta,
+      restorePlan: undefined,
+    });
+  }
+  const home = fixtures.meta.home;
+  const to = tilde(plan?.dest ?? n.path, home);
+  const steps: Op[] = [
+    ...(plan?.ops ?? [])
+      .filter((op) => op.kind === "unlink")
+      .map((op) => ({ ...op, label: unlinkStep.done })),
+    ...(moves
+      ? [{ kind: "move" as const, label: "Moved", from: tilde(n.path, home), to }]
+      : []),
+    { kind: "write", label: "Edited .laci.md", from: to },
+  ];
+  return changed(
+    `Restore ${n.name}`,
+    () => {
+      for (const { o, fields } of was) Object.assign(o, fields);
+    },
+    { steps },
+  );
 }
 /**
  * The plan for putting `n` back at `destination`, as the engine checks it: not where something is,
- * not inside the archive or the project, and inside the home folder. The steps go to that place.
+ * not inside the archive or the project, not through a link into the archive, and inside the home
+ * folder. The steps go to that place; the old link at the origin is removed only for the origin.
  */
 function restoreTo(n: Node, plan: ArchivePlan, destination: string): ArchivePlan {
   const home = fixtures.meta.home;
   const short = (path: string) =>
     path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+  // The old places that are links to their archived group, by the group's restore plan.
+  const links = Object.values(snapshot.nodes).flatMap((g) =>
+    isArchivedGroup(g) && g.restorePlan?.dest && g.restorePlan.ops.some((op) => op.kind === "unlink")
+      ? [{ group: g, link: g.restorePlan.dest }]
+      : [],
+  );
+  const through = links.find(
+    ({ link }) => destination !== link && within(destination, link),
+  );
   const cant = (reason: ArchivePlan["reason"], error: string): ArchivePlan => ({
     error,
     reason,
@@ -332,7 +387,14 @@ function restoreTo(n: Node, plan: ArchivePlan, destination: string): ArchivePlan
     path === dir || path.startsWith(`${dir}/`);
   if (!inside(destination, home))
     return cant("outside", "Path must be inside your home folder");
-  if (snapshot.nodes[destination])
+  if (through)
+    return cant(
+      "linked",
+      `${short(through.link)} is a link into the archive. Restore the whole group ${through.group.name}, or remove that link first.`,
+    );
+  // The old link is free only for the group it points at.
+  const link = links.find((l) => l.link === destination);
+  if (snapshot.nodes[destination] || (link && link.group !== n))
     return cant(
       "occupied",
       `Something is already at ${short(destination)}. Choose another place.`,
@@ -348,11 +410,17 @@ function restoreTo(n: Node, plan: ArchivePlan, destination: string): ArchivePlan
   const from = plan.dest ? short(plan.dest) : "";
   const to = short(destination);
   const ops: Op[] = plan.ops.length
-    ? plan.ops.map((op) =>
-        op.to && from && (op.to === from || op.to.startsWith(`${from}/`))
-          ? { ...op, to: to + op.to.slice(from.length) }
-          : op,
-      )
+    ? plan.ops
+        // The old link is at the origin: another place leaves it where it is.
+        .filter((op) => op.kind !== "unlink" || destination === plan.dest)
+        .map((op) =>
+          op.kind !== "unlink" &&
+          op.to &&
+          from &&
+          (op.to === from || op.to.startsWith(`${from}/`))
+            ? { ...op, to: to + op.to.slice(from.length) }
+            : op,
+        )
     : [
         { kind: "move", label: "Move folder", from: short(n.path), to },
         { kind: "write", label: "Clear status: archived", to: `${to}/.laci.md` },

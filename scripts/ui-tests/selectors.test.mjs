@@ -238,7 +238,8 @@ export async function placesCountTheProjectsInEachFolder() {
   }
   for (const path of paths)
     assert.equal(count(path), treeRowCount(snapshot, path), path);
-  assert.equal(count(ROOT), 8);
+  assert.equal(count(ROOT), 10);
+  assert.equal(count(`${ROOT}/_archive/old-clients`), 2);
   assert.equal(count(`${ROOT}/clients`), 2);
   // The same function again, which has kept what it counted.
   assert.equal(selectors.placesCounts(snapshot), count);
@@ -955,6 +956,8 @@ export async function homeOnTheDemoHome() {
     "dotfiles: unpushed",
     "campus-lms: unpushed",
     "old-portfolio: unpushed",
+    "batik-shop: unpushed",
+    "warung-pos: unpushed",
   ]);
   assert.deepEqual(home.needsYou.map(brief), home.needs.slice(1, 4).map(brief));
   assert.deepEqual(
@@ -1080,6 +1083,9 @@ export async function theCopyTreeNestsFoldersUnderTheirParentWithTheChatsOfEach(
     [
       [0, "project", 2, 7, true],
       [1, "_archive", 0, 0, true],
+      [2, "old-clients", 0, 0, true],
+      [3, "batik-shop", 0, 0, false],
+      [3, "warung-pos", 0, 0, false],
       [2, "old-portfolio", 0, 0, false],
       [1, "clients", 0, 3, true],
       [2, "acme-store", 1, 1, false],

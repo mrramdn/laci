@@ -325,6 +325,15 @@ try {
   assert.equal(restorePlan.destination, project);
   assert.ok(restorePlan.plan.some(op => op.kind === 'rename'));
   assert.equal(await exists(project), false);
+  // Something at the origin: the preview says why and where, and confirming changes nothing.
+  await mkdir(project);
+  const occupied = await client.call('restore_project', { project: archivePlan.destination });
+  assert.equal(occupied.reason, 'occupied');
+  assert.equal(occupied.destination, project);
+  assert.deepEqual(occupied.plan, []);
+  await client.rejects('restore_project', { project: archivePlan.destination, confirm: true }, /already at/i);
+  assert.equal(await exists(archivePlan.destination), true);
+  await rm(project, { recursive: true });
   const restored = await client.call('restore_project', { project: archivePlan.destination, confirm: true });
   assert.equal(await exists(project), true);
   assert.equal(await exists(archivePlan.destination), false);

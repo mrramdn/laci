@@ -402,12 +402,25 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             }
             let id = string(&n, "id");
             let plan = service.request("restore/plan", &json!({"id":id,"destination":args["destination"]}))?;
+            if let Some(error) = plan["error"].as_str() {
+                if args["confirm"] == true {
+                    return Err(error.into());
+                }
+                // Why it can't go back, and where Laci would have put it when it knows, so a destination can be chosen.
+                let mut refused = json!({"error":error,"reason":plan["reason"],"plan":[],"checks":[],"hint":"Nothing has changed. Ask the user where to put it back and call again with that destination."});
+                if plan["dest"].is_string() {
+                    refused["destination"] = plan["dest"].clone();
+                }
+                return Ok(refused);
+            }
             if args["confirm"] != true {
                 return Ok(
                     json!({"plan":plan["ops"],"destination":plan["dest"],"checks":plan["checks"],"hint":"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}),
                 );
             }
-            service.request_as("restore", &json!({"id":id,"destination":plan["dest"]}), "agent")
+            // One archived by its status only stays where it is, so it takes no destination.
+            let destination = if n["inArchive"] == true { plan["dest"].clone() } else { Value::Null };
+            service.request_as("restore", &json!({"id":id,"destination":destination}), "agent")
         }
         "set_project_fields" => {
             if let Some(deadline) = args["deadline"].as_str()

@@ -410,8 +410,10 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                 if args["confirm"] == true {
                     return Err(error.into());
                 }
-                let hint = if plan["reason"] == "linked" {
-                    "Nothing has changed. Its group is linked back from the archive: offer to restore that whole group with restore_project, or ask the user to remove the link first."
+                let hint = if plan["reason"] == "linked" && plan["group"].is_string() {
+                    "Nothing has changed. Its group is linked back from the archive: offer to restore that whole group with restore_project, project: group, or ask the user to remove the link first."
+                } else if plan["reason"] == "linked" {
+                    "Nothing has changed. Its folder is linked back from the archive and isn't an archived group: ask the user to remove the link first, or to mark that folder status: archived so it goes back whole."
                 } else {
                     "Nothing has changed. Ask the user where to put it back and call again with that destination."
                 };
@@ -419,6 +421,10 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                 let mut refused = json!({"error":error,"reason":plan["reason"],"plan":[],"checks":[],"hint":hint});
                 if plan["dest"].is_string() {
                     refused["destination"] = plan["dest"].clone();
+                }
+                // The archived group to restore instead, as restore_project takes it.
+                if plan["group"].is_string() {
+                    refused["group"] = plan["group"].clone();
                 }
                 return Ok(refused);
             }
@@ -1157,7 +1163,7 @@ fn tools() -> Vec<Tool> {
         ),
         (
             "restore_project",
-            "Put an archived project back where it came from (or at destination) with its agent history; requires confirm after preview. An archived group (a folder in the archive whose .laci.md says status: archived) goes back whole, with every project in it. A link left where it was, leading to it in the archive, is removed first; a project inside a group that is linked back that way can't go back alone (reason linked)",
+            "Put an archived project back where it came from (or at destination) with its agent history; requires confirm after preview. An archived group (a folder in the archive whose .laci.md says status: archived) goes back whole, with every project in it. A link left where it was, leading to it in the archive, is removed first; a project inside a group that is linked back that way can't go back alone (reason linked; group then names the archived group to restore instead, when the link leads to one)",
             json!({"project":project,"destination":text,"confirm":boolean}),
             vec!["project"],
         ),

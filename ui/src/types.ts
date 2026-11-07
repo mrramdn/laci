@@ -322,6 +322,16 @@ export interface ArchivePlan {
   dest?: string;
   error?: string;
   reason?: PlanReason;
+  /**
+   * With reason "linked": where the archived group is that the link leads to, in the archive. Restoring
+   * that group puts the project back with it. Missing when the scan lists no such group: the link has to be
+   * removed first.
+   */
+  group?: string;
+  /**
+   * What could be lost, as for the project's own checks. A group's plan gathers those of the projects in
+   * it, each one naming its project.
+   */
   checks: Issue[];
   ops: Op[];
 }
@@ -411,10 +421,18 @@ export interface Node {
   agents: Agents;
   size?: Size;
   issues: Issue[];
+  /**
+   * What archiving it does. A folder has one when it can be archived as a group: it holds a project, isn't
+   * archived, and isn't a scan location, the home folder, or a folder that holds the archive folder or the copy of
+   * AI chats. The group goes whole, with the agent history of every project in it.
+   */
   archivePlan?: ArchivePlan;
+  /** For a folder: how many projects it holds, at any depth. */
+  projectCount?: number;
   /**
    * What putting an archived project back does: where it goes, or why Laci can't tell. A folder has
-   * one only when it is an archived group: in the archive, with its own `.laci.md` saying archived.
+   * one when it is an archived group (in the archive, with its own `.laci.md` saying archived), or when
+   * its `.laci.md` says archived but it never moved: then the plan clears that status in place.
    */
   restorePlan?: ArchivePlan;
 }

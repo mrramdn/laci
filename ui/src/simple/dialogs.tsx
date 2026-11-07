@@ -9,9 +9,10 @@ import type { Dispatch, Ref, SetStateAction } from "react";
 import { api, errorText } from "../api";
 import { restoreFocus } from "../common";
 import {
-  archivedGroupOf,
   bytes,
   expandHome,
+  groupOfPlan,
+  groupSize,
   isAbsolutePath,
   isArchivedGroup,
   placeAfterRestore,
@@ -95,18 +96,29 @@ function ProjectSheet({ kind, node }: { kind: Kind; node: Node }) {
   const body = { node, stage, setStage, opener };
   // An archived group goes back whole, with every project in it.
   const group = kind === "restore" && isArchivedGroup(node);
+  // A folder of projects goes to the archive whole, with every project in it.
+  const nodes = useApp((s) => s.snapshot!.nodes);
+  const whole = kind === "archive" && node.kind === "folder";
   return (
     <Sheet
-      title={group ? said.restore.titleGroup(node.label) : said[kind].title(node.label)}
+      title={
+        group
+          ? said.restore.titleGroup(node.label)
+          : whole
+            ? said.archive.titleGroup(node.label)
+            : said[kind].title(node.label)
+      }
       // A project in the archive already has no Archive instead to recommend.
       description={
         kind === "delete" && node.archived
           ? said.delete.introArchived
           : group
             ? said.restore.introGroup
-            : kind === "restore" && !node.inArchive
-              ? said.restore.introInPlace
-              : said[kind].intro
+            : whole
+              ? said.archive.introGroup(groupSize(nodes, node))
+              : kind === "restore" && !node.inArchive
+                ? said.restore.introInPlace
+                : said[kind].intro
       }
       onClose={close}
       // While a Countdown runs, its own Cancel is the one to use.
@@ -377,9 +389,11 @@ function leave(id: string) {
  * Archive: what the engine's plan and the project's own checks say about its safety, then the way
  * on. A project that isn't safe gets "Back up first" (the fix sheet for its worst problem) as the
  * filled button, and "Archive anyway" beside it. Where it goes can be changed under Show details,
- * as in Detailed.
+ * as in Detailed. A folder of projects (a group) goes whole: the plan's checks gather those of its
+ * projects, each naming its project, and each is fixed on its project's own page.
  */
 function ArchiveBody({ node, stage, setStage, opener }: Body) {
+  const group = node.kind === "folder";
   const home = useApp((s) => s.snapshot!.home);
   const historyPending = useApp((s) => s.historyPending);
   const [destination, setDestination] = useState(() =>
@@ -446,16 +460,21 @@ function ArchiveBody({ node, stage, setStage, opener }: Body) {
   const checks = (plan ?? last)?.checks;
   // The plan's checks, and the problems of the project's own that the plan leaves out (out of
   // sync, no version history): what its "Is it safe?" card warns about is never called safe here.
-  const issues = checks && [
-    ...checks,
-    ...node.issues.filter(
-      (issue) => RISK.has(issue.code) && !checks.some((check) => check.code === issue.code),
-    ),
-  ];
+  const issues =
+    checks &&
+    (group
+      ? checks
+      : [
+          ...checks,
+          ...node.issues.filter(
+            (issue) => RISK.has(issue.code) && !checks.some((check) => check.code === issue.code),
+          ),
+        ]);
   // A warning the user hid doesn't hold the archive up; Show details lists it.
   const warnings = (issues ?? []).filter((issue) => !issue.muted).sort(worstFirst);
   const hidden = (issues ?? []).filter((issue) => issue.muted);
-  const first = warnings.find((issue) => fixable(issue.code));
+  // A group's problems are its projects': there is no one fix sheet for them here.
+  const first = group ? undefined : warnings.find((issue) => fixable(issue.code));
   const problem = failure || current?.error || "";
   const remote = node.git?.remotes[0];
   // The focus goes on to the filled button once the plan has drawn one, if it is still where the
@@ -533,13 +552,22 @@ function ArchiveBody({ node, stage, setStage, opener }: Body) {
         {!checks ? (
           problem ? null : <Working text={said.archive.checking} status />
         ) : warnings.length ? (
-          <>
-            <Problems node={node} issues={warnings} />
-            <p>{said.archive.unsafe}</p>
-          </>
+          group ? (
+            <>
+              <GroupProblems issues={warnings} />
+              <p>{said.archive.unsafeGroup}</p>
+            </>
+          ) : (
+            <>
+              <Problems node={node} issues={warnings} />
+              <p>{said.archive.unsafe}</p>
+            </>
+          )
         ) : hidden.length ? (
           // Not called safe: the warnings the user hid may still hold.
           <Callout tone="fyi">{said.archive.onlyHidden(hidden.length)}</Callout>
+        ) : group ? (
+          <Callout tone="safe">{said.archive.safeGroup}</Callout>
         ) : node.git ? (
           <Callout tone="safe">
             {remote?.host ? safety.safeOnline(remote.host) : safety.safeHere}
@@ -624,8 +652,10 @@ function ArchiveBody({ node, stage, setStage, opener }: Body) {
               <dt>{said.details.hidden}</dt>
               <dd>
                 <ul className="s-files">
-                  {hidden.map((issue) => (
-                    <li key={issue.code}>{safety.issues[issue.code]?.title ?? issue.title}</li>
+                  {hidden.map((issue, i) => (
+                    <li key={i}>
+                      {group ? issue.title : (safety.issues[issue.code]?.title ?? issue.title)}
+                    </li>
                   ))}
                 </ul>
               </dd>
@@ -707,8 +737,9 @@ function RestoreBody({ node, stage, setStage }: Body) {
   // Why the engine can't put it back there: another place has to be chosen, under Show details.
   const reason = moves && !failure && current?.plan?.error ? current.plan.reason : undefined;
   const where = tilde(current?.plan?.dest ?? expandHome(destination.trim(), home), home);
-  // A place reached through a link into the archive: the project's archived group goes back whole.
-  const group = reason === "linked" ? archivedGroupOf(nodes, node) : undefined;
+  // A place reached through a link into the archive: the archived group the engine names goes back
+  // whole. Without one, the link has to go first.
+  const group = reason === "linked" ? groupOfPlan(nodes, current?.plan) : undefined;
   const why = !reason
     ? ""
     : reason === "unknown"
@@ -1059,6 +1090,30 @@ function Problems({ node, issues }: { node: Node; issues: Issue[] }) {
               <b>{words?.title ?? issue.title}</b>
             </div>
             <p>{words ? words.body(issueCount(node, issue)) : (issue.detail ?? "")}</p>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * A group's problems: those of the projects in it, as the engine names them, each with its own
+ * project in its words. They are fixed on each project's page.
+ */
+function GroupProblems({ issues }: { issues: Issue[] }) {
+  if (!issues.length) return null;
+  return (
+    <ul className="s-issues" style={{ justifySelf: "stretch" }}>
+      {issues.map((issue, i) => {
+        const tone = toneOf(issue.severity);
+        return (
+          <li key={i} className="s-issue">
+            <div className="s-issue-title">
+              <StatusChip tone={tone}>{safety.tones[tone]}</StatusChip>
+              <b>{issue.title}</b>
+            </div>
+            {issue.detail ? <p>{issue.detail}</p> : null}
           </li>
         );
       })}

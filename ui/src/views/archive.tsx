@@ -6,7 +6,9 @@ import {
   archivedGroupOf,
   bytes,
   groupProjectCount,
+  groupSize,
   isArchivedGroup,
+  isMarkedFolder,
   linkedGroup,
   LOCALE,
   plural,
@@ -97,8 +99,13 @@ export function ArchiveView() {
     (n) => n.kind === "project" && n.archived,
   );
   const stored = archiveRows(nodes);
-  const marked = projects
-    .filter((n) => !n.inArchive)
+  // Projects, and folders, whose .laci.md says archived but which never moved.
+  const marked = Object.values(nodes)
+    .filter(
+      (n) =>
+        (n.kind === "project" && n.archived && !n.inArchive) ||
+        isMarkedFolder(n),
+    )
     .sort((a, b) => a.label.localeCompare(b.label));
   const select = (id: string) => useApp.getState().select(id);
   const open = (id: string) =>
@@ -235,46 +242,58 @@ export function ArchiveView() {
             hint="Their status says archived, but the folder hasn’t moved"
             order="By name"
           >
-            {marked.map((n) => (
-              <div
-                className="item"
-                key={n.id}
-                tabIndex={0}
-                data-id={n.id}
-                aria-selected={selected === n.id}
-                onClick={() => select(n.id)}
-              >
-                <span className="name">{n.label}</span>
-                <span className="d mono">{tilde(n.path, home)}</span>
-                <span className="meta">
-                  <button
-                    className="btn sm"
-                    disabled={historyPending}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      useApp.setState({ modal: { kind: "archive", id: n.id } });
-                    }}
-                  >
-                    <Icon name="archive" className="sm" />
-                    Move to archive
-                  </button>
-                  <button
-                    className="btn sm ghost"
-                    disabled={historyPending}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      open(n.id);
-                    }}
-                  >
-                    <Icon name="undo-2" className="sm" />
-                    Unarchive
-                  </button>
-                </span>
-              </div>
-            ))}
+            {marked.map((n) => {
+              // A folder only marked archived: Unarchive clears its mark; it has no archive plan.
+              const folder = n.kind === "folder";
+              return (
+                <div
+                  className="item"
+                  key={n.id}
+                  tabIndex={0}
+                  data-id={n.id}
+                  data-kind={folder ? "group" : "project"}
+                  aria-selected={selected === n.id}
+                  onClick={() => select(n.id)}
+                >
+                  {folder ? <Icon name="folder" className="sm" /> : null}
+                  <span className="name">{n.label}</span>
+                  <span className="d mono">{tilde(n.path, home)}</span>
+                  {folder ? (
+                    <span className="note">{said.group(groupSize(nodes, n))}</span>
+                  ) : null}
+                  <span className="meta">
+                    {folder ? null : (
+                      <button
+                        className="btn sm"
+                        disabled={historyPending}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          useApp.setState({ modal: { kind: "archive", id: n.id } });
+                        }}
+                      >
+                        <Icon name="archive" className="sm" />
+                        Move to archive
+                      </button>
+                    )}
+                    <button
+                      className="btn sm ghost"
+                      title={folder ? said.unarchiveFolder : undefined}
+                      disabled={historyPending}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        open(n.id);
+                      }}
+                    >
+                      <Icon name="undo-2" className="sm" />
+                      Unarchive
+                    </button>
+                  </span>
+                </div>
+              );
+            })}
           </Group>
         ) : null}
-        {!projects.length && !stored.length ? (
+        {!projects.length && !stored.length && !marked.length ? (
           <div className="empty">
             {historyPending
               ? "Updating…"

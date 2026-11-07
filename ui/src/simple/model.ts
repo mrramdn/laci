@@ -7,6 +7,8 @@ import {
   cap,
   deadlineInfo,
   deletable,
+  isArchivedGroup,
+  isMarkedFolder,
   liveIssues,
   recency,
   RISK,
@@ -245,7 +247,8 @@ const dueDays = (n: Node, now: Date) =>
 
 /**
  * Simple's project list. All leaves archived projects out; Needs you is the projects Home lists,
- * archived ones that can still lose work among them.
+ * archived ones that can still lose work among them. Archived also lists the projects in a folder
+ * only marked archived, under that folder.
  */
 export function projectsModel(
   snapshot: Snapshot,
@@ -256,11 +259,13 @@ export function projectsModel(
   const inFolder = Object.values(snapshot.nodes).filter(
     (n) => n.kind === "project" && (!folder || within(n.path, folder)),
   );
+  const marked = Object.values(snapshot.nodes).filter(isMarkedFolder);
   const shows: Record<ProjectFilter, (n: Node) => boolean> = {
     all: (n) => !n.archived,
     needs: (n) => needs.has(n.id),
     active: (n) => !n.archived && n.status.value === "active",
-    archived: (n) => n.archived,
+    archived: (n) =>
+      n.archived || marked.some((m) => n.path !== m.path && within(n.path, m.path)),
   };
   const counts = Object.fromEntries(
     PROJECT_FILTERS.map((key) => [key, inFolder.filter(shows[key]).length]),
@@ -275,7 +280,26 @@ export function projectsModel(
   const shown = inFolder
     .filter((n) => shows[filter](n) && matchesQuery(n, query))
     .sort(order[sort]);
-  return { shown, sections: projectSections(snapshot, shown, sort), counts };
+  return {
+    shown,
+    sections: projectSections(snapshot, shown, sort, filter === "archived"),
+    counts,
+  };
+}
+
+/**
+ * The archived folder above a project that goes back whole, the nearest one: an archived group, or a
+ * folder only marked archived. None when it is in neither.
+ */
+function archivedFolderOf(snapshot: Snapshot, n: Node): Node | null {
+  const seen = new Set<string>([n.id]);
+  for (let at = n.parent; at && !seen.has(at); at = snapshot.nodes[at]?.parent) {
+    seen.add(at);
+    const above = snapshot.nodes[at];
+    if (!above) return null;
+    if (isArchivedGroup(above) || isMarkedFolder(above)) return above;
+  }
+  return null;
 }
 
 /** The nearest folder above a project, which is what holds it in the user's layout. */
@@ -311,11 +335,14 @@ function projectSections(
   snapshot: Snapshot,
   shown: Node[],
   sort: ProjectSort,
+  archived = false,
 ): ProjectSection[] {
   // A Map keeps the order each section was first met in, which is the order of `shown`.
   const found = new Map<string, ProjectSection>();
   for (const n of shown) {
-    const group = groupOf(snapshot, n);
+    // Under Archived, a project sits under the archived folder that goes back with it, so that its
+    // heading can put the whole folder back.
+    const group = (archived && archivedFolderOf(snapshot, n)) || groupOf(snapshot, n);
     const key = group?.id ?? "";
     const section = found.get(key) ?? {
       group,

@@ -13,8 +13,11 @@ import {
   bytes,
   cap,
   date,
+  canArchiveGroup,
   descendants,
   isArchivedGroup,
+  isMarkedFolder,
+  linkedAlone,
   linkedGroup,
   plural,
   sessionsOf,
@@ -194,9 +197,11 @@ export function Inspector({ node: n }: { node: Node }) {
               <button
                 className="btn ghost sm"
                 title={
-                  n.inArchive
-                    ? "Put it back where it came from"
-                    : "Clear the archived status"
+                  linkedAlone(snapshot.nodes, n)
+                    ? detailedArchive.linkedAlone
+                    : n.inArchive
+                      ? "Put it back where it came from"
+                      : "Clear the archived status"
                 }
                 disabled={s.historyPending}
                 onClick={() =>
@@ -217,6 +222,30 @@ export function Inspector({ node: n }: { node: Node }) {
               >
                 <Icon name="undo-2" className="sm" />
                 Restore group
+              </button>
+            ) : isMarkedFolder(n) ? (
+              <button
+                className="btn ghost sm"
+                title={detailedArchive.unarchiveFolder}
+                disabled={s.historyPending}
+                onClick={() =>
+                  useApp.setState({ modal: { kind: "restore", id: n.id } })
+                }
+              >
+                <Icon name="undo-2" className="sm" />
+                Unarchive
+              </button>
+            ) : canArchiveGroup(n) ? (
+              <button
+                className="btn ghost sm"
+                title={detailedArchive.archiveGroupFor(n.name)}
+                disabled={s.historyPending}
+                onClick={() =>
+                  useApp.setState({ modal: { kind: "archive", id: n.id } })
+                }
+              >
+                <Icon name="archive" className="sm" />
+                {detailedArchive.archiveGroup}
               </button>
             ) : null}
             {isProject ? (

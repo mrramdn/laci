@@ -1073,6 +1073,87 @@ export async function aSheetWhoseProjectWentClosesItself() {
 // ── Restore ────────────────────────────────────────────────────────────────────────────────────────
 
 /** Where kopi-landing came from before it went to the archive. */
+// ── Archive a group ─────────────────────────────────────────────────────────────────────────────
+
+const GROUP_DEST = `${HOME}/project/_archive/clients`;
+/**
+ * The sheet opened on a folder of projects (clients, with acme-store and kopi-landing), as a project's
+ * would be: the harness keeps the modal's id, so only what the folder is changes.
+ */
+const CLIENTS = {
+  kind: "folder",
+  name: "clients",
+  label: "clients",
+  git: undefined,
+  issues: [],
+  size: undefined,
+  projectCount: 2,
+  archivePlan: { dest: GROUP_DEST, checks: [], ops: [] },
+};
+/** The engine's plan for the group: the checks of the projects in it, each naming its project. */
+const groupArchivePlan = (checks) => ({
+  dest: GROUP_DEST,
+  checks,
+  ops: [
+    { kind: "move", label: "Move folder", from: "~/project/clients", to: "~/project/_archive/clients" },
+    { kind: "write", label: "Set status: archived", to: "~/project/_archive/clients/.laci.md" },
+  ],
+});
+const ACME_UNPUSHED = {
+  code: "unpushed",
+  severity: "med",
+  title: "acme-store: 8 commits not pushed",
+  detail: "main has no upstream, and no remote has them",
+};
+const KOPI_NO_REMOTE = { ...NO_REMOTE, title: "kopi-landing: No remote" };
+
+export async function aFolderOfProjectsArchivesAsAGroupAndNamesEachProjectsProblem() {
+  const sheet = sheets({
+    kind: "archive",
+    node: CLIENTS,
+    replies: {
+      "archive/plan": [groupArchivePlan([ACME_UNPUSHED, KOPI_NO_REMOTE])],
+      archive: [{ revision: 9, journal: { id: "journal-1", title: "Archived clients" } }],
+    },
+  });
+  // The group's own words: its name, and how many projects go with their chats.
+  assert.ok(sheet.text().includes(said.archive.titleGroup("clients")), sheet.text());
+  assert.equal(said.archive.titleGroup("clients"), "Archive the group clients?");
+  assert.ok(sheet.text().includes(said.archive.introGroup(2)), sheet.text());
+  assert.equal(
+    said.archive.introGroup(2),
+    "Laci moves the whole folder to your archive folder. 2 projects move with their AI chats.",
+  );
+  assert.equal(said.archive.introGroup(1).endsWith("1 project moves with its AI chats."), true);
+  await sheet.wait(0);
+  // Each problem names its project, worst first, as the engine wrote it.
+  const text = sheet.text();
+  assert.ok(text.indexOf("kopi-landing: No remote") < text.indexOf("acme-store: 8 commits not pushed"), text);
+  assert.ok(text.includes(said.archive.unsafeGroup), text);
+  // Each is fixed on its project's own page: no one Back up first for the group.
+  assert.ok(!sheet.button(said.archive.backUpFirst));
+  sheet.click(sheet.button(said.archive.anyway));
+  await sheet.settle();
+  assert.deepEqual(sheet.asked("archive"), [{ id: KOPI, destination: GROUP_DEST, trashHeavy: false }]);
+  assert.deepEqual(sheet.changes.map(([, title]) => title), ["Archived clients"]);
+  assert.deepEqual(sheet.selected, [GROUP_DEST]);
+}
+
+export async function aGroupWithNothingToLoseArchivesWithItsOneFilledButton() {
+  const sheet = sheets({
+    kind: "archive",
+    node: CLIENTS,
+    replies: { "archive/plan": [groupArchivePlan([])] },
+  });
+  await sheet.wait(0);
+  assert.ok(sheet.text().includes(said.archive.safeGroup), sheet.text());
+  // A folder has no version history of its own: that isn't what the sheet says about it.
+  assert.doesNotMatch(sheet.text(), /version history/);
+  assert.deepEqual(sheet.filled(), [said.archive.archive]);
+  sheet.click(sheet.button(words.blocks.showDetails));
+  assert.match(sheet.text(), /Move folder: ~\/project\/clients → ~\/project\/_archive\/clients/);
+}
+
 const ORIGIN = `${HOME}/project/kopi-landing`;
 /** The engine's plan for putting it back at `dest`. */
 const restorePlan = (dest = ORIGIN) => ({
@@ -1274,7 +1355,8 @@ export async function anArchivedGroupGoesBackWholeAndRemovesTheOldLinkFirst() {
 
 export async function aProjectReachedThroughTheOldLinkOffersItsGroup() {
   const place = `${OLD_PLACE}/kopi-landing`;
-  const linked = cantRestore("linked", place);
+  // The engine names the group the link leads to; that, not where the project is, picks it.
+  const linked = { ...cantRestore("linked", place), group: GROUP };
   const sheet = sheets({
     kind: "restore",
     node: { ...archived(linked), parent: GROUP },
@@ -1301,7 +1383,7 @@ export async function theGroupRestoredFromAProjectsPageEndsOnThatProjectsNewPlac
   // group…" opens the group's sheet. Once the group is back, the page follows the project to where
   // it now is, not to the group's folder, where the page would find no project.
   const inside = `${GROUP}/kopi-landing`;
-  const linked = cantRestore("linked", `${OLD_PLACE}/kopi-landing`);
+  const linked = { ...cantRestore("linked", `${OLD_PLACE}/kopi-landing`), group: GROUP };
   const project = { ...KOPI_NODE, ...archived(linked), id: inside, path: inside, parent: GROUP };
   const sheet = sheets({
     kind: "restore",
@@ -1402,4 +1484,24 @@ export async function detailedLeavesArchiveDeleteAndFreeUpSpaceToSimple() {
   assert.match(drawn("detailed", "delete"), /Move kopi-landing to Trash\?/);
   // Every other dialog is still the shared one in Simple.
   assert.match(drawn("simple", "shortcuts"), /Keyboard shortcuts/);
+}
+
+export async function aLinkedProjectWhoseGroupTheEngineDoesntNameSaysToRemoveTheLink() {
+  // kopi-landing sits in the archived group old-clients, but the engine names no group to restore
+  // instead: where the project is doesn't pick one. The sheet says the link has to go first.
+  const place = `${OLD_PLACE}/kopi-landing`;
+  const linked = cantRestore("linked", place);
+  const sheet = sheets({
+    kind: "restore",
+    node: { ...archived(linked), parent: GROUP },
+    nodes: { [GROUP]: groupNode() },
+    replies: { "restore/plan": [linked] },
+  });
+  await sheet.wait(0);
+  assert.ok(
+    sheet.text().includes(said.restore.linkedAny("~/project/old-clients/kopi-landing")),
+    sheet.text(),
+  );
+  assert.ok(!sheet.button(said.restore.restoreGroup("old-clients")), "no group to restore");
+  assert.equal(sheet.button(said.restore.restore).disabled, true);
 }

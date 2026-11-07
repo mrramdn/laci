@@ -744,6 +744,63 @@ export async function theDetailsPanelOfAProjectThatWaitsForItsGroupOffersTheGrou
   }
 }
 
+export async function theDetailsPanelOfAFolderOfProjectsOffersArchiveGroup() {
+  // clients holds acme-store and kopi-landing, and the engine planned to archive it whole.
+  const clients = "/home/demo/project/clients";
+  const app = await detailed();
+  try {
+    assert.ok(app.state().snapshot.nodes[clients].archivePlan, "the scan plans the group");
+    await app.set({ selected: clients, tab: "health" });
+    await app.draw({ inspector: h(app.Shown) });
+    assert.equal(app.buttons("Archive").length, 0, "no project Archive on a folder");
+    const [archive, ...more] = app.buttons("Archive group");
+    assert.equal(more.length, 0);
+    assert.equal(archive.getAttribute("title"), "Archive the group clients with every project in it");
+    await app.fire(archive, "onClick");
+    assert.deepEqual(app.state().modal, { kind: "archive", id: clients });
+    // The scan location has no plan, so its panel has no Archive group.
+    await app.set({ selected: "/home/demo/project", modal: null });
+    await app.draw({ inspector: h(app.Shown) });
+    assert.equal(app.buttons("Archive group").length, 0);
+  } finally {
+    await app.close();
+  }
+}
+
+export async function theDetailsPanelOfAFolderOnlyMarkedArchivedOffersUnarchive() {
+  // thesis says archived in its own .laci.md, but never moved: its plan clears that in place.
+  const thesis = "/home/demo/project/thesis";
+  const app = await detailed({
+    edit: (scan) => {
+      const n = scan.nodes[thesis];
+      delete n.archivePlan;
+      Object.assign(n, {
+        archived: true,
+        inArchive: false,
+        meta: { ...n.meta, status: "archived" },
+        status: { value: "archived", auto: false },
+        restorePlan: {
+          dest: thesis,
+          checks: [],
+          ops: [{ kind: "write", label: "Clear status: archived", to: "~/project/thesis/.laci.md" }],
+        },
+      });
+    },
+  });
+  try {
+    await app.set({ selected: thesis, tab: "health" });
+    await app.draw({ inspector: h(app.Shown) });
+    assert.equal(app.buttons("Archive group").length, 0);
+    assert.equal(app.buttons("Restore group").length, 0, "it is not an archived group");
+    const [unarchive] = app.buttons("Unarchive");
+    assert.ok(unarchive, "the panel offers Unarchive");
+    await app.fire(unarchive, "onClick");
+    assert.deepEqual(app.state().modal, { kind: "restore", id: thesis });
+  } finally {
+    await app.close();
+  }
+}
+
 export async function tidyUpAndTheLogChangeThingsThroughTheSharedActions() {
   const app = await detailed({
     edit: (scan) => {

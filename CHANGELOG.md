@@ -10,12 +10,16 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 - **Restore** puts an archived project back where it came from, with its agent history: the folder, Claude's sessions and memory, the paths in agent logs (also of sessions from while it was archived), and `status: archived` cleared. A project archived only by its status is restored where it is. Without a recorded origin, Laci works it out from the archive's layout or the `_archive/` folder it is in, and asks for a place when it can't or something is already there. It shows in the Log with Undo, and agents can do it with the MCP tool `restore_project`.
 - **The Archive view** in Detailed shows everything archived in one place; Simple's Projects has an *Archived* section.
-- **Archiving records where a project came from**: `archivedFrom` and `archivedAt` in its `.laci.md`, next to `status: archived`. Undo takes them back with the rest.
+- **Archiving records where a project came from**: `archivedFrom` and `archivedAt` in its `.laci.md`, next to `status: archived`. Undo takes them back with the rest. A path `.laci.md` would read back as another one, such as `~/tugas/Lab #2/demo`, is left out, so the archive's layout decides instead of a wrong place. Restore clears `status` only while it is still `archived`.
+- **A restore that can't run says why** (`reason`: `occupied`, `unknown`, `inArchive` or `outside`) and, when Laci knows one, where it would have put the project (`dest`), in `restorePlan`, in `restore/plan` and in `restore_project`'s preview. A project archived only by its status refuses a destination.
 
 ### Changed
 
 - **The archive folder keeps the layout of your scan locations.** With an archive folder in Settings, `~/tugas/course/demo` is archived to `<archive folder>/tugas/course/demo` instead of `<archive folder>/demo`, so projects with the same name don't collide and Restore knows where they belong. Projects already in the archive stay where they are.
 - **A project archived only by its status can be moved into the archive**, in the app and with `archive_project`; a project already in the archive is refused with "Already in the archive".
+- **Undo keeps what changed after the change.** Undo of a move, archive, restore or Tidy rewrite now refuses, before changing anything, when a session added lines to a log Laci rewrote or `.laci.md` was edited since, and names the file; it used to put the older bytes back. Changes made before this version undo as before.
+- **Undo of a change a later one already reversed is refused** ("undo that instead"), such as an Archive after its Restore, instead of making the archived folder again around a few files. Undo no longer makes a missing folder again to put a file back.
+- **An `_archive`-style folder counts only at or below the scan location** that holds a project, so a scan location inside a folder called `archive` is not all archived.
 
 ## [3.2.0] - 2026-10-25
 

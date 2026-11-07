@@ -4,6 +4,17 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 2.0.1, 2.1.0, 2.2.0 and 2.3.0 were released from `main` without git tags or GitHub releases. They are the merges of pull requests #4 (`bf845a1`), #5 (`538da4e`), #6 (`8098403`) and #8 (`66956b2`).
 
+## [3.3.2] - 2026-11-08
+
+Only dependencies change.
+
+### Security
+
+- DOMPurify 3.4.16 -> 3.4.17, which cleans a README and release notes before Laci shows them ([GHSA-cg2g-xh64-v4q7](https://github.com/advisories/GHSA-cg2g-xh64-v4q7), [GHSA-mrv2-3pqr-j5jr](https://github.com/advisories/GHSA-mrv2-3pqr-j5jr), [GHSA-c6gr-qvv4-5v3f](https://github.com/advisories/GHSA-c6gr-qvv4-5v3f)). Each needs an option Laci doesn't use (`SAFE_FOR_TEMPLATES` with DOM output, `IN_PLACE` with a hook, or the XHTML parser), so Laci wasn't open to them.
+- rustls-webpki 0.103.15 -> 0.103.16, which checks the certificates of the updater's downloads ([RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382.html), [RUSTSEC-2026-0383](https://rustsec.org/advisories/RUSTSEC-2026-0383.html)): certificates through the distrusted emSign intermediates were accepted.
+- zod 4.6.5 -> 4.6.7 ([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)), a build tool only: it checks the settings of a lint rule and is not in Laci.
+- minimatch 10.2.6 -> 11.0.5 ([GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)), a build tool only: the TypeScript linter uses it and it is not in Laci.
+
 ## [3.3.1] - 2026-11-08
 
 ### Added

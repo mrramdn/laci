@@ -6,8 +6,6 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
-## [3.3.0] - Unreleased
-
 ### Added
 
 - **Restore** puts an archived project back where it came from, with its agent history: the folder, Claude's sessions and memory, the paths in agent logs (also of sessions from while it was archived), and `status: archived` cleared. A project archived only by its status is restored where it is. Without a recorded origin, Laci works it out from the archive's layout or the `_archive/` folder it is in, and asks for a place when it can't or something is already there. It shows in the Log with Undo, and agents can do it with the MCP tool `restore_project`.

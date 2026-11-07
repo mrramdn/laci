@@ -4,6 +4,21 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 2.0.1, 2.1.0, 2.2.0 and 2.3.0 were released from `main` without git tags or GitHub releases. They are the merges of pull requests #4 (`bf845a1`), #5 (`538da4e`), #6 (`8098403`) and #8 (`66956b2`).
 
+## [Unreleased]
+
+### Added
+
+- **`laci settings`** prints the scan locations and the archive, backup and reports folders, and which of them can't be used now. `laci settings archive DIR`, `laci settings copy DIR` (with `--fresh` to start a new backup when the old one can't be reached) and `laci settings reports DIR` change one through the same steps as Settings in the window: the same checks and drive identity, a Log entry by the command line, and Undo. `copy` moves the whole backup, also across drives, as **Change…** does.
+
+### Changed
+
+- **The moved project's Claude Code memory names its new place.** A move, an archive or a restore rewrites the old path in the project's own memory files (`memory/*.md` in its Claude session folder), written in full or from `~/`, wherever it is a whole path: `~/project/laci` never touches `~/project/laci-old`. The plan shows it as *Update the old path in N memory files*, and Undo puts each file back byte for byte. Other projects' memory and global files stay as they are.
+- **A backup folder on a drive that was taken out is noticed without a rescan.** The scan tells it like a scan location that isn't there (`copyStatus`, with the reason), and the open window reads it again when the drive's mount point goes away or comes back.
+
+### Fixed
+
+- **Undo of a move of the backup no longer freezes the window.** Like the move itself, it runs beside the window, which stays usable while the backup is copied back across drives; other changes asked for meanwhile are refused at once with *Laci is moving the copy of your AI chats*.
+
 ## [3.3.2] - 2026-11-08
 
 Only dependencies change.

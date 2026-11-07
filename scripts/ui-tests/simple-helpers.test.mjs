@@ -1375,7 +1375,7 @@ export async function theChooserStartsWithEverythingTickedWhenTheCopyTookEveryPr
   assert.ok(said.copyChooseAbout.includes("A project that appears later isn’t copied until you tick it."));
   const boxes = page.boxes();
   // Twelve folders, the chats in the top folder itself, and the chats outside them.
-  assert.equal(boxes.length, 14);
+  assert.equal(boxes.length, 15);
   assert.ok(boxes.every((b) => b.props.checked && !b.indeterminate));
   // Each row says how many chats it holds, a folder all those in it, and the folder's own chats have a row of their
   // own when it holds some.
@@ -1424,6 +1424,7 @@ export async function aFolderHasARowForItsOwnChatsOnlyWhenItHoldsSomeAndNoClickM
   assert.deepEqual(rows(), listed);
   // Its last project unticked, side is off: it holds no chats of its own, so its own tick goes with them.
   await page.tick("habit-app");
+  await page.tick("zine");
   assert.deepEqual([page.box("side").props.checked, page.box("side").indeterminate], [false, false]);
   await page.click(page.button(said.copyUntickAll));
   await page.tick("dotfiles");
@@ -1449,9 +1450,9 @@ export async function saveSendsTheChosenFoldersAndOneToastTellsIt() {
   const wanted = Object.keys(everything).filter((path) => path !== ACME);
   assert.equal(page.asked("backup/only").length, 1);
   assert.deepEqual(sent(page), { paths: wanted.sort(), outside: false });
-  // By projects, as the card and Activity count them: six of the seven.
-  assert.deepEqual(page.toasts.at(-1), [said.copyChosenDone(6, wanted.length, false), said.copyChosenNote]);
-  assert.equal(page.toasts.at(-1)[0], "Laci now copies only the chats of 6 projects you chose");
+  // By projects, as the card and Activity count them: seven of the eight.
+  assert.deepEqual(page.toasts.at(-1), [said.copyChosenDone(7, wanted.length, false), said.copyChosenNote]);
+  assert.equal(page.toasts.at(-1)[0], "Laci now copies only the chats of 7 projects you chose");
   assert.equal(page.sheet(), undefined, "saved, the sheet goes");
   assert.equal(
     said.copyChosenDone(2, 3, true),

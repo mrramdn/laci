@@ -367,6 +367,33 @@
         }
       ]
     },
+    "/home/demo/project/side/zine": {
+      "checks": [],
+      "dest": "/home/demo/project/_archive/side/zine",
+      "ops": [
+        {
+          "from": "~/project/side/zine",
+          "kind": "move",
+          "label": "Move folder",
+          "to": "~/project/_archive/side/zine"
+        },
+        {
+          "detail": ".laci.md",
+          "kind": "keep",
+          "label": "Travels with the folder"
+        },
+        {
+          "kind": "write",
+          "label": "Set status: archived",
+          "to": "~/project/_archive/side/zine/.laci.md"
+        },
+        {
+          "kind": "write",
+          "label": "Write undo journal",
+          "to": "~/.local/share/laci/journal/"
+        }
+      ]
+    },
     "/home/demo/project/thesis/campus-lms": {
       "checks": [
         {
@@ -2403,6 +2430,7 @@
           "worktree": false
         },
         "id": "/home/demo/project/_archive/old-portfolio",
+        "inArchive": true,
         "issues": [
           {
             "code": "unpushed",
@@ -2417,7 +2445,11 @@
           "at": "2026-01-21T09:00:00.000Z",
           "source": "commit"
         },
-        "meta": {},
+        "meta": {
+          "archivedAt": "2026-08-14",
+          "archivedFrom": "~/project/old-portfolio",
+          "status": "archived"
+        },
         "name": "old-portfolio",
         "ownActivity": {
           "at": "2026-01-21T09:00:00.000Z",
@@ -2436,7 +2468,36 @@
           "title": "Portfolio v1",
           "weakTitle": false
         },
-        "sidecar": false,
+        "restorePlan": {
+          "checks": [],
+          "dest": "/home/demo/project/old-portfolio",
+          "ops": [
+            {
+              "from": "~/project/_archive/old-portfolio",
+              "kind": "move",
+              "label": "Move folder",
+              "to": "~/project/old-portfolio"
+            },
+            {
+              "detail": "1 session",
+              "from": "~/project/_archive/old-portfolio",
+              "kind": "rename",
+              "label": "Move Claude sessions & memory",
+              "to": "~/project/old-portfolio"
+            },
+            {
+              "kind": "write",
+              "label": "Clear status: archived",
+              "to": "~/project/old-portfolio/.laci.md"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
+        "sidecar": true,
         "size": {
           "parts": [],
           "reclaimable": 0,
@@ -2477,7 +2538,7 @@
           "services": []
         },
         "status": {
-          "auto": true,
+          "auto": false,
           "value": "archived"
         },
         "summary": {
@@ -2643,6 +2704,7 @@
           "worktree": false
         },
         "id": "/home/demo/project/clients/acme-store",
+        "inArchive": false,
         "issues": [
           {
             "code": "dirty",
@@ -2913,6 +2975,7 @@
           "worktree": false
         },
         "id": "/home/demo/project/clients/kopi-landing",
+        "inArchive": false,
         "issues": [
           {
             "code": "no-remote",
@@ -3062,6 +3125,7 @@
           "source": "folder"
         },
         "id": "/home/demo/project/infra-notes",
+        "inArchive": false,
         "issues": [],
         "kind": "project",
         "label": "infra-notes",
@@ -3151,7 +3215,8 @@
         "archived": false,
         "children": [
           "/home/demo/project/side/dotfiles",
-          "/home/demo/project/side/habit-app"
+          "/home/demo/project/side/habit-app",
+          "/home/demo/project/side/zine"
         ],
         "createdAt": {
           "at": "2026-10-08T09:00:00.000Z",
@@ -3278,6 +3343,7 @@
           "worktree": false
         },
         "id": "/home/demo/project/side/dotfiles",
+        "inArchive": false,
         "issues": [
           {
             "code": "unpushed",
@@ -3450,6 +3516,7 @@
           "worktree": false
         },
         "id": "/home/demo/project/side/habit-app",
+        "inArchive": false,
         "issues": [
           {
             "code": "no-remote",
@@ -3526,6 +3593,95 @@
         "taskFiles": [],
         "tasks": [],
         "type": "code"
+      },
+      "/home/demo/project/side/zine": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [],
+          "items": []
+        },
+        "archivePlan": {
+          "checks": [],
+          "dest": "/home/demo/project/_archive/side/zine",
+          "ops": [
+            {
+              "from": "~/project/side/zine",
+              "kind": "move",
+              "label": "Move folder",
+              "to": "~/project/_archive/side/zine"
+            },
+            {
+              "detail": ".laci.md",
+              "kind": "keep",
+              "label": "Travels with the folder"
+            },
+            {
+              "kind": "write",
+              "label": "Set status: archived",
+              "to": "~/project/_archive/side/zine/.laci.md"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
+        "archived": true,
+        "children": [],
+        "createdAt": {
+          "at": "2026-03-02T09:00:00.000Z",
+          "source": "folder"
+        },
+        "id": "/home/demo/project/side/zine",
+        "inArchive": false,
+        "issues": [],
+        "kind": "project",
+        "label": "zine",
+        "lastActivity": {
+          "at": "2026-04-11T09:00:00.000Z",
+          "source": "files"
+        },
+        "meta": {
+          "status": "archived"
+        },
+        "name": "zine",
+        "ownActivity": {
+          "at": "2026-04-11T09:00:00.000Z",
+          "source": "files"
+        },
+        "parent": "/home/demo/project/side",
+        "path": "/home/demo/project/side/zine",
+        "restorePlan": {
+          "checks": [],
+          "dest": "/home/demo/project/side/zine",
+          "ops": [
+            {
+              "kind": "write",
+              "label": "Clear status: archived",
+              "to": "~/project/side/zine/.laci.md"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
+        "sidecar": true,
+        "size": {
+          "parts": [],
+          "reclaimable": 0,
+          "total": 4210
+        },
+        "stableId": "p:5a1c0e7d2b90",
+        "status": {
+          "auto": false,
+          "value": "archived"
+        },
+        "taskFiles": [],
+        "tasks": [],
+        "type": "docs"
       },
       "/home/demo/project/thesis": {
         "agents": {
@@ -3682,6 +3838,7 @@
           "worktree": false
         },
         "id": "/home/demo/project/thesis/campus-lms",
+        "inArchive": false,
         "issues": [
           {
             "code": "unpushed",

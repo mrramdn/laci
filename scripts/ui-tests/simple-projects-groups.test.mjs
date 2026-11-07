@@ -499,3 +499,35 @@ export async function aProjectThatGoesBackWithItsGroupSaysSoAndRestoresTheGroup(
   click(page, menuItem(card, words.projects.restoreGroup));
   assert.deepEqual(app.getState().modal, { kind: "restore", id: GROUP });
 }
+
+/** The declarations of the rule for `selector` in Simple's sheet. */
+function simpleRule(selector) {
+  const css = readFileSync(new URL("../../ui/src/simple/simple.css", import.meta.url), "utf8");
+  const quoted = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const body = new RegExp(`\\n\\s*${quoted}\\s*\\{([^}]*)\\}`).exec(css)?.[1];
+  assert.ok(body !== undefined, `simple.css has a rule for ${selector}`);
+  return Object.fromEntries(
+    body
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split(";")
+      .map((declaration) => declaration.split(":").map((part) => part.trim()))
+      .filter(([property, value]) => property && value),
+  );
+}
+
+export function aFolderHeadingStaysOnOneLineWhenThereIsRoomForIt() {
+  // The heading is as wide as its toggle, so the toggle fills it and its words keep one line at
+  // 1280x800. A toggle pulled 8px left inside it would be 8px short of its words, and "clients"
+  // would break mid-word: the heading takes the offset that lines the words up with the cards.
+  const head = simpleRule(".s-group-head");
+  const toggle = simpleRule(".s-group-toggle");
+  const name = simpleRule(".s-group-name");
+  assert.equal(head.margin, "0 0 0 -8px");
+  assert.equal(head["min-width"], "0");
+  assert.equal(toggle["max-width"], "100%");
+  for (const property of ["margin", "margin-left", "margin-inline", "margin-inline-start"])
+    assert.equal(toggle[property], undefined, `the toggle has no ${property} of its own`);
+  // A long name still wraps where the heading is narrower than it.
+  assert.equal(name["overflow-wrap"], "anywhere");
+  assert.equal(name["min-width"], "0");
+}

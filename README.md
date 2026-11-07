@@ -265,7 +265,11 @@ Apply finishes when the filesystem change is saved; the view refreshes in the ba
 
 ### Archive and move, with the history attached
 
-Choose a default archive folder in Settings, including a folder on a mounted drive. Leave it empty to use the nearest `_archive/` folder. The Archive dialog lets you choose a different final project path and previews that exact destination. Custom destinations outside the scan roots stay discoverable; their scan-root addition is included in the move journal. laci also moves its agent history (Claude's session folder, and whatever else your connectors keep), rewrites the folder paths in the logs, and marks the project archived. Everything goes into an undo journal first.
+Choose a default archive folder in Settings, including a folder on a mounted drive. Leave it empty to use the nearest `_archive/` folder. In the archive folder a project keeps its place below the scan location that holds it: with the scan locations `~/project` and `~/tugas`, `~/tugas/venture-creation/pet-pals` is archived to `<archive folder>/tugas/venture-creation/pet-pals`. A project no scan location holds goes straight into the archive folder. The Archive dialog lets you choose a different final project path and previews that exact destination. Custom destinations outside the scan roots stay discoverable; their scan-root addition is included in the move journal. laci also moves its agent history (Claude's session folder, and whatever else your connectors keep), rewrites the folder paths in the logs, and marks the project archived. Its `.laci.md` also records where it came from and when (`archivedFrom: ~/tugas/venture-creation/pet-pals`, `archivedAt: 2026-11-07`). Everything goes into an undo journal first.
+
+**Restore** puts an archived project back where it came from, with its agent history, and clears `status: archived`, `archivedFrom` and `archivedAt`. Without `archivedFrom`, as for a project you moved into the archive yourself, Laci works the place out from the archive's layout or the `_archive/` folder it is in; when it can't, or something is already there, you choose another place. Sessions an agent had while the project was archived come along too. A project archived only by its status is restored where it is. Restore shows in the Log with Undo.
+
+The **Archive** view in Detailed shows everything archived in one place, by scan location, with Restore on each project; in Simple, Projects has an *Archived* section.
 
 If a selected destination folder or drive has been replaced, archiving stops. Choose a valid alternative, or clear the location in Settings, save, then select it again to accept its new identity.
 
@@ -480,7 +484,7 @@ Then ask your agent things like *"which projects could lose work?"*, *"archive d
 | Tool | What it does |
 | --- | --- |
 | `list_projects` | Projects with status, activity, summary and problems, the most recently active first. Filter by status, `at_risk` or words |
-| `project_details` | Git, stack, to-dos, notes, the start of the README, the newest agent sessions, memory, the newest session reports and archive destination of one project |
+| `project_details` | Git, stack, to-dos, notes, the start of the README, the newest agent sessions, memory, the newest session reports and archive or restore destination of one project |
 | `list_reports` | Session reports, newest first, with summary, open items and the file to read. Narrow by project or by words |
 | `needs_attention` | Work at risk, deadlines and how many to-dos are open, the worst first |
 | `open_items` | Open to-dos and report items, the most pressing projects first. Narrow by project, kind or words |
@@ -488,7 +492,7 @@ Then ask your agent things like *"which projects could lose work?"*, *"archive d
 | `set_project_fields` | Status, priority, deadline |
 | `add_next_step`, `complete_task`, `edit_task`, `delete_task`, `move_task`, `write_notes` | Add, tick, rewrite, delete or move to-dos, and edit notes |
 | `close_report_item` | Close a report's open item as done, dropped or moved, or open it again. The report file stays as written |
-| `move_project`, `archive_project`, `delete_project`, `apply_suggestion`, `create_project`, `undo_change` | Changes on disk. Two calls: the first returns the plan, the second (with `confirm: true`) runs it |
+| `move_project`, `archive_project`, `restore_project`, `delete_project`, `apply_suggestion`, `create_project`, `undo_change` | Changes on disk. `restore_project` puts an archived project back where it came from, or at `destination`. Two calls: the first returns the plan, the second (with `confirm: true`) runs it |
 | `recent_changes` | The Log, newest first, and which entries can be undone. Narrow by project, words or `undoable` |
 
 Projects in lists and in answers to changes are short: status, priority, deadline, checks and to-dos. `project_details` has the stack, the start of the README, the newest sessions and the archive plan.
@@ -650,7 +654,7 @@ Settings are saved in `~/.config/laci/config.json` (or under `$XDG_CONFIG_HOME`)
 | `terminalTarget` | `internal` (default) or `external` for shell and agent launches |
 | `templatePaths` | Local template folders referenced from New project |
 | `recipes` | User-saved generator programs, argument arrays and prerequisite/download declarations |
-| `archiveDir` | Default archive folder; empty or absent uses the nearest `_archive/` folder |
+| `archiveDir` | Default archive folder; empty or absent uses the nearest `_archive/` folder. Projects keep their place below their scan location in it |
 | `reportsDir` | Folder of session reports; empty or absent hides Reports. Read only, never scanned for projects |
 | `presets` | Built-in connectors you added |
 | `custom` | Connectors you described yourself |

@@ -6,6 +6,19 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [3.3.0] - Unreleased
+
+### Added
+
+- **Restore** puts an archived project back where it came from, with its agent history: the folder, Claude's sessions and memory, the paths in agent logs (also of sessions from while it was archived), and `status: archived` cleared. A project archived only by its status is restored where it is. Without a recorded origin, Laci works it out from the archive's layout or the `_archive/` folder it is in, and asks for a place when it can't or something is already there. It shows in the Log with Undo, and agents can do it with the MCP tool `restore_project`.
+- **The Archive view** in Detailed shows everything archived in one place; Simple's Projects has an *Archived* section.
+- **Archiving records where a project came from**: `archivedFrom` and `archivedAt` in its `.laci.md`, next to `status: archived`. Undo takes them back with the rest.
+
+### Changed
+
+- **The archive folder keeps the layout of your scan locations.** With an archive folder in Settings, `~/tugas/course/demo` is archived to `<archive folder>/tugas/course/demo` instead of `<archive folder>/demo`, so projects with the same name don't collide and Restore knows where they belong. Projects already in the archive stay where they are.
+- **A project archived only by its status can be moved into the archive**, in the app and with `archive_project`; a project already in the archive is refused with "Already in the archive".
+
 ## [3.2.0] - 2026-10-25
 
 ### Added

@@ -491,7 +491,7 @@ export async function theBackupChooserStartsWithEverythingTickedAndSaysWhatStays
   assert.ok(said.backupChooseKeeps.includes("never removes anything"));
   assert.ok(said.backupChooseAbout.includes("A project that appears later isn't backed up until you tick it."));
   // Twelve folders, the chats in the top folder itself, and the chats outside them.
-  assert.equal(c.boxes().length, 14);
+  assert.equal(c.boxes().length, 15);
   assert.ok(c.boxes().every((b) => b.props.checked && !b.indeterminate));
   // A project says its chats, a folder all the chats in it, and its own chats have a row when it holds some.
   assert.equal(c.box("kopi-landing").parent.textContent, "kopi-landing2 chats");
@@ -580,9 +580,9 @@ export async function saveSendsTheChoiceOnceAndCancelSendsNothing() {
   assert.equal(c.asked.length, 1);
   const [[, { only }]] = c.asked;
   assert.deepEqual({ ...only, paths: [...only.paths].sort() }, { paths: wanted.sort(), outside: false });
-  // The toast counts projects, as the setting and the Log do: six of the seven, in eleven folders.
-  assert.deepEqual(c.toasts.at(-1), [said.backupChosenDone(6, wanted.length, false), said.backupChosenNote]);
-  assert.equal(c.toasts.at(-1)[0], "History backup now takes only 6 projects you chose");
+  // The toast counts projects, as the setting and the Log do: seven of the eight, in twelve folders.
+  assert.deepEqual(c.toasts.at(-1), [said.backupChosenDone(7, wanted.length, false), said.backupChosenNote]);
+  assert.equal(c.toasts.at(-1)[0], "History backup now takes only 7 projects you chose");
   assert.equal(c.app.getState().modal, null);
   // Opened again, it starts from what was saved.
   c.app.setState({ modal: { kind: "copy-choice" } });

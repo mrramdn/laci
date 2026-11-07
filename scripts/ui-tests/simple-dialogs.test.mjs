@@ -1070,6 +1070,146 @@ export async function aSheetWhoseProjectWentClosesItself() {
   assert.ok(!sheet.dialog());
 }
 
+// ── Restore ────────────────────────────────────────────────────────────────────────────────────────
+
+/** Where kopi-landing came from before it went to the archive. */
+const ORIGIN = `${HOME}/project/kopi-landing`;
+/** The engine's plan for putting it back at `dest`. */
+const restorePlan = (dest = ORIGIN) => ({
+  dest,
+  checks: [],
+  ops: [
+    {
+      kind: "move",
+      label: "Move folder",
+      from: "~/project/clients/kopi-landing",
+      to: `~${dest.slice(HOME.length)}`,
+    },
+  ],
+});
+/** A plan that can't run, for `reason`: with the origin Laci would use, except when it knows none. */
+const cantRestore = (reason, dest = ORIGIN) => ({
+  error: `The engine's own words for ${reason}`,
+  reason,
+  ...(reason === "unknown" ? {} : { dest }),
+  checks: [],
+  ops: [],
+});
+/** kopi-landing in the archive, with the plan the scan made for it. */
+const archived = (plan) => ({ archived: true, inArchive: true, restorePlan: plan });
+/** The "Goes to" field under Show details, when the details are open. */
+const goesTo = (sheet) => sheet.find((n) => n.type === "input");
+
+export async function restoreSaysWhereItGoesAndTakesTheFocus() {
+  const sheet = sheets({
+    kind: "restore",
+    node: archived(restorePlan()),
+    replies: { "restore/plan": [restorePlan()], restore: [{ revision: 3 }] },
+  });
+  sheet.focusIs(sheet.dialog());
+  assert.match(sheet.text(), /Checking where it goes/);
+  await sheet.wait(0);
+  assert.deepEqual(sheet.asked("restore/plan"), [{ id: KOPI, destination: ORIGIN }]);
+  assert.ok(sheet.text().includes(said.restore.goesBack("~/project/kopi-landing")));
+  assert.ok(!sheet.text().includes(said.restore.unknown));
+  // The details stay shut: nothing has to be chosen.
+  assert.ok(!goesTo(sheet));
+  sheet.focusIs(sheet.button(said.restore.restore));
+  sheet.click(sheet.button(said.restore.restore));
+  await sheet.settle();
+  assert.deepEqual(sheet.asked("restore"), [{ id: KOPI, destination: ORIGIN }]);
+  assert.deepEqual(sheet.selected, [ORIGIN]);
+}
+
+export async function somethingAtTheOriginIsSaidAndAnotherPlaceIsAskedFor() {
+  const sheet = sheets({
+    kind: "restore",
+    node: archived(cantRestore("occupied")),
+    replies: {
+      "restore/plan": [cantRestore("occupied"), restorePlan(`${HOME}/project/kopi-2`)],
+    },
+  });
+  await sheet.wait(0);
+  // Nothing typed: the engine looks at the origin itself.
+  assert.deepEqual(sheet.asked("restore/plan"), [{ id: KOPI }]);
+  assert.ok(sheet.text().includes(said.restore.why.occupied("~/project/kopi-landing")));
+  assert.ok(!sheet.text().includes(said.restore.unknown), "Laci knows where it came from");
+  assert.equal(sheet.button(said.restore.restore).disabled, true);
+  // Show details opened by itself, on the place to choose.
+  const field = goesTo(sheet);
+  assert.ok(field, "the Goes to field is shown");
+  assert.equal(field.props.required, true);
+  sheet.focusIs(field);
+  sheet.type("~/project/kopi-2");
+  await sheet.wait(200);
+  assert.deepEqual(sheet.asked("restore/plan").at(-1), {
+    id: KOPI,
+    destination: `${HOME}/project/kopi-2`,
+  });
+  assert.ok(sheet.text().includes(said.restore.goesBack("~/project/kopi-2")));
+  assert.equal(sheet.button(said.restore.restore).disabled, false);
+  sheet.focusIs(goesTo(sheet), "the focus stays where the user types");
+}
+
+export async function anUnknownOriginAsksWhereToPutItBack() {
+  const sheet = sheets({
+    kind: "restore",
+    node: archived(cantRestore("unknown")),
+    replies: { "restore/plan": [cantRestore("unknown")] },
+  });
+  await sheet.wait(0);
+  assert.ok(sheet.text().includes(said.restore.unknown));
+  assert.ok(goesTo(sheet), "Show details opened by itself");
+  sheet.focusIs(goesTo(sheet));
+}
+
+export async function aPlaceTheEngineRefusesSaysWhy() {
+  const inside = `${HOME}/project/_archive/kopi-landing`;
+  const outside = "/srv/kopi-landing";
+  const sheet = sheets({
+    kind: "restore",
+    node: archived(cantRestore("unknown")),
+    replies: {
+      "restore/plan": [
+        cantRestore("unknown"),
+        cantRestore("inArchive", inside),
+        cantRestore("outside", outside),
+      ],
+    },
+  });
+  await sheet.wait(0);
+  sheet.type("~/project/_archive/kopi-landing");
+  await sheet.wait(200);
+  assert.ok(sheet.text().includes(said.restore.why.inArchive("~/project/_archive/kopi-landing")));
+  sheet.type(outside);
+  await sheet.wait(200);
+  assert.ok(sheet.text().includes(said.restore.why.outside(outside)));
+  assert.equal(sheet.button(said.restore.restore).disabled, true);
+}
+
+export async function aRestoreThatFailsSaysSoAndKeepsTheFocusOnIt() {
+  const sheet = sheets({
+    kind: "restore",
+    node: archived(restorePlan()),
+    replies: {
+      "restore/plan": [restorePlan(), restorePlan()],
+      restore: [
+        () => {
+          throw new Error("This project is in use by Claude Code. Close it first.");
+        },
+      ],
+    },
+  });
+  await sheet.wait(0);
+  sheet.click(sheet.button(said.restore.restore));
+  await sheet.settle();
+  await sheet.wait(0);
+  assert.equal(sheet.asked("restore").length, 1);
+  assert.equal(sheet.alert(), said.restore.failed("kopi-landing"));
+  sheet.focusIs(sheet.button(said.restore.restore));
+  assert.deepEqual(sheet.changes, []);
+}
+
 // ── Detailed leaves them to Simple ─────────────────────────────────────────────────────────────────
 
 /** Detailed's dialogs.tsx, drawn to HTML on a server for the app state `read` gives. */

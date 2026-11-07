@@ -1548,6 +1548,14 @@
     color: var(--ink-3);
     font: var(--text-caption);
   }
+  /* Where an archived project came from: a path, which may be longer than the card is wide. */
+  .s-pcard-from {
+    margin: 0;
+    color: var(--ink-3);
+    font-family: var(--mono);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
   @container shell (min-width: 52.5rem) {
     .s-pcard {
       padding: 20px;

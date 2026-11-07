@@ -2,11 +2,11 @@
 
 ## Supported versions
 
-Security fixes go into the latest release line only. Today that is 3.2.x. If you run an older version, update first and check that the problem is still there.
+Security fixes go into the latest release line only. Today that is 3.3.x. If you run an older version, update first and check that the problem is still there.
 
 | Version | Supported |
 | --- | --- |
-| 3.2.x | Yes |
+| 3.3.x | Yes |
 | Older | No |
 
 ## Report a problem

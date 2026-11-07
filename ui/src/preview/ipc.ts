@@ -15,6 +15,7 @@ import type {
   McpStatus,
   NewInfo,
   Node,
+  Op,
   Proposal,
   ReportHit,
   ReportText,
@@ -286,6 +287,82 @@ function archive(body: Body): Change {
   };
   Object.assign(n, now);
   return changed(`Archived ${n.name}`, () => void Object.assign(n, was));
+}
+/** Takes a project out of the archive. The preview moves no folder: it clears the mark in place. */
+function restore(body: Body): Change {
+  const n = node(text(body, "id"));
+  if (!n.archived) fail("This project isn't archived");
+  const was = {
+    archived: n.archived,
+    inArchive: n.inArchive,
+    status: { ...n.status },
+    meta: { ...n.meta },
+    restorePlan: n.restorePlan,
+  };
+  const meta = { ...n.meta };
+  delete meta.status;
+  delete meta.archivedFrom;
+  delete meta.archivedAt;
+  Object.assign(n, {
+    archived: false,
+    inArchive: false,
+    status: { value: "idle", auto: true },
+    meta,
+    restorePlan: undefined,
+  });
+  return changed(`Restore ${n.name}`, () => void Object.assign(n, was));
+}
+/**
+ * The plan for putting `n` back at `destination`, as the engine checks it: not where something is,
+ * not inside the archive or the project, and inside the home folder. The steps go to that place.
+ */
+function restoreTo(n: Node, plan: ArchivePlan, destination: string): ArchivePlan {
+  const home = fixtures.meta.home;
+  const short = (path: string) =>
+    path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+  const cant = (reason: ArchivePlan["reason"], error: string): ArchivePlan => ({
+    error,
+    reason,
+    dest: destination,
+    ops: [],
+    checks: [],
+  });
+  const archive = `${home}/project/_archive`;
+  const inside = (path: string, dir: string) =>
+    path === dir || path.startsWith(`${dir}/`);
+  if (!inside(destination, home))
+    return cant("outside", "Path must be inside your home folder");
+  if (snapshot.nodes[destination])
+    return cant(
+      "occupied",
+      `Something is already at ${short(destination)}. Choose another place.`,
+    );
+  if (inside(destination, n.path))
+    return cant("inArchive", "Can't move a folder into itself");
+  if (inside(destination, archive))
+    return cant(
+      "inArchive",
+      "That place is in the archive. Choose a place outside it.",
+    );
+  // An origin the engine knows gives the steps; one it doesn't gives the steps a restore takes.
+  const from = plan.dest ? short(plan.dest) : "";
+  const to = short(destination);
+  const ops: Op[] = plan.ops.length
+    ? plan.ops.map((op) =>
+        op.to && from && (op.to === from || op.to.startsWith(`${from}/`))
+          ? { ...op, to: to + op.to.slice(from.length) }
+          : op,
+      )
+    : [
+        { kind: "move", label: "Move folder", from: short(n.path), to },
+        { kind: "write", label: "Clear status: archived", to: `${to}/.laci.md` },
+        {
+          kind: "write",
+          label: "Write undo journal",
+          to: "~/.local/share/laci/journal/",
+        },
+      ];
+  return { dest: destination, ops, checks: plan.checks };
 }
 function apply(body: Body): Change {
   const at = snapshot.proposals.findIndex((p) => p.id === text(body, "id"));
@@ -864,6 +941,12 @@ const reads: Record<string, Handler> = {
   health: (body) => lookup(fixtures.health, text(body, "id"), "health data"),
   "archive/plan": (body) =>
     lookup(fixtures["archive/plan"], text(body, "id"), "archive plan"),
+  "restore/plan": (body) => {
+    const n = node(text(body, "id"));
+    const plan = n.restorePlan ?? fail("This project isn't archived");
+    const destination = text(body, "destination");
+    return destination && n.inArchive ? restoreTo(n, plan, destination) : plan;
+  },
   "delete/plan": (body) => {
     const id = text(body, "id");
     return {
@@ -922,6 +1005,7 @@ const writes: Record<string, Handler> = {
   todo,
   notes,
   archive,
+  restore,
   apply,
   clean,
   undo: (body) => undo(text(body, "id")),

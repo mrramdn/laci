@@ -337,6 +337,9 @@ export const projects = {
   continueAi: "Continue with AI",
   showIn: (app: string) => `Show in ${app}`,
   archive: "Archive…",
+  restore: "Restore…",
+  /** Where an archived project came from, under its name. */
+  from: (where: string) => `From ${where}`,
   noneTitle: "No projects here",
   none: {
     all: "Laci found no projects in your project folders yet.",
@@ -372,6 +375,8 @@ export const project = {
   openIn: (app: string) => `Open in ${app}`,
   moreActions: "More actions",
   archive: "Archive…",
+  /** On the page of an archived project, beside Continue with AI. */
+  restoreButton: "Restore…",
   delete: "Delete project…",
   freeSpace: "Free up space here…",
   terminal: "Open terminal here",
@@ -1256,6 +1261,7 @@ export const activity = {
     keptOut: (files: number, name: string) =>
       `Kept ${count(files, "file")} of ${name} out of saved versions`,
     archived: (name: string) => `Archived ${name}`,
+    restored: (name: string) => `Took ${name} out of the archive`,
     moved: (name: string) => `Moved ${name}`,
     reconnected: (name: string) => `Reconnected the AI chats of ${name}`,
     finishedMoves: (moves: number) => `Finished ${count(moves, "unfinished move")}`,
@@ -1324,6 +1330,7 @@ export const logForms = {
   undid: told.undidAny,
   moved: told.moved,
   archived: told.archived,
+  restored: told.restored,
   reconnected: told.reconnected,
   chatsForGone: { kept: told.setAsideAny, trashed: told.trashedChatsAny },
   chatsForDeleted: { kept: told.setAside, trashed: told.trashedChats },
@@ -1963,6 +1970,33 @@ export const dialogs = {
     archivedNote: "Find it in Projects, under Archived.",
     failed: (name: string) => `Laci couldn’t archive ${name}.`,
   },
+  restore: {
+    title: (name: string) => `Restore ${name}?`,
+    intro: "Laci puts it back where it was, with its AI chats.",
+    /** For a project only marked archived: its folder never moved. */
+    introInPlace: "Laci takes away its archived mark. The folder stays where it is.",
+    goesBack: (where: string) => `It goes back to ${where}.`,
+    unknown: "Laci doesn’t know where this project came from. Choose where to put it back under Show details.",
+    /** Why it can't go back to `where` (the engine's reason), and that another place can be chosen. */
+    why: {
+      occupied: (where: string) =>
+        `Something else is at ${where} now. Choose another place under Show details.`,
+      inArchive: (where: string) =>
+        `${where} is inside your archive folder or inside the project. Choose another place under Show details.`,
+      outside: (where: string) =>
+        `${where} isn’t in your home folder or one of your project folders. Choose another place under Show details.`,
+    },
+    checking: "Checking where it goes…",
+    restore: "Restore",
+    note: "You can undo it any time in Activity.",
+    cant: (name: string) => `Laci can’t put ${name} back there.`,
+    elsewhere: "To put it somewhere else, change “Goes to” under Show details.",
+    fullPath: "Write the full location, such as ~/project/my-project.",
+    restoring: (name: string) => `Restoring ${name}…`,
+    restored: (name: string) => `Restored ${name}`,
+    restoredNote: "It is back with your other projects.",
+    failed: (name: string) => `Laci couldn’t restore ${name}.`,
+  },
   clean: {
     title: (name: string) => `Free up space in ${name}?`,
     intro:
@@ -1988,6 +2022,20 @@ export const dialogs = {
  * the look for secret files before a fix that saves or uploads versions. Its buttons keep their Git
  * names (FIX_LABEL in helpers.ts); what they open says it plainly.
  */
+/** Detailed's Archive view: where an archived project came from, and why it can't go back there. */
+export const detailedArchive = {
+  from: (where: string) => `From ${where}`,
+  /** The engine's reason, short, after "From <place> ·". */
+  why: {
+    occupied: "something is there now",
+    inArchive: "inside the archive",
+    outside: "outside your locations",
+  },
+  /** A plan that can't run without saying why. */
+  cant: "can’t go back there",
+  unknown: "Origin unknown",
+};
+
 export const detailedData = {
   /** The scan of the project folders, at the foot of the sidebar beside the update's badge. */
   scan: {
@@ -2074,6 +2122,7 @@ export const detailedSettings = {
   archiveFolderTitle: "Choose your archive folder",
   reportsFolderTitle: "Choose the folder for reports",
   destinationTitle: (name: string) => `Choose where to archive ${name}`,
+  restoreTitle: (name: string) => `Choose where to put ${name} back`,
   locationTitle: "Choose where the new project goes",
   templateTitle: "Choose a folder to start new projects from",
   backupFolderTitle: "Choose a folder for the history backup",

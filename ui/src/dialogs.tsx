@@ -17,6 +17,7 @@ import {
   joinPath,
   parentOf,
   plural,
+  readyPlan,
   tilde,
 } from "./helpers";
 import { CopyChoice } from "./copy-choice";
@@ -237,10 +238,11 @@ export function DialogFrame({
 export function Dialogs() {
   const modal = useApp((s) => s.modal);
   const design = useApp((s) => s.design);
-  // Simple draws its own Archive, Delete and Free up space sheets (simple/dialogs.tsx).
+  // Simple draws its own Archive, Restore, Delete and Free up space sheets (simple/dialogs.tsx).
   if (
     design === "simple" &&
     (modal?.kind === "archive" ||
+      modal?.kind === "restore" ||
       modal?.kind === "delete" ||
       modal?.kind === "clean")
   )
@@ -253,6 +255,8 @@ export function Dialogs() {
     </Suspense>
   ) : modal?.kind === "archive" ? (
     <Archive key={modal.id} id={modal.id} />
+  ) : modal?.kind === "restore" ? (
+    <Restore key={modal.id} id={modal.id} />
   ) : modal?.kind === "delete" ? (
     <DeleteProject key={modal.id} id={modal.id} />
   ) : modal?.kind === "clean" ? (
@@ -502,7 +506,7 @@ function Archive({ id }: { id: string }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const current = review?.destination === destination ? review : null;
-  const plan = current?.plan && !current.plan.error ? current.plan : undefined;
+  const plan = readyPlan(current?.plan);
   useEffect(() => {
     let live = true;
     const timer = window.setTimeout(() => {
@@ -660,6 +664,192 @@ function Archive({ id }: { id: string }) {
         <>
           <div className="sec-t">{plural(plan.ops.length, "change")}</div>
           <Ops key={plan.dest} ops={plan.ops} optional onHeavy={setHeavy} />
+        </>
+      ) : null}
+    </DialogFrame>
+  );
+}
+/**
+ * Puts an archived project back: from the archive to where it came from (or where the user says),
+ * with its agent history, or, for one only marked archived, clears that status in place.
+ */
+function Restore({ id }: { id: string }) {
+  const s = useApp();
+  const n = s.snapshot!.nodes[id];
+  const home = s.snapshot!.home;
+  const moves = Boolean(n?.inArchive);
+  const [destination, setDestination] = useState("");
+  const [review, setReview] = useState<{
+    destination: string;
+    plan?: ArchivePlan;
+    error?: string;
+  } | null>(null);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const current = review?.destination === destination ? review : null;
+  const plan = readyPlan(current?.plan);
+  /** Where it came from: the origin Laci would use, also when something stops it going back there. */
+  const origin = n?.restorePlan?.dest;
+  const known = Boolean(n?.restorePlan && !n.restorePlan.error);
+  useEffect(() => {
+    let live = true;
+    const timer = window.setTimeout(() => {
+      const path = expandHome(destination.trim(), home);
+      if (path && !isAbsolutePath(path)) {
+        setReview({
+          destination,
+          error: "Use a full path like ~/project/my-project",
+        });
+        return;
+      }
+      void api<ArchivePlan>("restore/plan", {
+        id,
+        ...(path ? { destination: path } : {}),
+      }).then(
+        (plan) => live && setReview({ destination, plan, error: plan.error }),
+        (error) => live && setReview({ destination, error: errorText(error) }),
+      );
+    }, 200);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [id, destination, home]);
+  if (!n) return null;
+  const typed = expandHome(destination.trim(), home);
+  const pickFrom = isAbsolutePath(typed)
+    ? parentOf(typed)
+    : origin
+      ? parentOf(origin)
+      : "~";
+  const shownDest = plan?.dest ?? (known ? origin : undefined);
+  async function restore() {
+    if (!plan) return;
+    await run(
+      async () => {
+        setSaving(true);
+        setError("");
+        const modal = useApp.getState().modal;
+        try {
+          const change = await api<Change>("restore", {
+            id,
+            ...(moves ? { destination: plan.dest } : {}),
+          });
+          if (useApp.getState().modal === modal) close();
+          changed(change, `Restored ${n.name}`);
+          selectWhenReady(plan.dest);
+        } finally {
+          setSaving(false);
+        }
+      },
+      `Restoring ${n.name}…`,
+      {
+        history: true,
+        onError: (error) => setError(errorText(error)),
+      },
+    );
+  }
+  return (
+    <DialogFrame
+      title={`Restore ${n.name}?`}
+      description={
+        moves ? (
+          <>
+            Puts the folder back at{" "}
+            <span className="mono">
+              {shownDest ? tilde(shownDest, home) : "the place you choose"}
+            </span>{" "}
+            with its agent history. Undo is in the Log.
+          </>
+        ) : (
+          <>
+            Clears the archived status. The folder stays where it is. Undo is
+            in the Log.
+          </>
+        )
+      }
+      footer={
+        <>
+          {error || current?.error ? (
+            <p className="err" role="alert">
+              {error || current?.error}
+            </p>
+          ) : (
+            <p>Written to an undo journal first.</p>
+          )}
+          <button className="btn" disabled={saving} onClick={close}>
+            Cancel
+          </button>
+          <button
+            className="btn primary"
+            disabled={saving || s.historyPending || !plan}
+            onClick={() => void restore()}
+          >
+            {saving ? "Restoring…" : moves ? "Restore" : "Unarchive"}
+          </button>
+        </>
+      }
+    >
+      {moves ? (
+        <label className="fld">
+          <span>Put it somewhere else</span>
+          <div className="addrow">
+            <input
+              className="inp mono"
+              value={destination}
+              disabled={saving}
+              required={Boolean(n.restorePlan?.error)}
+              onChange={(e) => {
+                setDestination(e.target.value);
+                setError("");
+              }}
+              autoComplete="off"
+              aria-label="Restore destination"
+              placeholder={
+                n.restorePlan?.error
+                  ? "Choose where to put it back…"
+                  : tilde(origin, home)
+              }
+            />
+            {/* The folder chosen takes the project inside, under its own name. */}
+            <ChooseFolder
+              label={said.choose}
+              name={said.restoreTitle(n.name)}
+              title={said.restoreTitle(n.name)}
+              defaultPath={pickFrom}
+              disabled={saving}
+              onPick={(path) => {
+                setDestination(joinPath(path, base(n.path)));
+                setError("");
+              }}
+            />
+          </div>
+          <small>
+            {n.restorePlan?.error
+              ? "Required: the full project folder path, including its name."
+              : "Leave it empty to put it back where it came from."}
+          </small>
+        </label>
+      ) : null}
+      {/* Why it can't go back by itself is said once, in the footer, as the plan's error. */}
+      {!current ? <p role="status">Checking…</p> : null}
+      {plan?.checks.length ? (
+        <div className="warnbox">
+          {plan.checks.map((check, i) => (
+            <div className="issue" key={i}>
+              <SeverityGlyph severity={check.severity} />
+              <div className="txt">
+                <p>{check.title}</p>
+                {check.detail ? <p className="d">{check.detail}</p> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {plan ? (
+        <>
+          <div className="sec-t">{plural(plan.ops.length, "change")}</div>
+          <Ops key={plan.dest} ops={plan.ops} />
         </>
       ) : null}
     </DialogFrame>

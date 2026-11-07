@@ -3,7 +3,7 @@
 import { useId, useMemo } from "react";
 import { useNow } from "../clock";
 import { Icon } from "../common";
-import { deadlineInfo } from "../helpers";
+import { deadlineInfo, tilde } from "../helpers";
 import { external, goToProject, useApp } from "../store";
 import type { Node, Snapshot } from "../types";
 import { ago, blocks, projects as said } from "../words";
@@ -255,6 +255,9 @@ function ProjectCard({
   const chats = projectChats(snapshot, n, now.getTime()).total;
   const priority = said.priority[n.meta.priority ?? ""];
   const title = useId();
+  // Where an archived project came from, when Laci knows: also when something stops it going back.
+  const from =
+    n.inArchive && n.restorePlan?.dest ? tilde(n.restorePlan.dest, snapshot.home) : "";
   return (
     <article
       className="s-pcard"
@@ -281,23 +284,27 @@ function ProjectCard({
               icon: "folder-open",
               onSelect: () => external(n.id, "files"),
             },
-            ...(n.archived
-              ? []
-              : [
-                  "-" as const,
-                  {
-                    label: said.archive,
-                    icon: "archive",
-                    onSelect: () =>
-                      useApp.setState({ modal: { kind: "archive", id: n.id } }),
-                  },
-                ]),
+            "-" as const,
+            n.archived
+              ? {
+                  label: said.restore,
+                  icon: "undo-2",
+                  onSelect: () =>
+                    useApp.setState({ modal: { kind: "restore", id: n.id } }),
+                }
+              : {
+                  label: said.archive,
+                  icon: "archive",
+                  onSelect: () =>
+                    useApp.setState({ modal: { kind: "archive", id: n.id } }),
+                },
           ]}
         />
       </div>
       <p className="s-pcard-desc">
         {n.summary?.text ?? <span className="s-quiet">{said.noDescription}</span>}
       </p>
+      {from ? <p className="s-pcard-from">{said.from(from)}</p> : null}
       <div className="s-pcard-chips">
         <SafetyBadge node={n} />
         {due && due.days <= 14 ? (

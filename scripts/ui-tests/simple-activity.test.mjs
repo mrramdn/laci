@@ -543,6 +543,7 @@ const MOVED_TO_TRASH = [{ kind: "delete", label: "Moved to the trash", from: "~/
 const FORMS = [
   [{ form: "moved", name: "kopi-landing" }, "Moved kopi-landing"],
   [{ form: "archived", name: "habit-app" }, "Archived habit-app"],
+  [{ form: "restored", name: "old-portfolio", to: "~/project/old-portfolio" }, "Took old-portfolio out of the archive"],
   [{ form: "reconnected", name: "old-portfolio" }, "Reconnected the AI chats of old-portfolio"],
   [{ form: "chatsForGone" }, "Set aside leftover AI chats", { steps: MOVED_TO_KEPT }],
   [{ form: "chatsForGone" }, "Moved leftover AI chats to the Trash", { steps: MOVED_TO_TRASH }],

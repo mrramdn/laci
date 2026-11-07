@@ -32,8 +32,8 @@ const reportFile = path.join(reportsDir, '2026-10-12-alpha-tokenizer.md');
 const toolNames = [
   'add_next_step', 'apply_suggestion', 'archive_project', 'close_report_item', 'complete_task', 'create_project',
   'delete_project', 'delete_task', 'edit_task', 'list_projects', 'list_reports', 'move_project', 'move_task',
-  'needs_attention', 'open_items', 'project_details', 'recent_changes', 'set_project_fields', 'tidy_suggestions',
-  'undo_change', 'write_notes',
+  'needs_attention', 'open_items', 'project_details', 'recent_changes', 'restore_project', 'set_project_fields',
+  'tidy_suggestions', 'undo_change', 'write_notes',
 ];
 let child;
 let stderr = '';
@@ -315,7 +315,34 @@ try {
   assert.equal(await exists(project), false);
   const archivedDetails = await client.call('project_details', { project: archivePlan.destination });
   assert.equal(archivedDetails.archived, true);
+  assert.equal(archivedDetails.inArchive, true);
   assert.equal(archivedDetails.meta.status, 'archived');
+  assert.equal(archivedDetails.meta.archivedFrom, '~/project/alpha');
+  assert.match(archivedDetails.meta.archivedAt, /^\d{4}-\d{2}-\d{2}$/);
+  await client.rejects('archive_project', { project: archivePlan.destination }, /Already in the archive/i);
+  await client.rejects('restore_project', { project: created.path }, /isn't archived/i);
+  const restorePlan = await client.call('restore_project', { project: archivePlan.destination });
+  assert.equal(restorePlan.destination, project);
+  assert.ok(restorePlan.plan.some(op => op.kind === 'rename'));
+  assert.equal(await exists(project), false);
+  // Something at the origin: the preview says why and where, and confirming changes nothing.
+  await mkdir(project);
+  const occupied = await client.call('restore_project', { project: archivePlan.destination });
+  assert.equal(occupied.reason, 'occupied');
+  assert.equal(occupied.destination, project);
+  assert.deepEqual(occupied.plan, []);
+  await client.rejects('restore_project', { project: archivePlan.destination, confirm: true }, /already at/i);
+  assert.equal(await exists(archivePlan.destination), true);
+  await rm(project, { recursive: true });
+  const restored = await client.call('restore_project', { project: archivePlan.destination, confirm: true });
+  assert.equal(await exists(project), true);
+  assert.equal(await exists(archivePlan.destination), false);
+  const restoredDetails = await client.call('project_details', { project });
+  assert.equal(restoredDetails.archived, false);
+  assert.equal(restoredDetails.meta.archivedFrom, undefined);
+  await client.call('undo_change', { id: restored.journal.id, confirm: true });
+  assert.equal(await exists(project), false);
+  assert.equal(await exists(archivePlan.destination), true);
   await client.call('undo_change', { id: archived.journal.id, confirm: true });
   assert.equal(await exists(project), true);
   assert.deepEqual(await readFile(path.join(project, '.laci.md')), beforeSidecar);
@@ -411,7 +438,8 @@ try {
   assert.ok(changes.entries.every(entry => entry.undo === undefined), 'The Log answer leaves out the undo data');
   const alphaChanges = await client.call('recent_changes', { project, limit: 3 });
   assert.ok(alphaChanges.entries.length > 0 && alphaChanges.entries.length <= 3);
-  assert.ok(alphaChanges.entries.every(entry => entry.path?.startsWith(project)));
+  // A restore is told at the archived path it started from, and listed here because it moved the project back.
+  assert.ok(alphaChanges.entries.every(entry => entry.path?.startsWith(project) || /Restore alpha/.test(entry.title)));
   assert.ok((await client.call('recent_changes', { undoable: true })).entries.every(entry => entry.canUndo));
   const projectLog = await client.call('recent_changes', { project, limit: 100 });
   assert.ok(projectLog.searched >= projectLog.total);

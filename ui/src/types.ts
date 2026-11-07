@@ -35,6 +35,10 @@ export interface Meta {
   tags?: string[];
   /** Muted check codes, comma separated. */
   quiet?: string;
+  /** Where the project was when Laci archived it, with `~` for home. */
+  archivedFrom?: string;
+  /** The day Laci archived it, YYYY-MM-DD. */
+  archivedAt?: string;
 }
 
 export interface Remote {
@@ -287,12 +291,27 @@ export interface Op {
   detail?: string;
 }
 
+/**
+ * Why a restore plan can't run. "occupied": something is at the origin now. "unknown": Laci can't
+ * tell where the project came from. "inArchive": the place is inside the archive folder or inside
+ * the project. "outside": the place isn't in the home folder or a scan location.
+ */
+export type PlanReason = "occupied" | "unknown" | "inArchive" | "outside";
+
 export interface ArchivePlan {
-  dest: string;
+  /**
+   * Where the project goes. On a plan that can't run, the origin Laci would use, when it knows one
+   * (missing for reason "unknown").
+   */
+  dest?: string;
   error?: string;
+  reason?: PlanReason;
   checks: Issue[];
   ops: Op[];
 }
+
+/** A plan that can run: it always says where the project goes. */
+export type ReadyPlan = ArchivePlan & { dest: string };
 
 export interface DeletePlan {
   allowed: boolean;
@@ -354,6 +373,8 @@ export interface Node {
   parent?: string;
   children: string[];
   archived: boolean;
+  /** Its folder is in the archive: under the archive folder from Settings, or in an `_archive` folder. */
+  inArchive?: boolean;
   stableId: string;
   meta: Meta;
   status: { value: string; auto: boolean };
@@ -375,6 +396,8 @@ export interface Node {
   size?: Size;
   issues: Issue[];
   archivePlan?: ArchivePlan;
+  /** What putting an archived project back does: where it goes, or why Laci can't tell. */
+  restorePlan?: ArchivePlan;
 }
 
 /**
@@ -676,6 +699,8 @@ export type View =
   | "agents"
   | "reports"
   | "log"
+  /** Detailed's list of archived projects. */
+  | "archive"
   | "settings"
   /** Simple's page for the selected project. Detailed shows a project beside the view instead. */
   | "project"

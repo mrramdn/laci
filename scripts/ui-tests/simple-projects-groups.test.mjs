@@ -177,11 +177,14 @@ export async function filtersAndSearchLeaveNoEmptySection() {
   ]);
   // Needs you has no infra-notes, so ~/project is gone; the archived project still needing it is not.
   assert.deepEqual(labels({ filter: "needs" }), ["clients", "side", "thesis", "_archive"]);
-  assert.deepEqual(sectionsOf(s, { filter: "archived" }), [["_archive", ["old-portfolio"]]]);
+  assert.deepEqual(sectionsOf(s, { filter: "archived" }), [
+    ["side", ["zine"]],
+    ["_archive", ["old-portfolio"]],
+  ]);
   // The one project of a folder archived: its section goes with it.
   node(s, "thesis/campus-lms").archived = true;
   assert.deepEqual(labels({}), ["clients", "project", "side"]);
-  assert.deepEqual(labels({ filter: "archived", sort: "name" }), ["_archive", "thesis"]);
+  assert.deepEqual(labels({ filter: "archived", sort: "name" }), ["_archive", "side", "thesis"]);
 }
 
 export async function theFolderFilterNarrowsTheSections() {
@@ -223,7 +226,7 @@ export async function shownStaysTheFlatListInTheChosenOrder() {
   assert.equal(labelsOf("recent").length, 8);
   // The counts are of the folder, as before.
   const { counts } = model.projectsModel(s, query({ folder: `${ROOT}/side` }), NOW);
-  assert.deepEqual(counts, { all: 2, needs: 2, active: 1, archived: 0 });
+  assert.deepEqual(counts, { all: 2, needs: 2, active: 1, archived: 1 });
 }
 
 // ── What Simple keeps ──────────────────────────────────────────────────────────────────────────────

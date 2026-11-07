@@ -830,6 +830,7 @@ export async function bothDesignsCanSwitchFromSearchAndActions() {
     "view:tidy",
     "view:agents",
     "view:reports",
+    "view:archive",
     "view:log",
     "new",
     "shortcuts",

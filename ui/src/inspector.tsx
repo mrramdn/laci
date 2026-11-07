@@ -14,6 +14,7 @@ import {
   cap,
   date,
   descendants,
+  isArchivedGroup,
   plural,
   sessionsOf,
   hasSessionFile,
@@ -188,6 +189,18 @@ export function Inspector({ node: n }: { node: Node }) {
               >
                 <Icon name="undo-2" className="sm" />
                 {n.inArchive ? "Restore" : "Unarchive"}
+              </button>
+            ) : isArchivedGroup(n) ? (
+              <button
+                className="btn ghost sm"
+                title="Put the whole group back where it came from"
+                disabled={s.historyPending}
+                onClick={() =>
+                  useApp.setState({ modal: { kind: "restore", id: n.id } })
+                }
+              >
+                <Icon name="undo-2" className="sm" />
+                Restore group
               </button>
             ) : null}
             {isProject ? (

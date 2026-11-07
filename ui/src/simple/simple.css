@@ -1414,8 +1414,17 @@
     flex-direction: column;
     gap: 28px;
   }
-  .s-group-head {
+  /* The heading, and Restore beside it for an archived group, which goes back whole. */
+  .s-group-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
     margin: 0 0 8px;
+  }
+  .s-group-head {
+    min-width: 0;
+    margin: 0;
     font: var(--text-section);
   }
   .s-group-toggle {

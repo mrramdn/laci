@@ -887,6 +887,10 @@ kbd {
 .item.two .glyph {
   margin-top: 2px;
 }
+/* The Archive's rows for what an archived group holds sit under the group's row. */
+.item.in-group {
+  padding-left: 40px;
+}
 .item .pill,
 .item .glyph,
 .c-name .pill,

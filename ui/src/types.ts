@@ -284,7 +284,16 @@ export interface Size {
 }
 
 export interface Op {
-  kind: "move" | "rename" | "rewrite" | "delete" | "write" | "git" | "keep";
+  /** "unlink": a restore removes the old link at the origin, which points at what it puts back. */
+  kind:
+    | "move"
+    | "rename"
+    | "rewrite"
+    | "delete"
+    | "write"
+    | "git"
+    | "keep"
+    | "unlink";
   label: string;
   from?: string;
   to?: string;
@@ -294,9 +303,16 @@ export interface Op {
 /**
  * Why a restore plan can't run. "occupied": something is at the origin now. "unknown": Laci can't
  * tell where the project came from. "inArchive": the place is inside the archive folder or inside
- * the project. "outside": the place isn't in the home folder or a scan location.
+ * the project. "outside": the place isn't in the home folder or a scan location. "linked": the place
+ * is reached through a link into the archive, the old place of the project's archived group; the
+ * group goes back whole, or the link is removed first.
  */
-export type PlanReason = "occupied" | "unknown" | "inArchive" | "outside";
+export type PlanReason =
+  | "occupied"
+  | "unknown"
+  | "inArchive"
+  | "outside"
+  | "linked";
 
 export interface ArchivePlan {
   /**
@@ -396,7 +412,10 @@ export interface Node {
   size?: Size;
   issues: Issue[];
   archivePlan?: ArchivePlan;
-  /** What putting an archived project back does: where it goes, or why Laci can't tell. */
+  /**
+   * What putting an archived project back does: where it goes, or why Laci can't tell. A folder has
+   * one only when it is an archived group: in the archive, with its own `.laci.md` saying archived.
+   */
   restorePlan?: ArchivePlan;
 }
 

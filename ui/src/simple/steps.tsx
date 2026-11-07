@@ -12,6 +12,7 @@ const ICON: Record<Op["kind"], string> = {
   write: "write",
   git: "commit",
   keep: "keep",
+  unlink: "unlink",
 };
 
 export function Steps({ ops }: { ops: Op[] }) {

@@ -429,7 +429,7 @@ const archivePlan = (checks) => ({
  * Simple's sheets with `modal` open on kopi-landing (as `node` changes it), and the engine's answers
  * for each request in the order they come: a value, or a function that gives one or throws.
  */
-function sheets({ kind = "delete", node: change = {}, replies = {} } = {}) {
+function sheets({ kind = "delete", node: change = {}, nodes = {}, replies = {} } = {}) {
   const page = standIn();
   // The controls a sheet can give the focus to: its buttons and fields that aren't disabled.
   page.query = (_, root) =>
@@ -445,7 +445,7 @@ function sheets({ kind = "delete", node: change = {}, replies = {} } = {}) {
   const node = { ...KOPI_NODE, ...change };
   const app = page.store({
     modal: { kind, id: KOPI },
-    snapshot: { home: HOME, nodes: { [KOPI]: node } },
+    snapshot: { home: HOME, nodes: { [KOPI]: node, ...nodes } },
     historyPending: false,
     working: "",
     sheets: 0,
@@ -1208,6 +1208,104 @@ export async function aRestoreThatFailsSaysSoAndKeepsTheFocusOnIt() {
   assert.equal(sheet.alert(), said.restore.failed("kopi-landing"));
   sheet.focusIs(sheet.button(said.restore.restore));
   assert.deepEqual(sheet.changes, []);
+}
+
+// ── Restore an archived group ─────────────────────────────────────────────────────────────────────
+
+/** An archived group, and its old place: a link to it, which the restore removes first. */
+const GROUP = `${HOME}/project/_archive/old-clients`;
+const OLD_PLACE = `${HOME}/project/old-clients`;
+const groupPlan = () => ({
+  dest: OLD_PLACE,
+  checks: [],
+  ops: [
+    {
+      kind: "unlink",
+      label: "Remove the old link",
+      from: "~/project/old-clients",
+      to: "~/project/_archive/old-clients",
+    },
+    {
+      kind: "move",
+      label: "Move folder",
+      from: "~/project/_archive/old-clients",
+      to: "~/project/old-clients",
+    },
+  ],
+});
+const groupNode = (more = {}) => ({
+  ...KOPI_NODE,
+  id: GROUP,
+  path: GROUP,
+  kind: "folder",
+  name: "old-clients",
+  label: "old-clients",
+  archived: true,
+  inArchive: true,
+  meta: { status: "archived", archivedFrom: "~/project/old-clients" },
+  restorePlan: groupPlan(),
+  ...more,
+});
+
+export async function anArchivedGroupGoesBackWholeAndRemovesTheOldLinkFirst() {
+  // The sheet's own project id, with everything else the group's.
+  const { id: _, ...group } = groupNode();
+  const sheet = sheets({
+    kind: "restore",
+    node: group,
+    replies: { "restore/plan": [groupPlan()], restore: [{ revision: 3 }] },
+  });
+  assert.ok(sheet.text().includes(said.restore.titleGroup("old-clients")), sheet.text());
+  assert.ok(sheet.text().includes(said.restore.introGroup));
+  assert.ok(!sheet.text().includes(said.restore.intro));
+  await sheet.wait(0);
+  assert.ok(sheet.text().includes(said.restore.goesBack("~/project/old-clients")));
+  // Show details says the old link goes first, then the group.
+  sheet.click(sheet.button(words.blocks.showDetails));
+  const text = sheet.text();
+  const unlink = text.indexOf("Remove the old link: ~/project/old-clients → ~/project/_archive/old-clients");
+  assert.ok(unlink >= 0, text);
+  assert.ok(unlink < text.indexOf("Move folder: ~/project/_archive/old-clients → ~/project/old-clients"), text);
+  sheet.click(sheet.button(said.restore.restore));
+  await sheet.settle();
+  assert.deepEqual(sheet.asked("restore"), [{ id: KOPI, destination: OLD_PLACE }]);
+  assert.deepEqual(sheet.selected, [OLD_PLACE]);
+}
+
+export async function aProjectReachedThroughTheOldLinkOffersItsGroup() {
+  const place = `${OLD_PLACE}/kopi-landing`;
+  const linked = cantRestore("linked", place);
+  const sheet = sheets({
+    kind: "restore",
+    node: { ...archived(linked), parent: GROUP },
+    nodes: { [GROUP]: groupNode() },
+    replies: { "restore/plan": [linked, groupPlan()] },
+  });
+  await sheet.wait(0);
+  assert.ok(
+    sheet.text().includes(said.restore.linked("~/project/old-clients/kopi-landing", "old-clients")),
+    sheet.text(),
+  );
+  assert.equal(sheet.button(said.restore.restore).disabled, true);
+  // Another place can still be chosen; or the group goes back, in its own sheet.
+  assert.ok(goesTo(sheet), "Show details opened by itself");
+  sheet.click(sheet.button(said.restore.restoreGroup("old-clients")));
+  assert.deepEqual(sheet.app.getState().modal, { kind: "restore", id: GROUP });
+  await sheet.wait(0);
+  assert.ok(sheet.text().includes(said.restore.titleGroup("old-clients")), sheet.text());
+  assert.deepEqual(sheet.asked("restore/plan").at(-1), { id: GROUP, destination: OLD_PLACE });
+}
+
+export async function aProjectBehindALinkWithNoArchivedGroupSaysToRemoveTheLink() {
+  const linked = cantRestore("linked", `${OLD_PLACE}/kopi-landing`);
+  const sheet = sheets({
+    kind: "restore",
+    node: archived(linked),
+    replies: { "restore/plan": [linked] },
+  });
+  await sheet.wait(0);
+  assert.ok(sheet.text().includes(said.restore.linkedAny("~/project/old-clients/kopi-landing")));
+  assert.equal(sheet.button(said.restore.restoreGroup("old-clients")), undefined);
 }
 
 // ── Detailed leaves them to Simple ─────────────────────────────────────────────────────────────────

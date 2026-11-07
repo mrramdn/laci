@@ -67,6 +67,41 @@ export function copyChangeSaid(
 export function readyPlan(plan?: ArchivePlan): ReadyPlan | undefined {
   return plan && !plan.error && plan.dest ? (plan as ReadyPlan) : undefined;
 }
+/**
+ * Whether a folder is an archived group: in the archive, its own `.laci.md` says archived, and the
+ * engine planned to put it back whole. Only such a folder has a restore plan.
+ */
+export function isArchivedGroup(n: Node | undefined): boolean {
+  return Boolean(n && n.kind === "folder" && n.archived && n.restorePlan);
+}
+/** How many projects an archived group holds, at any depth. */
+export function groupProjectCount(nodes: Snapshot["nodes"], group: Node) {
+  return Object.values(nodes).filter(
+    (n) => n.kind === "project" && n.path !== group.path && within(n.path, group.path),
+  ).length;
+}
+/** The archived group a project is in, the nearest one above it; none when it is in none. */
+export function archivedGroupOf(
+  nodes: Snapshot["nodes"],
+  n: Node,
+): Node | undefined {
+  // `seen` stops a scan whose parents loop.
+  const seen = new Set<string>([n.id]);
+  for (let at = n.parent; at && !seen.has(at); at = nodes[at]?.parent) {
+    seen.add(at);
+    if (isArchivedGroup(nodes[at])) return nodes[at];
+  }
+  return undefined;
+}
+/**
+ * For a project that can't go back alone because its place is reached through a link into the archive
+ * (the plan's reason "linked"): the archived group to restore instead, when the scan lists it.
+ */
+export function linkedGroup(nodes: Snapshot["nodes"], n: Node) {
+  return n.restorePlan?.error && n.restorePlan.reason === "linked"
+    ? archivedGroupOf(nodes, n)
+    : undefined;
+}
 export function tilde(path: string | undefined, home: string) {
   return path === home
     ? "~"

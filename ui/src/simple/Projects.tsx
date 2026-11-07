@@ -3,7 +3,7 @@
 import { useId, useMemo } from "react";
 import { useNow } from "../clock";
 import { Icon } from "../common";
-import { deadlineInfo, tilde } from "../helpers";
+import { deadlineInfo, isArchivedGroup, linkedGroup, tilde } from "../helpers";
 import { external, goToProject, useApp } from "../store";
 import type { Node, Snapshot } from "../types";
 import { ago, blocks, projects as said } from "../words";
@@ -128,8 +128,12 @@ export function Projects() {
           </MoreMenu>
         </div>
       </div>
-      {model.shown.length && grouped && model.sections.length > 1 ? (
-        // One section alone needs no header: its cards are the whole list.
+      {model.shown.length &&
+      grouped &&
+      (model.sections.length > 1 ||
+        model.sections.some((section) => isArchivedGroup(section.group ?? undefined))) ? (
+        // One section alone needs no header, its cards are the whole list, unless it is an archived
+        // group: its heading has the group's Restore.
         <div className="s-groups">
           {model.sections.map((section) => (
             <Section
@@ -207,23 +211,39 @@ function Section({
   now: Date;
 }) {
   const region = useId();
+  // An archived group goes back whole: its heading offers Restore.
+  const archived = isArchivedGroup(section.group ?? undefined) ? section.group : null;
   return (
     <section className="s-group">
-      <h2 className="s-group-head">
-        <button
-          type="button"
-          className="s-group-toggle"
-          aria-expanded={open}
-          aria-controls={region}
-          onClick={() => toggleCollapsed(sectionKey(section))}
-        >
-          <Icon name="chevron-down" />
-          <span className="s-group-name">{section.label}</span>
-          <span className="s-group-count">
-            {said.groupCount(section.projects.length)}
-          </span>
-        </button>
-      </h2>
+      <div className="s-group-bar">
+        <h2 className="s-group-head">
+          <button
+            type="button"
+            className="s-group-toggle"
+            aria-expanded={open}
+            aria-controls={region}
+            onClick={() => toggleCollapsed(sectionKey(section))}
+          >
+            <Icon name="chevron-down" />
+            <span className="s-group-name">{section.label}</span>
+            <span className="s-group-count">
+              {said.groupCount(section.projects.length)}
+            </span>
+          </button>
+        </h2>
+        {archived ? (
+          <Button
+            kind="text"
+            icon="undo-2"
+            aria-label={said.restoreGroupFor(archived.label)}
+            onClick={() =>
+              useApp.setState({ modal: { kind: "restore", id: archived.id } })
+            }
+          >
+            {said.restore}
+          </Button>
+        ) : null}
+      </div>
       <div id={region} hidden={!open}>
         {open ? (
           <Cards
@@ -255,6 +275,8 @@ function ProjectCard({
   const chats = projectChats(snapshot, n, now.getTime()).total;
   const priority = said.priority[n.meta.priority ?? ""];
   const title = useId();
+  // A project that goes back only with its archived group: Restore puts the group back.
+  const group = linkedGroup(snapshot.nodes, n);
   // Where an archived project came from, when Laci knows: also when something stops it going back.
   const from =
     n.inArchive && n.restorePlan?.dest ? tilde(n.restorePlan.dest, snapshot.home) : "";
@@ -287,10 +309,12 @@ function ProjectCard({
             "-" as const,
             n.archived
               ? {
-                  label: said.restore,
+                  label: group ? said.restoreGroup : said.restore,
                   icon: "undo-2",
                   onSelect: () =>
-                    useApp.setState({ modal: { kind: "restore", id: n.id } }),
+                    useApp.setState({
+                      modal: { kind: "restore", id: group?.id ?? n.id },
+                    }),
                 }
               : {
                   label: said.archive,
@@ -304,7 +328,11 @@ function ProjectCard({
       <p className="s-pcard-desc">
         {n.summary?.text ?? <span className="s-quiet">{said.noDescription}</span>}
       </p>
-      {from ? <p className="s-pcard-from">{said.from(from)}</p> : null}
+      {group ? (
+        <p className="s-pcard-from">{said.inGroup(group.label)}</p>
+      ) : from ? (
+        <p className="s-pcard-from">{said.from(from)}</p>
+      ) : null}
       <div className="s-pcard-chips">
         <SafetyBadge node={n} />
         {due && due.days <= 14 ? (

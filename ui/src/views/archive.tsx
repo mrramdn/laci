@@ -2,7 +2,16 @@ import { useEffect, useState } from "react";
 import { Icon, Group } from "../common";
 import { useApp, external } from "../store";
 import { api } from "../api";
-import { bytes, LOCALE, plural, tilde } from "../helpers";
+import {
+  archivedGroupOf,
+  bytes,
+  groupProjectCount,
+  isArchivedGroup,
+  linkedGroup,
+  LOCALE,
+  plural,
+  tilde,
+} from "../helpers";
 import type { Node, SetupInfo } from "../types";
 import { detailedArchive as said } from "../words";
 /** The day a project was archived, from its `.laci.md`, as the other lists write a date. */
@@ -31,9 +40,41 @@ function newestFirst(a: Node, b: Node) {
   const [x, y] = [a.meta.archivedAt ?? "", b.meta.archivedAt ?? ""];
   return x !== y ? (x < y ? 1 : -1) : a.label.localeCompare(b.label);
 }
+/** A row of "In the archive", and how far it is inside an archived group listed above it. */
+interface Row {
+  n: Node;
+  depth: number;
+}
 /**
- * Detailed's Archive: the archive folder, the projects in it with where they came from, and the
- * projects only marked archived, which are still in their own place.
+ * The archived groups and the projects in the archive, as rows: newest first, and after each group
+ * what it holds, by name.
+ */
+export function archiveRows(nodes: Record<string, Node>): Row[] {
+  const listed = Object.values(nodes).filter(
+    (n) =>
+      isArchivedGroup(n) || (n.kind === "project" && n.archived && n.inArchive),
+  );
+  const inGroup = new Map<string, Node[]>();
+  const top: Node[] = [];
+  for (const n of listed) {
+    const group = archivedGroupOf(nodes, n);
+    if (group) inGroup.set(group.id, [...(inGroup.get(group.id) ?? []), n]);
+    else top.push(n);
+  }
+  const rows: Row[] = [];
+  const add = (n: Node, depth: number) => {
+    rows.push({ n, depth });
+    for (const inside of (inGroup.get(n.id) ?? []).sort((a, b) =>
+      a.label.localeCompare(b.label),
+    ))
+      add(inside, depth + 1);
+  };
+  for (const n of top.sort(newestFirst)) add(n, 0);
+  return rows;
+}
+/**
+ * Detailed's Archive: the archive folder, the archived groups and the projects in it with where they
+ * came from, and the projects only marked archived, which are still in their own place.
  */
 export function ArchiveView() {
   const snapshot = useApp((s) => s.snapshot!);
@@ -51,10 +92,11 @@ export function ArchiveView() {
     };
   }, []);
   const home = snapshot.home;
-  const projects = Object.values(snapshot.nodes).filter(
+  const nodes = snapshot.nodes;
+  const projects = Object.values(nodes).filter(
     (n) => n.kind === "project" && n.archived,
   );
-  const stored = projects.filter((n) => n.inArchive).sort(newestFirst);
+  const stored = archiveRows(nodes);
   const marked = projects
     .filter((n) => !n.inArchive)
     .sort((a, b) => a.label.localeCompare(b.label));
@@ -101,36 +143,71 @@ export function ArchiveView() {
             hint="Put back where it came from, with its agent history"
             order="Newest first"
           >
-            {stored.map((n) => {
+            {stored.map(({ n, depth }) => {
+              const group = isArchivedGroup(n);
+              // A project that goes back only with its archived group (the engine's reason "linked")
+              // offers the group in place of its own Restore, when the scan lists the group. Without
+              // one, the row says where it came from and why it can't go back, as for any reason.
+              const whole = group ? undefined : linkedGroup(nodes, n);
+              const inside = whole ? said.inside(whole.label) : "";
               const from = restoreFrom(n, home);
               const day = archivedOn(n.meta.archivedAt);
               return (
                 <div
-                  className="item"
+                  className={depth ? "item in-group" : "item"}
                   key={n.id}
                   tabIndex={0}
                   data-id={n.id}
+                  data-kind={group ? "group" : "project"}
                   aria-selected={selected === n.id}
                   onClick={() => select(n.id)}
                 >
+                  {group ? <Icon name="folder" className="sm" /> : null}
                   <span className="name">{n.label}</span>
-                  <span className="d mono" title={from}>
-                    {from}
-                  </span>
+                  {inside ? (
+                    <span className="d" title={inside}>
+                      {inside}
+                    </span>
+                  ) : (
+                    <span className="d mono" title={from}>
+                      {from}
+                    </span>
+                  )}
                   <span className="meta">
+                    {group ? (
+                      <span>{said.group(groupProjectCount(nodes, n))}</span>
+                    ) : null}
                     {day ? <span>{day}</span> : null}
-                    <span className="mono">{bytes(n.size?.total)}</span>
-                    <button
-                      className="btn sm"
-                      disabled={historyPending}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        open(n.id);
-                      }}
-                    >
-                      <Icon name="undo-2" className="sm" />
-                      Restore
-                    </button>
+                    {group ? null : (
+                      <span className="mono">{bytes(n.size?.total)}</span>
+                    )}
+                    {whole ? (
+                      <button
+                        className="btn sm"
+                        title={said.restoreGroupFor(whole.label)}
+                        disabled={historyPending}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          select(whole.id);
+                          open(whole.id);
+                        }}
+                      >
+                        <Icon name="undo-2" className="sm" />
+                        {said.restoreGroup}
+                      </button>
+                    ) : (
+                      <button
+                        className="btn sm"
+                        disabled={historyPending}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          open(n.id);
+                        }}
+                      >
+                        <Icon name="undo-2" className="sm" />
+                        Restore
+                      </button>
+                    )}
                     <button
                       className="btn sm ghost"
                       onClick={(event) => {
@@ -194,7 +271,7 @@ export function ArchiveView() {
             ))}
           </Group>
         ) : null}
-        {!projects.length ? (
+        {!projects.length && !stored.length ? (
           <div className="empty">
             {historyPending
               ? "Updating…"

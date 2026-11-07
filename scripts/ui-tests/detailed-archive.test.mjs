@@ -2,11 +2,12 @@
 // from, and why they can't go back there by themselves when the engine says so; the projects only
 // marked archived are listed apart, at their own place. Drawn to HTML on a server, for scans made here.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { load, requireUi } from "../ui-module.mjs";
 
 const { createElement: h } = requireUi("react");
 const { renderToStaticMarkup } = requireUi("react-dom/server");
-const words = load("words.ts").detailedArchive;
+const { detailedArchive: words, unlinkStep } = load("words.ts");
 const HOME = "/home/demo";
 const none = () => null;
 
@@ -92,6 +93,179 @@ export function archiveRowsSayWhereEachProjectCameFromAndWhyItCantGoBack() {
   assert.equal(html.split(`>${words.unknown}<`).length - 1, 1);
   assert.match(html, /with its agent history/);
   assert.doesNotMatch(html, /AI history/);
+}
+
+/** An archived group: a folder in the archive whose own .laci.md says archived, with a restore plan. */
+const group = (name, more = {}) => ({
+  id: `${HOME}/project/_archive/${name}`,
+  path: `${HOME}/project/_archive/${name}`,
+  kind: "folder",
+  name,
+  label: name,
+  children: [],
+  archived: true,
+  inArchive: true,
+  meta: { status: "archived", archivedAt: "2026-08-29", archivedFrom: `~/project/${name}` },
+  restorePlan: {
+    dest: `${HOME}/project/${name}`,
+    ops: [
+      {
+        kind: "unlink",
+        label: "Remove the old link",
+        from: `~/project/${name}`,
+        to: `~/project/_archive/${name}`,
+      },
+    ],
+    checks: [],
+  },
+  ...more,
+});
+/** A project in the archived group `of`. */
+const member = (of, name, plan) =>
+  project(`${of.name}/${name}`, {
+    name,
+    label: name,
+    parent: of.id,
+    meta: { status: "archived" },
+    restorePlan: plan,
+  });
+/** Every row of the Archive, in order: its id, its classes, and what it says beside the name. */
+function rowsInOrder(html) {
+  return [
+    ...html.matchAll(
+      /<div class="([^"]+)" tabindex="0" data-id="([^"]+)" data-kind="(\w+)"[^>]*><span class="name">([^<]+)<\/span><span class="d[^"]*"[^>]*>([^<]*)<\/span>/g,
+    ),
+  ].map(([, classes, id, kind, name, said]) => ({ classes, id, kind, name, said }));
+}
+
+export function anArchivedGroupIsARowWithWhatItHoldsUnderIt() {
+  const clients = group("old-clients");
+  const linked = (name) =>
+    cant("linked", `${HOME}/project/old-clients/${name}`);
+  const html = draw([
+    project("old-portfolio", {
+      restorePlan: { dest: `${HOME}/project/old-portfolio`, ops: [], checks: [] },
+    }),
+    member(clients, "warung-pos", linked("warung-pos")),
+    member(clients, "batik-shop", linked("batik-shop")),
+    clients,
+  ]);
+  // Newest first: the group, archived last, then what it holds by name, then old-portfolio.
+  assert.deepEqual(
+    rowsInOrder(html).map(({ classes, kind, name, said }) => [classes, kind, name, said]),
+    [
+      ["item", "group", "old-clients", words.from("~/project/old-clients")],
+      ["item in-group", "project", "batik-shop", words.inside("old-clients")],
+      ["item in-group", "project", "warung-pos", words.inside("old-clients")],
+      ["item", "project", "old-portfolio", words.from("~/project/old-portfolio")],
+    ],
+  );
+  assert.equal(words.inside("old-clients"), "Inside old-clients · restore the group");
+  // The group says how many projects it holds, and has Restore and Open folder.
+  assert.equal(words.group(2), "Group of 2 projects");
+  const row = html.slice(html.indexOf('data-kind="group"'), html.indexOf('data-id="' + `${clients.id}/batik-shop`));
+  assert.match(row, />Group of 2 projects</);
+  assert.match(row, />Restore<\/button>/);
+  assert.match(row, />Open folder<\/button>/);
+  // Each project in it offers the group instead of a Restore of its own, which the engine refuses.
+  assert.equal(html.split(`>${words.restoreGroup}</button>`).length - 1, 2);
+  assert.equal(html.split(`title="${words.restoreGroupFor("old-clients")}"`).length - 1, 2);
+  assert.equal(html.split(">Restore</button>").length - 1, 2, "the group's and old-portfolio's");
+  // The view counts projects; the rows count the group too.
+  assert.match(html, />3 projects</);
+}
+
+export function aLinkedProjectWithNoArchivedGroupSaysWhyAndKeepsItsRestore() {
+  // Its folder isn't marked archived, so there is no group to put back: the row says the link.
+  const html = draw([
+    project("plain/batik-shop", {
+      name: "batik-shop",
+      label: "batik-shop",
+      parent: `${HOME}/project/_archive/plain`,
+      restorePlan: cant("linked", `${HOME}/project/plain/batik-shop`),
+    }),
+  ]);
+  assert.deepEqual(rows(html), {
+    "batik-shop": `${words.from("~/project/plain/batik-shop")} · ${words.why.linked}`,
+  });
+  assert.match(html, />Restore<\/button>/);
+  assert.doesNotMatch(html, new RegExp(words.restoreGroup));
+}
+
+export function theUnlinkStepHasItsIconAndTheEnginesWordsInBothDesigns() {
+  const op = {
+    kind: "unlink",
+    label: unlinkStep.done,
+    from: "~/project/old-clients",
+    to: "~/project/_archive/old-clients",
+  };
+  assert.equal(unlinkStep.plan, "Remove the old link");
+  assert.equal(unlinkStep.done, "Removed the old link");
+  // The icon is in the set both designs draw from.
+  const icons = readFileSync(new URL("../../ui/public/icons.svg", import.meta.url), "utf8");
+  assert.match(icons, /id="unlink"/);
+  // Detailed's Log and dialogs draw steps with Ops, named by their kind.
+  const { Ops } = load("common.tsx", {
+    "./api": { api: none, errorText: String },
+    "./store": { useApp: none, changed: none, run: none, toggleExpanded: none },
+    "./clock": { useNow: () => 0 },
+    "./terminal-api": { openTerminal: none },
+    "./dialogs": { DialogFrame: none },
+  });
+  const detailed = renderToStaticMarkup(h(Ops, { ops: [op] }));
+  assert.match(detailed, /class="k-unlink"/);
+  assert.match(detailed, /icons\.svg#unlink/);
+  assert.match(detailed, />Removed the old link</);
+  assert.match(detailed, /~\/project\/old-clients<span class="arr">→<\/span>~\/project\/_archive\/old-clients/);
+  // Simple's Activity draws them with Steps.
+  const { Steps } = load("simple/steps.tsx", {
+    "../common": { Icon: ({ name }) => h("i", { "data-icon": name }) },
+  });
+  const simple = renderToStaticMarkup(h(Steps, { ops: [op] }));
+  assert.match(simple, /data-icon="unlink"/);
+  assert.match(simple, />Removed the old link</);
+  assert.match(simple, />~\/project\/old-clients → ~\/project\/_archive\/old-clients</);
+}
+
+export function detailedsRestoreDialogNamesTheGroup() {
+  const clients = group("old-clients");
+  const state = {
+    design: "detailed",
+    modal: { kind: "restore", id: clients.id },
+    snapshot: { home: HOME, nodes: { [clients.id]: clients }, proposals: [] },
+    historyPending: false,
+    working: "",
+    palette: false,
+  };
+  const useApp = Object.assign((select) => (select ? select(state) : state), {
+    getState: () => state,
+    setState: none,
+  });
+  const { Dialogs } = load(
+    "dialogs.tsx",
+    {
+      "./api": { api: () => new Promise(none), errorText: String },
+      "./store": { useApp, changed: none, run: none, selectWhenReady: none },
+      "./common": { Icon: none, Ops: none, restoreFocus: none, SeverityGlyph: none },
+      "./terminal-api": { closeTerminal: none, useTerms: () => undefined },
+      "./session-ui": { AgentDialog: none, DeleteSessions: none, SessionDialog: none },
+      "./mcp-setup": { McpDialog: none },
+      "./select": {
+        Select: none,
+        SelectPortal: requireUi("react").createContext(null),
+        selectIsOpen: () => false,
+      },
+      "./settings": { useConfigPath: () => "~/.config/laci/config.json" },
+    },
+    {
+      document: { documentElement: { dataset: {} }, activeElement: null },
+      HTMLElement: class {},
+    },
+  );
+  const html = renderToStaticMarkup(h(Dialogs));
+  assert.match(html, /Restore the group old-clients\?/);
+  assert.equal(words.restoreGroupTitle("old-clients"), "Restore the group old-clients?");
+  assert.match(html, />~\/project\/old-clients<\/span> with every project in it and their agent history\. Undo is in the Log\./);
 }
 
 export function aPlaceThatCantBeUsedStillShowsTheOrigin() {

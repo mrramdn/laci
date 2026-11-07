@@ -287,6 +287,30 @@ function archive(body: Body): Change {
   Object.assign(n, now);
   return changed(`Archived ${n.name}`, () => void Object.assign(n, was));
 }
+/** Takes a project out of the archive. The preview moves no folder: it clears the mark in place. */
+function restore(body: Body): Change {
+  const n = node(text(body, "id"));
+  if (!n.archived) fail("This project isn't archived");
+  const was = {
+    archived: n.archived,
+    inArchive: n.inArchive,
+    status: { ...n.status },
+    meta: { ...n.meta },
+    restorePlan: n.restorePlan,
+  };
+  const meta = { ...n.meta };
+  delete meta.status;
+  delete meta.archivedFrom;
+  delete meta.archivedAt;
+  Object.assign(n, {
+    archived: false,
+    inArchive: false,
+    status: { value: "idle", auto: true },
+    meta,
+    restorePlan: undefined,
+  });
+  return changed(`Restore ${n.name}`, () => void Object.assign(n, was));
+}
 function apply(body: Body): Change {
   const at = snapshot.proposals.findIndex((p) => p.id === text(body, "id"));
   if (at < 0) fail("That suggestion is gone");
@@ -864,6 +888,14 @@ const reads: Record<string, Handler> = {
   health: (body) => lookup(fixtures.health, text(body, "id"), "health data"),
   "archive/plan": (body) =>
     lookup(fixtures["archive/plan"], text(body, "id"), "archive plan"),
+  "restore/plan": (body) => {
+    const n = node(text(body, "id"));
+    const plan = n.restorePlan ?? fail("This project isn't archived");
+    const destination = text(body, "destination");
+    return destination && n.inArchive
+      ? { ...plan, error: undefined, dest: destination }
+      : plan;
+  },
   "delete/plan": (body) => {
     const id = text(body, "id");
     return {
@@ -922,6 +954,7 @@ const writes: Record<string, Handler> = {
   todo,
   notes,
   archive,
+  restore,
   apply,
   clean,
   undo: (body) => undo(text(body, "id")),

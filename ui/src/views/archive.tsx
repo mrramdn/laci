@@ -169,14 +169,17 @@ export function ArchiveView() {
                       {inside}
                     </span>
                   ) : (
-                    <span className="d mono" title={from}>
+                    <span className={group ? "d mono whole" : "d mono"} title={from}>
                       {from}
                     </span>
                   )}
+                  {/* After where it came from, and cut off before it when the row is short. */}
+                  {group ? (
+                    <span className="note">
+                      {said.group(groupProjectCount(nodes, n))}
+                    </span>
+                  ) : null}
                   <span className="meta">
-                    {group ? (
-                      <span>{said.group(groupProjectCount(nodes, n))}</span>
-                    ) : null}
                     {day ? <span>{day}</span> : null}
                     {group ? null : (
                       <span className="mono">{bytes(n.size?.total)}</span>

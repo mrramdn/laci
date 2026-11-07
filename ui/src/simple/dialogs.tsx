@@ -8,7 +8,17 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch, Ref, SetStateAction } from "react";
 import { api, errorText } from "../api";
 import { restoreFocus } from "../common";
-import { bytes, expandHome, isAbsolutePath, readyPlan, RISK, tilde } from "../helpers";
+import {
+  archivedGroupOf,
+  bytes,
+  expandHome,
+  isAbsolutePath,
+  isArchivedGroup,
+  placeAfterRestore,
+  readyPlan,
+  RISK,
+  tilde,
+} from "../helpers";
 import { changed, run, selectWhenReady, useApp } from "../store";
 import type { Modal } from "../store";
 import type { ArchivePlan, Change, DeletePlan, Issue, Node, Op } from "../types";
@@ -83,16 +93,20 @@ function ProjectSheet({ kind, node }: { kind: Kind; node: Node }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const body = { node, stage, setStage, opener };
+  // An archived group goes back whole, with every project in it.
+  const group = kind === "restore" && isArchivedGroup(node);
   return (
     <Sheet
-      title={said[kind].title(node.label)}
+      title={group ? said.restore.titleGroup(node.label) : said[kind].title(node.label)}
       // A project in the archive already has no Archive instead to recommend.
       description={
         kind === "delete" && node.archived
           ? said.delete.introArchived
-          : kind === "restore" && !node.inArchive
-            ? said.restore.introInPlace
-            : said[kind].intro
+          : group
+            ? said.restore.introGroup
+            : kind === "restore" && !node.inArchive
+              ? said.restore.introInPlace
+              : said[kind].intro
       }
       onClose={close}
       // While a Countdown runs, its own Cancel is the one to use.
@@ -635,6 +649,7 @@ function ArchiveBody({ node, stage, setStage, opener }: Body) {
  */
 function RestoreBody({ node, stage, setStage }: Body) {
   const home = useApp((s) => s.snapshot!.home);
+  const nodes = useApp((s) => s.snapshot!.nodes);
   const historyPending = useApp((s) => s.historyPending);
   const moves = Boolean(node.inArchive);
   const [destination, setDestination] = useState(() =>
@@ -692,12 +707,19 @@ function RestoreBody({ node, stage, setStage }: Body) {
   // Why the engine can't put it back there: another place has to be chosen, under Show details.
   const reason = moves && !failure && current?.plan?.error ? current.plan.reason : undefined;
   const where = tilde(current?.plan?.dest ?? expandHome(destination.trim(), home), home);
-  const why =
-    reason === "unknown"
+  // A place reached through a link into the archive: the project's archived group goes back whole.
+  const group = reason === "linked" ? archivedGroupOf(nodes, node) : undefined;
+  const why = !reason
+    ? ""
+    : reason === "unknown"
       ? said.restore.unknown
-      : reason && where
-        ? said.restore.why[reason](where)
-        : "";
+      : !where
+        ? ""
+        : reason === "linked"
+          ? group
+            ? said.restore.linked(where, group.label)
+            : said.restore.linkedAny(where)
+          : said.restore.why[reason](where);
   const choose = Boolean(why);
   // The focus goes on to Restore once the plan has drawn it, or to the place to choose when the
   // engine can't go on, if it is still where the sheet put it.
@@ -722,14 +744,15 @@ function RestoreBody({ node, stage, setStage }: Body) {
     await run(
       async () => {
         ran = true;
-        const modal = useApp.getState().modal;
+        const { modal, selected } = useApp.getState();
         const change = await api<Change>("restore", {
           id: node.id,
           ...(moves ? { destination: plan.dest } : {}),
         });
         if (useApp.getState().modal === modal) close();
         changed(change, said.restore.restored(node.label), said.restore.restoredNote);
-        selectWhenReady(plan.dest);
+        // A group restored from a project's page in it goes on to that project in its new place.
+        selectWhenReady(placeAfterRestore(node, plan.dest, selected));
       },
       said.restore.restoring(node.label),
       {
@@ -754,7 +777,23 @@ function RestoreBody({ node, stage, setStage }: Body) {
       ) : !current ? (
         <Working text={said.restore.checking} status />
       ) : why ? (
-        <Callout tone="soon">{why}</Callout>
+        <>
+          <Callout tone="soon">{why}</Callout>
+          {group ? (
+            <p>
+              <Button
+                kind="outline"
+                icon="undo-2"
+                disabled={sending}
+                onClick={() =>
+                  useApp.setState({ modal: { kind: "restore", id: group.id } })
+                }
+              >
+                {said.restore.restoreGroup(group.label)}
+              </Button>
+            </p>
+          ) : null}
+        </>
       ) : (
         <>
           <Callout tone="soon">

@@ -267,6 +267,95 @@ export async function aChosenFolderTheDemoDiskLacksIsMissingAndCountsFollowTheCh
   });
 }
 
+export async function theArchivedGroupGoesBackWholeAndItsProjectsWaitForIt() {
+  const group = "/home/demo/project/_archive/old-clients";
+  const batik = `${group}/batik-shop`;
+  const origin = "/home/demo/project/old-clients";
+  await onPreview(async ({ request }) => {
+    const nodes = (await request("snapshot")).nodes;
+    // The group: a folder in the archive, archived by its .laci.md, whose old place is a link to it.
+    assert.deepEqual(
+      [nodes[group].kind, nodes[group].archived, nodes[group].inArchive, nodes[group].meta.status],
+      ["folder", true, true, "archived"],
+    );
+    assert.deepEqual(
+      nodes[group].restorePlan.ops.map((op) => [op.kind, op.label, op.from, op.to]).slice(0, 2),
+      [
+        ["unlink", "Remove the old link", "~/project/old-clients", "~/project/_archive/old-clients"],
+        ["move", "Move folder", "~/project/_archive/old-clients", "~/project/old-clients"],
+      ],
+    );
+    // Each of its projects is reached through that link, so it waits for the group.
+    assert.deepEqual(
+      [nodes[batik].restorePlan.reason, nodes[batik].restorePlan.dest],
+      ["linked", `${origin}/batik-shop`],
+    );
+    assert.match(nodes[batik].restorePlan.error, /^~\/project\/old-clients is a link into the archive\. Restore the whole group old-clients/);
+    // Another place for it is fine; a place through the link isn't, and the link itself is the group's.
+    const away = await request("restore/plan", { id: batik, destination: "/home/demo/project/batik-shop" });
+    assert.equal(away.error, undefined);
+    const through = await request("restore/plan", { id: batik, destination: `${origin}/shop` });
+    assert.equal(through.reason, "linked");
+    const onLink = await request("restore/plan", { id: batik, destination: origin });
+    assert.equal(onLink.reason, "occupied");
+    // Elsewhere, the group leaves the link where it is.
+    const moved = await request("restore/plan", { id: group, destination: "/home/demo/project/clients-old" });
+    assert.deepEqual(moved.ops.map((op) => op.kind).includes("unlink"), false);
+    const back = await request("restore/plan", { id: group, destination: origin });
+    assert.equal(back.ops[0].kind, "unlink");
+    // Put back: the group and its projects leave the archive, and the Log says the link went first.
+    await request("restore", { id: group, destination: origin });
+    const after = (await request("snapshot")).nodes;
+    assert.deepEqual(
+      [group, batik].map((id) => [after[id].archived, after[id].inArchive, after[id].restorePlan]),
+      [
+        [false, false, undefined],
+        [false, false, undefined],
+      ],
+    );
+    const [entry] = (await request("log")).entries;
+    assert.deepEqual(
+      entry.steps.map((step) => [step.kind, step.label]),
+      [
+        ["unlink", "Removed the old link"],
+        ["move", "Moved"],
+        ["write", "Edited .laci.md"],
+      ],
+    );
+    assert.deepEqual([entry.steps[0].from, entry.steps[0].to], ["~/project/old-clients", "~/project/_archive/old-clients"]);
+    // Undo puts the marks back.
+    await request("undo", { id: entry.id });
+    const undone = (await request("snapshot")).nodes;
+    assert.equal(undone[batik].restorePlan.reason, "linked");
+    assert.equal(undone[group].meta.archivedFrom, "~/project/old-clients");
+  });
+}
+
+export async function aProjectMarkedArchivedInARestoredGroupKeepsItsOwnMark() {
+  const group = "/home/demo/project/_archive/old-clients";
+  const batik = `${group}/batik-shop`;
+  const warung = `${group}/warung-pos`;
+  await onPreview(async ({ request }) => {
+    // warung-pos says archived in its own .laci.md; batik-shop is archived only by where it is.
+    await request("archive", { id: warung });
+    await request("restore", { id: group, destination: "/home/demo/project/old-clients" });
+    const after = (await request("snapshot")).nodes;
+    // The engine clears the group's own .laci.md only: warung-pos stays marked, out of the archive.
+    assert.deepEqual(
+      [batik, warung].map((id) => [after[id].archived, after[id].inArchive, after[id].status.value]),
+      [
+        [false, false, "idle"],
+        [true, false, "archived"],
+      ],
+    );
+    assert.equal(after[warung].meta.status, "archived");
+    assert.deepEqual(
+      after[warung].restorePlan.ops.map((op) => op.label),
+      ["Clear status: archived", "Write undo journal"],
+    );
+  });
+}
+
 export async function aReportIsFoundByTheWordsInIt() {
   await onPreview(async ({ request }) => {
     const hits = await request("reports/search", { query: "checkout safari" });

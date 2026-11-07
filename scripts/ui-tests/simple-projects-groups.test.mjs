@@ -176,15 +176,28 @@ export async function filtersAndSearchLeaveNoEmptySection() {
     ["side", ["dotfiles"]],
   ]);
   // Needs you has no infra-notes, so ~/project is gone; the archived project still needing it is not.
-  assert.deepEqual(labels({ filter: "needs" }), ["clients", "side", "thesis", "_archive"]);
+  assert.deepEqual(labels({ filter: "needs" }), [
+    "clients",
+    "side",
+    "thesis",
+    "_archive",
+    "_archive / old-clients",
+  ]);
+  // The archived group old-clients is a section of its own, under its path.
   assert.deepEqual(sectionsOf(s, { filter: "archived" }), [
     ["side", ["zine"]],
     ["_archive", ["old-portfolio"]],
+    ["_archive / old-clients", ["batik-shop", "warung-pos"]],
   ]);
   // The one project of a folder archived: its section goes with it.
   node(s, "thesis/campus-lms").archived = true;
   assert.deepEqual(labels({}), ["clients", "project", "side"]);
-  assert.deepEqual(labels({ filter: "archived", sort: "name" }), ["_archive", "side", "thesis"]);
+  assert.deepEqual(labels({ filter: "archived", sort: "name" }), [
+    "_archive",
+    "_archive / old-clients",
+    "side",
+    "thesis",
+  ]);
 }
 
 export async function theFolderFilterNarrowsTheSections() {
@@ -307,6 +320,7 @@ function projectsPage(snapshot = scan(), start = {}) {
     collapsed: [],
     ...start,
   });
+  const app = page.store({ snapshot, apps: {}, modal: null });
   const { Projects } = load("simple/Projects.tsx", {
     react: page.react,
     "../clock": { useNow: () => NOW.getTime() },
@@ -314,7 +328,7 @@ function projectsPage(snapshot = scan(), start = {}) {
     "../store": {
       external: () => {},
       goToProject: () => {},
-      useApp: page.store({ snapshot, apps: {} }),
+      useApp: app,
     },
     "./act": { continueWithAi: () => {}, fileManagerName: () => "Files" },
     "./state": {
@@ -331,7 +345,7 @@ function projectsPage(snapshot = scan(), start = {}) {
     "./ui": simpleBlocks({ SafetyBadge: () => null }),
   });
   page.mount(createElement(Projects));
-  return { page, simple };
+  return { page, simple, app };
 }
 
 const heads = (page) => page.all((n) => n.props.className === "s-group-toggle");
@@ -434,4 +448,86 @@ export async function aSearchWithNoMatchStillSaysSoWhenGrouped() {
   const { page } = projectsPage(scan(), { query: "nothing like it" });
   assert.equal(heads(page).length, 0);
   assert.ok(page.text().includes(words.projects.noMatch("nothing like it")));
+}
+
+// ── An archived group ──────────────────────────────────────────────────────────────────────────────
+
+/** The demo's archived group: two projects whose old place, ~/project/old-clients, is a link to it. */
+const GROUP = `${ROOT}/_archive/old-clients`;
+const groupRestores = (page) =>
+  page.all(
+    (n) =>
+      n.type === "button" &&
+      String(n.props["aria-label"] ?? "").startsWith(words.projects.restoreGroupFor("")),
+  );
+const menuItem = (host, label) =>
+  host.descendants().find((n) => n.props.role === "menuitem" && n.textContent === label);
+
+export async function anArchivedGroupsHeadingRestoresTheWholeGroup() {
+  const { page, app } = projectsPage(scan(), { filter: "archived" });
+  assert.deepEqual(heads(page).map(headName), ["side", "_archive", "_archive / old-clients"]);
+  assert.equal(headCount(heads(page)[2]), "· 2 projects");
+  // Only the archived group's heading has Restore: _archive and side only hold archived projects.
+  const [restore, ...more] = groupRestores(page);
+  assert.deepEqual(more, []);
+  assert.equal(restore.props["aria-label"], words.projects.restoreGroupFor("old-clients"));
+  assert.equal(restore.textContent, words.projects.restore);
+  click(page, restore);
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: GROUP });
+  // Alone in the list, the group keeps its heading, which holds its Restore.
+  const alone = projectsPage(scan(), { filter: "archived", query: "batik" });
+  assert.deepEqual(heads(alone.page).map(headName), ["_archive / old-clients"]);
+  assert.equal(groupRestores(alone.page).length, 1);
+  // Grouped by nothing, there are no headings, and no group Restore beside the cards.
+  const flat = projectsPage(scan(), { filter: "archived", grouped: false });
+  assert.deepEqual([heads(flat.page).length, groupRestores(flat.page).length], [0, 0]);
+}
+
+export async function aProjectThatGoesBackWithItsGroupSaysSoAndRestoresTheGroup() {
+  const { page, app } = projectsPage(scan(), { filter: "archived", grouped: false });
+  const card = page.find((n) => n.props["data-id"] === `${GROUP}/batik-shop`);
+  const text = card.textContent;
+  assert.ok(text.includes(words.projects.inGroup("old-clients")), text);
+  assert.ok(!text.includes(words.projects.from("~/project/old-clients/batik-shop")), text);
+  // A project the engine can put back alone says where it came from, and its menu restores it.
+  const old = page.find((n) => n.props["data-id"] === `${ROOT}/_archive/old-portfolio`);
+  assert.ok(old.textContent.includes(words.projects.from("~/project/old-portfolio")));
+  click(page, menuItem(old, words.projects.restore));
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: `${ROOT}/_archive/old-portfolio` });
+  // In the group's project's menu, Restore is the group's.
+  assert.equal(menuItem(card, words.projects.restore), undefined);
+  click(page, menuItem(card, words.projects.restoreGroup));
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: GROUP });
+}
+
+/** The declarations of the rule for `selector` in Simple's sheet. */
+function simpleRule(selector) {
+  const css = readFileSync(new URL("../../ui/src/simple/simple.css", import.meta.url), "utf8");
+  const quoted = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const body = new RegExp(`\\n\\s*${quoted}\\s*\\{([^}]*)\\}`).exec(css)?.[1];
+  assert.ok(body !== undefined, `simple.css has a rule for ${selector}`);
+  return Object.fromEntries(
+    body
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split(";")
+      .map((declaration) => declaration.split(":").map((part) => part.trim()))
+      .filter(([property, value]) => property && value),
+  );
+}
+
+export function aFolderHeadingStaysOnOneLineWhenThereIsRoomForIt() {
+  // The heading is as wide as its toggle, so the toggle fills it and its words keep one line at
+  // 1280x800. A toggle pulled 8px left inside it would be 8px short of its words, and "clients"
+  // would break mid-word: the heading takes the offset that lines the words up with the cards.
+  const head = simpleRule(".s-group-head");
+  const toggle = simpleRule(".s-group-toggle");
+  const name = simpleRule(".s-group-name");
+  assert.equal(head.margin, "0 0 0 -8px");
+  assert.equal(head["min-width"], "0");
+  assert.equal(toggle["max-width"], "100%");
+  for (const property of ["margin", "margin-left", "margin-inline", "margin-inline-start"])
+    assert.equal(toggle[property], undefined, `the toggle has no ${property} of its own`);
+  // A long name still wraps where the heading is narrower than it.
+  assert.equal(name["overflow-wrap"], "anywhere");
+  assert.equal(name["min-width"], "0");
 }

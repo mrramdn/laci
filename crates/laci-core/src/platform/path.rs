@@ -74,6 +74,13 @@ pub fn git_dir_name(name: &OsStr) -> bool {
     name.as_encoded_bytes() == b".git"
 }
 
+/// Whether `link` is a link, itself and not through a folder above it, that leads to `target` once every link on the
+/// way is resolved. Nothing else is followed: a link that leads anywhere else, or nowhere, is not one.
+pub fn links_to(link: &Path, target: &Path) -> bool {
+    fs::symlink_metadata(link).is_ok_and(|meta| meta.is_symlink())
+        && matches!((canonical(link), canonical(target)), (Ok(a), Ok(b)) if same_path(&a, &b))
+}
+
 /// Reject linked files and linked ancestor directories before writing notes or task files.
 pub fn plain_path(path: &Path) -> Result<()> {
     for p in path.ancestors() {

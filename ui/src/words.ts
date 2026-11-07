@@ -340,6 +340,11 @@ export const projects = {
   restore: "Restore…",
   /** Where an archived project came from, under its name. */
   from: (where: string) => `From ${where}`,
+  /** A project that goes back only with its archived group, under its name and in its menu. */
+  inGroup: (group: string) => `In the archived group ${group}: restore the group`,
+  restoreGroup: "Restore its group…",
+  /** Beside the heading of an archived group under Archived: it goes back whole. */
+  restoreGroupFor: (group: string) => `Restore the group ${group}`,
   noneTitle: "No projects here",
   none: {
     all: "Laci found no projects in your project folders yet.",
@@ -377,6 +382,8 @@ export const project = {
   archive: "Archive…",
   /** On the page of an archived project, beside Continue with AI. */
   restoreButton: "Restore…",
+  /** The same, for a project that goes back only with its archived group. */
+  restoreGroupButton: "Restore its group…",
   delete: "Delete project…",
   freeSpace: "Free up space here…",
   terminal: "Open terminal here",
@@ -1972,7 +1979,20 @@ export const dialogs = {
   },
   restore: {
     title: (name: string) => `Restore ${name}?`,
+    /** For an archived group: a folder of projects that goes back whole. */
+    titleGroup: (name: string) => `Restore the group ${name}?`,
     intro: "Laci puts it back where it was, with its AI chats.",
+    introGroup:
+      "Laci puts the whole group back where it was, with every project in it and their AI chats.",
+    /**
+     * A project whose place is reached through a link into the archive: its group goes back whole,
+     * or another place can be chosen.
+     */
+    linked: (where: string, group: string) =>
+      `${where} is reached through a link into your archive, the old place of the group ${group}. Restore the whole group, or choose another place under Show details.`,
+    linkedAny: (where: string) =>
+      `${where} is reached through a link into your archive. Remove that link first, or choose another place under Show details.`,
+    restoreGroup: (group: string) => `Restore the group ${group}…`,
     /** For a project only marked archived: its folder never moved. */
     introInPlace: "Laci takes away its archived mark. The folder stays where it is.",
     goesBack: (where: string) => `It goes back to ${where}.`,
@@ -2030,10 +2050,29 @@ export const detailedArchive = {
     occupied: "something is there now",
     inArchive: "inside the archive",
     outside: "outside your locations",
+    linked: "reached through a link into the archive",
   },
   /** A plan that can't run without saying why. */
   cant: "can’t go back there",
   unknown: "Origin unknown",
+  /** An archived group's row: a folder of projects that goes back whole. */
+  group: (projects: number) => `Group of ${count(projects, "project")}`,
+  /** A project that goes back only with its archived group, in place of where it came from. */
+  inside: (group: string) => `Inside ${group} · restore the group`,
+  restoreGroup: "Restore group",
+  restoreGroupFor: (group: string) => `Restore the group ${group}`,
+  /** The Restore dialog's title for an archived group. */
+  restoreGroupTitle: (name: string) => `Restore the group ${name}?`,
+};
+
+/**
+ * The step a restore takes when the old place is a link to what it puts back (op kind "unlink"), in
+ * the engine's words: in a plan, and in the Log and Activity once it ran. Both designs show the
+ * engine's own label; the preview answers with these.
+ */
+export const unlinkStep = {
+  plan: "Remove the old link",
+  done: "Removed the old link",
 };
 
 export const detailedData = {

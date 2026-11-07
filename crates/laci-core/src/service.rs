@@ -950,14 +950,19 @@ impl Service {
                     &self.env,
                     json!({"by":by,"title":format!("Undid: {}",string(&j,"title")),"say":{"form":"undid"},"undoes":entry.map(|e|e["id"].clone()).unwrap_or_else(||json!(format!("j:{}",string(&j,"id"))))}),
                 );
-                Ok(json!({"journal":j}))
+                let mut out = json!({"journal":j});
+                // What the Undo left out is told with it.
+                if let Some(warnings) = out["journal"].as_object_mut().and_then(|j| j.remove("warnings")) {
+                    out["warnings"] = warnings;
+                }
+                Ok(out)
             }
             "log" => Ok(
                 json!({"entries":activity::read_log(&self.env,300),"file":paths::tilde(&self.env.data_dir.join("laci.log"),&self.env.home)}),
             ),
             "log/undo" => {
-                activity::undo_activity(&self.env, id, by)?;
-                Ok(json!({}))
+                let undone = activity::undo_activity(&self.env, id, by)?;
+                Ok(if undone["warnings"].is_array() { json!({"warnings":undone["warnings"]}) } else { json!({}) })
             }
             "log/open" => {
                 platform::open(&self.env.data_dir.join("laci.log").to_string_lossy(), &self.env.home)?;

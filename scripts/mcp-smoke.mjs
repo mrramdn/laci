@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
@@ -475,6 +475,41 @@ try {
   const attentionText = await client.raw('needs_attention');
   assert.ok(attentionText.length < 20_000, `needs_attention answers in ${attentionText.length} characters`);
   assert.equal(JSON.parse(attentionText).projects.find(node => node.path === created.path).tasks, undefined);
+  checks++;
+
+  // A group moved into _archive by hand and linked back from where it was: a project in it can't go back alone, and
+  // the group, marked status: archived, goes back whole once the link is removed. Undo makes the link again.
+  const labGroup = path.join(home, 'project', '_archive', 'lab');
+  const groupOrigin = path.join(home, 'project', 'lab');
+  for (const name of ['one', 'two']) await write(path.join(labGroup, name, 'package.json'), '{}\n');
+  await symlink(labGroup, groupOrigin);
+  // Not marked yet, the folder has no group to offer.
+  const unmarked = await client.call('restore_project', { project: path.join(labGroup, 'one') });
+  assert.equal(unmarked.reason, 'linked');
+  assert.equal(unmarked.error, '~/project/lab is a link into the archive. Remove that link first, or mark lab status: archived to restore it whole.');
+  assert.equal(unmarked.group, undefined);
+  assert.match(unmarked.hint, /remove the link first, or to mark that folder status: archived/);
+  await write(path.join(labGroup, '.laci.md'), '---\nstatus: archived\n---\n');
+  const alone = await client.call('restore_project', { project: path.join(labGroup, 'one') });
+  assert.equal(alone.reason, 'linked');
+  assert.equal(alone.destination, path.join(groupOrigin, 'one'));
+  assert.equal(alone.error, '~/project/lab is a link into the archive. Restore the whole group lab, or remove that link first.');
+  assert.equal(alone.group, labGroup, 'the group to restore instead, as restore_project takes it');
+  assert.match(alone.hint, /restore_project, project: group/);
+  assert.deepEqual(alone.plan, []);
+  await client.rejects('restore_project', { project: path.join(labGroup, 'one'), confirm: true }, /link into the archive/);
+  assert.equal((await client.call('list_projects', { filter: 'archived' })).projects.some(node => node.path === labGroup), false, 'list_projects lists projects only');
+  const groupPlan = await client.call('restore_project', { project: labGroup });
+  assert.equal(groupPlan.destination, groupOrigin);
+  assert.deepEqual(groupPlan.plan[0], { kind: 'unlink', label: 'Remove the old link', from: '~/project/lab', to: '~/project/_archive/lab' });
+  const groupRestored = await client.call('restore_project', { project: labGroup, confirm: true });
+  assert.equal((await lstat(groupOrigin)).isSymbolicLink(), false);
+  assert.equal(await exists(path.join(groupOrigin, 'two', 'package.json')), true);
+  assert.equal(await exists(labGroup), false);
+  assert.doesNotMatch(await readFile(path.join(groupOrigin, '.laci.md'), 'utf8'), /status:/);
+  await client.call('undo_change', { id: groupRestored.journal.id, confirm: true });
+  assert.equal(await readlink(groupOrigin), labGroup);
+  assert.equal(await exists(path.join(labGroup, 'one', 'package.json')), true);
   checks++;
 
   await stop(client);

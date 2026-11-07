@@ -172,6 +172,11 @@ pub fn copy_link(src: &Path, dest: &Path) -> Result<()> {
     os::copy_link(src, dest)
 }
 
+/// Makes `link` a link to `target`, as Undo puts back a link that a restore removed.
+pub fn symlink(target: &Path, link: &Path) -> Result<()> {
+    os::symlink(target, link)
+}
+
 /// Where `path`, a list of folders as in PATH, finds the program `program`: the first folder with it as a file that
 /// can run.
 pub fn which(program: &str, path: &OsStr) -> Option<PathBuf> {

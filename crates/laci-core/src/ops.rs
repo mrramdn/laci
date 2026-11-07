@@ -82,6 +82,9 @@ fn value_path(env: &Env, v: &Value) -> Result<PathBuf> {
     path(env, v.as_str().ok_or("Missing file path")?)
 }
 fn journal_path(env: &Env, entry: &Value, key: &str) -> Result<PathBuf> {
+    if key == "path" && entry["kind"] == "unlink" {
+        return link_path(env, entry[key].as_str().ok_or("Missing link path")?);
+    }
     if key == "path" && entry["kind"] == "file" && entry["scope"] == "config" {
         let file = paths::config_file(env)?;
         if entry[key].as_str() != file.to_str() {
@@ -108,6 +111,16 @@ fn journal_path(env: &Env, entry: &Value, key: &str) -> Result<PathBuf> {
         return paths::restore_workspace_root(entry[key].as_str().ok_or("Missing source path")?, env, parent);
     }
     checked
+}
+
+/// The place of a link, checked by the folder it is in, as [`path`] checks a file: where the link leads, which may be
+/// outside home, doesn't decide where Laci may write.
+fn link_path(env: &Env, raw: &str) -> Result<PathBuf> {
+    let link = paths::expand(raw.trim(), &env.home);
+    match (link.parent(), link.file_name()) {
+        (Some(parent), Some(name)) => Ok(path(env, &parent.to_string_lossy())?.join(name)),
+        _ => Err("Invalid link path".into()),
+    }
 }
 
 pub(crate) fn data(env: &Env, name: &str) -> Result<PathBuf> {
@@ -500,6 +513,33 @@ impl<'a> Tx<'a> {
             }
         }
     }
+    /// Removes the link `link`, left where a folder was before it went into the archive by hand, as long as it still
+    /// leads to `target`, that folder. Undo makes it again once the folder is back.
+    fn unlink(&mut self, link: &Path, target: &Path) -> Result<()> {
+        sidecar::plain_path(link.parent().ok_or("Missing parent")?)?;
+        if !platform::path::links_to(link, target) {
+            return Err(format!(
+                "{} is no longer a link to {}. Rescan and try again.",
+                paths::tilde(link, &self.env.home),
+                paths::tilde(target, &self.env.home)
+            ));
+        }
+        self.log(json!({"kind":"unlink","path":link,"target":target}))?;
+        fs::remove_file(link).map_err(|e| e.to_string())
+    }
+    /// Notes which folder took the place of the link removed at `place`, so Undo can tell it from something put there
+    /// since, which it would otherwise move into the archive.
+    fn took_place(&mut self, place: &Path) -> Result<()> {
+        let meta = fs::symlink_metadata(place).map_err(|e| e.to_string())?;
+        let id = platform::identity(place, &meta)?;
+        let name = place.to_string_lossy();
+        for entry in self.journal["entries"].as_array_mut().unwrap() {
+            if entry["kind"] == "unlink" && entry["path"].as_str() == Some(name.as_ref()) {
+                entry["folder"] = id.to_json();
+            }
+        }
+        self.save()
+    }
     fn merge(&mut self, src: &Path, dest: &Path) -> Result<()> {
         if src == dest {
             return Ok(());
@@ -720,7 +760,7 @@ fn transact_unlocked(
         Err(error) => {
             tx.journal["error"] = json!(error);
             match undo_entries(env, tx.journal["entries"].as_array().unwrap(), false) {
-                Ok(()) => {
+                Ok(_) => {
                     if recovery(&tx.journal).is_some() {
                         tx.journal["state"] = json!("failed");
                         tx.journal["error"] = json!(format!(
@@ -754,6 +794,7 @@ fn validate_entries(env: &Env, entries: &[Value]) -> Result<()> {
             Some("file") if e["existed"].as_bool() == Some(true) => &["path", "backup"],
             Some("file") if e["existed"].as_bool() == Some(false) => &["path"],
             Some("mkdir" | "rmdir" | "trash" | "cleared") => &["path"],
+            Some("unlink") => &["path", "target"],
             Some("chosen") if e["pairs"].is_array() => &[],
             _ => return Err("Unknown or incomplete journal entry".into()),
         };
@@ -764,8 +805,10 @@ fn validate_entries(env: &Env, entries: &[Value]) -> Result<()> {
     Ok(())
 }
 /// Puts back what `entries` changed, newest first. `asked` is an Undo someone asked for, not the rollback of a change
-/// that failed part-way: only then is a move that is already back, or a file Laci rewrote, a reason to refuse.
-fn undo_entries(env: &Env, entries: &[Value], asked: bool) -> Result<()> {
+/// that failed part-way: only then is a move that is already back, or a file Laci rewrote, a reason to refuse. What it
+/// left out on the way, said in words, comes back.
+fn undo_entries(env: &Env, entries: &[Value], asked: bool) -> Result<Vec<String>> {
+    let mut left_out = vec![];
     validate_entries(env, entries)?;
     // A folder back where it was while its new place is gone was moved back by a later change, such as a Restore after
     // an Archive. Undoing the files of this one would make that place again around them.
@@ -773,6 +816,23 @@ fn undo_entries(env: &Env, entries: &[Value], asked: bool) -> Result<()> {
         for e in entries.iter().filter(|e| e["kind"] == "move") {
             if exists(&journal_path(env, e, "from")?) && !exists(&journal_path(env, e, "to")?) {
                 return Err("This change was already reversed by a later one; undo that instead".into());
+            }
+        }
+        // A link a restore removed comes back once the folder has gone back to the archive, so its place must hold
+        // that folder, which goes, or nothing. Something put there since would be moved into the archive instead.
+        for e in entries.iter().filter(|e| e["kind"] == "unlink") {
+            let link = journal_path(env, e, "path")?;
+            let Ok(meta) = fs::symlink_metadata(&link) else { continue };
+            let leaves = entries
+                .iter()
+                .any(|m| m["kind"] == "move" && journal_path(env, m, "to").is_ok_and(|to| same_path(&to, &link)));
+            let same =
+                e["folder"].is_null() || platform::identity(&link, &meta).is_ok_and(|id| id.matches(&e["folder"]));
+            if !(leaves && meta.is_dir() && same) {
+                return Err(format!(
+                    "Something else is at {} since this change, so Undo can't put the old link back. Move it away first.",
+                    paths::tilde(&link, &env.home)
+                ));
             }
         }
     }
@@ -864,12 +924,37 @@ fn undo_entries(env: &Env, entries: &[Value], asked: bool) -> Result<()> {
                     crate::config::save(env, &cfg)?;
                 }
             }
+            "unlink" => {
+                // The folder is back in the archive by now: the link leads to it again.
+                let link = journal_path(env, e, "path")?;
+                let target = journal_path(env, e, "target")?;
+                // A removal that failed left the link where it was, which is as good as put back.
+                if platform::path::links_to(&link, &target) {
+                    continue;
+                }
+                if exists(&link) {
+                    return Err(format!(
+                        "Something is at {} now, so Undo can't put the old link back",
+                        paths::tilde(&link, &env.home)
+                    ));
+                }
+                // A folder moved on by hand since didn't go back to the archive, and a link to it would lead nowhere.
+                if fs::metadata(&target).is_err() {
+                    left_out.push(format!(
+                        "The old link at {} isn't back: {}, where it led, is gone",
+                        paths::tilde(&link, &env.home),
+                        paths::tilde(&target, &env.home)
+                    ));
+                    continue;
+                }
+                platform::symlink(&target, &link)?;
+            }
             "trash" => {}   // The system trash owns recovery, as in v1.
             "cleared" => {} // Build output comes back with the next install or build.
             _ => return Err("Unknown journal entry".into()),
         }
     }
-    Ok(())
+    Ok(left_out)
 }
 fn restore(src: &Path, dest: &Path) -> Result<()> {
     sidecar::plain_path(src)?;
@@ -897,7 +982,7 @@ pub fn can_undo(journal: &Value) -> bool {
             .as_array()
             .into_iter()
             .flatten()
-            .any(|e| matches!(e["kind"].as_str(), Some("move" | "rewrite" | "file" | "rmdir")))
+            .any(|e| matches!(e["kind"].as_str(), Some("move" | "rewrite" | "file" | "rmdir" | "unlink")))
 }
 
 pub fn recovery(journal: &Value) -> Option<String> {
@@ -970,9 +1055,13 @@ pub(crate) fn undo_unlocked(env: &Env, id: &str, settled: &mut Option<Value>) ->
             .map(|e| journal_path(env, e, "to"))
             .collect::<Result<Vec<_>>>()?,
     )?;
-    undo_entries(env, entries, true)?;
+    let left_out = undo_entries(env, entries, true)?;
     journal["state"] = json!("undone");
     files::replace(&file, &serde_json::to_vec_pretty(&journal).map_err(|e| e.to_string())?)?;
+    // Told to whoever asked for the Undo, not kept in the journal.
+    if !left_out.is_empty() {
+        journal["warnings"] = json!(left_out);
+    }
     Ok(journal)
 }
 /// Undo of a move of the copy of AI chats, from the journal `file`: the setting goes back to the folder the copy came
@@ -1096,7 +1185,16 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
         return Err("Unknown project. Rescan and try again.".into());
     }
     let src = value_path(env, &node["path"])?;
-    let dest = path(env, dest)?;
+    // A restore whose place holds the link left there when the folder went into the archive removes that link first.
+    let unlink = opts["unlink"] == true;
+    let dest = if unlink { link_path(env, dest)? } else { path(env, dest)? };
+    if unlink && !platform::path::links_to(&dest, &src) {
+        return Err(format!(
+            "{} is no longer a link to {}. Rescan and try again.",
+            paths::tilde(&dest, &env.home),
+            paths::tilde(&src, &env.home)
+        ));
+    }
     if same_path(&src, &env.home) || same_path(&dest, &env.home) {
         return Err("Can't move the home folder".into());
     }
@@ -1128,6 +1226,9 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
     let say = if opts["say"].is_object() { opts["say"].clone() } else { json!({"form":"moved","name":name}) };
     transact(env, &title, say, |tx| {
         guard(std::slice::from_ref(&src))?;
+        if unlink {
+            tx.unlink(&dest, &src)?;
+        }
         if opts["status"] == "archived" || opts["restore"] == true {
             crate::scan::check_archive_destination(env, &dest)?;
         }
@@ -1155,6 +1256,9 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
             })
             .collect();
         tx.move_to(&src, &dest)?;
+        if unlink {
+            tx.took_place(&dest)?;
+        }
         tx.keep_chosen(&[(src.clone(), dest.clone())])?;
         for (c, old, now) in claude {
             let from = value_path(env, &c["dir"])?;
@@ -1258,8 +1362,9 @@ pub fn archive_project_to(
             "say":{"form":"archived","name":name}}),
     )
 }
-/// Puts an archived project back: out of the archive with its agent history, to where it came from or `destination`,
-/// or, for one archived by its status only, clears that status where it is.
+/// Puts an archived project or group back: out of the archive with its agent history, and for a group every project
+/// in it, to where it came from or `destination`, or, for one archived by its status only, clears that status where it
+/// is. The link left at that place when it went into the archive by hand is removed first.
 pub fn restore_project(env: &Env, snap: &Value, id: &str, destination: Option<&str>) -> Result<Value> {
     let plan = crate::scan::restore_plan(env, snap, id, destination)?;
     if let Some(error) = plan["error"].as_str() {
@@ -1271,7 +1376,8 @@ pub fn restore_project(env: &Env, snap: &Value, id: &str, destination: Option<&s
     let title = format!("Restore {name}");
     let say = json!({"form":"restored","name":name,"to":paths::tilde(Path::new(dest),&env.home)});
     if node["inArchive"] == true {
-        return move_project(env, snap, id, dest, &json!({"restore":true,"title":title,"say":say}));
+        let unlink = plan["ops"].as_array().into_iter().flatten().any(|op| op["kind"] == "unlink");
+        return move_project(env, snap, id, dest, &json!({"restore":true,"unlink":unlink,"title":title,"say":say}));
     }
     let dir = value_path(env, &node["path"])?;
     transact(env, &title, say, |tx| tx.clear_archived(&dir))
@@ -2534,5 +2640,27 @@ mod tests {
             });
             assert_eq!(with_lock(env, || Ok(1)), Ok(1));
         }
+    }
+
+    /// A restore that stops after it journaled the old link but before the link went leaves the link where it was,
+    /// which its rollback counts as put back rather than as something in the way.
+    #[test]
+    fn a_rollback_counts_a_link_that_was_never_removed_as_put_back() {
+        let (_temp, env, src, _) = home();
+        let link = env.home.join("project").join("old");
+        platform::symlink(&src, &link).unwrap();
+        let error = transact(&env, "Restore", Value::Null, |tx| {
+            tx.log(json!({"kind":"unlink","path":link,"target":src}))?;
+            Err("Permission denied".into())
+        })
+        .unwrap_err();
+        assert_eq!(error, "Permission denied");
+        let journal = journals(&env, 1).remove(0);
+        assert_eq!(
+            (&journal["state"], &journal["error"]),
+            (&json!("undone"), &json!("Permission denied")),
+            "{journal}"
+        );
+        assert!(platform::path::links_to(&link, &src));
     }
 }

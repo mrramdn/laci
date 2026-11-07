@@ -1414,8 +1414,20 @@
     flex-direction: column;
     gap: 28px;
   }
-  .s-group-head {
+  /* The heading, and Restore beside it for an archived group, which goes back whole. */
+  .s-group-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
     margin: 0 0 8px;
+  }
+  /* The toggle's padding hangs out to the left, so its words line up with the cards. The heading
+     takes that offset, not the toggle: a toggle pulled left inside a heading as wide as its content
+     is 8px short of its words and wraps them mid-word. */
+  .s-group-head {
+    min-width: 0;
+    margin: 0 0 0 -8px;
     font: var(--text-section);
   }
   .s-group-toggle {
@@ -1424,7 +1436,6 @@
     gap: 8px;
     max-width: 100%;
     min-height: 40px;
-    margin-left: -8px;
     padding: 4px 8px;
     border: 0;
     border-radius: var(--radius-control);

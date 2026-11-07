@@ -7,7 +7,7 @@ import { askAgent } from "../agent-launch";
 import { api } from "../api";
 import { useNow } from "../clock";
 import { Icon } from "../common";
-import { bytes, cap, deadlineInfo, providerName, tilde, within } from "../helpers";
+import { bytes, cap, deadlineInfo, linkedGroup, providerName, tilde, within } from "../helpers";
 import { useHealth, useNotesDraft } from "../hooks";
 import { activityModel } from "../selectors";
 import { requestResume } from "../session-ui";
@@ -108,6 +108,7 @@ function Project({ n }: { n: Node }) {
     (issue) => issue.severity === "high" && fixable(issue.code),
   );
   const last = lastChat(n, snapshot);
+  const group = linkedGroup(snapshot.nodes, n);
   const status = said.status[n.status.value] ?? cap(n.status.value);
   const priority = projects.priority[n.meta.priority ?? ""];
   const due = deadlineInfo(n.meta.deadline);
@@ -220,12 +221,15 @@ function Project({ n }: { n: Node }) {
             {said.continueAi}
           </MoreMenu>
           {n.archived ? (
+            // A project that goes back only with its archived group restores the group.
             <Button
               kind="outline"
               icon="undo-2"
-              onClick={() => useApp.setState({ modal: { kind: "restore", id: n.id } })}
+              onClick={() =>
+                useApp.setState({ modal: { kind: "restore", id: group?.id ?? n.id } })
+              }
             >
-              {said.restoreButton}
+              {group ? said.restoreGroupButton : said.restoreButton}
             </Button>
           ) : null}
           <Button kind="text" icon="editor" onClick={() => external(n.id, "editor")}>

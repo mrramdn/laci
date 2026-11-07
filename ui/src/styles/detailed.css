@@ -887,6 +887,24 @@ kbd {
 .item.two .glyph {
   margin-top: 2px;
 }
+/* The Archive's rows for what an archived group holds sit under the group's row. */
+.item.in-group {
+  padding-left: 40px;
+}
+/* An archived group's row: where it came from keeps its width, and "Group of N projects" after it
+   is cut off first. */
+.item .d.whole {
+  flex: 0 1 auto;
+}
+.item .note {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: 12px;
+}
 .item .pill,
 .item .glyph,
 .c-name .pill,

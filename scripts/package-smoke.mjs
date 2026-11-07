@@ -185,7 +185,7 @@ try {
     assert.equal(
       Object.values(snapshot.nodes).filter((node) => node.kind === "project")
         .length,
-      8,
+      10,
     );
     const mcp = run(process.execPath, [
       path.join(root, "scripts/mcp-smoke.mjs"),

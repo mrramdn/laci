@@ -519,6 +519,74 @@
     ]
   },
   "delete/plan": {
+    "/home/demo/project/_archive/old-clients/batik-shop": {
+      "allowed": false,
+      "checks": [
+        {
+          "code": "delete-blocked",
+          "detail": "Could not verify the remote. Nothing was removed. git failed: fatal: transport 'ssh' not allowed",
+          "severity": "high",
+          "title": "This project cannot be removed yet"
+        },
+        {
+          "code": "ignored-files",
+          "detail": "The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo.",
+          "severity": "med",
+          "title": "Ignored files are not backed up by Git"
+        }
+      ],
+      "ops": [
+        {
+          "from": "/home/demo/project/_archive/old-clients/batik-shop",
+          "kind": "delete",
+          "label": "Move the project folder to system Trash"
+        },
+        {
+          "detail": "External session logs and memory are preserved. They may appear as detached history until the folder is restored.",
+          "kind": "keep",
+          "label": "Keep agent history outside the project"
+        }
+      ],
+      "path": "/home/demo/project/_archive/old-clients/batik-shop",
+      "unbacked": {
+        "files": [],
+        "more": 0
+      }
+    },
+    "/home/demo/project/_archive/old-clients/warung-pos": {
+      "allowed": false,
+      "checks": [
+        {
+          "code": "delete-blocked",
+          "detail": "Could not verify the remote. Nothing was removed. git failed: fatal: transport 'ssh' not allowed",
+          "severity": "high",
+          "title": "This project cannot be removed yet"
+        },
+        {
+          "code": "ignored-files",
+          "detail": "The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo.",
+          "severity": "med",
+          "title": "Ignored files are not backed up by Git"
+        }
+      ],
+      "ops": [
+        {
+          "from": "/home/demo/project/_archive/old-clients/warung-pos",
+          "kind": "delete",
+          "label": "Move the project folder to system Trash"
+        },
+        {
+          "detail": "External session logs and memory are preserved. They may appear as detached history until the folder is restored.",
+          "kind": "keep",
+          "label": "Keep agent history outside the project"
+        }
+      ],
+      "path": "/home/demo/project/_archive/old-clients/warung-pos",
+      "unbacked": {
+        "files": [],
+        "more": 0
+      }
+    },
     "/home/demo/project/_archive/old-portfolio": {
       "allowed": false,
       "checks": [
@@ -793,6 +861,52 @@
     }
   },
   "health": {
+    "/home/demo/project/_archive/old-clients/batik-shop": {
+      "changes": [],
+      "changesMore": 0,
+      "recent": [
+        {
+          "at": "2025-11-12T09:00:00.000Z",
+          "author": "demo",
+          "hash": "467b5fa",
+          "subject": "feat: bank transfer checkout"
+        },
+        {
+          "at": "2025-10-13T09:00:00.000Z",
+          "author": "demo",
+          "hash": "dcf9504",
+          "subject": "feat: catalog"
+        },
+        {
+          "at": "2025-09-03T09:00:00.000Z",
+          "author": "demo",
+          "hash": "2feb27b",
+          "subject": "init"
+        }
+      ],
+      "stashes": [],
+      "unpushed": []
+    },
+    "/home/demo/project/_archive/old-clients/warung-pos": {
+      "changes": [],
+      "changesMore": 0,
+      "recent": [
+        {
+          "at": "2025-10-28T09:00:00.000Z",
+          "author": "demo",
+          "hash": "4bb13bc",
+          "subject": "feat: daily report"
+        },
+        {
+          "at": "2025-09-23T09:00:00.000Z",
+          "author": "demo",
+          "hash": "6b4346b",
+          "subject": "init"
+        }
+      ],
+      "stashes": [],
+      "unpushed": []
+    },
     "/home/demo/project/_archive/old-portfolio": {
       "changes": [],
       "changesMore": 0,
@@ -1260,6 +1374,16 @@
           "dir": true,
           "git": false,
           "hidden": false,
+          "link": true,
+          "name": "old-clients",
+          "path": "/home/demo/project/old-clients",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "hidden": false,
           "link": false,
           "name": "side",
           "path": "/home/demo/project/side",
@@ -1283,6 +1407,16 @@
         {
           "at": "2026-10-08T09:00:00.000Z",
           "dir": true,
+          "git": false,
+          "hidden": false,
+          "link": false,
+          "name": "old-clients",
+          "path": "/home/demo/project/_archive/old-clients",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
           "git": true,
           "hidden": false,
           "link": false,
@@ -1292,6 +1426,131 @@
         }
       ],
       "path": "/home/demo/project/_archive"
+    },
+    "/home/demo/project/_archive/old-clients": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "hidden": true,
+          "link": false,
+          "name": ".laci.md",
+          "path": "/home/demo/project/_archive/old-clients/.laci.md",
+          "size": 103
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": true,
+          "hidden": false,
+          "link": false,
+          "name": "batik-shop",
+          "path": "/home/demo/project/_archive/old-clients/batik-shop",
+          "size": 4096
+        },
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": true,
+          "hidden": false,
+          "link": false,
+          "name": "warung-pos",
+          "path": "/home/demo/project/_archive/old-clients/warung-pos",
+          "size": 4096
+        }
+      ],
+      "path": "/home/demo/project/_archive/old-clients"
+    },
+    "/home/demo/project/_archive/old-clients/batik-shop": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "hidden": true,
+          "link": false,
+          "name": ".git",
+          "path": "/home/demo/project/_archive/old-clients/batik-shop/.git",
+          "size": 4096
+        },
+        {
+          "at": "2025-11-12T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "hidden": true,
+          "link": false,
+          "name": ".history",
+          "path": "/home/demo/project/_archive/old-clients/batik-shop/.history",
+          "size": 2
+        },
+        {
+          "at": "2025-11-12T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "hidden": false,
+          "link": false,
+          "name": "README.md",
+          "path": "/home/demo/project/_archive/old-clients/batik-shop/README.md",
+          "size": 92
+        },
+        {
+          "at": "2025-11-12T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "hidden": false,
+          "link": false,
+          "name": "package.json",
+          "path": "/home/demo/project/_archive/old-clients/batik-shop/package.json",
+          "size": 202
+        }
+      ],
+      "path": "/home/demo/project/_archive/old-clients/batik-shop"
+    },
+    "/home/demo/project/_archive/old-clients/warung-pos": {
+      "entries": [
+        {
+          "at": "2026-10-08T09:00:00.000Z",
+          "dir": true,
+          "git": false,
+          "hidden": true,
+          "link": false,
+          "name": ".git",
+          "path": "/home/demo/project/_archive/old-clients/warung-pos/.git",
+          "size": 4096
+        },
+        {
+          "at": "2025-10-28T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "hidden": true,
+          "link": false,
+          "name": ".history",
+          "path": "/home/demo/project/_archive/old-clients/warung-pos/.history",
+          "size": 2
+        },
+        {
+          "at": "2025-10-28T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "hidden": false,
+          "link": false,
+          "name": "README.md",
+          "path": "/home/demo/project/_archive/old-clients/warung-pos/README.md",
+          "size": 83
+        },
+        {
+          "at": "2025-10-28T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "hidden": false,
+          "link": false,
+          "name": "package.json",
+          "path": "/home/demo/project/_archive/old-clients/warung-pos/package.json",
+          "size": 150
+        }
+      ],
+      "path": "/home/demo/project/_archive/old-clients/warung-pos"
     },
     "/home/demo/project/_archive/old-portfolio": {
       "entries": [
@@ -1871,7 +2130,18 @@
       "thesis": "2026-09-18T09:00:00.000Z"
     },
     "/home/demo/project/_archive": {
+      "old-clients": "2025-11-12T09:00:00.000Z",
       "old-portfolio": "2026-01-21T09:00:00.000Z"
+    },
+    "/home/demo/project/_archive/old-clients": {
+      "batik-shop": "2025-11-12T09:00:00.000Z",
+      "warung-pos": "2025-10-28T09:00:00.000Z"
+    },
+    "/home/demo/project/_archive/old-clients/batik-shop": {
+      ".git": "2026-10-08T09:00:00.000Z"
+    },
+    "/home/demo/project/_archive/old-clients/warung-pos": {
+      ".git": "2026-10-08T09:00:00.000Z"
     },
     "/home/demo/project/_archive/old-portfolio": {
       ".git": "2026-10-08T09:00:00.000Z"
@@ -2360,6 +2630,7 @@
           "source": "folder"
         },
         "id": "/home/demo/project",
+        "inArchive": false,
         "issues": [],
         "kind": "folder",
         "label": "project",
@@ -2387,6 +2658,7 @@
         },
         "archived": true,
         "children": [
+          "/home/demo/project/_archive/old-clients",
           "/home/demo/project/_archive/old-portfolio"
         ],
         "createdAt": {
@@ -2394,6 +2666,7 @@
           "source": "folder"
         },
         "id": "/home/demo/project/_archive",
+        "inArchive": true,
         "issues": [],
         "kind": "folder",
         "label": "_archive",
@@ -2413,6 +2686,391 @@
         },
         "taskFiles": [],
         "tasks": []
+      },
+      "/home/demo/project/_archive/old-clients": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [],
+          "items": []
+        },
+        "archived": true,
+        "children": [
+          "/home/demo/project/_archive/old-clients/batik-shop",
+          "/home/demo/project/_archive/old-clients/warung-pos"
+        ],
+        "createdAt": {
+          "at": "2026-10-08T09:00:00.000Z",
+          "source": "folder"
+        },
+        "id": "/home/demo/project/_archive/old-clients",
+        "inArchive": true,
+        "issues": [],
+        "kind": "folder",
+        "label": "old-clients",
+        "lastActivity": {
+          "at": "2025-11-12T09:00:00.000Z",
+          "source": "inside"
+        },
+        "meta": {
+          "archivedAt": "2026-08-29",
+          "archivedFrom": "~/project/old-clients",
+          "status": "archived"
+        },
+        "name": "old-clients",
+        "parent": "/home/demo/project/_archive",
+        "path": "/home/demo/project/_archive/old-clients",
+        "restorePlan": {
+          "checks": [],
+          "dest": "/home/demo/project/old-clients",
+          "ops": [
+            {
+              "from": "~/project/old-clients",
+              "kind": "unlink",
+              "label": "Remove the old link",
+              "to": "~/project/_archive/old-clients"
+            },
+            {
+              "from": "~/project/_archive/old-clients",
+              "kind": "move",
+              "label": "Move folder",
+              "to": "~/project/old-clients"
+            },
+            {
+              "kind": "write",
+              "label": "Clear status: archived",
+              "to": "~/project/old-clients/.laci.md"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
+        "sidecar": true,
+        "stableId": "p:8f4e5f5dd00b",
+        "status": {
+          "auto": false,
+          "value": "archived"
+        },
+        "taskFiles": [],
+        "tasks": []
+      },
+      "/home/demo/project/_archive/old-clients/batik-shop": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [],
+          "items": []
+        },
+        "archived": true,
+        "children": [],
+        "createdAt": {
+          "at": "2025-09-03T09:00:00.000Z",
+          "source": "first commit"
+        },
+        "git": {
+          "ahead": 0,
+          "authors": 1,
+          "behind": 0,
+          "branch": "main",
+          "commits": 3,
+          "deleted": 0,
+          "dirty": 0,
+          "firstCommitAt": "2025-09-03T09:00:00.000Z",
+          "lastCommitAt": "2025-11-12T09:00:00.000Z",
+          "lastSubject": "feat: bank transfer checkout",
+          "localOnly": 3,
+          "remotes": [
+            {
+              "host": "github.com",
+              "name": "origin",
+              "url": "git@github.com:me/batik-shop.git",
+              "web": "https://github.com/me/batik-shop"
+            }
+          ],
+          "rootCommit": "2feb27bfe50f2bd57c15ff00aeeb1b44631c6121",
+          "stashes": 0,
+          "upstream": "",
+          "weekly": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "worktree": false
+        },
+        "id": "/home/demo/project/_archive/old-clients/batik-shop",
+        "inArchive": true,
+        "issues": [
+          {
+            "code": "unpushed",
+            "detail": "main has no upstream, and no remote has them",
+            "severity": "med",
+            "title": "3 commits not pushed"
+          }
+        ],
+        "kind": "project",
+        "label": "batik-shop",
+        "lastActivity": {
+          "at": "2025-11-12T09:00:00.000Z",
+          "source": "commit"
+        },
+        "meta": {},
+        "name": "batik-shop",
+        "ownActivity": {
+          "at": "2025-11-12T09:00:00.000Z",
+          "source": "commit"
+        },
+        "parent": "/home/demo/project/_archive/old-clients",
+        "path": "/home/demo/project/_archive/old-clients/batik-shop",
+        "readme": {
+          "file": "README.md",
+          "images": 0,
+          "links": [],
+          "raw": "# Batik Shop\n\nOnline shop for a batik maker in Pekalongan: catalog, cart and bank transfer.\n",
+          "sections": [],
+          "tagline": "Online shop for a batik maker in Pekalongan: catalog, cart and bank transfer.",
+          "template": false,
+          "title": "Batik Shop",
+          "weakTitle": false
+        },
+        "restorePlan": {
+          "checks": [],
+          "dest": "/home/demo/project/old-clients/batik-shop",
+          "error": "~/project/old-clients is a link into the archive. Restore the whole group old-clients, or remove that link first.",
+          "ops": [],
+          "reason": "linked"
+        },
+        "sidecar": false,
+        "size": {
+          "parts": [],
+          "reclaimable": 0,
+          "total": 30049
+        },
+        "stableId": "git:2feb27bfe50f",
+        "stack": {
+          "ci": [],
+          "deploy": [],
+          "description": null,
+          "env": [],
+          "files": 3,
+          "labels": [
+            "Next.js",
+            "Tailwind"
+          ],
+          "languages": [
+            {
+              "files": 1,
+              "name": "Markdown"
+            }
+          ],
+          "newest": "2025-11-12T09:00:00.000Z",
+          "packageManager": "",
+          "scripts": [
+            {
+              "cmd": "next dev",
+              "name": "dev"
+            },
+            {
+              "cmd": "next build",
+              "name": "build"
+            },
+            {
+              "cmd": "eslint .",
+              "name": "lint"
+            }
+          ],
+          "services": []
+        },
+        "status": {
+          "auto": true,
+          "value": "archived"
+        },
+        "summary": {
+          "source": "README.md",
+          "text": "Online shop for a batik maker in Pekalongan: catalog, cart and bank transfer."
+        },
+        "taskFiles": [],
+        "tasks": [],
+        "type": "code"
+      },
+      "/home/demo/project/_archive/old-clients/warung-pos": {
+        "agents": {
+          "aiFiles": [],
+          "claude": [],
+          "items": []
+        },
+        "archived": true,
+        "children": [],
+        "createdAt": {
+          "at": "2025-09-23T09:00:00.000Z",
+          "source": "first commit"
+        },
+        "git": {
+          "ahead": 0,
+          "authors": 1,
+          "behind": 0,
+          "branch": "main",
+          "commits": 2,
+          "deleted": 0,
+          "dirty": 0,
+          "firstCommitAt": "2025-09-23T09:00:00.000Z",
+          "lastCommitAt": "2025-10-28T09:00:00.000Z",
+          "lastSubject": "feat: daily report",
+          "localOnly": 2,
+          "remotes": [
+            {
+              "host": "github.com",
+              "name": "origin",
+              "url": "git@github.com:me/warung-pos.git",
+              "web": "https://github.com/me/warung-pos"
+            }
+          ],
+          "rootCommit": "6b4346b2efa53dcbfcbcd36dfa95dcdbbe04a829",
+          "stashes": 0,
+          "upstream": "",
+          "weekly": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "worktree": false
+        },
+        "id": "/home/demo/project/_archive/old-clients/warung-pos",
+        "inArchive": true,
+        "issues": [
+          {
+            "code": "unpushed",
+            "detail": "main has no upstream, and no remote has them",
+            "severity": "med",
+            "title": "2 commits not pushed"
+          }
+        ],
+        "kind": "project",
+        "label": "warung-pos",
+        "lastActivity": {
+          "at": "2025-10-28T09:00:00.000Z",
+          "source": "commit"
+        },
+        "meta": {},
+        "name": "warung-pos",
+        "ownActivity": {
+          "at": "2025-10-28T09:00:00.000Z",
+          "source": "commit"
+        },
+        "parent": "/home/demo/project/_archive/old-clients",
+        "path": "/home/demo/project/_archive/old-clients/warung-pos",
+        "readme": {
+          "file": "README.md",
+          "images": 0,
+          "links": [],
+          "raw": "# Warung POS\n\nA till for a food stall: orders, daily totals and a printed receipt.\n",
+          "sections": [],
+          "tagline": "A till for a food stall: orders, daily totals and a printed receipt.",
+          "template": false,
+          "title": "Warung POS",
+          "weakTitle": false
+        },
+        "restorePlan": {
+          "checks": [],
+          "dest": "/home/demo/project/old-clients/warung-pos",
+          "error": "~/project/old-clients is a link into the archive. Restore the whole group old-clients, or remove that link first.",
+          "ops": [],
+          "reason": "linked"
+        },
+        "sidecar": false,
+        "size": {
+          "parts": [],
+          "reclaimable": 0,
+          "total": 29303
+        },
+        "stableId": "git:6b4346b2efa5",
+        "stack": {
+          "ci": [],
+          "deploy": [],
+          "description": null,
+          "env": [],
+          "files": 3,
+          "labels": [
+            "React",
+            "Vite"
+          ],
+          "languages": [
+            {
+              "files": 1,
+              "name": "Markdown"
+            }
+          ],
+          "newest": "2025-10-28T09:00:00.000Z",
+          "packageManager": "",
+          "scripts": [
+            {
+              "cmd": "vite",
+              "name": "dev"
+            },
+            {
+              "cmd": "vite build",
+              "name": "build"
+            }
+          ],
+          "services": []
+        },
+        "status": {
+          "auto": true,
+          "value": "archived"
+        },
+        "summary": {
+          "source": "README.md",
+          "text": "A till for a food stall: orders, daily totals and a printed receipt."
+        },
+        "taskFiles": [],
+        "tasks": [],
+        "type": "code"
       },
       "/home/demo/project/_archive/old-portfolio": {
         "agents": {
@@ -2615,6 +3273,7 @@
           "source": "folder"
         },
         "id": "/home/demo/project/clients",
+        "inArchive": false,
         "issues": [],
         "kind": "folder",
         "label": "clients",
@@ -3273,6 +3932,7 @@
           "source": "folder"
         },
         "id": "/home/demo/project/side",
+        "inArchive": false,
         "issues": [],
         "kind": "folder",
         "label": "side",
@@ -3766,6 +4426,7 @@
           "source": "folder"
         },
         "id": "/home/demo/project/thesis",
+        "inArchive": false,
         "issues": [],
         "kind": "folder",
         "label": "thesis",

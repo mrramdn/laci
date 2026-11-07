@@ -3,7 +3,7 @@
 // LACI_DEMO_NOW (an ISO time) pins "now", so the same home comes out on every run. Set TZ too: the
 // report file names hold the local date.
 import { execFileSync } from 'node:child_process'
-import { appendFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, truncateSync, utimesSync, writeFileSync } from 'node:fs'
+import { appendFileSync, lstatSync, lutimesSync, mkdirSync, readdirSync, readFileSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const started = Date.now()
@@ -155,6 +155,22 @@ try {
 appendFileSync(exclude, `${excluded && !excluded.endsWith('\n') ? '\n' : ''}.laci.md\n`)
 age(old, 260)
 sessions(P('old-portfolio'), [{ id: 'o1', cwd: P('old-portfolio'), title: 'Portfolio projects grid', daysAgo: 26 }], ['MEMORY.md'])
+
+// An archived group: a client's folder of two projects, archived whole. Its .laci.md says where it came
+// from, and the old place is still a link to it, as a folder moved by hand often leaves behind. Restore
+// takes the group back whole and removes that link; either project alone is reached through the link, so
+// it waits for its group.
+const group = P('_archive', 'old-clients')
+put(path.join(group, '.laci.md'), `---\nstatus: archived\narchivedFrom: ~/project/old-clients\narchivedAt: ${ago(40).slice(0, 10)}\n---\n\n## Next\n\n## Notes\n`)
+repo(path.join(group, 'batik-shop'), {
+  'package.json': pkg('batik-shop', ['next', 'react', 'tailwindcss']),
+  'README.md': '# Batik Shop\n\nOnline shop for a batik maker in Pekalongan: catalog, cart and bank transfer.\n',
+}, [[400, 'init'], [360, 'feat: catalog'], [330, 'feat: bank transfer checkout']], 'git@github.com:me/batik-shop.git')
+repo(path.join(group, 'warung-pos'), {
+  'package.json': pkg('warung-pos', ['vite', 'react'], { dev: 'vite', build: 'vite build' }),
+  'README.md': '# Warung POS\n\nA till for a food stall: orders, daily totals and a printed receipt.\n',
+}, [[380, 'init'], [345, 'feat: daily report']], 'git@github.com:me/warung-pos.git')
+symlinkSync(group, P('old-clients'))
 
 // Session reports, as an agent following Laci's instruction writes them. Choose ~/Documents/agent-reports
 // in Settings to see them.
@@ -313,7 +329,9 @@ put(path.join(home, '.bash_profile'), "PS1='\\W $ '\n")
 /** A pinned clock reaches everything the run wrote: what has no age of its own, and the folders that gained entries. */
 function settle(p: string) {
   const stat = lstatSync(p)
-  if (stat.mtimeMs >= started - 1000 && stat.mtimeMs <= Date.now() + 1000) utimesSync(p, new Date(pinned!), new Date(pinned!))
+  // A link gets the time itself: utimes would follow it to its folder.
+  const touch = stat.isSymbolicLink() ? lutimesSync : utimesSync
+  if (stat.mtimeMs >= started - 1000 && stat.mtimeMs <= Date.now() + 1000) touch(p, new Date(pinned!), new Date(pinned!))
   if (stat.isDirectory()) for (const name of readdirSync(p)) settle(path.join(p, name))
 }
 if (pinned !== undefined) settle(home)

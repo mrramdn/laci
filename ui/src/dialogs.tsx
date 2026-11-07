@@ -14,8 +14,10 @@ import {
   bytes,
   expandHome,
   isAbsolutePath,
+  isArchivedGroup,
   joinPath,
   parentOf,
+  placeAfterRestore,
   plural,
   readyPlan,
   tilde,
@@ -30,7 +32,7 @@ import { AgentDialog, DeleteSessions, SessionDialog } from "./session-ui";
 import { McpDialog } from "./mcp-setup";
 import { Select, SelectPortal, selectIsOpen } from "./select";
 import type { ArchivePlan, Change, DeletePlan, Link } from "./types";
-import { detailedSettings as said } from "./words";
+import { detailedArchive, detailedSettings as said } from "./words";
 const NewProject = lazy(() =>
   import("./new-project").then((module) => ({ default: module.NewProject })),
 );
@@ -729,7 +731,7 @@ function Restore({ id }: { id: string }) {
       async () => {
         setSaving(true);
         setError("");
-        const modal = useApp.getState().modal;
+        const { modal, selected } = useApp.getState();
         try {
           const change = await api<Change>("restore", {
             id,
@@ -737,7 +739,8 @@ function Restore({ id }: { id: string }) {
           });
           if (useApp.getState().modal === modal) close();
           changed(change, `Restored ${n.name}`);
-          selectWhenReady(plan.dest);
+          // A group restored while a project in it is selected goes on to that project's new place.
+          selectWhenReady(placeAfterRestore(n, plan.dest, selected));
         } finally {
           setSaving(false);
         }
@@ -749,9 +752,15 @@ function Restore({ id }: { id: string }) {
       },
     );
   }
+  // An archived group goes back whole: the folder, every project in it and their agent history.
+  const group = isArchivedGroup(n);
   return (
     <DialogFrame
-      title={`Restore ${n.name}?`}
+      title={
+        group
+          ? detailedArchive.restoreGroupTitle(n.name)
+          : `Restore ${n.name}?`
+      }
       description={
         moves ? (
           <>
@@ -759,7 +768,10 @@ function Restore({ id }: { id: string }) {
             <span className="mono">
               {shownDest ? tilde(shownDest, home) : "the place you choose"}
             </span>{" "}
-            with its agent history. Undo is in the Log.
+            {group
+              ? "with every project in it and their agent history"
+              : "with its agent history"}
+            . Undo is in the Log.
           </>
         ) : (
           <>

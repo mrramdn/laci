@@ -121,8 +121,8 @@ export async function projectsFilterSortAndSearch() {
       .shown.map((n) => n.label);
   const { counts } = model.projectsModel(s, { filter: "all", query: "", sort: "recent", folder: null }, NOW);
   // All leaves archived projects out; Needs you is what Home lists, archived ones included.
-  assert.deepEqual(counts, { all: 6, needs: 6, active: 4, archived: 2 });
-  assert.deepEqual(list({ filter: "archived" }), ["old-portfolio", "zine"]);
+  assert.deepEqual(counts, { all: 6, needs: 8, active: 4, archived: 4 });
+  assert.deepEqual(list({ filter: "archived" }), ["batik-shop", "old-portfolio", "warung-pos", "zine"]);
   assert.deepEqual(
     list({ filter: "needs" }).sort(),
     homeModel(s, NOW).needs.map((need) => need.n.label).sort(),

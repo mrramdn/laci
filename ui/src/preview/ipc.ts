@@ -278,8 +278,91 @@ function notes(body: Body): Node {
   });
 }
 
+const JOURNAL: Op = {
+  kind: "write",
+  label: "Write undo journal",
+  to: "~/.local/share/laci/journal/",
+};
+/**
+ * Archives a folder of projects as a group, as the engine does it: the folder and everything in it
+ * goes to the archive, its own `.laci.md` says archived, where it came from and when, and it goes
+ * back whole. The preview moves no folder: everything in it is marked as being in the archive where
+ * it is. Undo takes every mark away again.
+ */
+function archiveGroup(n: Node): Change {
+  const home = fixtures.meta.home;
+  const plan = n.archivePlan;
+  if (!plan || plan.error) fail(plan?.error ?? "This folder can't be archived as a group");
+  const inside = Object.values(snapshot.nodes).filter((o) => within(o.path, n.path));
+  const was = inside.map((o) => ({
+    o,
+    fields: {
+      archived: o.archived,
+      inArchive: o.inArchive,
+      status: { ...o.status },
+      meta: { ...o.meta },
+      restorePlan: o.restorePlan,
+    },
+  }));
+  const from = tilde(n.path, home);
+  const dest = plan.dest ? tilde(plan.dest, home) : from;
+  for (const o of inside) {
+    const group = o === n;
+    Object.assign(o, {
+      archived: true,
+      inArchive: true,
+      // A status of its own still wins, as in the engine; else being in the archive says archived.
+      status:
+        group || !o.meta.status
+          ? { value: "archived", auto: !group }
+          : { value: o.meta.status, auto: false },
+      meta: group
+        ? {
+            ...o.meta,
+            status: "archived",
+            archivedFrom: from,
+            archivedAt: new Date().toISOString().slice(0, 10),
+          }
+        : o.meta,
+      // The group goes back whole; a project in it can go back by itself, to where it was.
+      restorePlan:
+        group || o.kind === "project"
+          ? {
+              dest: o.path,
+              checks: [],
+              ops: [
+                {
+                  kind: "move",
+                  label: "Move folder",
+                  from: dest + o.path.slice(n.path.length),
+                  to: tilde(o.path, home),
+                },
+                {
+                  kind: "write",
+                  label: "Clear status: archived",
+                  to: `${tilde(o.path, home)}/.laci.md`,
+                },
+                JOURNAL,
+              ],
+            }
+          : undefined,
+    });
+  }
+  const steps: Op[] = [
+    { kind: "move", label: "Moved", from, to: dest },
+    { kind: "write", label: "Edited .laci.md", from: dest },
+  ];
+  return changed(
+    `Archived ${n.name}`,
+    () => {
+      for (const { o, fields } of was) Object.assign(o, fields);
+    },
+    { steps },
+  );
+}
 function archive(body: Body): Change {
   const n = node(text(body, "id"));
+  if (n.kind === "folder") return archiveGroup(n);
   const was = {
     archived: n.archived,
     status: { ...n.status },
@@ -324,41 +407,24 @@ function restore(body: Body): Change {
     },
   }));
   const home = fixtures.meta.home;
+  // Every folder and project in the group that says archived in its own .laci.md loses the mark
+  // with it, in the same change, as the engine does it: one Undo brings every mark back.
   for (const o of moved) {
     const meta = { ...o.meta };
-    if (o === n) {
+    if (o === n || meta.status === "archived") {
       delete meta.status;
       delete meta.archivedFrom;
       delete meta.archivedAt;
     }
-    // Only the restored folder's own .laci.md loses its mark, as the engine does it: a project in
-    // the group marked archived in its own .laci.md stays marked, where it now is.
-    const marked = o !== n && meta.status === "archived";
     Object.assign(o, {
-      archived: marked,
+      archived: false,
       inArchive: false,
-      status: marked
-        ? { value: "archived", auto: false }
+      // A status of its own that wasn't the archived mark stays.
+      status: meta.status
+        ? { value: meta.status, auto: false }
         : { value: "idle", auto: true },
       meta,
-      restorePlan: marked
-        ? {
-            dest: o.path,
-            checks: [],
-            ops: [
-              {
-                kind: "write",
-                label: "Clear status: archived",
-                to: `${tilde(o.path, home)}/.laci.md`,
-              },
-              {
-                kind: "write",
-                label: "Write undo journal",
-                to: "~/.local/share/laci/journal/",
-              },
-            ],
-          }
-        : undefined,
+      restorePlan: undefined,
     });
   }
   const to = tilde(plan?.dest ?? n.path, home);
@@ -407,13 +473,19 @@ function restoreTo(n: Node, plan: ArchivePlan, destination: string): ArchivePlan
   const archive = `${home}/project/_archive`;
   const inside = (path: string, dir: string) =>
     path === dir || path.startsWith(`${dir}/`);
+  // A group the preview archived never moved: the place it came from is where it still is.
+  if (destination === n.path && plan.dest === n.path && !plan.error) return plan;
   if (!inside(destination, home))
     return cant("outside", "Path must be inside your home folder");
   if (through)
-    return cant(
-      "linked",
-      `${short(through.link)} is a link into the archive. Restore the whole group ${through.group.name}, or remove that link first.`,
-    );
+    return {
+      ...cant(
+        "linked",
+        `${short(through.link)} is a link into the archive. Restore the whole group ${through.group.name}, or remove that link first.`,
+      ),
+      // Where the group is, so the window can offer to restore it instead.
+      group: through.group.path,
+    };
   // The old link is free only for the group it points at.
   const link = links.find((l) => l.link === destination);
   if (snapshot.nodes[destination] || (link && link.group !== n))
@@ -1029,7 +1101,10 @@ const reads: Record<string, Handler> = {
   log: () => ({ entries: log, file: fixtures.log.file }),
   "agent/mcp": () => ({ agents: mcp }),
   health: (body) => lookup(fixtures.health, text(body, "id"), "health data"),
+  // A folder's plan, as a group, is the one the scan holds: the recorded plans are the projects'.
   "archive/plan": (body) =>
+    fixtures["archive/plan"][text(body, "id")] ??
+    snapshot.nodes[text(body, "id")]?.archivePlan ??
     lookup(fixtures["archive/plan"], text(body, "id"), "archive plan"),
   "restore/plan": (body) => {
     const n = node(text(body, "id"));

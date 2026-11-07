@@ -3,7 +3,7 @@
 // LACI_DEMO_NOW (an ISO time) pins "now", so the same home comes out on every run. Set TZ too: the
 // report file names hold the local date.
 import { execFileSync } from 'node:child_process'
-import { lstatSync, mkdirSync, readdirSync, truncateSync, utimesSync, writeFileSync } from 'node:fs'
+import { appendFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, truncateSync, utimesSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const started = Date.now()
@@ -125,6 +125,14 @@ age(habit, 150)
 const dots = P('side', 'dotfiles')
 repo(dots, { 'README.md': '# dotfiles\n\nHyprland, kitty and shell config.\n', 'install.sh': '#!/bin/sh\n' }, [[40, 'init'], [8, 'hyprland: new binds']], 'git@github.com:me/dotfiles.git')
 
+// A finished zine, marked archived in its .laci.md but never moved: the Archive lists it as still in place.
+const zine = P('side', 'zine')
+put(path.join(zine, '.laci.md'), '---\nstatus: archived\n---\n\n## Next\n\n## Notes\n')
+put(path.join(zine, 'NOTES.md'), '# Zine\n\nA photocopied zine about the coffee shops of Bandung, two issues, sold at the shops themselves.\n\n## Print\n\nA5, folded from A4, black on recycled paper. 60 copies of each issue at the copy shop on Jalan Dago.\n\n## Done\n\nBoth issues sold out. No third one.\n')
+put(path.join(zine, 'issue-01.md'), '# Issue 1: Morning\n\nWho opens first, who roasts their own beans, and where to sit with a laptop before nine.\n\n## Shops\n\n- Kopi Pagi: opens at six, filter only\n- Warung Seduh: the cheapest V60 in town\n- Roastery Utara: roasts on Tuesdays, you can watch\n')
+put(path.join(zine, 'issue-02.md'), '# Issue 2: Night\n\nThe shops that stay open late, the ones with music, and the one that serves coffee with durian.\n\n## Shops\n\n- Malam Kopi: open until two\n- Ruang Dengar: vinyl on Fridays\n- Kopi Durian Pak Ujang: you have been warned\n')
+age(zine, 180)
+
 // Notes-only folder with an open checklist
 put(P('infra-notes', 'NOTES.md'), '# Server notes\n\n## Open\n- [ ] Rotate the SSH keys on the staging droplet\n- [ ] Renew the SSL cert before it expires\n- [x] Add 2 GB swap\n')
 age(P('infra-notes'), 5)
@@ -133,6 +141,19 @@ sessions(P('infra-notes'), [{ id: 'n1', cwd: P('infra-notes'), title: 'Why the d
 // Archived portfolio, whose agent history stayed at the old address
 const old = P('_archive', 'old-portfolio')
 repo(old, { 'package.json': pkg('old-portfolio', ['next', 'react']), 'README.md': '# Portfolio v1\n\nMy first portfolio site.\n' }, [[300, 'init'], [260, 'feat: projects page']], 'git@github.com:me/portfolio-v1.git')
+// Its .laci.md says where it came from and when it was archived, as Laci's Archive writes it, and is in
+// the repository's exclude list as Laci keeps it: not a change to the project.
+put(path.join(old, '.laci.md'), `---\nstatus: archived\narchivedFrom: ~/project/old-portfolio\narchivedAt: ${ago(55).slice(0, 10)}\n---\n\n## Next\n\n## Notes\n`)
+const exclude = path.join(old, '.git', 'info', 'exclude')
+mkdirSync(path.dirname(exclude), { recursive: true })
+let excluded = ''
+try {
+  excluded = readFileSync(exclude, 'utf8')
+} catch {
+  /* Git made no exclude list: this starts one. */
+}
+appendFileSync(exclude, `${excluded && !excluded.endsWith('\n') ? '\n' : ''}.laci.md\n`)
+age(old, 260)
 sessions(P('old-portfolio'), [{ id: 'o1', cwd: P('old-portfolio'), title: 'Portfolio projects grid', daysAgo: 26 }], ['MEMORY.md'])
 
 // Session reports, as an agent following Laci's instruction writes them. Choose ~/Documents/agent-reports

@@ -723,6 +723,40 @@
         "more": 0
       }
     },
+    "/home/demo/project/side/zine": {
+      "allowed": false,
+      "checks": [
+        {
+          "code": "delete-blocked",
+          "detail": "Only a standalone Git project can be removed here. Linked worktrees and submodules must be managed with Git.",
+          "severity": "high",
+          "title": "This project cannot be removed yet"
+        },
+        {
+          "code": "ignored-files",
+          "detail": "The entire project folder, including ignored files and history inside it, moves to system Trash. Restore it through your file manager; there is no Log Undo.",
+          "severity": "med",
+          "title": "Ignored files are not backed up by Git"
+        }
+      ],
+      "ops": [
+        {
+          "from": "/home/demo/project/side/zine",
+          "kind": "delete",
+          "label": "Move the project folder to system Trash"
+        },
+        {
+          "detail": "External session logs and memory are preserved. They may appear as detached history until the folder is restored.",
+          "kind": "keep",
+          "label": "Keep agent history outside the project"
+        }
+      ],
+      "path": "/home/demo/project/side/zine",
+      "unbacked": {
+        "files": [],
+        "more": 0
+      }
+    },
     "/home/demo/project/thesis/campus-lms": {
       "allowed": false,
       "checks": [
@@ -920,6 +954,12 @@
           "subject": "init expo"
         }
       ],
+      "stashes": [],
+      "unpushed": []
+    },
+    "/home/demo/project/side/zine": {
+      "changes": [],
+      "recent": [],
       "stashes": [],
       "unpushed": []
     },
@@ -1274,6 +1314,16 @@
           "name": ".history",
           "path": "/home/demo/project/_archive/old-portfolio/.history",
           "size": 2
+        },
+        {
+          "at": "2026-01-21T09:00:00.000Z",
+          "dir": false,
+          "git": false,
+          "hidden": true,
+          "link": false,
+          "name": ".laci.md",
+          "path": "/home/demo/project/_archive/old-portfolio/.laci.md",
+          "size": 105
         },
         {
           "at": "2026-01-21T09:00:00.000Z",
@@ -2501,7 +2551,7 @@
         "size": {
           "parts": [],
           "reclaimable": 0,
-          "total": 29265
+          "total": 29379
         },
         "stableId": "git:f6de84a81bde",
         "stack": {
@@ -2509,13 +2559,13 @@
           "deploy": [],
           "description": null,
           "env": [],
-          "files": 3,
+          "files": 4,
           "labels": [
             "Next.js"
           ],
           "languages": [
             {
-              "files": 1,
+              "files": 2,
               "name": "Markdown"
             }
           ],
@@ -3630,7 +3680,7 @@
         "archived": true,
         "children": [],
         "createdAt": {
-          "at": "2026-03-02T09:00:00.000Z",
+          "at": "2026-10-08T09:00:00.000Z",
           "source": "folder"
         },
         "id": "/home/demo/project/side/zine",
@@ -3672,9 +3722,27 @@
         "size": {
           "parts": [],
           "reclaimable": 0,
-          "total": 4210
+          "total": 791
         },
-        "stableId": "p:5a1c0e7d2b90",
+        "stableId": "p:daa4cdca5d38",
+        "stack": {
+          "ci": [],
+          "deploy": [],
+          "description": null,
+          "env": [],
+          "files": 4,
+          "labels": [],
+          "languages": [
+            {
+              "files": 4,
+              "name": "Markdown"
+            }
+          ],
+          "newest": "2026-04-11T09:00:00.000Z",
+          "packageManager": "",
+          "scripts": [],
+          "services": []
+        },
         "status": {
           "auto": false,
           "value": "archived"

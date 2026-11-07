@@ -255,11 +255,9 @@ function ProjectCard({
   const chats = projectChats(snapshot, n, now.getTime()).total;
   const priority = said.priority[n.meta.priority ?? ""];
   const title = useId();
-  // Where an archived project came from, when Laci knows.
+  // Where an archived project came from, when Laci knows: also when something stops it going back.
   const from =
-    n.inArchive && n.restorePlan && !n.restorePlan.error
-      ? tilde(n.restorePlan.dest, snapshot.home)
-      : "";
+    n.inArchive && n.restorePlan?.dest ? tilde(n.restorePlan.dest, snapshot.home) : "";
   return (
     <article
       className="s-pcard"
@@ -306,7 +304,7 @@ function ProjectCard({
       <p className="s-pcard-desc">
         {n.summary?.text ?? <span className="s-quiet">{said.noDescription}</span>}
       </p>
-      {from ? <p className="s-pcard-meta s-mono">{said.from(from)}</p> : null}
+      {from ? <p className="s-pcard-from">{said.from(from)}</p> : null}
       <div className="s-pcard-chips">
         <SafetyBadge node={n} />
         {due && due.days <= 14 ? (

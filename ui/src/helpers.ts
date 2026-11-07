@@ -1,4 +1,6 @@
 import type {
+  ArchivePlan,
+  ReadyPlan,
   Node,
   Snapshot,
   LogEntry,
@@ -61,6 +63,10 @@ export function copyChangeSaid(
   return answer.moved ? words.moved(where) : words.kept(where);
 }
 
+/** The plan when it can run; a plan with an error, or without a place, can't. */
+export function readyPlan(plan?: ArchivePlan): ReadyPlan | undefined {
+  return plan && !plan.error && plan.dest ? (plan as ReadyPlan) : undefined;
+}
 export function tilde(path: string | undefined, home: string) {
   return path === home
     ? "~"

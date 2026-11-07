@@ -17,6 +17,7 @@ import {
   joinPath,
   parentOf,
   plural,
+  readyPlan,
   tilde,
 } from "./helpers";
 import { CopyChoice } from "./copy-choice";
@@ -505,7 +506,7 @@ function Archive({ id }: { id: string }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const current = review?.destination === destination ? review : null;
-  const plan = current?.plan && !current.plan.error ? current.plan : undefined;
+  const plan = readyPlan(current?.plan);
   useEffect(() => {
     let live = true;
     const timer = window.setTimeout(() => {
@@ -686,7 +687,10 @@ function Restore({ id }: { id: string }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const current = review?.destination === destination ? review : null;
-  const plan = current?.plan && !current.plan.error ? current.plan : undefined;
+  const plan = readyPlan(current?.plan);
+  /** Where it came from: the origin Laci would use, also when something stops it going back there. */
+  const origin = n?.restorePlan?.dest;
+  const known = Boolean(n?.restorePlan && !n.restorePlan.error);
   useEffect(() => {
     let live = true;
     const timer = window.setTimeout(() => {
@@ -715,11 +719,10 @@ function Restore({ id }: { id: string }) {
   const typed = expandHome(destination.trim(), home);
   const pickFrom = isAbsolutePath(typed)
     ? parentOf(typed)
-    : n.restorePlan && !n.restorePlan.error
-      ? parentOf(n.restorePlan.dest)
+    : origin
+      ? parentOf(origin)
       : "~";
-  const shownDest =
-    plan?.dest ?? (n.restorePlan?.error ? undefined : n.restorePlan?.dest);
+  const shownDest = plan?.dest ?? (known ? origin : undefined);
   async function restore() {
     if (!plan) return;
     await run(
@@ -756,7 +759,7 @@ function Restore({ id }: { id: string }) {
             <span className="mono">
               {shownDest ? tilde(shownDest, home) : "the place you choose"}
             </span>{" "}
-            with its AI history. Undo is in the Log.
+            with its agent history. Undo is in the Log.
           </>
         ) : (
           <>
@@ -805,7 +808,7 @@ function Restore({ id }: { id: string }) {
               placeholder={
                 n.restorePlan?.error
                   ? "Choose where to put it back…"
-                  : tilde(n.restorePlan?.dest, home)
+                  : tilde(origin, home)
               }
             />
             {/* The folder chosen takes the project inside, under its own name. */}
@@ -828,9 +831,7 @@ function Restore({ id }: { id: string }) {
           </small>
         </label>
       ) : null}
-      {moves && n.restorePlan?.error && !destination ? (
-        <p className="err">{n.restorePlan.error}</p>
-      ) : null}
+      {/* Why it can't go back by itself is said once, in the footer, as the plan's error. */}
       {!current ? <p role="status">Checking…</p> : null}
       {plan?.checks.length ? (
         <div className="warnbox">

@@ -1977,6 +1977,15 @@ export const dialogs = {
     introInPlace: "Laci takes away its archived mark. The folder stays where it is.",
     goesBack: (where: string) => `It goes back to ${where}.`,
     unknown: "Laci doesn’t know where this project came from. Choose where to put it back under Show details.",
+    /** Why it can't go back to `where` (the engine's reason), and that another place can be chosen. */
+    why: {
+      occupied: (where: string) =>
+        `Something else is at ${where} now. Choose another place under Show details.`,
+      inArchive: (where: string) =>
+        `${where} is inside your archive folder or inside the project. Choose another place under Show details.`,
+      outside: (where: string) =>
+        `${where} isn’t in your home folder or one of your project folders. Choose another place under Show details.`,
+    },
     checking: "Checking where it goes…",
     restore: "Restore",
     note: "You can undo it any time in Activity.",
@@ -2013,6 +2022,20 @@ export const dialogs = {
  * the look for secret files before a fix that saves or uploads versions. Its buttons keep their Git
  * names (FIX_LABEL in helpers.ts); what they open says it plainly.
  */
+/** Detailed's Archive view: where an archived project came from, and why it can't go back there. */
+export const detailedArchive = {
+  from: (where: string) => `From ${where}`,
+  /** The engine's reason, short, after "From <place> ·". */
+  why: {
+    occupied: "something is there now",
+    inArchive: "inside the archive",
+    outside: "outside your locations",
+  },
+  /** A plan that can't run without saying why. */
+  cant: "can’t go back there",
+  unknown: "Origin unknown",
+};
+
 export const detailedData = {
   /** The scan of the project folders, at the foot of the sidebar beside the update's badge. */
   scan: {

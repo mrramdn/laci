@@ -4,6 +4,7 @@ import { useApp, external } from "../store";
 import { api } from "../api";
 import { bytes, LOCALE, plural, tilde } from "../helpers";
 import type { Node, SetupInfo } from "../types";
+import { detailedArchive as said } from "../words";
 /** The day a project was archived, from its `.laci.md`, as the other lists write a date. */
 function archivedOn(day?: string) {
   const [y, m, d] = (day ?? "").split("-").map(Number);
@@ -13,6 +14,17 @@ function archivedOn(day?: string) {
     month: "short",
     year: "numeric",
   });
+}
+/**
+ * Where a project in the archive came from, and why it can't go back there by itself: "From
+ * <place>", "From <place> · something is there now", or "Origin unknown".
+ */
+export function restoreFrom(n: Node, home: string) {
+  const plan = n.restorePlan;
+  if (!plan?.dest || plan.reason === "unknown") return said.unknown;
+  const from = said.from(tilde(plan.dest, home));
+  if (!plan.error) return from;
+  return `${from} · ${plan.reason ? said.why[plan.reason] : said.cant}`;
 }
 /** Newest archive first; projects without a day after them, then by name. */
 function newestFirst(a: Node, b: Node) {
@@ -74,8 +86,8 @@ export function ArchiveView() {
             </>
           ) : archiveDir === "" ? (
             <span className="d">
-              Laci archives a project into an _archive folder next to it.
-              Settings can choose one archive folder for all of them.
+              Laci archives a project into the _archive folder of its scan
+              location. Settings can choose one archive folder for all of them.
             </span>
           ) : (
             <span className="d">Reading the archive folder…</span>
@@ -86,14 +98,11 @@ export function ArchiveView() {
             title="In the archive"
             icon="archive"
             count={stored.length}
-            hint="Put back where it came from, with its AI history"
+            hint="Put back where it came from, with its agent history"
             order="Newest first"
           >
             {stored.map((n) => {
-              const from =
-                n.restorePlan && !n.restorePlan.error
-                  ? `From ${tilde(n.restorePlan.dest, home)}`
-                  : "Origin unknown";
+              const from = restoreFrom(n, home);
               const day = archivedOn(n.meta.archivedAt);
               return (
                 <div

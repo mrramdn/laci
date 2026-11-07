@@ -291,12 +291,27 @@ export interface Op {
   detail?: string;
 }
 
+/**
+ * Why a restore plan can't run. "occupied": something is at the origin now. "unknown": Laci can't
+ * tell where the project came from. "inArchive": the place is inside the archive folder or inside
+ * the project. "outside": the place isn't in the home folder or a scan location.
+ */
+export type PlanReason = "occupied" | "unknown" | "inArchive" | "outside";
+
 export interface ArchivePlan {
-  dest: string;
+  /**
+   * Where the project goes. On a plan that can't run, the origin Laci would use, when it knows one
+   * (missing for reason "unknown").
+   */
+  dest?: string;
   error?: string;
+  reason?: PlanReason;
   checks: Issue[];
   ops: Op[];
 }
+
+/** A plan that can run: it always says where the project goes. */
+export type ReadyPlan = ArchivePlan & { dest: string };
 
 export interface DeletePlan {
   allowed: boolean;

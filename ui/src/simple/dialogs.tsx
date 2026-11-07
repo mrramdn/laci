@@ -8,7 +8,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch, Ref, SetStateAction } from "react";
 import { api, errorText } from "../api";
 import { restoreFocus } from "../common";
-import { bytes, expandHome, isAbsolutePath, RISK, tilde } from "../helpers";
+import { bytes, expandHome, isAbsolutePath, readyPlan, RISK, tilde } from "../helpers";
 import { changed, run, selectWhenReady, useApp } from "../store";
 import type { Modal } from "../store";
 import type { ArchivePlan, Change, DeletePlan, Issue, Node, Op } from "../types";
@@ -428,7 +428,7 @@ function ArchiveBody({ node, stage, setStage, opener }: Body) {
     };
   }, [node, destination, home, attempt, sending]);
   const current = review?.destination === destination ? review : null;
-  const plan = current?.plan && !current.error ? current.plan : undefined;
+  const plan = current && !current.error ? readyPlan(current.plan) : undefined;
   const checks = (plan ?? last)?.checks;
   // The plan's checks, and the problems of the project's own that the plan leaves out (out of
   // sync, no version history): what its "Is it safe?" card warns about is never called safe here.
@@ -630,7 +630,8 @@ function ArchiveBody({ node, stage, setStage, opener }: Body) {
 /**
  * Restore: a project in the archive goes back where it came from, with its AI chats; one only
  * marked archived loses the mark in place. Where it goes can be changed under Show details, and
- * must be when Laci doesn't know where it came from.
+ * must be when Laci can't put it back where it came from: it doesn't know the place, something is
+ * there now, or the place is one a project can't go back to. Show details opens by itself then.
  */
 function RestoreBody({ node, stage, setStage }: Body) {
   const home = useApp((s) => s.snapshot!.home);
@@ -650,6 +651,10 @@ function RestoreBody({ node, stage, setStage }: Body) {
   const noteId = useId();
   const aboutId = useId();
   const field = useId();
+  const go = useRef<HTMLButtonElement>(null);
+  const place = useRef<HTMLInputElement>(null);
+  /** Back from a request: the focus returns to the button that started it. */
+  const back = useRef(false);
   const sending = stage === "send";
   // The plan is asked for when the sheet opens and again once a place being typed stops changing.
   useEffect(() => {
@@ -682,10 +687,34 @@ function RestoreBody({ node, stage, setStage }: Body) {
     };
   }, [node, destination, home, moves, sending]);
   const current = review?.destination === destination ? review : null;
-  const plan = current?.plan && !current.error ? current.plan : undefined;
+  const plan = current && !current.error ? readyPlan(current.plan) : undefined;
   const problem = failure || current?.error || "";
+  // Why the engine can't put it back there: another place has to be chosen, under Show details.
+  const reason = moves && !failure && current?.plan?.error ? current.plan.reason : undefined;
+  const where = tilde(current?.plan?.dest ?? expandHome(destination.trim(), home), home);
+  const why =
+    reason === "unknown"
+      ? said.restore.unknown
+      : reason && where
+        ? said.restore.why[reason](where)
+        : "";
+  const choose = Boolean(why);
+  // The focus goes on to Restore once the plan has drawn it, or to the place to choose when the
+  // engine can't go on, if it is still where the sheet put it.
+  useLayoutEffect(() => {
+    const at = document.activeElement;
+    if (!plan && !choose) return;
+    if (at && at !== document.body && at.getAttribute("role") !== "dialog") return;
+    (plan ? go.current : place.current)?.focus();
+  }, [plan, choose]);
+  useLayoutEffect(() => {
+    if (stage !== "choose" || !back.current) return;
+    back.current = false;
+    (go.current && !go.current.disabled ? go.current : place.current)?.focus();
+  }, [stage]);
   const restore = async () => {
     if (!plan) return;
+    back.current = true;
     setFailure("");
     setNote("");
     setStage("send");
@@ -724,8 +753,8 @@ function RestoreBody({ node, stage, setStage }: Body) {
         ) : null
       ) : !current ? (
         <Working text={said.restore.checking} status />
-      ) : moves && !destination && node.restorePlan?.error ? (
-        <Callout tone="soon">{said.restore.unknown}</Callout>
+      ) : why ? (
+        <Callout tone="soon">{why}</Callout>
       ) : (
         <>
           <Callout tone="soon">
@@ -743,6 +772,7 @@ function RestoreBody({ node, stage, setStage }: Body) {
             <Button
               kind="filled"
               icon="undo-2"
+              ref={go}
               disabled={!plan || historyPending}
               aria-describedby={note ? `${noteId} ${aboutId}` : aboutId}
               onClick={() => void restore()}
@@ -756,7 +786,7 @@ function RestoreBody({ node, stage, setStage }: Body) {
           </div>
         </div>
       )}
-      <Disclosure>
+      <Disclosure opened={choose}>
         <dl className="s-facts">
           {moves ? (
             <>
@@ -766,10 +796,12 @@ function RestoreBody({ node, stage, setStage }: Body) {
               <dd>
                 <input
                   id={field}
+                  ref={place}
                   className="s-input s-mono"
                   value={destination}
                   autoComplete="off"
                   spellCheck={false}
+                  required={choose}
                   disabled={stage !== "choose"}
                   onChange={(event) => {
                     edited.current = true;

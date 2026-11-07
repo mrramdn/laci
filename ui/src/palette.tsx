@@ -81,6 +81,7 @@ export function actionsFor(
     ...(reports
       ? [["view:reports", "Open Reports", "report"] as const]
       : []),
+    ["view:archive", "Open Archive", "archive"],
     ["view:log", "Open Log", "scroll"],
     ["new", "New project", "plus"],
     ["shortcuts", "Keyboard shortcuts", "keyboard"],

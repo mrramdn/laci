@@ -35,6 +35,9 @@ export function Sidebar() {
   // Due today or overdue, or a high risk: a project that is both counts once.
   const badges = navBadges(snapshot, reportsSeen, new Date(now));
   const { today: hot, due, atRisk, suggestions, detached } = badges;
+  const archived = Object.values(snapshot.nodes).filter(
+    (n) => n.kind === "project" && n.archived,
+  ).length;
   const freshReports = currentView !== "reports" ? badges.reports : 0;
   const go = (view: View) => {
     setRailOpen(false);
@@ -73,6 +76,13 @@ export function Sidebar() {
           ],
         ] as [View, string, string, number, string][])
       : []),
+    [
+      "archive",
+      "Archive",
+      "archive",
+      archived,
+      `${plural(archived, "archived project")}`,
+    ],
     ["log", "Log", "scroll", 0, ""],
   ];
   useEffect(() => {

@@ -9,6 +9,7 @@ import { Tidy } from "../views/tidy";
 import { AgentsView } from "../views/agents";
 import { LogView } from "../views/log";
 import { ReportsView } from "../views/reports";
+import { ArchiveView } from "../views/archive";
 import { Settings } from "../settings";
 import { Inspector } from "../inspector";
 const TerminalPanel = lazy(() => import("../TerminalPanel"));
@@ -54,6 +55,8 @@ export default function DetailedShell() {
           <AgentsView />
         ) : view === "reports" ? (
           <ReportsView />
+        ) : view === "archive" ? (
+          <ArchiveView />
         ) : view === "log" ? (
           <LogView />
         ) : view === "settings" ? (

@@ -100,6 +100,17 @@ pub fn root_status(env: &Env, cfg: &Value) -> Vec<Value> {
         .collect()
 }
 
+/// The folder chosen for the copy of AI chats, told as [`root_status`] tells a scan location: unavailable, with why,
+/// while its drive isn't connected or it isn't the folder that was chosen, so the window can say so and watch for it
+/// to come back. Nothing for the default folder in Laci's data folder.
+pub fn copy_status(env: &Env, cfg: &Value) -> Option<Value> {
+    let path = crate::backup::chosen(env, cfg)?;
+    Some(match crate::backup::dir(env) {
+        Ok(_) => json!({"path":path,"available":true}),
+        Err(reason) => json!({"path":path,"available":false,"reason":reason}),
+    })
+}
+
 #[derive(Clone)]
 struct Found {
     path: PathBuf,
@@ -373,6 +384,7 @@ fn build(
         "claude":history.claude,"items":history.items,"connectors":[],"suggestions":[],"global":{"claude":[],"items":[]},"orphans":{"claude":[],"items":[]},"unmatched":[],"proposals":[],"warnings":[],"tookMs":0});
     snapshot["sessions"] = json!(history.sessions);
     snapshot["rootStatus"] = json!(root_status(env, &config::load(env)));
+    snapshot["copyStatus"] = json!(copy_status(env, &config::load(env)));
     snapshot["terminalTarget"] = json!(config::load(env)["terminalTarget"].as_str().unwrap_or("internal"));
     link(env, &mut snapshot, &on, &history.paths, &history.mentions);
     settle(env, &mut snapshot);
@@ -420,6 +432,7 @@ pub fn refresh_agents(env: &Env, snapshot: &mut Value) -> Result<bool> {
     }
     snapshot["roots"] = json!(roots);
     snapshot["rootStatus"] = json!(root_status(env, &cfg));
+    snapshot["copyStatus"] = json!(copy_status(env, &cfg));
     snapshot["sessions"] = json!(history.sessions);
     snapshot["claude"] = json!(history.claude);
     snapshot["items"] = json!(history.items);
@@ -1146,6 +1159,21 @@ pub fn move_ops(env: &Env, from: &Path, to: &Path, snapshot: &Value) -> Vec<Valu
             + stale_cwds(c).iter().map(|(_, n)| n).sum::<u64>();
         if lines > 0 {
             ops.push(json!({"kind":"rewrite","label":"Rewrite cwd in Claude logs","detail":format!("{} → {}",plural(lines,"line"),paths::tilde(&target,&env.home))}));
+        }
+        // The memory files that name the old place, as the move rewrites them (`ops::move_project`).
+        let listed =
+            if array(&c["memory"]).is_empty() { Vec::new() } else { agents::memory_files(Path::new(string(c, "dir"))) };
+        let memory = listed
+            .iter()
+            .filter(|file| {
+                files::text(file).is_some_and(|text| agents::moved_paths(&text, from, to, &env.home).is_some())
+            })
+            .count() as u64;
+        if memory > 0 {
+            ops.push(
+                json!({"kind":"rewrite","label":format!("Update the old path in {}",plural(memory,"memory file")),
+                "detail":format!("{} → {}",paths::tilde(from,&env.home),paths::tilde(to,&env.home))}),
+            );
         }
     }
     for c in array(&snapshot["connectors"]) {

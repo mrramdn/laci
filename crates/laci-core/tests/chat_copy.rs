@@ -457,6 +457,47 @@ fn a_copy_that_cant_be_reached_moves_only_once_the_drive_is_back_or_a_new_copy_s
 }
 
 #[test]
+fn the_undo_of_a_move_of_the_copy_runs_as_a_long_action_and_a_copy_folder_that_is_gone_is_told() {
+    let (_temp, env, disk) = home();
+    let project = claude(&env);
+    session(&env, &project, ID, "Fix the login page");
+    let mut service = Service::new(env.clone());
+    service.request("backup", &json!({})).unwrap();
+    let before = service.snapshot().unwrap();
+    assert!(before["copyStatus"].is_null(), "Laci's own folder for the copy is never away");
+    let chosen = disk.join("ai-chats");
+    fs::create_dir(&chosen).unwrap();
+    let moved = service.request("backup/move", &json!({"dir":chosen})).unwrap();
+    assert_eq!(moved["snapshot"]["copyStatus"], json!({"path":chosen,"available":true}));
+
+    // Its drive taken out, the copy folder is told unavailable, as a scan location is, without a scan.
+    let away = disk.join("unplugged");
+    fs::rename(&chosen, &away).unwrap();
+    let status = laci_core::scan::copy_status(&env, &config::load(&env)).unwrap();
+    assert_eq!((&status["path"], &status["available"]), (&json!(chosen), &json!(false)));
+    assert!(status["reason"].as_str().unwrap().contains("Connect its drive"), "{status}");
+    fs::rename(&away, &chosen).unwrap();
+
+    // Its Undo, by the journal or by the Log, can copy it back across drives: it runs as a long action does.
+    let journal = moved["journal"]["id"].clone();
+    let entry = journal_entry(&env, &moved["journal"]);
+    assert!(laci_core::service::runs_long_request(&env, "undo", &json!({"id":journal})));
+    assert!(laci_core::service::runs_long_request(&env, "log/undo", &json!({"id":entry["id"]})));
+    assert!(laci_core::service::moves_copy("undo") && laci_core::service::moves_copy("log/undo"));
+    for (name, body) in [("undo", json!({"id":"missing"})), ("log/undo", json!({"id":"missing"})), ("theme", json!({}))]
+    {
+        assert!(!laci_core::service::runs_long_request(&env, name, &body), "{name}");
+    }
+    let undone = service.request("undo", &json!({"id":journal})).unwrap();
+    assert_eq!(undone["journal"]["state"], "undone");
+    assert_eq!(config::load(&env)["backupDir"], "");
+    assert!(backup::marked(&env.data_dir.join("history")));
+    let told = activity::read_log(&env, 5);
+    assert_eq!(told[0]["title"], json!(format!("Undid: Moved the copy of AI chats to {}", chosen.display())));
+    assert!(undone["snapshot"]["copyStatus"].is_null());
+}
+
+#[test]
 fn undo_moves_nothing_outside_the_copy_whatever_its_journal_says() {
     let (_temp, env, disk) = home();
     let outside = disk.join("someone/else.txt");

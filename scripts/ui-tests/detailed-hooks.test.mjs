@@ -720,6 +720,30 @@ export async function theDetailsPanelChangesAProjectThroughTheSharedActions() {
   }
 }
 
+export async function theDetailsPanelOfAProjectThatWaitsForItsGroupOffersTheGroupsRestore() {
+  // batik-shop is reached through ~/project/old-clients, a link to its archived group: the engine
+  // refuses it alone (reason "linked"), so the panel offers the group, as the Archive's row does.
+  const group = "/home/demo/project/_archive/old-clients";
+  const batik = `${group}/batik-shop`;
+  const app = await detailed();
+  try {
+    assert.equal(app.state().snapshot.nodes[batik].restorePlan.reason, "linked");
+    await app.set({ selected: batik, tab: "health" });
+    await app.draw({ inspector: h(app.Shown) });
+    assert.deepEqual(app.buttons("Restore"), [], "no Restore the engine refuses");
+    const [restore] = app.buttons("Restore group");
+    assert.ok(restore, "the panel offers Restore group");
+    assert.equal(restore.getAttribute("title"), "Restore the group old-clients");
+    await app.fire(restore, "onClick");
+    // The group's dialog opens, and the project stays selected: once the group is back, the window
+    // goes on to the project in its new place.
+    assert.deepEqual(app.state().modal, { kind: "restore", id: group });
+    assert.equal(app.state().selected, batik);
+  } finally {
+    await app.close();
+  }
+}
+
 export async function tidyUpAndTheLogChangeThingsThroughTheSharedActions() {
   const app = await detailed({
     edit: (scan) => {

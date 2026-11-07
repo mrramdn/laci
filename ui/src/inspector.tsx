@@ -15,6 +15,7 @@ import {
   date,
   descendants,
   isArchivedGroup,
+  linkedGroup,
   plural,
   sessionsOf,
   hasSessionFile,
@@ -40,6 +41,7 @@ import { agentProviders, askAgent } from "./agent-launch";
 import { SessionList, requestResume } from "./session-ui";
 import { openTerminal } from "./terminal-api";
 import type { Commit, Node, Snapshot, Task } from "./types";
+import { detailedArchive } from "./words";
 export function Inspector({ node: n }: { node: Node }) {
   // Only what the panel shows, so news of a scan in progress doesn't draw it again.
   const s = useApp(
@@ -64,6 +66,8 @@ export function Inspector({ node: n }: { node: Node }) {
   const parent = n.parent ? snapshot.nodes[n.parent] : null;
   const git = n.git;
   const isProject = n.kind === "project";
+  // A project that goes back only with its archived group offers the group's Restore.
+  const whole = isProject ? linkedGroup(snapshot.nodes, n) : undefined;
   const tabs: [string, string, number][] = [
     ["health", "Health", 0],
     ["todo", "To-do", n.tasks.filter((t) => !t.done).length],
@@ -173,6 +177,18 @@ export function Inspector({ node: n }: { node: Node }) {
               >
                 <Icon name="archive" className="sm" />
                 Archive
+              </button>
+            ) : whole ? (
+              <button
+                className="btn ghost sm"
+                title={detailedArchive.restoreGroupFor(whole.label)}
+                disabled={s.historyPending}
+                onClick={() =>
+                  useApp.setState({ modal: { kind: "restore", id: whole.id } })
+                }
+              >
+                <Icon name="undo-2" className="sm" />
+                {detailedArchive.restoreGroup}
               </button>
             ) : isProject ? (
               <button

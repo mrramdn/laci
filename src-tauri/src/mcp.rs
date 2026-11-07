@@ -18,7 +18,7 @@ impl ServerHandler for Mcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_prompts().build())
             .with_server_info(Implementation::new("laci",env!("CARGO_PKG_VERSION")))
-            .with_instructions("Use laci for moving projects so their agent history travels with them. Destructive tools return a plan first; show it to the user before calling with confirm: true. Lists answer a page at a time: when more is true, call again with offset. open_items lists the open to-dos and report items, the most pressing projects first; change to-dos with complete_task, edit_task, delete_task and move_task, and close report items with close_report_item, so each change shows in Laci's Log with Undo. recent_changes reads the Log, narrowed by project or words, and gives the ids undo_change needs. Reports from earlier sessions are in list_reports and project_details; read a report's file for its full text. The review prompt goes through everything open with the user.")
+            .with_instructions("Use laci for moving projects so their agent history travels with them. archive_project moves a project into the archive and restore_project puts an archived one back where it came from. Destructive tools return a plan first; show it to the user before calling with confirm: true. Lists answer a page at a time: when more is true, call again with offset. open_items lists the open to-dos and report items, the most pressing projects first; change to-dos with complete_task, edit_task, delete_task and move_task, and close report items with close_report_item, so each change shows in Laci's Log with Undo. recent_changes reads the Log, narrowed by project or words, and gives the ids undo_change needs. Reports from earlier sessions are in list_reports and project_details; read a report's file for its full text. The review prompt goes through everything open with the user.")
     }
     async fn list_prompts(
         &self,
@@ -362,8 +362,11 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             let n = project(service, string(args, "project"))?;
             let id = string(&n, "id");
             let archive_plan = if name == "archive_project" {
-                if n["kind"] != "project" || n["archived"] == true {
+                if n["kind"] != "project" {
                     return Err("This folder cannot be archived".into());
+                }
+                if n["inArchive"] == true {
+                    return Err("Already in the archive".into());
                 }
                 Some(service.request("archive/plan", &json!({"id":id,"destination":args["destination"]}))?)
             } else {
@@ -390,6 +393,21 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                 &json!({"id":id,"destination":destination,"trashHeavy":args["trash_heavy"]==true}),
                 "agent",
             )
+        }
+        "restore_project" => {
+            service.rescan()?;
+            let n = project(service, string(args, "project"))?;
+            if n["kind"] != "project" || n["archived"] != true {
+                return Err("This project isn't archived".into());
+            }
+            let id = string(&n, "id");
+            let plan = service.request("restore/plan", &json!({"id":id,"destination":args["destination"]}))?;
+            if args["confirm"] != true {
+                return Ok(
+                    json!({"plan":plan["ops"],"destination":plan["dest"],"checks":plan["checks"],"hint":"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}),
+                );
+            }
+            service.request_as("restore", &json!({"id":id,"destination":plan["dest"]}), "agent")
         }
         "set_project_fields" => {
             if let Some(deadline) = args["deadline"].as_str()
@@ -533,7 +551,7 @@ enum Tasks {
 /// stack and session lists that project_details gives.
 fn compact(n: &Value, tasks: Tasks) -> Value {
     let mut out = json!({});
-    for key in ["path", "name", "kind", "type", "archived", "status", "meta", "issues", "lastActivity"] {
+    for key in ["path", "name", "kind", "type", "archived", "inArchive", "status", "meta", "issues", "lastActivity"] {
         if !n[key].is_null() {
             out[key] = n[key].clone();
         }
@@ -1111,8 +1129,14 @@ fn tools() -> Vec<Tool> {
         ),
         (
             "archive_project",
-            "Archive a project with its agent history; requires confirm after preview",
+            "Archive a project with its agent history; requires confirm after preview. With an archive folder in Settings, it keeps its place below the scan location that holds it: ~/tugas/course/demo goes to <archive>/tugas/course/demo",
             json!({"project":project,"destination":text,"trash_heavy":boolean,"confirm":boolean}),
+            vec!["project"],
+        ),
+        (
+            "restore_project",
+            "Put an archived project back where it came from (or at destination) with its agent history; requires confirm after preview",
+            json!({"project":project,"destination":text,"confirm":boolean}),
             vec!["project"],
         ),
         ("delete_project", DELETE_PROJECT.as_str(), json!({"project":project,"confirm":boolean}), vec!["project"]),
@@ -1169,6 +1193,7 @@ fn tools() -> Vec<Tool> {
                             [
                                 "move_project",
                                 "archive_project",
+                                "restore_project",
                                 "delete_project",
                                 "apply_suggestion",
                                 "undo_change",
@@ -1215,6 +1240,12 @@ mod tests {
         assert!(error.contains("expected string"), "{error}");
         let error = validate_args("set_project_fields", &json!({"project":"p","status":"nope"})).unwrap_err();
         assert!(error.contains("\"paused\""), "{error}");
+        assert!(validate_args("restore_project", &json!({"project":"p"})).is_ok());
+        assert!(validate_args("restore_project", &json!({"project":"p","destination":"~/p","confirm":true})).is_ok());
+        let error = validate_args("restore_project", &json!({"project":"p","trash_heavy":true})).unwrap_err();
+        assert!(error.contains("Unknown argument trash_heavy"), "{error}");
+        assert!(validate_args("restore_project", &json!({"destination":"~/p"})).is_err());
+        assert!(validate_args("restore_project", &json!({"project":"p","confirm":"yes"})).is_err());
     }
 
     #[test]

@@ -429,7 +429,8 @@ try {
   assert.ok(changes.entries.every(entry => entry.undo === undefined), 'The Log answer leaves out the undo data');
   const alphaChanges = await client.call('recent_changes', { project, limit: 3 });
   assert.ok(alphaChanges.entries.length > 0 && alphaChanges.entries.length <= 3);
-  assert.ok(alphaChanges.entries.every(entry => entry.path?.startsWith(project)));
+  // A restore is told at the archived path it started from, and listed here because it moved the project back.
+  assert.ok(alphaChanges.entries.every(entry => entry.path?.startsWith(project) || /Restore alpha/.test(entry.title)));
   assert.ok((await client.call('recent_changes', { undoable: true })).entries.every(entry => entry.canUndo));
   const projectLog = await client.call('recent_changes', { project, limit: 100 });
   assert.ok(projectLog.searched >= projectLog.total);

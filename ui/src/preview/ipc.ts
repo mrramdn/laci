@@ -15,6 +15,7 @@ import type {
   McpStatus,
   NewInfo,
   Node,
+  Op,
   Proposal,
   ReportHit,
   ReportText,
@@ -310,6 +311,50 @@ function restore(body: Body): Change {
     restorePlan: undefined,
   });
   return changed(`Restore ${n.name}`, () => void Object.assign(n, was));
+}
+/**
+ * The plan for putting `n` back at `destination`, as the engine checks it: not where something is,
+ * not inside the archive or the project, and inside the home folder. The steps go to that place.
+ */
+function restoreTo(n: Node, plan: ArchivePlan, destination: string): ArchivePlan {
+  const home = fixtures.meta.home;
+  const short = (path: string) =>
+    path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+  const cant = (reason: ArchivePlan["reason"], error: string): ArchivePlan => ({
+    error,
+    reason,
+    dest: destination,
+    ops: [],
+    checks: [],
+  });
+  const archive = `${home}/project/_archive`;
+  const inside = (path: string, dir: string) =>
+    path === dir || path.startsWith(`${dir}/`);
+  if (inside(destination, n.path) || inside(destination, archive))
+    return cant("inArchive", "Choose a place outside the archive and the project");
+  if (!inside(destination, home))
+    return cant("outside", "Choose a place inside your home folder");
+  if (snapshot.nodes[destination])
+    return cant("occupied", `Something is already at ${short(destination)}`);
+  // An origin the engine knows gives the steps; one it doesn't gives the steps a restore takes.
+  const from = plan.dest ? short(plan.dest) : "";
+  const to = short(destination);
+  const ops: Op[] = plan.ops.length
+    ? plan.ops.map((op) =>
+        op.to && from && (op.to === from || op.to.startsWith(`${from}/`))
+          ? { ...op, to: to + op.to.slice(from.length) }
+          : op,
+      )
+    : [
+        { kind: "move", label: "Move folder", from: short(n.path), to },
+        { kind: "write", label: "Clear status: archived", to: `${to}/.laci.md` },
+        {
+          kind: "write",
+          label: "Write undo journal",
+          to: "~/.local/share/laci/journal/",
+        },
+      ];
+  return { dest: destination, ops, checks: plan.checks };
 }
 function apply(body: Body): Change {
   const at = snapshot.proposals.findIndex((p) => p.id === text(body, "id"));
@@ -892,9 +937,7 @@ const reads: Record<string, Handler> = {
     const n = node(text(body, "id"));
     const plan = n.restorePlan ?? fail("This project isn't archived");
     const destination = text(body, "destination");
-    return destination && n.inArchive
-      ? { ...plan, error: undefined, dest: destination }
-      : plan;
+    return destination && n.inArchive ? restoreTo(n, plan, destination) : plan;
   },
   "delete/plan": (body) => {
     const id = text(body, "id");

@@ -330,12 +330,20 @@ function restoreTo(n: Node, plan: ArchivePlan, destination: string): ArchivePlan
   const archive = `${home}/project/_archive`;
   const inside = (path: string, dir: string) =>
     path === dir || path.startsWith(`${dir}/`);
-  if (inside(destination, n.path) || inside(destination, archive))
-    return cant("inArchive", "Choose a place outside the archive and the project");
   if (!inside(destination, home))
-    return cant("outside", "Choose a place inside your home folder");
+    return cant("outside", "Path must be inside your home folder");
   if (snapshot.nodes[destination])
-    return cant("occupied", `Something is already at ${short(destination)}`);
+    return cant(
+      "occupied",
+      `Something is already at ${short(destination)}. Choose another place.`,
+    );
+  if (inside(destination, n.path))
+    return cant("inArchive", "Can't move a folder into itself");
+  if (inside(destination, archive))
+    return cant(
+      "inArchive",
+      "That place is in the archive. Choose a place outside it.",
+    );
   // An origin the engine knows gives the steps; one it doesn't gives the steps a restore takes.
   const from = plan.dest ? short(plan.dest) : "";
   const to = short(destination);

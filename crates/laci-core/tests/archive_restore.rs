@@ -324,3 +324,206 @@ fn the_archive_fields_of_laci_md_take_a_path_and_a_date() {
     let text = sidecar_text(&dir);
     assert!(!text.contains("archivedFrom") && text.contains("archivedAt: 2026-11-07"), "{text}");
 }
+
+#[test]
+fn the_archive_is_looked_through_one_folder_deeper_than_a_scan_location() {
+    let (_temp, env, archive) = fixture();
+    // Seven folders below the archive, six below ~/project where it came from.
+    let deep = archive.join("project/freelance/client/site/web/site/site-wp");
+    write(&deep.join("package.json"), "{}");
+    let deeper = archive.join("project/a/b/c/d/e/f/g");
+    write(&deeper.join("package.json"), "{}");
+    let at_home = env.home.join("project/a/b/c/d/e/f");
+    write(&at_home.join("package.json"), "{}");
+    let too_deep = env.home.join("project/a/b/c/d/e/x/y");
+    write(&too_deep.join("package.json"), "{}");
+    let snap = Service::new(env.clone()).snapshot().unwrap();
+    let node = &snap["nodes"][deep.to_str().unwrap()];
+    assert_eq!((&node["kind"], &node["inArchive"]), (&json!("project"), &json!(true)), "{node}");
+    assert_eq!(node["restorePlan"]["dest"], json!(env.home.join("project/freelance/client/site/web/site/site-wp")));
+    assert!(snap["nodes"][deeper.to_str().unwrap()].is_null(), "eight folders below the archive is too deep");
+    assert_eq!(snap["nodes"][at_home.to_str().unwrap()]["kind"], "project");
+    assert!(snap["nodes"][too_deep.to_str().unwrap()].is_null(), "other scan locations keep their depth");
+}
+
+/// A project moved into the archive by hand from ~/project/gabut/dummy2, with a link left there that leads to it and
+/// a Claude session from while it was in the archive.
+fn linked_back() -> (support::TempDir, Env, Service, PathBuf, PathBuf) {
+    let (temp, env, archive) = fixture();
+    let archived = archive.join("project").join("gabut").join("dummy2");
+    write(&archived.join("package.json"), "{}");
+    write(&store(&env, &archived).join("first.jsonl"), &session(&archived));
+    let origin = env.home.join("project").join("gabut").join("dummy2");
+    fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&archived, &origin).unwrap();
+    let service = Service::new(env.clone());
+    (temp, env, service, archived, origin)
+}
+
+#[test]
+fn restore_removes_the_old_link_to_it_and_undo_makes_the_link_again() {
+    let (_temp, env, mut service, archived, origin) = linked_back();
+    let snap = service.snapshot().unwrap();
+    let id = archived.to_str().unwrap();
+    let plan = &snap["nodes"][id]["restorePlan"];
+    assert!(plan["error"].is_null(), "{plan}");
+    assert_eq!(plan["dest"], json!(origin));
+    assert_eq!(
+        plan["ops"][0],
+        json!({"kind":"unlink","label":"Remove the old link","from":"~/project/gabut/dummy2","to":archived})
+    );
+    assert_eq!(plan["ops"][1]["kind"], "move", "{plan}");
+
+    let restored = service.request("restore", &json!({"id":id})).unwrap();
+    let meta = fs::symlink_metadata(&origin).unwrap();
+    assert!(meta.is_dir() && !meta.is_symlink());
+    assert!(origin.join("package.json").is_file());
+    assert!(!archived.exists());
+    assert_eq!(fs::read_to_string(store(&env, &origin).join("first.jsonl")).unwrap(), session(&origin));
+    let entry = &restored["journal"]["entries"][0];
+    assert_eq!(
+        (&entry["kind"], &entry["path"], &entry["target"]),
+        (&json!("unlink"), &json!(origin), &json!(archived))
+    );
+    let log = activity::read_log(&env, 5).remove(0);
+    assert_eq!(
+        log["steps"][0],
+        json!({"kind":"unlink","label":"Removed the old link","from":"~/project/gabut/dummy2","to":archived})
+    );
+    assert_eq!(log["canUndo"], true);
+    let snap = service.snapshot().unwrap();
+    assert_eq!(snap["nodes"][origin.to_str().unwrap()]["archived"], false);
+
+    service.request("undo", &json!({"id":restored["journal"]["id"]})).unwrap();
+    assert!(archived.join("package.json").is_file());
+    assert_eq!(fs::read_link(&origin).unwrap(), archived);
+    assert_eq!(fs::read_to_string(store(&env, &archived).join("first.jsonl")).unwrap(), session(&archived));
+    assert!(!store(&env, &origin).exists());
+}
+
+#[test]
+fn undo_of_a_restore_refuses_when_something_else_took_the_place_of_the_link() {
+    let (_temp, env, mut service, archived, origin) = linked_back();
+    service.snapshot().unwrap();
+    let restored = service.request("restore", &json!({"id":archived})).unwrap();
+    let away = env.home.join("project").join("gabut").join("dummy2-kept");
+    fs::rename(&origin, &away).unwrap();
+    write(&origin.join("other.txt"), "made since");
+    let error = service.request("undo", &json!({"id":restored["journal"]["id"]})).unwrap_err();
+    assert!(
+        error.contains(
+            "Something else is at ~/project/gabut/dummy2 since this change, so Undo can't put the old link back"
+        ),
+        "{error}"
+    );
+    assert_eq!(fs::read_to_string(origin.join("other.txt")).unwrap(), "made since");
+    assert!(away.join("package.json").is_file());
+    assert!(!archived.exists());
+    assert!(store(&env, &origin).join("first.jsonl").is_file() && !store(&env, &archived).exists());
+}
+
+#[test]
+fn a_link_at_the_origin_that_leads_anywhere_else_is_in_the_way() {
+    let (_temp, env, archive) = fixture();
+    let archived = archive.join("project").join("gabut").join("dummy2");
+    write(&archived.join("package.json"), "{}");
+    let other = archive.join("project").join("gabut").join("other");
+    write(&other.join("keep.txt"), "kept");
+    let origin = env.home.join("project").join("gabut").join("dummy2");
+    fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    let mut service = Service::new(env.clone());
+    for target in [other.clone(), env.home.join("nowhere")] {
+        let _ = fs::remove_file(&origin);
+        std::os::unix::fs::symlink(&target, &origin).unwrap();
+        let snap = service.rescan().unwrap();
+        let plan = &snap["nodes"][archived.to_str().unwrap()]["restorePlan"];
+        assert_eq!((&plan["reason"], &plan["dest"], &plan["ops"]), (&json!("occupied"), &json!(origin), &json!([])));
+        assert!(plan["error"].as_str().unwrap().contains("Something is already at ~/project/gabut/dummy2"), "{plan}");
+        let error = service.request("restore", &json!({"id":archived})).unwrap_err();
+        assert!(error.contains("Something is already at"), "{error}");
+        assert_eq!(fs::read_link(&origin).unwrap(), target);
+        assert!(archived.join("package.json").is_file());
+    }
+}
+
+#[test]
+fn a_group_linked_back_from_the_archive_goes_back_whole_and_its_projects_not_alone() {
+    let (_temp, env, archive) = fixture();
+    let group = archive.join("project").join("freelance").join("client").join("ecobiz");
+    let (one, two) = (group.join("one"), group.join("two"));
+    write(&one.join("package.json"), "{}");
+    write(&two.join("package.json"), "{}");
+    write(&group.join("penting").join("list.txt"), "a plain folder");
+    write(&store(&env, &one).join("first.jsonl"), &session(&one));
+    let origin = env.home.join("project").join("freelance").join("client").join("ecobiz");
+    fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&group, &origin).unwrap();
+    let mut service = Service::new(env.clone());
+
+    // Without status: archived it is a folder in the archive like any other: nothing to put back.
+    let snap = service.snapshot().unwrap();
+    let node = &snap["nodes"][group.to_str().unwrap()];
+    assert_eq!((&node["kind"], &node["inArchive"]), (&json!("folder"), &json!(true)), "{node}");
+    assert!(node["restorePlan"].is_null(), "{node}");
+    assert!(snap["nodes"][archive.join("project").to_str().unwrap()]["restorePlan"].is_null());
+    let error = service.request("restore/plan", &json!({"id":group})).unwrap_err();
+    assert!(error.contains("isn't an archived group"), "{error}");
+    let linked = "~/project/freelance/client/ecobiz is a link into the archive. Restore the whole group ecobiz, or \
+                  remove that link first.";
+    let plan = &snap["nodes"][one.to_str().unwrap()]["restorePlan"];
+    assert_eq!(
+        (&plan["error"], &plan["reason"], &plan["dest"], &plan["ops"]),
+        (&json!(linked), &json!("linked"), &json!(origin.join("one")), &json!([]))
+    );
+    let error = service.request("restore", &json!({"id":one})).unwrap_err();
+    assert_eq!(error, linked);
+    assert_eq!(fs::read_link(&origin).unwrap(), group);
+    assert!(one.join("package.json").is_file());
+
+    write(&group.join(".laci.md"), "---\nstatus: archived\npriority: low\n---\n");
+    let snap = service.rescan().unwrap();
+    let node = &snap["nodes"][group.to_str().unwrap()];
+    assert_eq!(
+        (&node["kind"], &node["archived"], &node["meta"]["status"]),
+        (&json!("folder"), &json!(true), &json!("archived"))
+    );
+    let plan = &node["restorePlan"];
+    assert!(plan["error"].is_null(), "{plan}");
+    assert_eq!(plan["dest"], json!(origin));
+    assert_eq!(
+        plan["ops"][0],
+        json!({"kind":"unlink","label":"Remove the old link","from":"~/project/freelance/client/ecobiz","to":group})
+    );
+    let ops = plan["ops"].as_array().unwrap();
+    assert!(ops.iter().any(|op| op["kind"] == "rename"), "the sessions of a project in it go along: {plan}");
+    assert!(ops.iter().any(|op| op["label"] == "Clear status: archived"), "{plan}");
+    // A project in it still can't go back alone.
+    assert_eq!(snap["nodes"][two.to_str().unwrap()]["restorePlan"]["reason"], "linked");
+
+    let restored = service.request("restore", &json!({"id":group})).unwrap();
+    assert!(!fs::symlink_metadata(&origin).unwrap().is_symlink());
+    for file in ["one/package.json", "two/package.json", "penting/list.txt"] {
+        assert!(origin.join(file).is_file(), "{file}");
+    }
+    assert!(!group.exists());
+    let back = origin.join("one");
+    assert_eq!(fs::read_to_string(store(&env, &back).join("first.jsonl")).unwrap(), session(&back));
+    assert!(!store(&env, &one).exists());
+    let text = sidecar_text(&origin);
+    assert!(!text.contains("status:") && text.contains("priority: low"), "{text}");
+    assert_eq!(
+        activity::read_log(&env, 5)[0]["say"],
+        json!({"form":"restored","name":"ecobiz","to":"~/project/freelance/client/ecobiz"})
+    );
+    let snap = service.snapshot().unwrap();
+    let node = &snap["nodes"][origin.to_str().unwrap()];
+    assert_eq!((&node["kind"], &node["archived"]), (&json!("folder"), &json!(false)), "{node}");
+    assert!(node["restorePlan"].is_null());
+    assert_eq!(snap["nodes"][back.to_str().unwrap()]["archived"], false);
+
+    service.request("undo", &json!({"id":restored["journal"]["id"]})).unwrap();
+    assert_eq!(fs::read_link(&origin).unwrap(), group);
+    assert!(one.join("package.json").is_file() && group.join("penting").join("list.txt").is_file());
+    assert!(sidecar_text(&group).contains("status: archived"));
+    assert_eq!(fs::read_to_string(store(&env, &one).join("first.jsonl")).unwrap(), session(&one));
+}

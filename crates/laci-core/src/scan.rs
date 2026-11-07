@@ -120,7 +120,11 @@ struct Skip<'a> {
     agent_paths: &'a BTreeSet<PathBuf>,
     copy: Option<PathBuf>,
 }
-fn detect(env: &Env, path: &Path, skip: &Skip<'_>, depth: usize) -> Option<Found> {
+/// How many folders deep a scan looks for projects below a scan location.
+const DEPTH: usize = 6;
+/// Looks for projects in `path`, `depth` folders below its scan location, and in its folders while `depth` is below
+/// `max`.
+fn detect(env: &Env, path: &Path, skip: &Skip<'_>, depth: usize, max: usize) -> Option<Found> {
     if skip.copy.as_deref().is_some_and(|copy| platform::path::same_path(copy, path))
         || paths::workspace_path(&path.to_string_lossy(), env).is_err()
         || !path.is_dir()
@@ -147,7 +151,7 @@ fn detect(env: &Env, path: &Path, skip: &Skip<'_>, depth: usize) -> Option<Found
         });
     }
     let mut children = Vec::new();
-    if depth < 6 {
+    if depth < max {
         for entry in entries {
             let name = entry.file_name().to_string_lossy().into_owned();
             // What a file manager hides, a dotted name, holds no projects.
@@ -157,7 +161,7 @@ fn detect(env: &Env, path: &Path, skip: &Skip<'_>, depth: usize) -> Option<Found
             {
                 continue;
             }
-            if let Some(child) = detect(env, &entry.path(), skip, depth + 1) {
+            if let Some(child) = detect(env, &entry.path(), skip, depth + 1, max) {
                 children.push(child);
             }
         }
@@ -276,7 +280,18 @@ fn find(env: &Env, cfg: &Value, agent_paths: &BTreeSet<PathBuf>) -> Vec<Found> {
     env.progress.start(Step::Folders, 0, 0);
     let _done = env.progress.until_done();
     let skip = Skip { agent_paths, copy: crate::backup::chosen(env, cfg) };
-    available_roots(env, cfg).iter().filter_map(|r| detect(env, r, &skip, 0)).collect()
+    let archive = configured_archive(env, cfg);
+    available_roots(env, cfg)
+        .iter()
+        .filter_map(|r| {
+            // The archive's first level is the name of the scan location a project came from
+            // (`<archive>/tugas/course/demo`), so it is looked through one folder deeper and a project keeps the depth
+            // it had there.
+            let max =
+                if archive.as_deref().is_some_and(|dir| platform::path::same_path(dir, r)) { DEPTH + 1 } else { DEPTH };
+            detect(env, r, &skip, 0, max)
+        })
+        .collect()
 }
 
 fn build(
@@ -725,6 +740,9 @@ fn link(
 
 fn array(v: &Value) -> &[Value] {
     v.as_array().map(Vec::as_slice).unwrap_or(&[])
+}
+fn all_nodes(snapshot: &Value) -> impl Iterator<Item = &Value> {
+    snapshot["nodes"].as_object().into_iter().flatten().map(|(_, n)| n)
 }
 /// Where the copy of AI chats in `copy` keeps the log of the session `s`, from the store of one of the connectors `on`.
 fn packed_of(copy: &Path, on: &[Value], s: &Value) -> Option<PathBuf> {
@@ -1258,8 +1276,8 @@ fn origin(env: &Env, snapshot: &Value, path: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
-/// A restore that can't run: what to tell, why (`occupied`, `unknown`, `inArchive` or `outside`), and the place
-/// Laci would put the project when it knows one.
+/// A restore that can't run: what to tell, why (`occupied`, `unknown`, `inArchive`, `outside` or `linked`), and the
+/// place Laci would put the project when it knows one.
 fn refused_restore(error: impl Into<String>, reason: &str, dest: Option<&Path>) -> Value {
     let mut plan = json!({"error":error.into(),"reason":reason,"ops":[],"checks":[]});
     if let Some(dest) = dest {
@@ -1268,12 +1286,45 @@ fn refused_restore(error: impl Into<String>, reason: &str, dest: Option<&Path>) 
     plan
 }
 
-/// What putting an archived project back does: out of the archive to where it came from, or, for one archived by
-/// its status only, clearing that status where it is. A place it can't go to gives a plan with `error` and `reason`
-/// ([`refused_restore`]); a project that isn't archived, or a destination for one that stays where it is, an error.
+/// Whether the node `n` is an archived group: a folder in the archive whose own .laci.md says `status: archived`. It
+/// is put back whole, with every project in it.
+pub fn archived_group(n: &Value) -> bool {
+    n["kind"] == "folder" && n["inArchive"] == true && n["meta"]["status"] == "archived"
+}
+
+/// Whether `real`, a path with every link resolved, is in the archive: below the archive folder in Settings, or in an
+/// `_archive`-style folder in home or a scan location.
+fn leads_into_archive(env: &Env, real: &Path, roots: &[PathBuf]) -> bool {
+    let dir = configured_archive(env, &config::load(env));
+    dir.as_deref().and_then(|dir| platform::path::canonical(dir).ok()).is_some_and(|dir| real.starts_with(dir))
+        || ((real.starts_with(&env.home) || roots.iter().any(|root| real.starts_with(root)))
+            && in_archive(env, real, roots, None))
+}
+
+/// The folder above `place` that is a link into the archive, with where it leads, when there is one: a group that was
+/// moved into the archive and linked back from where it was. Putting a project back there would put it back into the
+/// archive.
+fn linked_parent(env: &Env, place: &Path, roots: &[PathBuf]) -> Option<(PathBuf, PathBuf)> {
+    place.ancestors().skip(1).find_map(|folder| {
+        if !std::fs::symlink_metadata(folder).is_ok_and(|meta| meta.is_symlink()) {
+            return None;
+        }
+        let real = platform::path::canonical(folder).ok()?;
+        leads_into_archive(env, &real, roots).then(|| (folder.to_owned(), real))
+    })
+}
+
+/// What putting an archived project or group back does: out of the archive to where it came from, or, for a project
+/// archived by its status only, clearing that status where it is. A link at that place that leads to the folder put
+/// back, left when it was moved into the archive by hand, is removed first. A place it can't go to gives a plan with
+/// `error` and `reason` ([`refused_restore`]); a project that isn't archived, or a destination for one that stays
+/// where it is, an error.
 pub fn restore_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&str>) -> Result<Value> {
     let n = &snapshot["nodes"][id];
-    if n["kind"] != "project" {
+    if n["kind"] == "folder" && !archived_group(n) {
+        return Err("This folder isn't an archived group".into());
+    }
+    if n["kind"] != "project" && n["kind"] != "folder" {
         return Err("Unknown project. Rescan and try again.".into());
     }
     if n["archived"] != true {
@@ -1303,14 +1354,48 @@ pub fn restore_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
             None,
         ));
     };
-    let dest = match paths::workspace_path(&raw, env) {
+    let roots: Vec<_> = array(&snapshot["roots"]).iter().filter_map(Value::as_str).map(PathBuf::from).collect();
+    let place = paths::expand(raw.trim(), &env.home);
+    if place.is_absolute()
+        && let Some((link, real)) = linked_parent(env, &place, &roots)
+    {
+        // The group by the name the scan shows it, when it is in view.
+        let group = all_nodes(snapshot)
+            .find(|g| {
+                archived_group(g) && platform::path::canonical(Path::new(string(g, "path"))).is_ok_and(|p| p == real)
+            })
+            .map(|g| string(g, "name").to_owned())
+            .unwrap_or_else(|| real.file_name().unwrap_or_default().to_string_lossy().into_owned());
+        return Ok(refused_restore(
+            format!(
+                "{} is a link into the archive. Restore the whole group {group}, or remove that link first.",
+                paths::tilde(&link, &env.home)
+            ),
+            "linked",
+            Some(place.as_path()),
+        ));
+    }
+    // A link at that place is checked by the folder it is in: where it leads doesn't decide where Laci may write.
+    let linked = std::fs::symlink_metadata(&place).is_ok_and(|meta| meta.is_symlink());
+    let checked = if linked {
+        match (place.parent(), place.file_name()) {
+            (Some(parent), Some(name)) => {
+                paths::workspace_path(&parent.to_string_lossy(), env).map(|parent| parent.join(name))
+            }
+            _ => Err("Invalid path".into()),
+        }
+    } else {
+        paths::workspace_path(&raw, env)
+    };
+    let dest = match checked {
         Ok(dest) => dest,
         Err(error) => {
-            let dest = paths::expand(raw.trim(), &env.home);
-            return Ok(refused_restore(error, "outside", Some(dest.as_path()).filter(|dest| dest.is_absolute())));
+            return Ok(refused_restore(error, "outside", Some(place.as_path()).filter(|dest| dest.is_absolute())));
         }
     };
-    if std::fs::symlink_metadata(&dest).is_ok() {
+    // The link left where it was, leading to it in the archive: the place is free once that link is gone.
+    let old_link = linked && platform::path::links_to(&dest, &source);
+    if !old_link && std::fs::symlink_metadata(&dest).is_ok() {
         return Ok(refused_restore(
             format!("Something is already at {}. Choose another place.", paths::tilde(&dest, &env.home)),
             "occupied",
@@ -1320,7 +1405,6 @@ pub fn restore_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
     if paths::within(&dest, &source) {
         return Ok(refused_restore("Can't move a folder into itself", "inArchive", Some(dest.as_path())));
     }
-    let roots: Vec<_> = array(&snapshot["roots"]).iter().filter_map(Value::as_str).map(PathBuf::from).collect();
     if in_archive(env, &dest, &roots, configured_archive(env, &config::load(env)).as_deref()) {
         return Ok(refused_restore(
             "That place is in the archive. Choose a place outside it.",
@@ -1328,7 +1412,11 @@ pub fn restore_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
             Some(dest.as_path()),
         ));
     }
-    let mut ops = move_ops(env, Path::new(string(n, "path")), &dest, snapshot);
+    let mut ops = Vec::new();
+    if old_link {
+        ops.push(json!({"kind":"unlink","label":"Remove the old link","from":paths::tilde(&dest,&env.home),"to":paths::tilde(&source,&env.home)}));
+    }
+    ops.extend(move_ops(env, Path::new(string(n, "path")), &dest, snapshot));
     ops.push(json!({"kind":"write","label":"Clear status: archived","to":format!("{}/.laci.md",paths::tilde(&dest,&env.home))}));
     ops.push(journal);
     Ok(json!({"dest":dest,"checks":[],"ops":ops}))
@@ -1339,14 +1427,17 @@ fn plan(env: &Env, snapshot: &mut Value) {
         .as_object()
         .into_iter()
         .flatten()
-        .filter(|(_, n)| n["kind"] == "project")
+        .filter(|(_, n)| n["kind"] == "project" || n["kind"] == "folder")
         .map(|(id, _)| id.clone())
         .collect();
     for id in ids {
         let node = &snapshot["nodes"][&id];
+        let project = node["kind"] == "project";
         let (archived, inside) = (node["archived"] == true, node["inArchive"] == true);
-        let archive = (!inside).then(|| archive_plan(env, snapshot, &id, None));
-        let restore = archived.then(|| {
+        let archive = (project && !inside).then(|| archive_plan(env, snapshot, &id, None));
+        // Of folders, only an archived group goes back.
+        let restorable = if project { archived } else { archived_group(node) };
+        let restore = restorable.then(|| {
             restore_plan(env, snapshot, &id, None)
                 .or_else(|error| Ok::<_, String>(refused_restore(error, "unknown", None)))
         });

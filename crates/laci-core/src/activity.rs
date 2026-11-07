@@ -82,6 +82,12 @@ fn steps(env: &Env, j: &Value) -> Value {
     let entries = j["entries"].as_array().cloned().unwrap_or_default();
     let mut out = vec![];
     let tilde = |v: &Value| paths::tilde(Path::new(v.as_str().unwrap_or("")), &env.home);
+    // The link a restore removed before the folder took its place again.
+    for e in entries.iter().filter(|e| e["kind"] == "unlink") {
+        out.push(
+            json!({"kind":"unlink","label":"Removed the old link","from":tilde(&e["path"]),"to":tilde(&e["target"])}),
+        );
+    }
     let moves = entries.iter().filter(|e| e["kind"] == "move").collect::<Vec<_>>();
     for e in moves.iter().take(20) {
         out.push(json!({"kind":"move","label":"Moved","from":tilde(&e["from"]),"to":tilde(&e["to"])}));

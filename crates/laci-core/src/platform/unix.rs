@@ -146,6 +146,10 @@ pub fn copy_link(src: &Path, dest: &Path) -> Result<()> {
     std::os::unix::fs::symlink(fs::read_link(src).map_err(|e| e.to_string())?, dest).map_err(|e| e.to_string())
 }
 
+pub fn symlink(target: &Path, link: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(target, link).map_err(|e| e.to_string())
+}
+
 /// O_NOFOLLOW refuses a link, and O_NONBLOCK keeps a FIFO from blocking the open.
 pub fn open_nofollow(path: &Path) -> io::Result<File> {
     OpenOptions::new().read(true).custom_flags((OFlags::NOFOLLOW | OFlags::NONBLOCK).bits() as i32).open(path)

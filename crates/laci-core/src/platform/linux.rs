@@ -2,7 +2,7 @@
 //! and settings and cache follow the XDG folders.
 pub use super::unix::{
     Group, Lock, change_stamp, copy_link, exited, file_change_stamp, home_dir, identity, lock, open_nofollow, preserve,
-    remove_all, rename_noreplace, spawn_group, user_dirs, which,
+    remove_all, rename_noreplace, spawn_group, symlink, user_dirs, which,
 };
 use super::{Apps, Holder};
 use crate::Result;

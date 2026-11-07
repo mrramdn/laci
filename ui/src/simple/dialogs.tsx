@@ -14,6 +14,7 @@ import {
   expandHome,
   isAbsolutePath,
   isArchivedGroup,
+  placeAfterRestore,
   readyPlan,
   RISK,
   tilde,
@@ -743,14 +744,15 @@ function RestoreBody({ node, stage, setStage }: Body) {
     await run(
       async () => {
         ran = true;
-        const modal = useApp.getState().modal;
+        const { modal, selected } = useApp.getState();
         const change = await api<Change>("restore", {
           id: node.id,
           ...(moves ? { destination: plan.dest } : {}),
         });
         if (useApp.getState().modal === modal) close();
         changed(change, said.restore.restored(node.label), said.restore.restoredNote);
-        selectWhenReady(plan.dest);
+        // A group restored from a project's page in it goes on to that project in its new place.
+        selectWhenReady(placeAfterRestore(node, plan.dest, selected));
       },
       said.restore.restoring(node.label),
       {

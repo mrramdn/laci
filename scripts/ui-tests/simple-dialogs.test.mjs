@@ -1296,6 +1296,47 @@ export async function aProjectReachedThroughTheOldLinkOffersItsGroup() {
   assert.deepEqual(sheet.asked("restore/plan").at(-1), { id: GROUP, destination: OLD_PLACE });
 }
 
+export async function theGroupRestoredFromAProjectsPageEndsOnThatProjectsNewPlace() {
+  // The project's page is open on kopi-landing inside the archived group, and its "Restore its
+  // group…" opens the group's sheet. Once the group is back, the page follows the project to where
+  // it now is, not to the group's folder, where the page would find no project.
+  const inside = `${GROUP}/kopi-landing`;
+  const linked = cantRestore("linked", `${OLD_PLACE}/kopi-landing`);
+  const project = { ...KOPI_NODE, ...archived(linked), id: inside, path: inside, parent: GROUP };
+  const sheet = sheets({
+    kind: "restore",
+    node: archived(linked),
+    nodes: { [inside]: project, [GROUP]: groupNode() },
+    replies: { "restore/plan": [linked, groupPlan()], restore: [{ revision: 3 }] },
+  });
+  await sheet.wait(0);
+  sheet.act(() =>
+    sheet.app.setState({ modal: { kind: "restore", id: GROUP }, selected: inside }),
+  );
+  await sheet.wait(0);
+  assert.ok(sheet.text().includes(said.restore.titleGroup("old-clients")), sheet.text());
+  sheet.click(sheet.button(said.restore.restore));
+  await sheet.settle();
+  assert.deepEqual(sheet.asked("restore"), [{ id: GROUP, destination: OLD_PLACE }]);
+  assert.deepEqual(sheet.selected, [`${OLD_PLACE}/kopi-landing`]);
+}
+
+export async function aGroupRestoredWithNothingInItSelectedEndsOnTheGroup() {
+  // From Archived, the group itself is what the sheet was opened on: it ends on the group's place.
+  const sheet = sheets({
+    kind: "restore",
+    node: archived(restorePlan()),
+    nodes: { [GROUP]: groupNode() },
+    replies: { "restore/plan": [restorePlan(), groupPlan()], restore: [{ revision: 3 }] },
+  });
+  await sheet.wait(0);
+  sheet.act(() => sheet.app.setState({ modal: { kind: "restore", id: GROUP }, selected: GROUP }));
+  await sheet.wait(0);
+  sheet.click(sheet.button(said.restore.restore));
+  await sheet.settle();
+  assert.deepEqual(sheet.selected, [OLD_PLACE]);
+}
+
 export async function aProjectBehindALinkWithNoArchivedGroupSaysToRemoveTheLink() {
   const linked = cantRestore("linked", `${OLD_PLACE}/kopi-landing`);
   const sheet = sheets({

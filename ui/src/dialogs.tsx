@@ -17,6 +17,7 @@ import {
   isArchivedGroup,
   joinPath,
   parentOf,
+  placeAfterRestore,
   plural,
   readyPlan,
   tilde,
@@ -730,7 +731,7 @@ function Restore({ id }: { id: string }) {
       async () => {
         setSaving(true);
         setError("");
-        const modal = useApp.getState().modal;
+        const { modal, selected } = useApp.getState();
         try {
           const change = await api<Change>("restore", {
             id,
@@ -738,7 +739,8 @@ function Restore({ id }: { id: string }) {
           });
           if (useApp.getState().modal === modal) close();
           changed(change, `Restored ${n.name}`);
-          selectWhenReady(plan.dest);
+          // A group restored while a project in it is selected goes on to that project's new place.
+          selectWhenReady(placeAfterRestore(n, plan.dest, selected));
         } finally {
           setSaving(false);
         }

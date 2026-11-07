@@ -102,6 +102,20 @@ export function linkedGroup(nodes: Snapshot["nodes"], n: Node) {
     ? archivedGroupOf(nodes, n)
     : undefined;
 }
+/**
+ * What to select once `n` went back to `dest`: when `n` is an archived group and the selection
+ * (`selected`, a path) is inside it, the selection's new place in the group; else `dest`.
+ */
+export function placeAfterRestore(
+  n: Node,
+  dest: string,
+  selected: string | null | undefined,
+) {
+  if (!isArchivedGroup(n) || !selected || selected === n.path) return dest;
+  if (!within(selected, n.path)) return dest;
+  const below = selected.slice(trimSep(n.path).length).replace(/^\/+/, "");
+  return below ? joinPath(dest, below) : dest;
+}
 export function tilde(path: string | undefined, home: string) {
   return path === home
     ? "~"

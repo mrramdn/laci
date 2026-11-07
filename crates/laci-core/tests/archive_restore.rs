@@ -275,7 +275,7 @@ fn a_path_laci_md_would_read_back_otherwise_is_not_kept_as_archived_from() {
     assert_eq!(snap["nodes"][dest.to_str().unwrap()]["restorePlan"]["dest"], json!(project));
     let error = sidecar::set_meta(&dest, "archivedFrom", "~/tugas/Lab #2/demo").unwrap_err();
     assert!(error.contains("invalid value"), "{error}");
-    for value in ["~/tugas/demo ", "~/tugas/'demo'", "~/tugas/[demo]"] {
+    for value in ["~/tugas/demo ", "~/tugas/demo'", "~/tugas/demo\""] {
         assert!(sidecar::set_meta(&dest, "archivedFrom", value).is_err(), "{value}");
     }
 }

@@ -566,7 +566,24 @@ impl<'a> Tx<'a> {
         preserve(&meta, &backup)?;
         self.log(json!({"kind":"rewrite","path":file,"backup":backup}))?;
         files::replace(file, output.as_bytes())?;
-        preserve(&meta, file)
+        preserve(&meta, file)?;
+        self.wrote(file, output.as_bytes());
+        Ok(())
+    }
+    /// Notes what Laci left in `file`, on each entry of this change that keeps it, so Undo can tell a change made
+    /// after this one (a line a session added, a note edited) and refuse rather than lose it. It is saved with the
+    /// next entry or when the change is applied: until then the change can't be undone from the Log.
+    fn wrote(&mut self, file: &Path, bytes: &[u8]) {
+        let hash = json!(format!("{:x}", Sha256::digest(bytes)));
+        let name = file.to_string_lossy();
+        for entry in self.journal["entries"].as_array_mut().unwrap() {
+            if matches!(entry["kind"].as_str(), Some("rewrite" | "file"))
+                && entry["scope"] != "config"
+                && entry["path"].as_str() == Some(name.as_ref())
+            {
+                entry["afterHash"] = hash.clone();
+            }
+        }
     }
     fn keep(&mut self, file: &Path) -> Result<()> {
         sidecar::plain_path(file)?;
@@ -576,19 +593,34 @@ impl<'a> Tx<'a> {
     }
     /// Sets fields of the project's .laci.md, keeping it and the Git exclude file first so Undo puts them back.
     fn sidecar_meta(&mut self, dir: &Path, fields: &[(&str, String)]) -> Result<()> {
-        self.keep(&dir.join(sidecar::SIDECAR))?;
+        let mut kept = vec![dir.join(sidecar::SIDECAR)];
         if let Some(file) = sidecar::exclude_file(dir) {
-            let file = path(self.env, &file.to_string_lossy())?;
-            self.keep(&file)?;
+            kept.push(path(self.env, &file.to_string_lossy())?);
         }
-        fields.iter().try_for_each(|(key, value)| sidecar::set_meta(dir, key, value))
+        for file in &kept {
+            self.keep(file)?;
+        }
+        fields.iter().try_for_each(|(key, value)| sidecar::set_meta(dir, key, value))?;
+        for file in &kept {
+            if let Ok(bytes) = fs::read(file) {
+                self.wrote(file, &bytes);
+            }
+        }
+        Ok(())
     }
-    /// Clears what archiving wrote in .laci.md. A project without one has nothing to clear.
+    /// Clears what archiving wrote in .laci.md: where it came from and when, and the status when it is still
+    /// archived. A project without one has nothing to clear.
     fn clear_archived(&mut self, dir: &Path) -> Result<()> {
-        if !exists(&dir.join(sidecar::SIDECAR)) {
+        let Some(text) = files::text(&dir.join(sidecar::SIDECAR)) else {
             return Ok(());
-        }
-        self.sidecar_meta(dir, &ARCHIVE_FIELDS.map(|key| (key, String::new())))
+        };
+        let archived = crate::readers::parse_meta(&text)["status"] == "archived";
+        let fields: Vec<_> = ARCHIVE_FIELDS
+            .into_iter()
+            .filter(|key| archived || *key != "status")
+            .map(|key| (key, String::new()))
+            .collect();
+        self.sidecar_meta(dir, &fields)
     }
     fn remember_archive(&mut self, dest: &Path) -> Result<()> {
         let cfg = crate::config::load(self.env);
@@ -687,7 +719,7 @@ fn transact_unlocked(
         }
         Err(error) => {
             tx.journal["error"] = json!(error);
-            match undo_entries(env, tx.journal["entries"].as_array().unwrap()) {
+            match undo_entries(env, tx.journal["entries"].as_array().unwrap(), false) {
                 Ok(()) => {
                     if recovery(&tx.journal).is_some() {
                         tx.journal["state"] = json!("failed");
@@ -731,13 +763,32 @@ fn validate_entries(env: &Env, entries: &[Value]) -> Result<()> {
     }
     Ok(())
 }
-fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
+/// Puts back what `entries` changed, newest first. `asked` is an Undo someone asked for, not the rollback of a change
+/// that failed part-way: only then is a move that is already back, or a file Laci rewrote, a reason to refuse.
+fn undo_entries(env: &Env, entries: &[Value], asked: bool) -> Result<()> {
     validate_entries(env, entries)?;
+    // A folder back where it was while its new place is gone was moved back by a later change, such as a Restore after
+    // an Archive. Undoing the files of this one would make that place again around them.
+    if asked {
+        for e in entries.iter().filter(|e| e["kind"] == "move") {
+            if exists(&journal_path(env, e, "from")?) && !exists(&journal_path(env, e, "to")?) {
+                return Err("This change was already reversed by a later one; undo that instead".into());
+            }
+        }
+    }
     // A file changed after the change, by hand, by an agent or by Laci, or gone with a folder that moved, keeps what
     // it has now: putting back the older bytes would lose that, or bring back the folder.
     for entry in entries {
         if let Some(expected) = entry["afterHash"].as_str() {
+            // A rollback puts back only settings; the files it rewrote are as it left them.
+            if !asked && entry["scope"] != "config" {
+                continue;
+            }
             let file = journal_path(env, entry, "path")?;
+            // A file this change made and that is gone since has nothing to lose.
+            if entry["kind"] == "file" && entry["existed"] == false && !exists(&file) {
+                continue;
+            }
             if !fs::read(&file).is_ok_and(|bytes| format!("{:x}", Sha256::digest(bytes)) == expected) {
                 return Err(if entry["scope"] == "config" {
                     "Settings changed after this. Restore those settings before undoing it.".into()
@@ -823,6 +874,13 @@ fn undo_entries(env: &Env, entries: &[Value]) -> Result<()> {
 fn restore(src: &Path, dest: &Path) -> Result<()> {
     sidecar::plain_path(src)?;
     sidecar::plain_path(dest)?;
+    // A folder that is gone was moved or removed after the change; putting the file back would make it again.
+    if !dest.parent().is_some_and(Path::is_dir) {
+        return Err(format!(
+            "The folder of {} is gone since this change, so Undo would make it again. Undo the later change first.",
+            dest.display()
+        ));
+    }
     let meta = fs::metadata(src).map_err(|e| e.to_string())?;
     let bytes = fs::read(src).map_err(|e| e.to_string())?;
     files::replace(dest, &bytes)?;
@@ -912,7 +970,7 @@ pub(crate) fn undo_unlocked(env: &Env, id: &str, settled: &mut Option<Value>) ->
             .map(|e| journal_path(env, e, "to"))
             .collect::<Result<Vec<_>>>()?,
     )?;
-    undo_entries(env, entries)?;
+    undo_entries(env, entries, true)?;
     journal["state"] = json!("undone");
     files::replace(&file, &serde_json::to_vec_pretty(&journal).map_err(|e| e.to_string())?)?;
     Ok(journal)
@@ -1150,8 +1208,9 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
         if let Some(status) = opts["status"].as_str().filter(|s| !s.is_empty()) {
             let mut fields = vec![("status", status.to_owned())];
             let from = paths::tilde(&src, &env.home);
-            // Where it came from, so it can be put back; a path .laci.md can't hold on one line is left out.
-            if status == "archived" && from.chars().count() <= 1024 && !from.contains(['\n', '\r']) {
+            // Where it came from, so it can be put back. A path .laci.md can't hold, or would read back as another one
+            // (`Lab #2` is cut at ` #`), is left out, so the archive's layout tells where it came from instead.
+            if status == "archived" && sidecar::valid_meta("archivedFrom", &from) {
                 fields.push(("archivedFrom", from));
                 fields.push(("archivedAt", chrono::Local::now().format("%Y-%m-%d").to_string()));
             }
@@ -1203,6 +1262,9 @@ pub fn archive_project_to(
 /// or, for one archived by its status only, clears that status where it is.
 pub fn restore_project(env: &Env, snap: &Value, id: &str, destination: Option<&str>) -> Result<Value> {
     let plan = crate::scan::restore_plan(env, snap, id, destination)?;
+    if let Some(error) = plan["error"].as_str() {
+        return Err(error.into());
+    }
     let node = &snap["nodes"][id];
     let name = node["name"].as_str().unwrap_or("project");
     let dest = plan["dest"].as_str().ok_or("Missing destination")?;

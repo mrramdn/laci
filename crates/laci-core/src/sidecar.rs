@@ -97,8 +97,9 @@ pub fn ensure_excluded(dir: &Path) -> Result<()> {
             .as_bytes(),
     )
 }
-pub fn set_meta(dir: &Path, key: &str, value: &str) -> Result<()> {
-    let valid = match key {
+/// Whether `value` may be written as `key` in .laci.md.
+pub(crate) fn valid_meta(key: &str, value: &str) -> bool {
+    match key {
         "status" => ["", "active", "idle", "dormant", "idea", "paused", "done", "archived"].contains(&value),
         "priority" => ["", "high", "medium", "low"].contains(&value),
         "deadline" => value.is_empty() || Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap().is_match(value),
@@ -109,6 +110,7 @@ pub fn set_meta(dir: &Path, key: &str, value: &str) -> Result<()> {
                 || value.chars().count() <= 1024
                     && !value.contains(['\n', '\r'])
                     && (value.starts_with('/') || value == "~" || value.starts_with("~/"))
+                    && reads_back(key, value)
         }
         "archivedAt" => value.is_empty() || Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap().is_match(value),
         // Checks muted for this project: issue codes, comma separated.
@@ -121,8 +123,15 @@ pub fn set_meta(dir: &Path, key: &str, value: &str) -> Result<()> {
                 || value.is_empty()
         }
         _ => false,
-    };
-    if !valid {
+    }
+}
+/// Whether the line `key: value` is read back as `value`: a path with ` #` in it would be cut there, and spaces or
+/// quotes at its ends dropped, so it would name another place.
+fn reads_back(key: &str, value: &str) -> bool {
+    crate::readers::parse_meta(&format!("---\n{key}: {value}\n---\n"))[key].as_str() == Some(value)
+}
+pub fn set_meta(dir: &Path, key: &str, value: &str) -> Result<()> {
+    if !valid_meta(key, value) {
         return Err("Unknown field or invalid value".into());
     }
     edit(dir, |text, eol| {

@@ -99,7 +99,7 @@ fn archive_keeps_the_place_below_its_scan_location_and_restore_puts_it_back() {
 
 #[test]
 fn restore_finds_the_origin_from_the_archive_layout_and_refuses_an_occupied_place() {
-    let (_temp, env, archive) = fixture();
+    let (temp, env, archive) = fixture();
     let archived = archive.join("tugas").join("course").join("old");
     write(&archived.join("package.json"), "{}");
     let loose = archive.join("loose");
@@ -110,16 +110,38 @@ fn restore_finds_the_origin_from_the_archive_layout_and_refuses_an_occupied_plac
     let id = archived.to_str().unwrap();
     assert_eq!(snap["nodes"][id]["inArchive"], true);
     assert_eq!(snap["nodes"][id]["restorePlan"]["dest"], json!(origin));
-    let error = snap["nodes"][loose.to_str().unwrap()]["restorePlan"]["error"].as_str().unwrap();
+    let unknown = &snap["nodes"][loose.to_str().unwrap()]["restorePlan"];
+    let error = unknown["error"].as_str().unwrap();
     assert!(error.contains("doesn't know where this project came from"), "{error}");
+    assert_eq!(unknown["reason"], "unknown");
+    assert!(unknown.get("dest").is_none(), "{unknown}");
+    assert_eq!((&unknown["ops"], &unknown["checks"]), (&json!([]), &json!([])));
 
     write(&origin.join("keep.txt"), "already here");
-    let error = service.request("restore/plan", &json!({"id":id})).unwrap_err();
+    let snap = service.rescan().unwrap();
+    let occupied = &snap["nodes"][id]["restorePlan"];
+    assert_eq!(
+        (&occupied["reason"], &occupied["dest"], &occupied["ops"]),
+        (&json!("occupied"), &json!(origin), &json!([]))
+    );
+    let plan = service.request("restore/plan", &json!({"id":id})).unwrap();
+    let error = plan["error"].as_str().unwrap();
     assert!(error.contains("Something is already at ~/tugas/course/old"), "{error}");
-    assert!(service.request("restore", &json!({"id":id})).is_err());
+    assert_eq!((&plan["reason"], &plan["dest"]), (&json!("occupied"), &json!(origin)));
+    let error = service.request("restore", &json!({"id":id})).unwrap_err();
+    assert!(error.contains("Something is already at"), "{error}");
     assert!(archived.join("package.json").is_file());
-    let error = service.request("restore/plan", &json!({"id":id,"destination":archive.join("elsewhere")})).unwrap_err();
-    assert!(error.contains("in the archive"), "{error}");
+    let elsewhere = archive.join("elsewhere");
+    let plan = service.request("restore/plan", &json!({"id":id,"destination":elsewhere})).unwrap();
+    assert!(plan["error"].as_str().unwrap().contains("in the archive"), "{plan}");
+    assert_eq!((&plan["reason"], &plan["dest"]), (&json!("inArchive"), &json!(elsewhere)));
+    let inside = archived.join("sub");
+    let plan = service.request("restore/plan", &json!({"id":id,"destination":inside})).unwrap();
+    assert_eq!((&plan["reason"], &plan["dest"]), (&json!("inArchive"), &json!(inside)));
+    let outside = temp.path().join("outside");
+    let plan = service.request("restore/plan", &json!({"id":id,"destination":outside})).unwrap();
+    assert_eq!((&plan["reason"], &plan["dest"], &plan["ops"]), (&json!("outside"), &json!(outside), &json!([])));
+    assert!(service.request("restore", &json!({"id":id,"destination":outside})).is_err());
     fs::remove_dir_all(&origin).unwrap();
 
     service.request("restore", &json!({"id":id})).unwrap();
@@ -159,6 +181,123 @@ fn restore_of_a_project_archived_by_its_status_clears_it_in_place() {
     service.request("undo", &json!({"id":restored["journal"]["id"]})).unwrap();
     assert_eq!(sidecar_text(&project), original);
     assert!(service.request("restore/plan", &json!({"id":env.home.join("project")})).is_err());
+
+    // It stays where it is, so a place to put it is refused rather than ignored.
+    let elsewhere = env.home.join("project").join("elsewhere");
+    for name in ["restore/plan", "restore"] {
+        let error = service.request(name, &json!({"id":id,"destination":elsewhere})).unwrap_err();
+        assert!(error.contains("only marked archived; it stays where it is"), "{name}: {error}");
+    }
+    assert_eq!(sidecar_text(&project), original);
+    assert!(!elsewhere.exists());
+}
+
+#[test]
+fn restore_keeps_a_status_other_than_archived() {
+    let (_temp, env, archive) = fixture();
+    let archived = archive.join("project").join("kept");
+    write(&archived.join("package.json"), "{}");
+    write(
+        &archived.join(".laci.md"),
+        "---\nstatus: paused\narchivedFrom: ~/project/kept\narchivedAt: 2026-01-02\n---\n",
+    );
+    let mut service = Service::new(env.clone());
+    service.snapshot().unwrap();
+    service.request("restore", &json!({"id":archived})).unwrap();
+    let text = sidecar_text(&env.home.join("project").join("kept"));
+    assert!(text.contains("status: paused"), "{text}");
+    assert!(!text.contains("archivedFrom") && !text.contains("archivedAt"), "{text}");
+}
+
+/// A project archived from ~/tugas/course/demo with a Claude session: the service, the project, the place the
+/// archive keeps it and the journal id of the Archive.
+fn archived_demo() -> (support::TempDir, Env, Service, PathBuf, PathBuf, String) {
+    let (temp, env, archive) = fixture();
+    let project = env.home.join("tugas").join("course").join("demo");
+    write(&project.join("package.json"), "{}");
+    write(&store(&env, &project).join("first.jsonl"), &session(&project));
+    let mut service = Service::new(env.clone());
+    service.snapshot().unwrap();
+    let archived = service.request("archive", &json!({"id":project})).unwrap();
+    let dest = archive.join("tugas").join("course").join("demo");
+    assert!(dest.join("package.json").is_file());
+    let id = archived["journal"]["id"].as_str().unwrap().to_owned();
+    (temp, env, service, project, dest, id)
+}
+
+#[test]
+fn undo_of_a_restore_keeps_a_session_line_or_a_note_added_since() {
+    for edited in ["session", "notes"] {
+        let (_temp, env, mut service, project, dest, _) = archived_demo();
+        let restored = service.request("restore", &json!({"id":dest})).unwrap();
+        let file = match edited {
+            "session" => store(&env, &project).join("first.jsonl"),
+            _ => project.join(".laci.md"),
+        };
+        let text = fs::read_to_string(&file).unwrap() + "- [ ] a line added after the restore\n";
+        fs::write(&file, &text).unwrap();
+        let error = service.request("undo", &json!({"id":restored["journal"]["id"]})).unwrap_err();
+        let name = paths::tilde(&file, &env.home);
+        assert!(error.contains(&format!("{name} changed after this")), "{edited}: {error}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), text, "{edited}: nothing is lost");
+        assert!(project.join("package.json").is_file() && !dest.exists(), "{edited}: nothing moved");
+        assert!(store(&env, &project).join("first.jsonl").is_file() && !store(&env, &dest).exists());
+    }
+}
+
+#[test]
+fn undo_of_an_archive_that_was_restored_since_changes_nothing() {
+    let (_temp, env, mut service, project, dest, archived) = archived_demo();
+    service.request("restore", &json!({"id":dest})).unwrap();
+    let before = fs::read_to_string(project.join(".laci.md")).unwrap();
+    let error = service.request("undo", &json!({"id":archived})).unwrap_err();
+    assert!(error.contains("already reversed by a later one; undo that instead"), "{error}");
+    assert!(!dest.exists(), "the archived folder isn't made again");
+    assert!(!store(&env, &dest).exists());
+    assert!(project.join("package.json").is_file());
+    assert_eq!(fs::read_to_string(project.join(".laci.md")).unwrap(), before);
+    assert_eq!(fs::read_to_string(store(&env, &project).join("first.jsonl")).unwrap(), session(&project));
+}
+
+#[test]
+fn a_path_laci_md_would_read_back_otherwise_is_not_kept_as_archived_from() {
+    let (_temp, env, archive) = fixture();
+    let project = env.home.join("tugas").join("Lab #2").join("demo");
+    write(&project.join("package.json"), "{}");
+    let mut service = Service::new(env.clone());
+    service.snapshot().unwrap();
+    service.request("archive", &json!({"id":project})).unwrap();
+    let dest = archive.join("tugas").join("Lab #2").join("demo");
+    let text = sidecar_text(&dest);
+    assert!(text.contains("status: archived") && !text.contains("archivedFrom"), "{text}");
+    // The archive's layout still tells where it came from.
+    let snap = service.rescan().unwrap();
+    assert_eq!(snap["nodes"][dest.to_str().unwrap()]["restorePlan"]["dest"], json!(project));
+    let error = sidecar::set_meta(&dest, "archivedFrom", "~/tugas/Lab #2/demo").unwrap_err();
+    assert!(error.contains("invalid value"), "{error}");
+    for value in ["~/tugas/demo ", "~/tugas/'demo'", "~/tugas/[demo]"] {
+        assert!(sidecar::set_meta(&dest, "archivedFrom", value).is_err(), "{value}");
+    }
+}
+
+#[test]
+fn an_archive_named_folder_above_the_scan_location_does_not_count() {
+    let temp = support::tempdir();
+    let env = Env::for_home(temp.path().join("home"));
+    let root = env.home.join("archive").join("work");
+    let app = root.join("app");
+    write(&app.join("package.json"), "{}");
+    let old = root.join("_archive").join("old");
+    write(&old.join("package.json"), "{}");
+    config::save(&env, &json!({"roots":["~/archive/work"],"presets":["claude"]})).unwrap();
+    let mut service = Service::new(env.clone());
+    let snap = service.snapshot().unwrap();
+    let node = &snap["nodes"][app.to_str().unwrap()];
+    assert_eq!((&node["archived"], &node["inArchive"]), (&json!(false), &json!(false)), "{node}");
+    assert!(node["restorePlan"].is_null());
+    let node = &snap["nodes"][old.to_str().unwrap()];
+    assert_eq!(node["inArchive"], true);
+    assert_eq!(node["restorePlan"]["dest"], json!(root.join("old")));
 }
 
 #[test]

@@ -323,6 +323,7 @@ function restore(body: Body): Change {
       restorePlan: o.restorePlan,
     },
   }));
+  const home = fixtures.meta.home;
   for (const o of moved) {
     const meta = { ...o.meta };
     if (o === n) {
@@ -330,15 +331,36 @@ function restore(body: Body): Change {
       delete meta.archivedFrom;
       delete meta.archivedAt;
     }
+    // Only the restored folder's own .laci.md loses its mark, as the engine does it: a project in
+    // the group marked archived in its own .laci.md stays marked, where it now is.
+    const marked = o !== n && meta.status === "archived";
     Object.assign(o, {
-      archived: false,
+      archived: marked,
       inArchive: false,
-      status: { value: "idle", auto: true },
+      status: marked
+        ? { value: "archived", auto: false }
+        : { value: "idle", auto: true },
       meta,
-      restorePlan: undefined,
+      restorePlan: marked
+        ? {
+            dest: o.path,
+            checks: [],
+            ops: [
+              {
+                kind: "write",
+                label: "Clear status: archived",
+                to: `${tilde(o.path, home)}/.laci.md`,
+              },
+              {
+                kind: "write",
+                label: "Write undo journal",
+                to: "~/.local/share/laci/journal/",
+              },
+            ],
+          }
+        : undefined,
     });
   }
-  const home = fixtures.meta.home;
   const to = tilde(plan?.dest ?? n.path, home);
   const steps: Op[] = [
     ...(plan?.ops ?? [])

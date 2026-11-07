@@ -331,6 +331,31 @@ export async function theArchivedGroupGoesBackWholeAndItsProjectsWaitForIt() {
   });
 }
 
+export async function aProjectMarkedArchivedInARestoredGroupKeepsItsOwnMark() {
+  const group = "/home/demo/project/_archive/old-clients";
+  const batik = `${group}/batik-shop`;
+  const warung = `${group}/warung-pos`;
+  await onPreview(async ({ request }) => {
+    // warung-pos says archived in its own .laci.md; batik-shop is archived only by where it is.
+    await request("archive", { id: warung });
+    await request("restore", { id: group, destination: "/home/demo/project/old-clients" });
+    const after = (await request("snapshot")).nodes;
+    // The engine clears the group's own .laci.md only: warung-pos stays marked, out of the archive.
+    assert.deepEqual(
+      [batik, warung].map((id) => [after[id].archived, after[id].inArchive, after[id].status.value]),
+      [
+        [false, false, "idle"],
+        [true, false, "archived"],
+      ],
+    );
+    assert.equal(after[warung].meta.status, "archived");
+    assert.deepEqual(
+      after[warung].restorePlan.ops.map((op) => op.label),
+      ["Clear status: archived", "Write undo journal"],
+    );
+  });
+}
+
 export async function aReportIsFoundByTheWordsInIt() {
   await onPreview(async ({ request }) => {
     const hits = await request("reports/search", { query: "checkout safari" });

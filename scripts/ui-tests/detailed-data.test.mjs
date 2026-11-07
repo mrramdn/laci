@@ -776,6 +776,7 @@ function detailedWindow(patch = {}) {
       "../views/agents": { AgentsView: nothing },
       "../views/log": { LogView: nothing },
       "../views/reports": { ReportsView: nothing },
+      "../views/archive": { ArchiveView: nothing },
       "../settings": { Settings: nothing },
       "../inspector": { Inspector: nothing },
     },

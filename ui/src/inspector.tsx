@@ -173,6 +173,22 @@ export function Inspector({ node: n }: { node: Node }) {
                 <Icon name="archive" className="sm" />
                 Archive
               </button>
+            ) : isProject ? (
+              <button
+                className="btn ghost sm"
+                title={
+                  n.inArchive
+                    ? "Put it back where it came from"
+                    : "Clear the archived status"
+                }
+                disabled={s.historyPending}
+                onClick={() =>
+                  useApp.setState({ modal: { kind: "restore", id: n.id } })
+                }
+              >
+                <Icon name="undo-2" className="sm" />
+                {n.inArchive ? "Restore" : "Unarchive"}
+              </button>
             ) : null}
             {isProject ? (
               <button

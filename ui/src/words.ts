@@ -337,6 +337,9 @@ export const projects = {
   continueAi: "Continue with AI",
   showIn: (app: string) => `Show in ${app}`,
   archive: "Archive…",
+  restore: "Restore…",
+  /** Where an archived project came from, under its name. */
+  from: (where: string) => `From ${where}`,
   noneTitle: "No projects here",
   none: {
     all: "Laci found no projects in your project folders yet.",
@@ -372,6 +375,8 @@ export const project = {
   openIn: (app: string) => `Open in ${app}`,
   moreActions: "More actions",
   archive: "Archive…",
+  /** On the page of an archived project, beside Continue with AI. */
+  restoreButton: "Restore…",
   delete: "Delete project…",
   freeSpace: "Free up space here…",
   terminal: "Open terminal here",
@@ -1256,6 +1261,7 @@ export const activity = {
     keptOut: (files: number, name: string) =>
       `Kept ${count(files, "file")} of ${name} out of saved versions`,
     archived: (name: string) => `Archived ${name}`,
+    restored: (name: string) => `Took ${name} out of the archive`,
     moved: (name: string) => `Moved ${name}`,
     reconnected: (name: string) => `Reconnected the AI chats of ${name}`,
     finishedMoves: (moves: number) => `Finished ${count(moves, "unfinished move")}`,
@@ -1324,6 +1330,7 @@ export const logForms = {
   undid: told.undidAny,
   moved: told.moved,
   archived: told.archived,
+  restored: told.restored,
   reconnected: told.reconnected,
   chatsForGone: { kept: told.setAsideAny, trashed: told.trashedChatsAny },
   chatsForDeleted: { kept: told.setAside, trashed: told.trashedChats },
@@ -1963,6 +1970,24 @@ export const dialogs = {
     archivedNote: "Find it in Projects, under Archived.",
     failed: (name: string) => `Laci couldn’t archive ${name}.`,
   },
+  restore: {
+    title: (name: string) => `Restore ${name}?`,
+    intro: "Laci puts it back where it was, with its AI chats.",
+    /** For a project only marked archived: its folder never moved. */
+    introInPlace: "Laci takes away its archived mark. The folder stays where it is.",
+    goesBack: (where: string) => `It goes back to ${where}.`,
+    unknown: "Laci doesn’t know where this project came from. Choose where to put it back under Show details.",
+    checking: "Checking where it goes…",
+    restore: "Restore",
+    note: "You can undo it any time in Activity.",
+    cant: (name: string) => `Laci can’t put ${name} back there.`,
+    elsewhere: "To put it somewhere else, change “Goes to” under Show details.",
+    fullPath: "Write the full location, such as ~/project/my-project.",
+    restoring: (name: string) => `Restoring ${name}…`,
+    restored: (name: string) => `Restored ${name}`,
+    restoredNote: "It is back with your other projects.",
+    failed: (name: string) => `Laci couldn’t restore ${name}.`,
+  },
   clean: {
     title: (name: string) => `Free up space in ${name}?`,
     intro:
@@ -2074,6 +2099,7 @@ export const detailedSettings = {
   archiveFolderTitle: "Choose your archive folder",
   reportsFolderTitle: "Choose the folder for reports",
   destinationTitle: (name: string) => `Choose where to archive ${name}`,
+  restoreTitle: (name: string) => `Choose where to put ${name} back`,
   locationTitle: "Choose where the new project goes",
   templateTitle: "Choose a folder to start new projects from",
   backupFolderTitle: "Choose a folder for the history backup",

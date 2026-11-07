@@ -35,6 +35,10 @@ export interface Meta {
   tags?: string[];
   /** Muted check codes, comma separated. */
   quiet?: string;
+  /** Where the project was when Laci archived it, with `~` for home. */
+  archivedFrom?: string;
+  /** The day Laci archived it, YYYY-MM-DD. */
+  archivedAt?: string;
 }
 
 export interface Remote {
@@ -354,6 +358,8 @@ export interface Node {
   parent?: string;
   children: string[];
   archived: boolean;
+  /** Its folder is in the archive: under the archive folder from Settings, or in an `_archive` folder. */
+  inArchive?: boolean;
   stableId: string;
   meta: Meta;
   status: { value: string; auto: boolean };
@@ -375,6 +381,8 @@ export interface Node {
   size?: Size;
   issues: Issue[];
   archivePlan?: ArchivePlan;
+  /** What putting an archived project back does: where it goes, or why Laci can't tell. */
+  restorePlan?: ArchivePlan;
 }
 
 /**
@@ -676,6 +684,8 @@ export type View =
   | "agents"
   | "reports"
   | "log"
+  /** Detailed's list of archived projects. */
+  | "archive"
   | "settings"
   /** Simple's page for the selected project. Detailed shows a project beside the view instead. */
   | "project"

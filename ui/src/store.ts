@@ -22,7 +22,7 @@ export type SortKey = "name" | "last" | "size" | "ai" | "priority" | "deadline";
 export type Modal =
   | { kind: "shortcuts" | "connector" | "help" | "copy-choice" }
   | { kind: "new"; job?: CreationJob }
-  | { kind: "archive" | "delete" | "orphan" | "clean"; id: string }
+  | { kind: "archive" | "restore" | "delete" | "orphan" | "clean"; id: string }
   | { kind: "terminal-close"; id: string }
   | { kind: "mcp"; provider: string }
   | {

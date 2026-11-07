@@ -238,7 +238,7 @@ export async function placesCountTheProjectsInEachFolder() {
   }
   for (const path of paths)
     assert.equal(count(path), treeRowCount(snapshot, path), path);
-  assert.equal(count(ROOT), 7);
+  assert.equal(count(ROOT), 8);
   assert.equal(count(`${ROOT}/clients`), 2);
   // The same function again, which has kept what it counted.
   assert.equal(selectors.placesCounts(snapshot), count);
@@ -391,6 +391,7 @@ const paletteActions = (snapshot) => [
   ["view:tidy", "Open Tidy up", "sparkles"],
   ["view:agents", "Open Agents", "history"],
   ...(snapshot.reportsDir ? [["view:reports", "Open Reports", "report"]] : []),
+  ["view:archive", "Open Archive", "archive"],
   ["view:log", "Open Log", "scroll"],
   ["new", "New project", "plus"],
   ["shortcuts", "Keyboard shortcuts", "keyboard"],
@@ -1087,6 +1088,7 @@ export async function theCopyTreeNestsFoldersUnderTheirParentWithTheChatsOfEach(
       [1, "side", 0, 0, true],
       [2, "dotfiles", 0, 0, false],
       [2, "habit-app", 0, 0, false],
+      [2, "zine", 0, 0, false],
       [1, "thesis", 0, 1, true],
       [2, "campus-lms", 1, 1, false],
     ],

@@ -163,6 +163,7 @@ pub fn mutates(name: &str) -> bool {
             | "notes"
             | "report/close"
             | "archive"
+            | "restore"
             | "delete"
             | "move"
             | "apply"
@@ -193,6 +194,7 @@ pub fn changes_history(name: &str) -> bool {
     matches!(
         name,
         "archive"
+            | "restore"
             | "delete"
             | "move"
             | "apply"
@@ -577,7 +579,7 @@ impl Service {
         };
         let value = self.execute_action(name, b, by)?;
         let refresh = match name {
-            "archive" | "delete" | "move" | "undo" | "log/undo" | "setup/save" | "new" => Refresh::full(),
+            "archive" | "restore" | "delete" | "move" | "undo" | "log/undo" | "setup/save" | "new" => Refresh::full(),
             "connector/add" | "connector/remove" => Refresh { watches: true, ..Refresh::agents() },
             "apply" if matches!(apply_kind.as_deref(), Some("archive" | "trash" | "clear")) => Refresh::full(),
             "apply" => Refresh { watches: true, ..Refresh::agents() },
@@ -817,6 +819,10 @@ impl Service {
                 let snap = self.snapshot()?;
                 scan::archive_plan(&self.env, &snap, id, b["destination"].as_str())
             }
+            "restore/plan" => {
+                let snap = self.snapshot()?;
+                scan::restore_plan(&self.env, &snap, id, b["destination"].as_str())
+            }
             "delete/plan" => {
                 let node = self.node(id)?;
                 crate::deletion::plan(&self.env, &node)
@@ -850,6 +856,11 @@ impl Service {
                     b["destination"].as_str(),
                     b["trashHeavy"].as_bool().unwrap_or(false),
                 )?;
+                self.journaled(j, Some(id), by)
+            }
+            "restore" => {
+                let snap = self.snapshot()?;
+                let j = ops::restore_project(&self.env, &snap, id, b["destination"].as_str())?;
                 self.journaled(j, Some(id), by)
             }
             "move" => {

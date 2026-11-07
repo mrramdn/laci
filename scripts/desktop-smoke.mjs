@@ -696,7 +696,7 @@ async function modularRegressions() {
         assert.equal(info.archiveDir, archiveRoot);
         assert.equal(
           (await snapshot()).nodes[source].archivePlan.dest,
-          path.join(archiveRoot, path.basename(source)),
+          path.join(archiveRoot, "projects", path.basename(source)),
         );
         await shot("modular-settings");
       },

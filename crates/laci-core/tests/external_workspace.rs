@@ -74,7 +74,7 @@ fn configured_external_archive_matches_preview_scan_and_undo() {
     let snapshot = service.snapshot().unwrap();
     let id = project.to_str().unwrap();
     assert!(snapshot["nodes"][id].is_object());
-    let dest = archive.join("demo");
+    let dest = archive.join("disk").join("demo");
     let plan = service.request("archive/plan", &json!({"id":id})).unwrap();
     assert_eq!(plan["dest"], json!(dest));
     assert_eq!(snapshot["nodes"][id]["archivePlan"]["dest"], plan["dest"]);
@@ -191,7 +191,7 @@ fn external_project_history_and_notes_survive_archive_and_undo() {
     service.request("log/undo", &json!({"id":note["id"]})).unwrap();
     assert!(fs::read_to_string(source.join(".laci.md")).unwrap().contains("Original notes"));
     let changed = service.request("archive", &json!({"id":id})).unwrap();
-    let dest = archive.join("demo");
+    let dest = archive.join("disk").join("demo");
     let snap = service.snapshot().unwrap();
     let archived = &snap["nodes"][dest.to_str().unwrap()];
     assert_eq!(archived["agents"]["claude"].as_array().unwrap().len(), 1);

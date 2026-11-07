@@ -574,13 +574,21 @@ impl<'a> Tx<'a> {
         let backup = if existed { Some(self.backup(file)?) } else { None };
         self.log(json!({"kind":"file","path":file,"existed":existed,"backup":backup}))
     }
-    fn sidecar_status(&mut self, dir: &Path, status: &str) -> Result<()> {
+    /// Sets fields of the project's .laci.md, keeping it and the Git exclude file first so Undo puts them back.
+    fn sidecar_meta(&mut self, dir: &Path, fields: &[(&str, String)]) -> Result<()> {
         self.keep(&dir.join(sidecar::SIDECAR))?;
         if let Some(file) = sidecar::exclude_file(dir) {
             let file = path(self.env, &file.to_string_lossy())?;
             self.keep(&file)?;
         }
-        sidecar::set_meta(dir, "status", status)
+        fields.iter().try_for_each(|(key, value)| sidecar::set_meta(dir, key, value))
+    }
+    /// Clears what archiving wrote in .laci.md. A project without one has nothing to clear.
+    fn clear_archived(&mut self, dir: &Path) -> Result<()> {
+        if !exists(&dir.join(sidecar::SIDECAR)) {
+            return Ok(());
+        }
+        self.sidecar_meta(dir, &ARCHIVE_FIELDS.map(|key| (key, String::new())))
     }
     fn remember_archive(&mut self, dest: &Path) -> Result<()> {
         let cfg = crate::config::load(self.env);
@@ -1021,6 +1029,9 @@ fn roots(mut paths: Vec<String>) -> Vec<String> {
     }
     out
 }
+/// The fields of .laci.md archiving sets and putting a project back clears.
+const ARCHIVE_FIELDS: [&str; 3] = ["status", "archivedFrom", "archivedAt"];
+
 pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value) -> Result<Value> {
     let node = &snap["nodes"][id];
     if !node.is_object() {
@@ -1059,7 +1070,7 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
     let say = if opts["say"].is_object() { opts["say"].clone() } else { json!({"form":"moved","name":name}) };
     transact(env, &title, say, |tx| {
         guard(std::slice::from_ref(&src))?;
-        if opts["status"] == "archived" {
+        if opts["status"] == "archived" || opts["restore"] == true {
             crate::scan::check_archive_destination(env, &dest)?;
         }
         // Which history belongs to the folder is asked while it is still there.
@@ -1137,10 +1148,22 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
             // Inside history travels with the folder. Mention documents retain their original wording.
         }
         if let Some(status) = opts["status"].as_str().filter(|s| !s.is_empty()) {
-            tx.sidecar_status(&dest, status)?;
+            let mut fields = vec![("status", status.to_owned())];
+            let from = paths::tilde(&src, &env.home);
+            // Where it came from, so it can be put back; a path .laci.md can't hold on one line is left out.
+            if status == "archived" && from.chars().count() <= 1024 && !from.contains(['\n', '\r']) {
+                fields.push(("archivedFrom", from));
+                fields.push(("archivedAt", chrono::Local::now().format("%Y-%m-%d").to_string()));
+            }
+            tx.sidecar_meta(&dest, &fields)?;
             if status == "archived" {
                 tx.remember_archive(&dest)?;
             }
+        }
+        if opts["restore"] == true {
+            tx.clear_archived(&dest)?;
+            // A place outside the scan locations is added to them, so the project stays in view.
+            tx.remember_archive(&dest)?;
         }
         if opts["trashHeavy"].as_bool() == Some(true) {
             for part in node["size"]["parts"].as_array().into_iter().flatten() {
@@ -1175,6 +1198,21 @@ pub fn archive_project_to(
         &json!({"status":"archived","trashHeavy":trash_heavy,"title":format!("Archive {name}"),
             "say":{"form":"archived","name":name}}),
     )
+}
+/// Puts an archived project back: out of the archive with its agent history, to where it came from or `destination`,
+/// or, for one archived by its status only, clears that status where it is.
+pub fn restore_project(env: &Env, snap: &Value, id: &str, destination: Option<&str>) -> Result<Value> {
+    let plan = crate::scan::restore_plan(env, snap, id, destination)?;
+    let node = &snap["nodes"][id];
+    let name = node["name"].as_str().unwrap_or("project");
+    let dest = plan["dest"].as_str().ok_or("Missing destination")?;
+    let title = format!("Restore {name}");
+    let say = json!({"form":"restored","name":name,"to":paths::tilde(Path::new(dest),&env.home)});
+    if node["inArchive"] == true {
+        return move_project(env, snap, id, dest, &json!({"restore":true,"title":title,"say":say}));
+    }
+    let dir = value_path(env, &node["path"])?;
+    transact(env, &title, say, |tx| tx.clear_archived(&dir))
 }
 pub fn apply_proposal(env: &Env, snap: &Value, proposal: &Value, recovery: &str) -> Result<Value> {
     if !["quarantine", "trash"].contains(&recovery) {

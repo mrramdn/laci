@@ -180,18 +180,22 @@ fn explicitly_archived(path: &Path) -> bool {
     files::text(&path.join(".laci.md")).is_some_and(|text| readers::parse_meta(&text)["status"] == "archived")
 }
 
+/// Whether a folder lies in the archive: below the archive folder in Settings, or in an `_archive`-style folder.
+fn in_archive(env: &Env, path: &Path, archive_dir: Option<&Path>) -> bool {
+    archive_dir.is_some_and(|dir| path.starts_with(dir))
+        || path
+            .strip_prefix(&env.home)
+            .unwrap_or(path)
+            .components()
+            .any(|c| ARCHIVE_COMPONENT.is_match(&c.as_os_str().to_string_lossy()))
+}
+
 fn found_nodes(env: &Env, f: &Found, parent: Option<&str>, archive_dir: Option<&Path>, out: &mut Vec<Value>) {
     let id = f.path.to_string_lossy().into_owned();
     let mut n = json!({"id":id,"path":id,"name":f.path.file_name().unwrap_or_default().to_string_lossy(),"kind":f.kind,"children":f.children.iter().map(|c|c.path.to_string_lossy().into_owned()).collect::<Vec<_>>()});
-    n["archived"] = json!(
-        explicitly_archived(&f.path)
-            || archive_dir.is_some_and(|dir| f.path.starts_with(dir))
-            || f.path
-                .strip_prefix(&env.home)
-                .unwrap_or(&f.path)
-                .components()
-                .any(|c| { ARCHIVE_COMPONENT.is_match(&c.as_os_str().to_string_lossy()) })
-    );
+    let inside = in_archive(env, &f.path, archive_dir);
+    n["inArchive"] = json!(inside);
+    n["archived"] = json!(inside || explicitly_archived(&f.path));
     if let Some(parent) = parent {
         n["parent"] = json!(parent);
     }
@@ -277,7 +281,7 @@ fn build(
                     if blank["kind"] == "folder" { readers::folder(env, path) } else { readers::project(env, path) };
                 env.progress.advance(0);
                 let mut n = read.ok()?;
-                for key in ["kind", "type", "parent", "children", "archived"] {
+                for key in ["kind", "type", "parent", "children", "archived", "inArchive"] {
                     if !blank[key].is_null() {
                         n[key] = blank[key].clone();
                     }
@@ -354,7 +358,9 @@ pub fn refresh_agents(env: &Env, snapshot: &mut Value) -> Result<bool> {
         nodes.len() == graph.len()
             && graph.iter().all(|node| {
                 nodes.get(string(node, "id")).is_some_and(|old| {
-                    ["kind", "type", "parent", "children", "archived"].iter().all(|key| old[key] == node[key])
+                    ["kind", "type", "parent", "children", "archived", "inArchive"]
+                        .iter()
+                        .all(|key| old[key] == node[key])
                 })
             })
     });
@@ -416,7 +422,7 @@ pub fn refresh(env: &Env, snapshot: &mut Value, id: &str) -> Result<Value> {
     }
     let path = Path::new(old["path"].as_str().ok_or("Project path is missing")?);
     let mut node = if old["kind"] == "folder" { readers::folder(env, path) } else { readers::project(env, path) }?;
-    for key in ["id", "label", "kind", "type", "parent", "children", "agents", "archived", "stableId"] {
+    for key in ["id", "label", "kind", "type", "parent", "children", "agents", "archived", "inArchive", "stableId"] {
         if !old[key].is_null() {
             node[key] = old[key].clone();
         }
@@ -1036,10 +1042,19 @@ fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
     out
 }
 
+/// Where a project is archived to. With an archive folder in Settings, it keeps its place below the scan location
+/// that holds it: `~/tugas/course/demo` goes to `<archive>/tugas/course/demo`.
 pub fn archive_dest(env: &Env, node: &Value, roots: &[PathBuf]) -> PathBuf {
     let path = Path::new(string(node, "path"));
     if let Some(dir) = configured_archive(env, &config::load(env)) {
-        return dir.join(path.file_name().unwrap_or_default());
+        let holder = roots
+            .iter()
+            .filter(|r| !r.starts_with(&dir) && paths::within(path, r) && r.as_path() != path)
+            .max_by_key(|r| r.as_os_str().len());
+        return match holder.and_then(|r| Some((r.file_name()?, path.strip_prefix(r).ok()?))) {
+            Some((name, rest)) if !rest.as_os_str().is_empty() => dir.join(name).join(rest),
+            _ => dir.join(path.file_name().unwrap_or_default()),
+        };
     }
     let root = roots
         .iter()
@@ -1183,19 +1198,102 @@ pub fn archive_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
     Ok(json!({"dest":dest,"checks":checks,"ops":ops}))
 }
 
+/// Where an archived project goes back to when nothing says so: below the scan location the archive keeps it under,
+/// or where it was before an `_archive` folder.
+fn origin(env: &Env, snapshot: &Value, path: &Path) -> Option<PathBuf> {
+    if let Some(dir) = configured_archive(env, &config::load(env)).filter(|dir| path.starts_with(dir)) {
+        let mut parts = path.strip_prefix(&dir).ok()?.components();
+        let first = parts.next()?.as_os_str().to_owned();
+        let rest = parts.as_path();
+        if rest.as_os_str().is_empty() {
+            return None;
+        }
+        let holders: Vec<_> = array(&snapshot["roots"])
+            .iter()
+            .filter_map(Value::as_str)
+            .map(Path::new)
+            .filter(|root| !root.starts_with(&dir) && root.file_name() == Some(first.as_os_str()))
+            .collect();
+        return match holders.as_slice() {
+            [root] => Some(root.join(rest)),
+            _ => None,
+        };
+    }
+    let parts: Vec<_> = path.parent()?.components().collect();
+    // Folders of home itself don't count, as for the archive test.
+    let home = if path.starts_with(&env.home) { env.home.components().count() } else { 0 };
+    let skip = parts.iter().rposition(|c| ARCHIVE_COMPONENT.is_match(&c.as_os_str().to_string_lossy()))?;
+    if skip < home {
+        return None;
+    }
+    let mut out: PathBuf = parts.iter().enumerate().filter(|(i, _)| *i != skip).map(|(_, c)| c.as_os_str()).collect();
+    out.push(path.file_name()?);
+    Some(out)
+}
+
+/// What putting an archived project back does: out of the archive to where it came from, or, for one archived by
+/// its status only, clearing that status where it is.
+pub fn restore_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&str>) -> Result<Value> {
+    let n = &snapshot["nodes"][id];
+    if n["kind"] != "project" {
+        return Err("Unknown project. Rescan and try again.".into());
+    }
+    if n["archived"] != true {
+        return Err("This project isn't archived".into());
+    }
+    let source = paths::workspace_path(string(n, "path"), env)?;
+    let journal = json!({"kind":"write","label":"Write undo journal","to":format!("{}/",paths::tilde(&env.data_dir.join("journal"),&env.home))});
+    if n["inArchive"] != true {
+        let clear = json!({"kind":"write","label":"Clear status: archived","to":format!("{}/.laci.md",paths::tilde(&source,&env.home))});
+        return Ok(json!({"dest":source,"checks":[],"ops":[clear,journal]}));
+    }
+    let raw = destination
+        .filter(|raw| !raw.trim().is_empty())
+        .map(str::to_owned)
+        .or_else(|| n["meta"]["archivedFrom"].as_str().filter(|raw| !raw.trim().is_empty()).map(str::to_owned))
+        .or_else(|| origin(env, snapshot, &source).map(|p| p.to_string_lossy().into_owned()))
+        .ok_or("Laci doesn't know where this project came from. Choose where to put it back.")?;
+    let dest = paths::workspace_path(&raw, env)?;
+    if std::fs::symlink_metadata(&dest).is_ok() {
+        return Err(format!("Something is already at {}. Choose another place.", paths::tilde(&dest, &env.home)));
+    }
+    if paths::within(&dest, &source) {
+        return Err("Can't move a folder into itself".into());
+    }
+    if in_archive(env, &dest, configured_archive(env, &config::load(env)).as_deref()) {
+        return Err("That place is in the archive. Choose a place outside it.".into());
+    }
+    let mut ops = move_ops(env, Path::new(string(n, "path")), &dest, snapshot);
+    ops.push(json!({"kind":"write","label":"Clear status: archived","to":format!("{}/.laci.md",paths::tilde(&dest,&env.home))}));
+    ops.push(journal);
+    Ok(json!({"dest":dest,"checks":[],"ops":ops}))
+}
+
 fn plan(env: &Env, snapshot: &mut Value) {
     let ids: Vec<_> = snapshot["nodes"]
         .as_object()
         .into_iter()
         .flatten()
-        .filter(|(_, n)| n["kind"] == "project" && n["archived"] != true)
+        .filter(|(_, n)| n["kind"] == "project")
         .map(|(id, _)| id.clone())
         .collect();
     for id in ids {
-        snapshot["nodes"][&id]["archivePlan"] = match archive_plan(env, snapshot, &id, None) {
-            Ok(plan) => plan,
-            Err(error) => json!({"error":error,"ops":[],"checks":[]}),
-        };
+        let node = &snapshot["nodes"][&id];
+        let (archived, inside) = (node["archived"] == true, node["inArchive"] == true);
+        let archive = (!inside).then(|| archive_plan(env, snapshot, &id, None));
+        let restore = archived.then(|| restore_plan(env, snapshot, &id, None));
+        let node = &mut snapshot["nodes"][&id];
+        for (key, plan) in [("archivePlan", archive), ("restorePlan", restore)] {
+            match plan {
+                Some(Ok(plan)) => node[key] = plan,
+                Some(Err(error)) => node[key] = json!({"error":error,"ops":[],"checks":[]}),
+                None => {
+                    if let Some(node) = node.as_object_mut() {
+                        node.remove(key);
+                    }
+                }
+            }
+        }
     }
     let dismissed = dismissed(env);
     let (hidden, shown): (Vec<_>, Vec<_>) = proposals(env, snapshot)

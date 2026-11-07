@@ -610,6 +610,21 @@ impl<'a> Tx<'a> {
         self.wrote(file, output.as_bytes());
         Ok(())
     }
+    /// Rewrites the folder `from` to `to` in the Claude Code memory file `file` (`agents::moved_paths`), keeping it
+    /// first so Undo puts its bytes back. A file Laci can't read as text, or that doesn't name `from`, stays as it is.
+    fn rewrite_memory(&mut self, file: &Path, from: &Path, to: &Path) -> Result<()> {
+        sidecar::plain_path(file)?;
+        let Some(source) = files::text(file) else { return Ok(()) };
+        let Some(output) = crate::agents::moved_paths(&source, from, to, &self.env.home) else { return Ok(()) };
+        let meta = fs::metadata(file).map_err(|e| e.to_string())?;
+        let backup = self.backup(file)?;
+        preserve(&meta, &backup)?;
+        self.log(json!({"kind":"rewrite","path":file,"backup":backup}))?;
+        files::replace(file, output.as_bytes())?;
+        preserve(&meta, file)?;
+        self.wrote(file, output.as_bytes());
+        Ok(())
+    }
     /// Notes what Laci left in `file`, on each entry of this change that keeps it, so Undo can tell a change made
     /// after this one (a line a session added, a note edited) and refuse rather than lose it. It is saved with the
     /// next entry or when the change is applied: until then the change can't be undone from the Log.
@@ -1019,6 +1034,13 @@ pub fn journals(env: &Env, limit: usize) -> Vec<Value> {
         .filter_map(|e| read_journal(&e.path()).ok())
         .collect()
 }
+/// Whether the journal `id` is of a move of the copy of AI chats, whose Undo can copy it back to another drive.
+pub fn is_copy_move(env: &Env, id: &str) -> bool {
+    valid_id(id)
+        && data(env, "journal")
+            .and_then(|dir| read_journal(&dir.join(format!("{id}.json"))))
+            .is_ok_and(|journal| journal["copyMove"].is_object())
+}
 pub fn undo(env: &Env, id: &str) -> Result<Value> {
     with_lock(env, || undo_unlocked(env, id, &mut None))
 }
@@ -1279,6 +1301,10 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
             pairs.extend(stale.into_iter().map(|s| (s, now.to_string_lossy().into_owned())));
             for f in jsonl(&target) {
                 tx.rewrite(&f, &pairs, "cwd")?;
+            }
+            // The project's own memory names the folder where it was. Other projects' memory and global files stay.
+            for f in crate::agents::memory_files(&target) {
+                tx.rewrite_memory(&f, &src, &dest)?;
             }
         }
         let connectors = snap["connectors"].as_array().cloned().unwrap_or_default();

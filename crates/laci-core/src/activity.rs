@@ -242,6 +242,10 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
                 record_journal(env, journal, None, by);
             }
             out["journal"] = undone?;
+            // What the Undo left out is told with it.
+            if let Some(warnings) = out["journal"].as_object_mut().and_then(|j| j.remove("warnings")) {
+                out["warnings"] = warnings;
+            }
             out["refresh"] = json!("all");
         } else if kind == "config" || kind == "connector" {
             let mut c = config::load(env);

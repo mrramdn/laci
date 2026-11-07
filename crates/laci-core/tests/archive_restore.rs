@@ -423,6 +423,35 @@ fn undo_of_a_restore_refuses_when_something_else_took_the_place_of_the_link() {
 }
 
 #[test]
+fn undo_of_a_restore_leaves_out_the_old_link_once_the_folder_moved_on_by_hand() {
+    for via_log in [false, true] {
+        let (_temp, env, mut service, archived, origin) = linked_back();
+        service.snapshot().unwrap();
+        let restored = service.request("restore", &json!({"id":archived})).unwrap();
+        let away = env.home.join("project").join("gabut").join("dummy2-kept");
+        fs::rename(&origin, &away).unwrap();
+        let undone = if via_log {
+            let entry = activity::read_log(&env, 5).remove(0);
+            service.request("log/undo", &json!({"id":entry["id"]})).unwrap()
+        } else {
+            service.request("undo", &json!({"id":restored["journal"]["id"]})).unwrap()
+        };
+        assert!(fs::symlink_metadata(&origin).is_err(), "no link that leads nowhere is left at the origin");
+        assert!(!archived.exists());
+        assert!(away.join("package.json").is_file());
+        assert_eq!(
+            undone["warnings"],
+            json!([format!(
+                "The old link at ~/project/gabut/dummy2 isn't back: {}, where it led, is gone",
+                paths::tilde(&archived, &env.home)
+            )]),
+            "{undone}"
+        );
+        assert!(undone["journal"]["warnings"].is_null(), "{undone}");
+    }
+}
+
+#[test]
 fn a_link_at_the_origin_that_leads_anywhere_else_is_in_the_way() {
     let (_temp, env, archive) = fixture();
     let archived = archive.join("project").join("gabut").join("dummy2");
@@ -468,12 +497,13 @@ fn a_group_linked_back_from_the_archive_goes_back_whole_and_its_projects_not_alo
     assert!(snap["nodes"][archive.join("project").to_str().unwrap()]["restorePlan"].is_null());
     let error = service.request("restore/plan", &json!({"id":group})).unwrap_err();
     assert!(error.contains("isn't an archived group"), "{error}");
-    let linked = "~/project/freelance/client/ecobiz is a link into the archive. Restore the whole group ecobiz, or \
-                  remove that link first.";
+    // Nothing there goes back whole yet, so the refusal doesn't offer it.
+    let linked = "~/project/freelance/client/ecobiz is a link into the archive. Remove that link first, or mark \
+                  ecobiz status: archived to restore it whole.";
     let plan = &snap["nodes"][one.to_str().unwrap()]["restorePlan"];
     assert_eq!(
-        (&plan["error"], &plan["reason"], &plan["dest"], &plan["ops"]),
-        (&json!(linked), &json!("linked"), &json!(origin.join("one")), &json!([]))
+        (&plan["error"], &plan["reason"], &plan["dest"], &plan["ops"], &plan["group"]),
+        (&json!(linked), &json!("linked"), &json!(origin.join("one")), &json!([]), &json!(null))
     );
     let error = service.request("restore", &json!({"id":one})).unwrap_err();
     assert_eq!(error, linked);
@@ -497,8 +527,20 @@ fn a_group_linked_back_from_the_archive_goes_back_whole_and_its_projects_not_alo
     let ops = plan["ops"].as_array().unwrap();
     assert!(ops.iter().any(|op| op["kind"] == "rename"), "the sessions of a project in it go along: {plan}");
     assert!(ops.iter().any(|op| op["label"] == "Clear status: archived"), "{plan}");
-    // A project in it still can't go back alone.
-    assert_eq!(snap["nodes"][two.to_str().unwrap()]["restorePlan"]["reason"], "linked");
+    // A project in it still can't go back alone: the refusal names the group to restore instead, and where it is.
+    let plan = &snap["nodes"][two.to_str().unwrap()]["restorePlan"];
+    assert_eq!(
+        (&plan["error"], &plan["reason"], &plan["group"]),
+        (
+            &json!(
+                "~/project/freelance/client/ecobiz is a link into the archive. Restore the whole group ecobiz, or \
+                 remove that link first."
+            ),
+            &json!("linked"),
+            &json!(group)
+        ),
+        "{plan}"
+    );
 
     let restored = service.request("restore", &json!({"id":group})).unwrap();
     assert!(!fs::symlink_metadata(&origin).unwrap().is_symlink());

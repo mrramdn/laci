@@ -760,7 +760,7 @@ fn transact_unlocked(
         Err(error) => {
             tx.journal["error"] = json!(error);
             match undo_entries(env, tx.journal["entries"].as_array().unwrap(), false) {
-                Ok(()) => {
+                Ok(_) => {
                     if recovery(&tx.journal).is_some() {
                         tx.journal["state"] = json!("failed");
                         tx.journal["error"] = json!(format!(
@@ -805,8 +805,10 @@ fn validate_entries(env: &Env, entries: &[Value]) -> Result<()> {
     Ok(())
 }
 /// Puts back what `entries` changed, newest first. `asked` is an Undo someone asked for, not the rollback of a change
-/// that failed part-way: only then is a move that is already back, or a file Laci rewrote, a reason to refuse.
-fn undo_entries(env: &Env, entries: &[Value], asked: bool) -> Result<()> {
+/// that failed part-way: only then is a move that is already back, or a file Laci rewrote, a reason to refuse. What it
+/// left out on the way, said in words, comes back.
+fn undo_entries(env: &Env, entries: &[Value], asked: bool) -> Result<Vec<String>> {
+    let mut left_out = vec![];
     validate_entries(env, entries)?;
     // A folder back where it was while its new place is gone was moved back by a later change, such as a Restore after
     // an Archive. Undoing the files of this one would make that place again around them.
@@ -925,20 +927,34 @@ fn undo_entries(env: &Env, entries: &[Value], asked: bool) -> Result<()> {
             "unlink" => {
                 // The folder is back in the archive by now: the link leads to it again.
                 let link = journal_path(env, e, "path")?;
+                let target = journal_path(env, e, "target")?;
+                // A removal that failed left the link where it was, which is as good as put back.
+                if platform::path::links_to(&link, &target) {
+                    continue;
+                }
                 if exists(&link) {
                     return Err(format!(
                         "Something is at {} now, so Undo can't put the old link back",
                         paths::tilde(&link, &env.home)
                     ));
                 }
-                platform::symlink(&journal_path(env, e, "target")?, &link)?;
+                // A folder moved on by hand since didn't go back to the archive, and a link to it would lead nowhere.
+                if fs::metadata(&target).is_err() {
+                    left_out.push(format!(
+                        "The old link at {} isn't back: {}, where it led, is gone",
+                        paths::tilde(&link, &env.home),
+                        paths::tilde(&target, &env.home)
+                    ));
+                    continue;
+                }
+                platform::symlink(&target, &link)?;
             }
             "trash" => {}   // The system trash owns recovery, as in v1.
             "cleared" => {} // Build output comes back with the next install or build.
             _ => return Err("Unknown journal entry".into()),
         }
     }
-    Ok(())
+    Ok(left_out)
 }
 fn restore(src: &Path, dest: &Path) -> Result<()> {
     sidecar::plain_path(src)?;
@@ -1039,9 +1055,13 @@ pub(crate) fn undo_unlocked(env: &Env, id: &str, settled: &mut Option<Value>) ->
             .map(|e| journal_path(env, e, "to"))
             .collect::<Result<Vec<_>>>()?,
     )?;
-    undo_entries(env, entries, true)?;
+    let left_out = undo_entries(env, entries, true)?;
     journal["state"] = json!("undone");
     files::replace(&file, &serde_json::to_vec_pretty(&journal).map_err(|e| e.to_string())?)?;
+    // Told to whoever asked for the Undo, not kept in the journal.
+    if !left_out.is_empty() {
+        journal["warnings"] = json!(left_out);
+    }
     Ok(journal)
 }
 /// Undo of a move of the copy of AI chats, from the journal `file`: the setting goes back to the folder the copy came
@@ -2620,5 +2640,27 @@ mod tests {
             });
             assert_eq!(with_lock(env, || Ok(1)), Ok(1));
         }
+    }
+
+    /// A restore that stops after it journaled the old link but before the link went leaves the link where it was,
+    /// which its rollback counts as put back rather than as something in the way.
+    #[test]
+    fn a_rollback_counts_a_link_that_was_never_removed_as_put_back() {
+        let (_temp, env, src, _) = home();
+        let link = env.home.join("project").join("old");
+        platform::symlink(&src, &link).unwrap();
+        let error = transact(&env, "Restore", Value::Null, |tx| {
+            tx.log(json!({"kind":"unlink","path":link,"target":src}))?;
+            Err("Permission denied".into())
+        })
+        .unwrap_err();
+        assert_eq!(error, "Permission denied");
+        let journal = journals(&env, 1).remove(0);
+        assert_eq!(
+            (&journal["state"], &journal["error"]),
+            (&json!("undone"), &json!("Permission denied")),
+            "{journal}"
+        );
+        assert!(platform::path::links_to(&link, &src));
     }
 }

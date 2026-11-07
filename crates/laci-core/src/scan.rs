@@ -1359,21 +1359,34 @@ pub fn restore_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
     if place.is_absolute()
         && let Some((link, real)) = linked_parent(env, &place, &roots)
     {
-        // The group by the name the scan shows it, when it is in view.
-        let group = all_nodes(snapshot)
-            .find(|g| {
-                archived_group(g) && platform::path::canonical(Path::new(string(g, "path"))).is_ok_and(|p| p == real)
-            })
-            .map(|g| string(g, "name").to_owned())
-            .unwrap_or_else(|| real.file_name().unwrap_or_default().to_string_lossy().into_owned());
-        return Ok(refused_restore(
+        // The archived group the link leads to, by the name the scan shows it, when it is in view.
+        let group = all_nodes(snapshot).find(|g| {
+            archived_group(g) && platform::path::canonical(Path::new(string(g, "path"))).is_ok_and(|p| p == real)
+        });
+        let link = paths::tilde(&link, &env.home);
+        let Some(group) = group else {
+            // A folder in the archive without status: archived has nothing that goes back whole yet.
+            let name = real.file_name().unwrap_or_default().to_string_lossy();
+            return Ok(refused_restore(
+                format!(
+                    "{link} is a link into the archive. Remove that link first, or mark {name} status: archived to \
+                     restore it whole."
+                ),
+                "linked",
+                Some(place.as_path()),
+            ));
+        };
+        let mut plan = refused_restore(
             format!(
-                "{} is a link into the archive. Restore the whole group {group}, or remove that link first.",
-                paths::tilde(&link, &env.home)
+                "{link} is a link into the archive. Restore the whole group {}, or remove that link first.",
+                string(group, "name")
             ),
             "linked",
             Some(place.as_path()),
-        ));
+        );
+        // Where the group is, so whoever asked can restore it instead.
+        plan["group"] = group["path"].clone();
+        return Ok(plan);
     }
     // A link at that place is checked by the folder it is in: where it leads doesn't decide where Laci may write.
     let linked = std::fs::symlink_metadata(&place).is_ok_and(|meta| meta.is_symlink());

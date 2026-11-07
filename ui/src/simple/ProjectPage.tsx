@@ -219,6 +219,15 @@ function Project({ n }: { n: Node }) {
           >
             {said.continueAi}
           </MoreMenu>
+          {n.archived ? (
+            <Button
+              kind="outline"
+              icon="undo-2"
+              onClick={() => useApp.setState({ modal: { kind: "restore", id: n.id } })}
+            >
+              {said.restoreButton}
+            </Button>
+          ) : null}
           <Button kind="text" icon="editor" onClick={() => external(n.id, "editor")}>
             {said.openIn(editorName(apps))}
           </Button>

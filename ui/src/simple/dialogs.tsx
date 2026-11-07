@@ -1,8 +1,8 @@
-// Simple's own Delete, Archive and Free up space sheets (design-research §3.7). Archive comes
+// Simple's own Delete, Archive, Restore and Free up space sheets (design-research §3.7). Archive comes
 // before the system's bin, a destructive button is never the filled one, and what can't be undone
 // waits for a Countdown that asks nothing of the engine until it runs out. They send the requests
 // Detailed's dialogs send, through run() and changed(), so the toast and its Undo are the same in
-// both designs. Detailed keeps its own dialogs in ../dialogs.tsx, which leaves these three to
+// both designs. Detailed keeps its own dialogs in ../dialogs.tsx, which leaves these four to
 // Simple.
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch, Ref, SetStateAction } from "react";
@@ -17,9 +17,9 @@ import { fixable, issueCount, safetyIssues, toneOf } from "./model";
 import { openFix } from "./state";
 import { Button, Callout, Countdown, Disclosure, Sheet, StatusChip } from "./ui";
 
-type Kind = "delete" | "archive" | "clean";
-const KINDS: readonly string[] = ["delete", "archive", "clean"];
-/** Whether `modal` is one of the three sheets drawn here. */
+type Kind = "delete" | "archive" | "restore" | "clean";
+const KINDS: readonly string[] = ["delete", "archive", "restore", "clean"];
+/** Whether `modal` is one of the four sheets drawn here. */
 const isOwn = (modal: Modal): modal is { kind: Kind; id: string } =>
   Boolean(modal && KINDS.includes(modal.kind));
 
@@ -77,7 +77,7 @@ function ProjectSheet({ kind, node }: { kind: Kind; node: Node }) {
   // holds the focus until then.
   useLayoutEffect(() => {
     if (kind === "clean" || (kind === "delete" && node.archived)) cancel.current?.focus();
-    else if (kind === "archive")
+    else if (kind === "archive" || kind === "restore")
       cancel.current?.closest<HTMLElement>('[role="dialog"]')?.focus();
     // Only when the sheet opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -87,7 +87,13 @@ function ProjectSheet({ kind, node }: { kind: Kind; node: Node }) {
     <Sheet
       title={said[kind].title(node.label)}
       // A project in the archive already has no Archive instead to recommend.
-      description={kind === "delete" && node.archived ? said.delete.introArchived : said[kind].intro}
+      description={
+        kind === "delete" && node.archived
+          ? said.delete.introArchived
+          : kind === "restore" && !node.inArchive
+            ? said.restore.introInPlace
+            : said[kind].intro
+      }
       onClose={close}
       // While a Countdown runs, its own Cancel is the one to use.
       footer={
@@ -102,6 +108,8 @@ function ProjectSheet({ kind, node }: { kind: Kind; node: Node }) {
         <DeleteBody {...body} />
       ) : kind === "archive" ? (
         <ArchiveBody {...body} />
+      ) : kind === "restore" ? (
+        <RestoreBody {...body} />
       ) : (
         <CleanBody {...body} />
       )}
@@ -611,6 +619,170 @@ function ArchiveBody({ node, stage, setStage, opener }: Body) {
           ) : null}
           {/* Simple's archive keeps the downloaded packages: Free up space deletes them, on its own. */}
           <Steps ops={(plan ?? last)?.ops.filter((op) => op.kind !== "delete")} home={home} />
+        </dl>
+      </Disclosure>
+    </>
+  );
+}
+
+// --- Restore -------------------------------------------------------------------------------------
+
+/**
+ * Restore: a project in the archive goes back where it came from, with its AI chats; one only
+ * marked archived loses the mark in place. Where it goes can be changed under Show details, and
+ * must be when Laci doesn't know where it came from.
+ */
+function RestoreBody({ node, stage, setStage }: Body) {
+  const home = useApp((s) => s.snapshot!.home);
+  const historyPending = useApp((s) => s.historyPending);
+  const moves = Boolean(node.inArchive);
+  const [destination, setDestination] = useState(() =>
+    node.restorePlan?.dest && !node.restorePlan.error ? tilde(node.restorePlan.dest, home) : "",
+  );
+  const [review, setReview] = useState<{
+    destination: string;
+    plan?: ArchivePlan;
+    error?: string;
+  } | null>(null);
+  const [failure, setFailure] = useState("");
+  const [note, setNote] = useState("");
+  const edited = useRef(false);
+  const noteId = useId();
+  const aboutId = useId();
+  const field = useId();
+  const sending = stage === "send";
+  // The plan is asked for when the sheet opens and again once a place being typed stops changing.
+  useEffect(() => {
+    if (sending) return;
+    let live = true;
+    const timer = setTimeout(
+      () => {
+        const path = moves ? expandHome(destination.trim(), home) : "";
+        if (path && !isAbsolutePath(path)) {
+          setReview({ destination, error: said.restore.fullPath });
+          return;
+        }
+        void api<ArchivePlan>("restore/plan", {
+          id: node.id,
+          ...(path ? { destination: path } : {}),
+        }).then(
+          (plan) => {
+            if (live) setReview({ destination, plan, error: plan.error });
+          },
+          (error) => {
+            if (live) setReview({ destination, error: errorText(error) });
+          },
+        );
+      },
+      edited.current ? 200 : 0,
+    );
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [node, destination, home, moves, sending]);
+  const current = review?.destination === destination ? review : null;
+  const plan = current?.plan && !current.error ? current.plan : undefined;
+  const problem = failure || current?.error || "";
+  const restore = async () => {
+    if (!plan) return;
+    setFailure("");
+    setNote("");
+    setStage("send");
+    let ran = false;
+    await run(
+      async () => {
+        ran = true;
+        const modal = useApp.getState().modal;
+        const change = await api<Change>("restore", {
+          id: node.id,
+          ...(moves ? { destination: plan.dest } : {}),
+        });
+        if (useApp.getState().modal === modal) close();
+        changed(change, said.restore.restored(node.label), said.restore.restoredNote);
+        selectWhenReady(plan.dest);
+      },
+      said.restore.restoring(node.label),
+      {
+        history: true,
+        onError: (error) => {
+          setFailure(errorText(error));
+          setStage("choose");
+        },
+      },
+    );
+    if (!ran) {
+      setNote(said.busy);
+      setStage("choose");
+    }
+  };
+  return (
+    <>
+      {plan ? (
+        moves ? (
+          <p>{said.restore.goesBack(tilde(plan.dest, home))}</p>
+        ) : null
+      ) : !current ? (
+        <Working text={said.restore.checking} status />
+      ) : moves && !destination && node.restorePlan?.error ? (
+        <Callout tone="soon">{said.restore.unknown}</Callout>
+      ) : (
+        <>
+          <Callout tone="soon">
+            {failure ? said.restore.failed(node.label) : said.restore.cant(node.label)}
+          </Callout>
+          {failure || !moves ? null : <p>{said.restore.elsewhere}</p>}
+        </>
+      )}
+      <Announce text={failure ? said.restore.failed(node.label) : ""} />
+      {sending ? (
+        <Working text={said.restore.restoring(node.label)} />
+      ) : (
+        <div className="s-choices">
+          <div className="s-choice">
+            <Button
+              kind="filled"
+              icon="undo-2"
+              disabled={!plan || historyPending}
+              aria-describedby={note ? `${noteId} ${aboutId}` : aboutId}
+              onClick={() => void restore()}
+            >
+              {said.restore.restore}
+            </Button>
+            {note ? <p id={noteId}>{note}</p> : null}
+            <p id={aboutId} className="s-quiet">
+              {said.restore.note}
+            </p>
+          </div>
+        </div>
+      )}
+      <Disclosure>
+        <dl className="s-facts">
+          {moves ? (
+            <>
+              <dt>
+                <label htmlFor={field}>{said.details.goesTo}</label>
+              </dt>
+              <dd>
+                <input
+                  id={field}
+                  className="s-input s-mono"
+                  value={destination}
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={stage !== "choose"}
+                  onChange={(event) => {
+                    edited.current = true;
+                    setDestination(event.target.value);
+                    setFailure("");
+                    setNote("");
+                  }}
+                />
+              </dd>
+            </>
+          ) : null}
+          <Found text={problem} />
+          <Steps ops={plan?.ops} home={home} />
         </dl>
       </Disclosure>
     </>

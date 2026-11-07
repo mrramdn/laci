@@ -130,6 +130,7 @@ const FORMS: Record<string, [RegExp, Saying][]> = {
   ],
   journal: [
     [/^Archive (.+)$/, ([name]) => say.archived(name)],
+    [/^Restore (.+)$/, ([name]) => say.restored(name)],
     [/^Move (.+?) → /, ([name]) => say.moved(name)],
     [/^Reconnect .+? to (.+)$/, ([name]) => say.reconnected(name)],
     [/^Finish (\d+) half-done moves?$/, ([moves]) => say.finishedMoves(Number(moves))],
@@ -198,6 +199,7 @@ const SAYS: Record<string, Telling> = {
   undid: () => forms.undid,
   moved: of("name", forms.moved),
   archived: of("name", forms.archived),
+  restored: of("name", forms.restored),
   reconnected: of("name", forms.reconnected),
   chatsForGone: (_parts, entry) => forms.chatsForGone[leftover(entry)],
   chatsForDeleted: (parts, entry) => {

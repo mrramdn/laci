@@ -412,7 +412,7 @@ listed. The font packages are under Fonts.
 | `@xterm/xterm` | 6.0.0 | MIT | [source](https://github.com/xtermjs/xterm.js) |
 | `aria-hidden` | 1.2.6 | MIT | [source](https://github.com/theKashey/aria-hidden) |
 | `detect-node-es` | 1.1.0 | MIT | [source](https://github.com/thekashey/detect-node) |
-| `dompurify` | 3.4.16 | (MPL-2.0 OR Apache-2.0) | [source](https://github.com/cure53/DOMPurify) |
+| `dompurify` | 3.4.17 | (MPL-2.0 OR Apache-2.0) | [source](https://github.com/cure53/DOMPurify) |
 | `get-nonce` | 1.0.1 | MIT | [source](https://github.com/theKashey/get-nonce) |
 | `marked` | 17.0.6 | MIT | [source](https://marked.js.org) |
 | `react` | 19.3.0 | MIT | [source](https://react.dev/) |
@@ -616,7 +616,7 @@ Used by: `@tauri-apps/api` 2.12.4
 
 #### Apache License 2.0
 
-Used by: `dompurify` 3.4.16
+Used by: `dompurify` 3.4.17
 
 ```text
                                  Apache License
@@ -1181,7 +1181,7 @@ SOFTWARE.
 
 #### Mozilla Public License 2.0
 
-Used by: `dompurify` 3.4.16
+Used by: `dompurify` 3.4.17
 
 ```text
 Mozilla Public License Version 2.0
@@ -1876,7 +1876,7 @@ Crates that only run while building are included. Crates that only tests need ar
 | `rustls-native-certs` | 0.8.5 | Apache-2.0 OR ISC OR MIT | [source](https://github.com/rustls/rustls-native-certs) |
 | `rustls-pki-types` | 1.15.1 | MIT OR Apache-2.0 | [source](https://github.com/rustls/pki-types) |
 | `rustls-platform-verifier` | 0.7.1 | MIT OR Apache-2.0 | [source](https://github.com/rustls/rustls-platform-verifier) |
-| `rustls-webpki` | 0.103.15 | ISC | [source](https://github.com/rustls/webpki) |
+| `rustls-webpki` | 0.103.16 | ISC | [source](https://github.com/rustls/webpki) |
 | `same-file` | 1.0.6 | Unlicense/MIT | [source](https://github.com/BurntSushi/same-file) |
 | `schemars` | 0.8.22 | MIT | [source](https://github.com/GREsau/schemars) |
 | `schemars` | 0.9.0 | MIT | [source](https://github.com/GREsau/schemars) |
@@ -9156,7 +9156,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 #### ISC License
 
-Used by: `rustls-webpki` 0.103.15
+Used by: `rustls-webpki` 0.103.16
 
 ```text
 Except as otherwise noted, this project is licensed under the following

@@ -106,9 +106,10 @@ for (const name of present.filter((name) => name.endsWith(".png"))) {
 console.log(`PNG: ${pngs} files at the sizes their names give`);
 
 // brand-icons.mjs writes into the folder above its own, so it runs from a copy in a temporary folder
-// laid out like the repo. Its SVG sources and the app's marks are compared every time; the icons
-// only when the render tools are installed. Another resvg version may draw slightly different
-// pixels, so the report names the versions.
+// laid out like the repo, with the two files it reads outlines from: the wordmark, and the social
+// preview, which keeps its tagline's. Its SVG sources and the app's marks are compared every time;
+// the icons only when the render tools are installed. Another resvg version may draw slightly
+// different pixels, so the report names the versions.
 const versions = {};
 for (const tool of ["resvg", "magick"]) {
   const result = spawnSync(tool, ["--version"], { encoding: "utf8" });
@@ -125,6 +126,7 @@ try {
   for (const file of [
     "scripts/brand-icons.mjs",
     "docs/brand/src/laci-wordmark.svg",
+    "docs/brand/src/laci-social.svg",
   ]) {
     mkdirSync(path.dirname(path.join(temp, file)), { recursive: true });
     copyFileSync(path.join(root, file), path.join(temp, file));

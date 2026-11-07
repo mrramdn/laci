@@ -4,6 +4,18 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 2.0.1, 2.1.0, 2.2.0 and 2.3.0 were released from `main` without git tags or GitHub releases. They are the merges of pull requests #4 (`bf845a1`), #5 (`538da4e`), #6 (`8098403`) and #8 (`66956b2`).
 
+## [Unreleased]
+
+### Added
+
+- **An archived group goes back whole.** A folder in the archive whose own `.laci.md` says `status: archived` is an archived group: Restore puts the whole folder back where it came from, with every project in it and their agent history, and clears its `status`, `archivedFrom` and `archivedAt`. It gets `restorePlan` like a project; other folders in the archive don't. `restore_project` takes a group by name or path; `list_projects` with `filter: archived` still lists projects only.
+- **A link left where a folder was is removed on Restore.** When a project or group was moved into the archive by hand and a link left at its old place that leads to it, Restore removes that link first (a new step, *Remove the old link*, `kind: "unlink"`) and puts the folder there. Only a link that leads exactly to the folder being restored is removed; a link that leads anywhere else is still in the way (`occupied`). The Log says *Removed the old link*, and Undo moves the folder back into the archive and makes the link again, or refuses before changing anything when something else is there since.
+
+### Changed
+
+- **The archive folder is looked through one folder deeper** than other scan locations, since its first level is the name of the scan location a project came from: a project keeps the depth it had in `~/project` or `~/tugas`. `_archive/` folders inside scan locations are looked through as before.
+- **A project inside a group that is linked back from the archive can't go back alone.** Its restore says why (`reason: "linked"`, with where it would have gone): the group's link would put it back into the archive. Restore the whole group, or remove that link first.
+
 ## [3.3.0] - 2026-11-07
 
 ### Added

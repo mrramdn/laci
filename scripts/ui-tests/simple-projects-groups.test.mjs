@@ -366,7 +366,13 @@ export async function theProjectsPageHasAHeaderForEachFolderAndASwitchThatIsOn()
   assert.equal(group.textContent, words.projects.groupBy);
   assert.equal(group.props["aria-checked"], true);
   assert.deepEqual(heads(page).map(headName), ["clients", "project", "side", "thesis"]);
-  assert.deepEqual(heads(page).map(headCount), ["· 2 projects", "· 1 project", "· 2 projects", "· 1 project"]);
+  // side holds zine too, archived, which Archive group… moves with the others: its heading says both.
+  assert.deepEqual(heads(page).map(headCount), [
+    "· 2 projects",
+    "· 1 project",
+    "· 2 of 3 projects",
+    "· 1 project",
+  ]);
   // A folder's heading says whether its cards are shown, and what they are.
   assert.ok(heads(page).every((h) => h.props["aria-expanded"] === true));
   const first = heads(page)[0];
@@ -399,7 +405,7 @@ export async function aFoldedSectionHidesItsCardsAndSaysSo() {
   assert.deepEqual(cardNames(page), ["acme-store", "kopi-landing", "infra-notes", "campus-lms"]);
   // The heading stays, with how many it holds.
   assert.equal(headName(heads(page)[2]), "side");
-  assert.equal(headCount(heads(page)[2]), "· 2 projects");
+  assert.equal(headCount(heads(page)[2]), "· 2 of 3 projects");
   click(page, heads(page)[2]);
   assert.ok(heads(page).every((h) => h.props["aria-expanded"] === true));
   assert.equal(cardNames(page).length, 6);
@@ -524,6 +530,112 @@ export async function aFoldersHeadingArchivesTheWholeGroup() {
   // Among what is archived already, no heading offers Archive group: side holds zine there.
   const archived = projectsPage(scan(), { filter: "archived" });
   assert.equal(groupArchives(archived.page).length, 0);
+}
+
+export async function aHeadingCountsWhatItsArchiveGroupMoves() {
+  // side holds 3 projects (the engine's projectCount): dotfiles, habit-app and zine, archived where
+  // it is. All shows 2 cards; Archive group… moves the 3, and the heading says so.
+  const s = scan();
+  assert.equal(node(s, "side").projectCount, 3);
+  assert.equal(words.projects.groupCountOf(2, 3), "· 2 of 3 projects");
+  const { page } = projectsPage(s);
+  const side = heads(page).find((head) => headName(head) === "side");
+  assert.equal(headCount(side), words.projects.groupCountOf(2, 3));
+  // A search leaves one card of clients' 2: the heading still says what the group holds.
+  const search = projectsPage(scan(), { query: "acme" });
+  assert.deepEqual(heads(search.page).map(headCount), []);
+  const two = projectsPage(scan(), { query: "a" });
+  const clients = heads(two.page).find((head) => headName(head) === "clients");
+  const shown = cardNames(two.page).filter((name) => ["acme-store", "kopi-landing"].includes(name));
+  assert.equal(
+    headCount(clients),
+    shown.length === 2 ? words.projects.groupCount(2) : words.projects.groupCountOf(shown.length, 2),
+  );
+  // A folder whose heading moves nothing counts its cards alone.
+  const archived = projectsPage(scan(), { filter: "archived" });
+  const sideArchived = heads(archived.page).find((head) => headName(head) === "side");
+  assert.equal(headCount(sideArchived), words.projects.groupCount(1));
+}
+
+export async function aHeadingsButtonsAreNamedByWhatTheyShow() {
+  // Each button beside a folder's heading has a name that starts with its own words, so that it is
+  // found by what it shows (Archive group…, Restore…), and then says which folder.
+  const named = (page) =>
+    page
+      .all(
+        (n) =>
+          n.type === "button" &&
+          n.props["aria-label"] &&
+          [words.projects.archiveGroup, words.projects.restore].includes(n.textContent),
+      )
+      .map((n) => [n.textContent, n.props["aria-label"]]);
+  const all = named(projectsPage().page);
+  const archived = named(projectsPage(scan(), { filter: "archived" }).page);
+  const marked = named(projectsPage(markedThesis(), { filter: "archived" }).page);
+  assert.ok(all.length && archived.length && marked.length);
+  for (const [shows, name] of [...all, ...archived, ...marked])
+    assert.ok(name.startsWith(shows), `"${name}" starts with "${shows}"`);
+  assert.deepEqual(all[0], [words.projects.archiveGroup, "Archive group… clients"]);
+  assert.deepEqual(archived[0], [words.projects.restore, "Restore… the group old-clients"]);
+  assert.ok(marked.some(([, name]) => name === "Restore… thesis: take the archived mark off"));
+}
+
+/** The demo home with an archived group, 2024, inside old-clients, holding a project of its own. */
+function nestedArchive() {
+  const s = scan();
+  const outer = `${GROUP}`;
+  const inner = `${GROUP}/2024`;
+  const template = s.nodes[GROUP];
+  add(s, inner, "folder", {
+    parent: outer,
+    ...structuredClone(template),
+    id: inner,
+    path: inner,
+    name: "2024",
+    label: "2024",
+    children: [],
+    restorePlan: {
+      error: "2024 is in the archived group old-clients, which goes back whole.",
+      reason: "inGroup",
+      dest: `${ROOT}/old-clients/2024`,
+      group: outer,
+      ops: [],
+      checks: [],
+    },
+  });
+  s.nodes[inner].parent = outer;
+  const mobile = `${inner}/mobile`;
+  add(s, mobile, "project", {
+    parent: inner,
+    ...structuredClone(s.nodes[`${GROUP}/batik-shop`]),
+    id: mobile,
+    path: mobile,
+    name: "mobile",
+    label: "mobile",
+    restorePlan: { ...s.nodes[inner].restorePlan, dest: `${ROOT}/old-clients/2024/mobile` },
+  });
+  s.nodes[mobile].parent = inner;
+  return s;
+}
+
+export async function aProjectInAnArchivedGroupInsideAnotherIsUnderTheOuterGroup() {
+  // The engine puts back the outermost archived group: old-clients' heading holds mobile too, and its
+  // Restore… is the only one; 2024 has no heading of its own.
+  const s = nestedArchive();
+  assert.deepEqual(sectionsOf(s, { filter: "archived", sort: "name" }), [
+    ["_archive", ["old-portfolio"]],
+    ["_archive / old-clients", ["batik-shop", "mobile", "warung-pos"]],
+    ["side", ["zine"]],
+  ]);
+  const { page, app } = projectsPage(s, { filter: "archived", sort: "name" });
+  const [restore, ...more] = groupRestores(page);
+  assert.deepEqual(more, []);
+  assert.equal(restore.props["aria-label"], words.projects.restoreGroupFor("old-clients"));
+  // Its count is what Restore… puts back: the 3 projects at any depth.
+  const outer = heads(page).find((head) => headName(head) === "_archive / old-clients");
+  assert.equal(headCount(outer), words.projects.groupCount(3));
+  click(page, restore);
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: GROUP });
 }
 
 /** The demo home with thesis marked archived in its own .laci.md, where it is. */

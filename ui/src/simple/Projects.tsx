@@ -6,6 +6,7 @@ import { Icon } from "../common";
 import {
   canArchiveGroup,
   deadlineInfo,
+  groupSize,
   isArchivedGroup,
   isMarkedFolder,
   linkedAlone,
@@ -236,6 +237,12 @@ function Section({
   const group = section.group;
   const archived = group && restorable(section) ? group : null;
   const archivable = archiving && group && canArchiveGroup(group) ? group : null;
+  // The count says how many cards are here. When the heading moves the whole folder and that holds
+  // more (a filter or a search left some out, or a folder inside it has a heading of its own), it
+  // says both: those shown, of all that Archive group… or Restore… moves.
+  const moves = archived ?? archivable;
+  const shown = section.projects.length;
+  const all = moves ? groupSize(snapshot.nodes, moves) : shown;
   return (
     <section className="s-group">
       <div className="s-group-bar">
@@ -250,7 +257,7 @@ function Section({
             <Icon name="chevron-down" />
             <span className="s-group-name">{section.label}</span>
             <span className="s-group-count">
-              {said.groupCount(section.projects.length)}
+              {all > shown ? said.groupCountOf(shown, all) : said.groupCount(shown)}
             </span>
           </button>
         </h2>

@@ -330,6 +330,12 @@ export const projects = {
   groupBy: "Group by folder",
   noGroup: "Not in a group",
   groupCount: (n: number) => `· ${count(n, "project")}`,
+  /**
+   * A folder's heading when it shows fewer projects than it holds (a filter, a search, or folders
+   * inside it with headings of their own): those shown, of all the projects in it, which is what
+   * Archive group… or Restore… moves.
+   */
+  groupCountOf: (shown: number, all: number) => `· ${shown} of ${count(all, "project")}`,
   lastChange: (when: string) => `Last change ${when}`,
   noChange: "No changes yet",
   chats: (n: number) => count(n, "AI chat"),
@@ -350,13 +356,17 @@ export const projects = {
   restoreGroup: "Restore its group…",
   /** The same project put back alone, in a place of its own chosen in the sheet. */
   restoreAlone: "Restore it alone…",
-  /** Beside the heading of an archived group under Archived: it goes back whole. */
-  restoreGroupFor: (group: string) => `Restore the group ${group}`,
+  /**
+   * The names of the buttons beside a folder's heading, which a screen reader says: each starts with
+   * the button's own words (`restore`, `archiveGroup`), so that it is found by what it shows.
+   * Beside the heading of an archived group under Archived: it goes back whole.
+   */
+  restoreGroupFor: (group: string) => `Restore… the group ${group}`,
   /** Beside the heading of a folder only marked archived: the mark goes, the folder stays. */
-  unmarkGroupFor: (group: string) => `Take the archived mark off ${group}`,
+  unmarkGroupFor: (group: string) => `Restore… ${group}: take the archived mark off`,
   /** Beside a folder's heading: the folder goes to the archive whole, with every project in it. */
   archiveGroup: "Archive group…",
-  archiveGroupFor: (group: string) => `Archive the group ${group}`,
+  archiveGroupFor: (group: string) => `Archive group… ${group}`,
   /**
    * A project whose old place is reached through a link into the archive, with no archived group to
    * put back with it: the link has to go first.
@@ -1991,6 +2001,8 @@ export const dialogs = {
     safeGroup: "Laci found nothing in its projects that could be lost.",
     onlyHidden: (n: number) =>
       `You hid ${count(n, "warning")} about this project. Show details lists ${n === 1 ? "it" : "them"}.`,
+    onlyHiddenGroup: (n: number) =>
+      `You hid ${count(n, "warning")} about the projects in it. Show details lists ${n === 1 ? "it" : "them"}.`,
     backUpFirst: "Back up first",
     backUpNote: (problem: string) =>
       `Laci helps you with “${problem}” first. Archive it after that.`,
@@ -2035,6 +2047,7 @@ export const dialogs = {
     introInPlace: "Laci takes away its archived mark. The folder stays where it is.",
     goesBack: (where: string) => `It goes back to ${where}.`,
     unknown: "Laci doesn’t know where this project came from. Choose where to put it back under Show details.",
+    unknownGroup: "Laci doesn’t know where this group came from. Choose where to put it back under Show details.",
     /** Why it can't go back to `where` (the engine's reason), and that another place can be chosen. */
     why: {
       occupied: (where: string) =>

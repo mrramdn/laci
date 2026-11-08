@@ -49,7 +49,9 @@ interface Row {
 }
 /**
  * The archived groups and the projects in the archive, as rows: newest first, and after each group
- * what it holds, by name.
+ * what it holds, by its place in the group. What an archived group holds, an archived group inside it
+ * and what that one holds too, is listed under the outermost one: that is the group the engine puts
+ * back with it.
  */
 export function archiveRows(nodes: Record<string, Node>): Row[] {
   const listed = Object.values(nodes).filter(
@@ -66,8 +68,9 @@ export function archiveRows(nodes: Record<string, Node>): Row[] {
   const rows: Row[] = [];
   const add = (n: Node, depth: number) => {
     rows.push({ n, depth });
+    // By path, so that a group inside comes just before what it holds.
     for (const inside of (inGroup.get(n.id) ?? []).sort((a, b) =>
-      a.label.localeCompare(b.label),
+      a.path.localeCompare(b.path),
     ))
       add(inside, depth + 1);
   };
@@ -174,7 +177,7 @@ export function ArchiveView() {
                   {group ? <Icon name="folder" className="sm" /> : null}
                   <span className="name">{n.label}</span>
                   {inside ? (
-                    <span className="d" title={inside}>
+                    <span className={group ? "d whole" : "d"} title={inside}>
                       {inside}
                     </span>
                   ) : (
@@ -259,7 +262,8 @@ export function ArchiveView() {
                 >
                   {folder ? <Icon name="folder" className="sm" /> : null}
                   <span className="name">{n.label}</span>
-                  <span className="d mono">{tilde(n.path, home)}</span>
+                  {/* A folder's "Group of N projects" follows its place, as an archived group's does. */}
+                  <span className={folder ? "d mono whole" : "d mono"}>{tilde(n.path, home)}</span>
                   {folder ? (
                     <span className="note">{said.group(groupSize(nodes, n))}</span>
                   ) : null}

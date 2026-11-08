@@ -13,10 +13,10 @@ const ACME = "/home/demo/project/clients/acme-store";
  * interface's `api`, `invoke` its direct commands. The Tauri API finds the desktop through the
  * page's `window`, so there is a stand-in for it while `body` runs.
  */
-async function onPreview(body, options = {}) {
+async function onPreview(body, options = {}, deps = {}) {
   globalThis.window = { crypto: globalThis.crypto };
   try {
-    load("preview/ipc.ts").installIpc({
+    load("preview/ipc.ts", deps).installIpc({
       design: "detailed",
       theme: "light",
       ...options,
@@ -478,6 +478,76 @@ export async function aProjectInAGroupThePreviewArchivedGoesBackAloneToAPlaceOfI
     const after = (await request("snapshot")).nodes;
     assert.deepEqual([after[acme].archived, after[clients].archived], [false, true]);
   });
+}
+
+export async function aGroupInsideAGroupThePreviewArchivedGoesBackWithItAsTheEngineSays() {
+  // clients holds 2024, a folder whose own .laci.md says archived, with a project in it, and plain,
+  // a folder with none. Archived with clients, 2024 is an archived group inside it: the engine
+  // refuses it alone without a place (reason "inGroup", naming clients), as a project in it.
+  const clients = "/home/demo/project/clients";
+  const nested = `${clients}/2024`;
+  const plain = `${clients}/plain`;
+  const site = `${nested}/site`;
+  const fixtures = JSON.parse(
+    readFileSync(new URL("../../ui/src/preview/fixtures.json", import.meta.url), "utf8"),
+  );
+  const nodes = fixtures.snapshot.nodes;
+  const folder = (path, meta) => ({
+    ...structuredClone(nodes[clients]),
+    id: path,
+    path,
+    name: path.split("/").pop(),
+    label: path.split("/").pop(),
+    parent: clients,
+    children: [],
+    meta,
+    archivePlan: undefined,
+    projectCount: undefined,
+  });
+  nodes[nested] = folder(nested, { status: "archived" });
+  nodes[plain] = folder(plain, {});
+  nodes[site] = {
+    ...structuredClone(nodes[`${clients}/kopi-landing`]),
+    id: site,
+    path: site,
+    name: "site",
+    label: "site",
+    parent: nested,
+  };
+  nodes[nested].children = [site];
+  await onPreview(
+    async ({ request }) => {
+      const plan = await request("archive/plan", { id: clients });
+      await request("archive", { id: clients, destination: plan.dest, trashHeavy: false });
+      const after = (await request("snapshot")).nodes;
+      const { isArchivedGroup, archivedGroupOf } = load("helpers.ts");
+      assert.deepEqual(
+        [nested, site].map((id) => [after[id].restorePlan?.reason, after[id].restorePlan?.group]),
+        [
+          ["inGroup", clients],
+          ["inGroup", clients],
+        ],
+      );
+      assert.equal(isArchivedGroup(after[nested]), true);
+      // A plain folder in it has no plan of its own: it isn't put back by itself.
+      assert.equal(after[plain].restorePlan, undefined);
+      // The outermost group is the one listed and restored for both.
+      assert.equal(archivedGroupOf(after, after[site])?.id, clients);
+      await assert.rejects(request("restore", { id: nested }), /in the archived group clients/);
+      await assert.rejects(request("restore", { id: site }), /in the archived group clients/);
+      // With a place of its own, it goes back alone, with what it holds.
+      const away = "/home/demo/project/2024";
+      assert.equal((await request("restore/plan", { id: nested, destination: away })).dest, away);
+      await request("restore", { id: nested, destination: away });
+      const back = (await request("snapshot")).nodes;
+      assert.deepEqual(
+        [nested, site, clients].map((id) => back[id].archived),
+        [false, false, true],
+      );
+    },
+    {},
+    { "./fixtures.json": fixtures },
+  );
 }
 
 export async function theCopyOfChatsIsToldAsTheEngineTellsIt() {

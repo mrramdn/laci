@@ -1137,6 +1137,12 @@ export async function aFolderOfProjectsArchivesAsAGroupAndNamesEachProjectsProbl
   assert.ok(text.includes(kopi) && text.includes(acme), text);
   assert.ok(text.indexOf(kopi) < text.indexOf(acme), text);
   assert.doesNotMatch(text, /commits not pushed|No remote/, "not the engine's Git words");
+  // Under each, what it means in Simple's words, counted as the project's card counts it: never the
+  // engine's detail, which speaks of commits, upstreams and disks.
+  assert.ok(text.includes(words.safety.issues["no-remote"].body(3)), text);
+  assert.ok(text.includes(words.safety.issues.unpushed.body(8)), text);
+  assert.doesNotMatch(text, /upstream|commits exist|this disk/, "not the engine's detail");
+  assert.doesNotMatch(text, /this project/, "a group's sheet speaks of its projects");
   // Each line knows its project.
   assert.deepEqual(
     sheet.all((n) => n.props.className === "s-issue").map((n) => n.props["data-project"]),
@@ -1150,6 +1156,33 @@ export async function aFolderOfProjectsArchivesAsAGroupAndNamesEachProjectsProbl
   assert.deepEqual(sheet.asked("archive"), [{ id: KOPI, destination: GROUP_DEST, trashHeavy: false }]);
   assert.deepEqual(sheet.changes.map(([, title]) => title), ["Archived clients"]);
   assert.deepEqual(sheet.selected, [GROUP_DEST]);
+}
+
+export async function aGroupsSheetCountsFromEachProjectAndNeverSaysThisProject() {
+  // The check names acme-store, whose card counts 5 saved versions not uploaded: the sheet says
+  // the same, not the engine's count. A warning hidden about a project in it is the group's.
+  const acme = `${HOME}/project/clients/acme-store`;
+  const sheet = sheets({
+    kind: "archive",
+    node: CLIENTS,
+    nodes: {
+      [acme]: { ...KOPI_NODE, id: acme, path: acme, name: "acme-store", label: "acme-store", git: { ...KOPI_NODE.git, ahead: 5 } },
+    },
+    replies: { "archive/plan": [groupArchivePlan([{ ...ACME_UNPUSHED, title: "commits not pushed" }])] },
+  });
+  await sheet.wait(0);
+  assert.ok(sheet.text().includes(words.safety.issues.unpushed.body(5)), sheet.text());
+  const hidden = sheets({
+    kind: "archive",
+    node: CLIENTS,
+    replies: { "archive/plan": [groupArchivePlan([{ ...KOPI_NO_REMOTE, muted: true }])] },
+  });
+  await hidden.wait(0);
+  assert.ok(hidden.text().includes(said.archive.onlyHiddenGroup(1)), hidden.text());
+  assert.doesNotMatch(hidden.text(), /this project/);
+  // A group Laci knows no origin of is a group, not a project, in the restore sheet's words.
+  assert.doesNotMatch(said.restore.unknownGroup, /this project/);
+  assert.match(said.restore.unknownGroup, /this group/);
 }
 
 export async function aGroupWithNothingToLoseArchivesWithItsOneFilledButton() {

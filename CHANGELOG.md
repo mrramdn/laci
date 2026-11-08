@@ -24,6 +24,10 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 ### Fixed
 
+- **A project in an archived group inside another is listed under the outer group**, in Detailed's Archive and under Simple's Archived, since that is the group Restore puts back with it; the group inside comes just before what it holds. Simple's heading for that group counts every project it puts back.
+- **A folder's heading in Simple counts what Archive group… moves.** When the folder holds more than its cards show (an archived project in it, a folder inside it with a heading of its own, or a filter or search), it says both, as *· 2 of 3 projects*. The names a screen reader gives the heading's buttons start with what they show (*Archive group… clients*, *Restore… the group old-clients*).
+- **Simple's sheet for archiving a group says each project's problem in Simple's words**, counted as that project's card counts it, never in Git's, and speaks of the projects in it, not of "this project", also when a warning about one is hidden; a group Laci knows no origin of is called a group.
+- **In Detailed's Archive, "Group of N projects" follows a folder's name and place**, for a folder only marked archived and a group inside another as for an archived group, rather than sitting in the middle of the row.
 - **Undo of a move of the backup no longer freezes the window.** Like the move itself, it runs beside the window, which stays usable while the backup is copied back across drives; other changes asked for meanwhile are refused at once with *Laci is moving the copy of your AI chats*.
 
 ## [3.3.2] - 2026-11-08

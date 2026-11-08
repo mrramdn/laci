@@ -25,7 +25,7 @@ import { changed, run, selectWhenReady, useApp } from "../store";
 import type { Modal } from "../store";
 import type { ArchivePlan, Change, DeletePlan, Issue, Node, Op, PlanCheck } from "../types";
 import { blocks, dialogs as said, fix, project, safety } from "../words";
-import { fixable, issueCount, safetyIssues, toneOf } from "./model";
+import { checkCount, fixable, issueCount, safetyIssues, toneOf } from "./model";
 import { openFix } from "./state";
 import { Button, Callout, Countdown, Disclosure, Sheet, StatusChip } from "./ui";
 
@@ -566,7 +566,11 @@ function ArchiveBody({ node, stage, setStage, opener }: Body) {
           )
         ) : hidden.length ? (
           // Not called safe: the warnings the user hid may still hold.
-          <Callout tone="fyi">{said.archive.onlyHidden(hidden.length)}</Callout>
+          <Callout tone="fyi">
+            {group
+              ? said.archive.onlyHiddenGroup(hidden.length)
+              : said.archive.onlyHidden(hidden.length)}
+          </Callout>
         ) : group ? (
           <Callout tone="safe">{said.archive.safeGroup}</Callout>
         ) : node.git ? (
@@ -747,7 +751,9 @@ function RestoreBody({ node, stage, setStage }: Body) {
   const why = !reason
     ? ""
     : reason === "unknown"
-      ? said.restore.unknown
+      ? node.kind === "folder"
+        ? said.restore.unknownGroup
+        : said.restore.unknown
       : reason === "inGroup"
         ? group
           ? said.restore.inGroup(group.label)
@@ -1107,22 +1113,27 @@ function Problems({ node, issues }: { node: Node; issues: Issue[] }) {
 
 /**
  * A group's problems: those of the projects in it, each after the name of its project (the check's
- * `project`), in Simple's words. They are fixed on each project's page.
+ * `project`), in Simple's words, as the project's own "Is it safe?" card says them: never the
+ * engine's Git words. They are fixed on each project's page.
  */
 function GroupProblems({ issues }: { issues: PlanCheck[] }) {
+  const nodes = useApp((s) => s.snapshot!.nodes);
   if (!issues.length) return null;
   return (
     <ul className="s-issues" style={{ justifySelf: "stretch" }}>
       {issues.map((issue, i) => {
         const tone = toneOf(issue.severity);
+        const words = safety.issues[issue.code];
+        // Counted from the project the check names (`projectId`), as its card counts it.
+        const about = issue.projectId ? nodes[issue.projectId] : undefined;
         return (
           <li key={i} className="s-issue" data-project={issue.projectId}>
             <div className="s-issue-title">
               <StatusChip tone={tone}>{safety.tones[tone]}</StatusChip>
               {/* The project in the group it is about, then the problem in plain words. */}
-              <b>{checkTitle(issue, safety.issues[issue.code]?.title ?? issue.title)}</b>
+              <b>{checkTitle(issue, words?.title ?? issue.title)}</b>
             </div>
-            {issue.detail ? <p>{issue.detail}</p> : null}
+            {words ? <p>{words.body(checkCount(about, issue))}</p> : null}
           </li>
         );
       })}

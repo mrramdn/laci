@@ -270,6 +270,53 @@ export function anArchivedGroupInsideAnotherOffersTheOuterGroup() {
   assert.equal(html.split(`>${words.restoreGroup}</button>`).length - 1, 1);
 }
 
+export function aProjectInAnArchivedGroupInsideAnotherIsListedUnderTheOuterGroup() {
+  // old-clients holds the archived group 2024, which holds warung-pos. The engine puts back the
+  // outermost group for both (reason "inGroup", group old-clients): they are listed under it, the
+  // inner group just before what it holds, and each row's Restore group is old-clients'.
+  const outer = group("old-clients");
+  const inGroup = (name) => ({
+    ...cant("inGroup", `${HOME}/project/old-clients/${name}`),
+    group: outer.path,
+  });
+  const inner = group("old-clients/2024", {
+    name: "2024",
+    label: "2024",
+    parent: outer.id,
+    restorePlan: inGroup("2024"),
+  });
+  const warung = project("old-clients/2024/warung-pos", {
+    name: "warung-pos",
+    label: "warung-pos",
+    parent: inner.id,
+    meta: { status: "archived" },
+    restorePlan: inGroup("2024/warung-pos"),
+  });
+  const batik = member(outer, "batik-shop", inGroup("batik-shop"));
+  const nodes = Object.fromEntries([outer, inner, warung, batik].map((n) => [n.id, n]));
+  const { archivedGroupOf } = load("helpers.ts");
+  assert.equal(archivedGroupOf(nodes, warung)?.id, outer.id, "the outermost group, not 2024");
+  assert.equal(archivedGroupOf(nodes, inner)?.id, outer.id);
+  assert.equal(archivedGroupOf(nodes, outer), undefined);
+  const html = draw([warung, batik, inner, outer]);
+  assert.deepEqual(
+    rowsInOrder(html).map(({ classes, kind, name, said }) => [classes, kind, name, said]),
+    [
+      ["item", "group", "old-clients", words.from("~/project/old-clients")],
+      ["item in-group", "group", "2024", words.inside("old-clients")],
+      ["item in-group", "project", "warung-pos", words.inside("old-clients")],
+      ["item in-group", "project", "batik-shop", words.inside("old-clients")],
+    ],
+  );
+  assert.equal(html.split(`title="${words.restoreGroupFor("old-clients")}"`).length - 1, 3);
+  assert.doesNotMatch(html, new RegExp(`title="${words.restoreGroupFor("2024")}"`));
+  // The inner group's "Group of 1 project" follows its words, as the outer group's does.
+  assert.match(
+    html,
+    /<span class="name">2024<\/span><span class="d whole"[^>]*>[^<]*<\/span><span class="note">Group of 1 project<\/span>/,
+  );
+}
+
 export function aGroupsArchiveChecksNameTheirProject() {
   const { checkTitle } = load("helpers.ts");
   const check = { code: "unpushed", severity: "med", title: "8 commits not pushed" };
@@ -279,7 +326,13 @@ export function aGroupsArchiveChecksNameTheirProject() {
     "acme-store: 8 commits not pushed",
   );
   // A design's own words for the title keep the project in front.
-  assert.equal(checkTitle({ ...check, project: "acme-store" }, "Not uploaded yet"), "acme-store: Not uploaded yet");
+  assert.equal(
+    checkTitle(
+      { ...check, project: "acme-store", projectId: `${HOME}/project/clients/acme-store` },
+      "Not uploaded yet",
+    ),
+    "acme-store: Not uploaded yet",
+  );
   // Detailed's Archive dialog draws them that way.
   const source = readFileSync(new URL("../../ui/src/dialogs.tsx", import.meta.url), "utf8");
   assert.match(source, /<p>\{checkTitle\(check\)\}<\/p>/);
@@ -333,8 +386,12 @@ export function aFolderOnlyMarkedArchivedIsListedInPlaceWithUnarchive() {
   assert.match(html, /data-title="Marked archived, still in place"/);
   const row = html.slice(html.indexOf(`data-id="${thesis.id}"`));
   assert.match(row, /^data-id="[^"]+" data-kind="group"/);
-  assert.match(row, /<span class="name">thesis<\/span><span class="d mono">~\/project\/thesis<\/span>/);
-  assert.match(row, />Group of 1 project</);
+  // "Group of 1 project" follows where it is, as an archived group's follows where it came from:
+  // the place keeps its width (`whole`), and the note takes what is left, not the middle of the row.
+  assert.match(
+    row,
+    /<span class="name">thesis<\/span><span class="d mono whole">~\/project\/thesis<\/span><span class="note">Group of 1 project<\/span>/,
+  );
   // Unarchive clears its mark; it isn't moved to the archive from here.
   assert.match(row, new RegExp(`title="${words.unarchiveFolder}"[^>]*>Unarchive</button>`));
   assert.doesNotMatch(row, />Move to archive</);
@@ -401,6 +458,32 @@ export function theUnlinkStepHasItsIconAndTheEnginesWordsInBothDesigns() {
   assert.match(simple, /data-icon="unlink"/);
   assert.match(simple, />Removed the old link</);
   assert.match(simple, />~\/project\/old-clients → ~\/project\/_archive\/old-clients</);
+}
+
+export function aPlanStepIsDrawnWithTheEnginesOwnLabel() {
+  // A group archived into a folder that is in the archive already joins it: a step of kind "move"
+  // whose label the engine writes. Both designs draw it as given, never a label of their own.
+  const op = {
+    kind: "move",
+    label: "Join the folder already in the archive (~/project/_archive/clients)",
+    from: "~/project/clients",
+    to: "~/project/_archive/clients",
+  };
+  const { Ops } = load("common.tsx", {
+    "./api": { api: none, errorText: String },
+    "./store": { useApp: none, changed: none, run: none, toggleExpanded: none },
+    "./clock": { useNow: () => 0 },
+    "./terminal-api": { openTerminal: none },
+    "./dialogs": { DialogFrame: none },
+  });
+  const detailed = renderToStaticMarkup(h(Ops, { ops: [op] }));
+  assert.match(detailed, /class="k-move"/);
+  assert.ok(detailed.includes(`>${op.label}</div>`), detailed);
+  const { Steps } = load("simple/steps.tsx", {
+    "../common": { Icon: ({ name }) => h("i", { "data-icon": name }) },
+  });
+  const simple = renderToStaticMarkup(h(Steps, { ops: [op] }));
+  assert.ok(simple.includes(`>${op.label}</span>`), simple);
 }
 
 /** Detailed's dialogs module, loaded with `modal` open over a scan of `nodes`. */

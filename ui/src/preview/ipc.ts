@@ -308,6 +308,9 @@ function archiveGroup(n: Node): Change {
   const dest = plan.dest ? tilde(plan.dest, home) : from;
   for (const o of inside) {
     const group = o === n;
+    // A folder in it whose own .laci.md says archived is an archived group inside this one: like a
+    // project, the engine puts it back only with the whole group, or alone to a place of its own.
+    const alone = o.kind === "project" || (o.kind === "folder" && o.meta.status === "archived");
     Object.assign(o, {
       archived: true,
       inArchive: true,
@@ -324,10 +327,11 @@ function archiveGroup(n: Node): Change {
             archivedAt: new Date().toISOString().slice(0, 10),
           }
         : o.meta,
-      // The group goes back whole. A project in it goes back with it, as the engine says it (reason
-      // "inGroup", naming the group), or alone to a place of its own: `restoreTo` plans that.
+      // The group goes back whole. A project, or a group, in it goes back with it, as the engine says
+      // it (reason "inGroup", naming the group), or alone to a place of its own: `restoreTo` plans
+      // that. Any other folder in it has no plan of its own.
       restorePlan: !group
-        ? o.kind === "project"
+        ? alone
           ? {
               error: `${o.name} is in the archived group ${n.name}, which goes back whole. Restore ${n.name}, or choose another place for it.`,
               reason: "inGroup",

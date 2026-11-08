@@ -106,21 +106,23 @@ export function groupSize(nodes: Snapshot["nodes"], group: Node) {
   return group.projectCount ?? groupProjectCount(nodes, group);
 }
 /**
- * The archived group a node is in, the nearest one above it; none when it is in none. This is where
- * it is, to list it under its group; which group puts a project back is its plan's to say
+ * The archived group a node is in, the outermost one above it, which is the one the engine puts back
+ * whole with it (an archived group inside another goes back with the outer one too); none when it is
+ * in none. This is where it is listed; which group puts a project back is its plan's to say
  * (`linkedGroup`).
  */
 export function archivedGroupOf(
   nodes: Snapshot["nodes"],
   n: Node,
 ): Node | undefined {
+  let outer: Node | undefined;
   // `seen` stops a scan whose parents loop.
   const seen = new Set<string>([n.id]);
   for (let at = n.parent; at && !seen.has(at); at = nodes[at]?.parent) {
     seen.add(at);
-    if (isArchivedGroup(nodes[at])) return nodes[at];
+    if (isArchivedGroup(nodes[at])) outer = nodes[at];
   }
-  return undefined;
+  return outer;
 }
 /**
  * The archived group a restore plan refused with reason "linked" or "inGroup" names (`plan.group`, its

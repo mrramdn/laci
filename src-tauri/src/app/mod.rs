@@ -312,7 +312,14 @@ impl AppState {
             }
             // A backup's first run after 3.1 packs gigabytes, and a move of the copy can copy them to another
             // drive: the window and the watchers stay live meanwhile. The change lock keeps other changes out.
+            // So can the Undo of a move of the copy, which takes it back the same way.
             name if laci_core::service::runs_long(name) => return self.long_action(name, body),
+            "undo" | "log/undo" => {
+                let env = self.engine.lock().map_err(|e| e.to_string())?.service.env.clone();
+                if laci_core::service::runs_long_request(&env, name, body) {
+                    return self.long_action(name, body);
+                }
+            }
             "secrets/check" => {
                 let (env, node) = {
                     let mut engine = self.engine.lock().map_err(|e| e.to_string())?;

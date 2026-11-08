@@ -366,7 +366,13 @@ export async function theProjectsPageHasAHeaderForEachFolderAndASwitchThatIsOn()
   assert.equal(group.textContent, words.projects.groupBy);
   assert.equal(group.props["aria-checked"], true);
   assert.deepEqual(heads(page).map(headName), ["clients", "project", "side", "thesis"]);
-  assert.deepEqual(heads(page).map(headCount), ["· 2 projects", "· 1 project", "· 2 projects", "· 1 project"]);
+  // side holds zine too, archived, which Archive group… moves with the others: its heading says both.
+  assert.deepEqual(heads(page).map(headCount), [
+    "· 2 projects",
+    "· 1 project",
+    "· 2 of 3 projects",
+    "· 1 project",
+  ]);
   // A folder's heading says whether its cards are shown, and what they are.
   assert.ok(heads(page).every((h) => h.props["aria-expanded"] === true));
   const first = heads(page)[0];
@@ -399,7 +405,7 @@ export async function aFoldedSectionHidesItsCardsAndSaysSo() {
   assert.deepEqual(cardNames(page), ["acme-store", "kopi-landing", "infra-notes", "campus-lms"]);
   // The heading stays, with how many it holds.
   assert.equal(headName(heads(page)[2]), "side");
-  assert.equal(headCount(heads(page)[2]), "· 2 projects");
+  assert.equal(headCount(heads(page)[2]), "· 2 of 3 projects");
   click(page, heads(page)[2]);
   assert.ok(heads(page).every((h) => h.props["aria-expanded"] === true));
   assert.equal(cardNames(page).length, 6);
@@ -498,6 +504,227 @@ export async function aProjectThatGoesBackWithItsGroupSaysSoAndRestoresTheGroup(
   assert.equal(menuItem(card, words.projects.restore), undefined);
   click(page, menuItem(card, words.projects.restoreGroup));
   assert.deepEqual(app.getState().modal, { kind: "restore", id: GROUP });
+}
+
+// ── Archive a group, and a folder only marked archived ────────────────────────────────────────────
+
+const groupArchives = (page) =>
+  page.all(
+    (n) =>
+      n.type === "button" &&
+      String(n.props["aria-label"] ?? "").startsWith(words.projects.archiveGroupFor("")),
+  );
+
+export async function aFoldersHeadingArchivesTheWholeGroup() {
+  const { page, app } = projectsPage();
+  // clients, side and thesis have a plan to archive them whole; ~/project, a scan location, has none.
+  assert.deepEqual(
+    groupArchives(page).map((n) => n.props["aria-label"]),
+    ["clients", "side", "thesis"].map(words.projects.archiveGroupFor),
+  );
+  const [clients] = groupArchives(page);
+  assert.equal(clients.textContent, words.projects.archiveGroup);
+  assert.equal(words.projects.archiveGroup, "Archive group…");
+  click(page, clients);
+  assert.deepEqual(app.getState().modal, { kind: "archive", id: `${ROOT}/clients` });
+  // Among what is archived already, no heading offers Archive group: side holds zine there.
+  const archived = projectsPage(scan(), { filter: "archived" });
+  assert.equal(groupArchives(archived.page).length, 0);
+}
+
+export async function aHeadingCountsWhatItsArchiveGroupMoves() {
+  // side holds 3 projects (the engine's projectCount): dotfiles, habit-app and zine, archived where
+  // it is. All shows 2 cards; Archive group… moves the 3, and the heading says so.
+  const s = scan();
+  assert.equal(node(s, "side").projectCount, 3);
+  assert.equal(words.projects.groupCountOf(2, 3), "· 2 of 3 projects");
+  const { page } = projectsPage(s);
+  const side = heads(page).find((head) => headName(head) === "side");
+  assert.equal(headCount(side), words.projects.groupCountOf(2, 3));
+  // A search leaves one card of clients' 2: the heading still says what the group holds.
+  const search = projectsPage(scan(), { query: "acme" });
+  assert.deepEqual(heads(search.page).map(headCount), []);
+  const two = projectsPage(scan(), { query: "a" });
+  const clients = heads(two.page).find((head) => headName(head) === "clients");
+  const shown = cardNames(two.page).filter((name) => ["acme-store", "kopi-landing"].includes(name));
+  assert.equal(
+    headCount(clients),
+    shown.length === 2 ? words.projects.groupCount(2) : words.projects.groupCountOf(shown.length, 2),
+  );
+  // A folder whose heading moves nothing counts its cards alone.
+  const archived = projectsPage(scan(), { filter: "archived" });
+  const sideArchived = heads(archived.page).find((head) => headName(head) === "side");
+  assert.equal(headCount(sideArchived), words.projects.groupCount(1));
+}
+
+export async function aHeadingsButtonsAreNamedByWhatTheyShow() {
+  // Each button beside a folder's heading has a name that starts with its own words, so that it is
+  // found by what it shows (Archive group…, Restore…), and then says which folder.
+  const named = (page) =>
+    page
+      .all(
+        (n) =>
+          n.type === "button" &&
+          n.props["aria-label"] &&
+          [words.projects.archiveGroup, words.projects.restore].includes(n.textContent),
+      )
+      .map((n) => [n.textContent, n.props["aria-label"]]);
+  const all = named(projectsPage().page);
+  const archived = named(projectsPage(scan(), { filter: "archived" }).page);
+  const marked = named(projectsPage(markedThesis(), { filter: "archived" }).page);
+  assert.ok(all.length && archived.length && marked.length);
+  for (const [shows, name] of [...all, ...archived, ...marked])
+    assert.ok(name.startsWith(shows), `"${name}" starts with "${shows}"`);
+  assert.deepEqual(all[0], [words.projects.archiveGroup, "Archive group… clients"]);
+  assert.deepEqual(archived[0], [words.projects.restore, "Restore… the group old-clients"]);
+  assert.ok(marked.some(([, name]) => name === "Restore… thesis: take the archived mark off"));
+}
+
+/** The demo home with an archived group, 2024, inside old-clients, holding a project of its own. */
+function nestedArchive() {
+  const s = scan();
+  const outer = `${GROUP}`;
+  const inner = `${GROUP}/2024`;
+  const template = s.nodes[GROUP];
+  add(s, inner, "folder", {
+    parent: outer,
+    ...structuredClone(template),
+    id: inner,
+    path: inner,
+    name: "2024",
+    label: "2024",
+    children: [],
+    restorePlan: {
+      error: "2024 is in the archived group old-clients, which goes back whole.",
+      reason: "inGroup",
+      group: outer,
+      ops: [],
+      checks: [],
+    },
+  });
+  s.nodes[inner].parent = outer;
+  const mobile = `${inner}/mobile`;
+  add(s, mobile, "project", {
+    parent: inner,
+    ...structuredClone(s.nodes[`${GROUP}/batik-shop`]),
+    id: mobile,
+    path: mobile,
+    name: "mobile",
+    label: "mobile",
+    restorePlan: { ...s.nodes[inner].restorePlan, error: "mobile is in the archived group old-clients" },
+  });
+  s.nodes[mobile].parent = inner;
+  return s;
+}
+
+export async function aProjectInAnArchivedGroupInsideAnotherIsUnderTheOuterGroup() {
+  // The engine puts back the outermost archived group: old-clients' heading holds mobile too, and its
+  // Restore… is the only one; 2024 has no heading of its own.
+  const s = nestedArchive();
+  assert.deepEqual(sectionsOf(s, { filter: "archived", sort: "name" }), [
+    ["_archive", ["old-portfolio"]],
+    ["_archive / old-clients", ["batik-shop", "mobile", "warung-pos"]],
+    ["side", ["zine"]],
+  ]);
+  const { page, app } = projectsPage(s, { filter: "archived", sort: "name" });
+  const [restore, ...more] = groupRestores(page);
+  assert.deepEqual(more, []);
+  assert.equal(restore.props["aria-label"], words.projects.restoreGroupFor("old-clients"));
+  // Its count is what Restore… puts back: the 3 projects at any depth.
+  const outer = heads(page).find((head) => headName(head) === "_archive / old-clients");
+  assert.equal(headCount(outer), words.projects.groupCount(3));
+  click(page, restore);
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: GROUP });
+}
+
+/** The demo home with thesis marked archived in its own .laci.md, where it is. */
+function markedThesis() {
+  const s = scan();
+  const thesis = node(s, "thesis");
+  delete thesis.archivePlan;
+  Object.assign(thesis, {
+    archived: true,
+    inArchive: false,
+    meta: { ...thesis.meta, status: "archived" },
+    status: { value: "archived", auto: false },
+    restorePlan: {
+      dest: thesis.path,
+      checks: [],
+      ops: [{ kind: "write", label: "Clear status: archived", to: "~/project/thesis/.laci.md" }],
+    },
+  });
+  return s;
+}
+
+export async function aFolderOnlyMarkedArchivedIsUnderArchivedWithItsRestore() {
+  const s = markedThesis();
+  // Its projects aren't archived themselves, and Archived lists them under the folder.
+  assert.deepEqual(sectionsOf(s, { filter: "archived", sort: "name" }), [
+    ["_archive", ["old-portfolio"]],
+    ["_archive / old-clients", ["batik-shop", "warung-pos"]],
+    ["side", ["zine"]],
+    ["thesis", ["campus-lms"]],
+  ]);
+  assert.equal(model.projectsModel(s, query({ filter: "archived" }), NOW).counts.archived, 5);
+  const { page, app } = projectsPage(s, { filter: "archived" });
+  const restore = page.find(
+    (n) => n.type === "button" && n.props["aria-label"] === words.projects.unmarkGroupFor("thesis"),
+  );
+  assert.ok(restore, "the folder's heading has Restore");
+  assert.equal(restore.textContent, words.projects.restore);
+  click(page, restore);
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: `${ROOT}/thesis` });
+  // Alone in the list, it keeps its heading, which holds its Restore.
+  const alone = projectsPage(s, { filter: "archived", query: "campus" });
+  assert.deepEqual(heads(alone.page).map(headName), ["thesis"]);
+  // A marked folder has no plan to archive it again.
+  assert.deepEqual(groupArchives(projectsPage(s).page).map((n) => n.props["aria-label"]), [
+    words.projects.archiveGroupFor("clients"),
+    words.projects.archiveGroupFor("side"),
+  ]);
+}
+
+export async function aLinkedProjectWhoseGroupTheEngineDoesntNameSaysToRemoveTheLink() {
+  // The engine names no group for batik-shop: its card says the link has to go, and its menu
+  // offers its own Restore, where another place can be chosen.
+  const s = scan();
+  delete s.nodes[`${GROUP}/batik-shop`].restorePlan.group;
+  const { page, app } = projectsPage(s, { filter: "archived", grouped: false });
+  const card = page.find((n) => n.props["data-id"] === `${GROUP}/batik-shop`);
+  assert.ok(card.textContent.includes(words.projects.linkedAlone), card.textContent);
+  assert.ok(!card.textContent.includes(words.projects.inGroup("old-clients")), card.textContent);
+  assert.equal(menuItem(card, words.projects.restoreGroup), undefined);
+  click(page, menuItem(card, words.projects.restore));
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: `${GROUP}/batik-shop` });
+}
+
+export async function aProjectInsideAnArchivedGroupRestoresTheGroupOrItselfInAPlaceOfItsOwn() {
+  // The engine refuses batik-shop alone without a place (reason "inGroup"), naming its group.
+  const s = scan();
+  const batik = s.nodes[`${GROUP}/batik-shop`];
+  batik.restorePlan = {
+    error: "batik-shop is in the archived group old-clients, which goes back whole. Restore old-clients, or choose another place for it.",
+    // No place: the one it came from is the group's.
+    reason: "inGroup",
+    group: GROUP,
+    ops: [],
+    checks: [],
+  };
+  const { page, app } = projectsPage(s, { filter: "archived", grouped: false });
+  const card = page.find((n) => n.props["data-id"] === `${GROUP}/batik-shop`);
+  assert.ok(card.textContent.includes(words.projects.inGroup("old-clients")), card.textContent);
+  assert.equal(menuItem(card, words.projects.restore), undefined);
+  click(page, menuItem(card, words.projects.restoreGroup));
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: GROUP });
+  // Alone: its own sheet, where a place of its own is chosen.
+  click(page, menuItem(card, words.projects.restoreAlone));
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: `${GROUP}/batik-shop` });
+  // A project the engine puts back by itself has no Restore it alone.
+  const old = page.find((n) => n.props["data-id"] === `${ROOT}/_archive/old-portfolio`);
+  assert.equal(menuItem(old, words.projects.restoreAlone), undefined);
+  // Simple's words don't say "agent".
+  assert.doesNotMatch(words.projects.restoreAlone, /agent/i);
+  assert.doesNotMatch(words.dialogs.restore.inGroup("old-clients"), /agent/i);
 }
 
 /** The declarations of the rule for `selector` in Simple's sheet. */

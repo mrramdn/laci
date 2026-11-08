@@ -891,8 +891,8 @@ kbd {
 .item.in-group {
   padding-left: 40px;
 }
-/* An archived group's row: where it came from keeps its width, and "Group of N projects" after it
-   is cut off first. */
+/* A folder's row in the Archive (an archived group, or a folder only marked archived): where it came
+   from, or where it is, keeps its width, and "Group of N projects" follows it and is cut off first. */
 .item .d.whole {
   flex: 0 1 auto;
 }

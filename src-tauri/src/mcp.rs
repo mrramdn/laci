@@ -18,7 +18,7 @@ impl ServerHandler for Mcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_prompts().build())
             .with_server_info(Implementation::new("laci",env!("CARGO_PKG_VERSION")))
-            .with_instructions("Use laci for moving projects so their agent history travels with them. archive_project moves a project into the archive and restore_project puts an archived one, or an archived group of projects, back where it came from. Destructive tools return a plan first; show it to the user before calling with confirm: true. Lists answer a page at a time: when more is true, call again with offset. open_items lists the open to-dos and report items, the most pressing projects first; change to-dos with complete_task, edit_task, delete_task and move_task, and close report items with close_report_item, so each change shows in Laci's Log with Undo. recent_changes reads the Log, narrowed by project or words, and gives the ids undo_change needs. Reports from earlier sessions are in list_reports and project_details; read a report's file for its full text. The review prompt goes through everything open with the user.")
+            .with_instructions("Use laci for moving projects so their agent history travels with them. archive_project moves a project, or a folder of projects as a group, into the archive and restore_project puts an archived one, or an archived group of projects, back where it came from. Destructive tools return a plan first; show it to the user before calling with confirm: true. Lists answer a page at a time: when more is true, call again with offset. open_items lists the open to-dos and report items, the most pressing projects first; change to-dos with complete_task, edit_task, delete_task and move_task, and close report items with close_report_item, so each change shows in Laci's Log with Undo. recent_changes reads the Log, narrowed by project or words, and gives the ids undo_change needs. Reports from earlier sessions are in list_reports and project_details; read a report's file for its full text. The review prompt goes through everything open with the user.")
     }
     async fn list_prompts(
         &self,
@@ -362,7 +362,8 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             let n = project(service, string(args, "project"))?;
             let id = string(&n, "id");
             let archive_plan = if name == "archive_project" {
-                if n["kind"] != "project" {
+                // A folder of projects is archived as a group; the plan says why one can't be.
+                if n["kind"] != "project" && n["kind"] != "folder" {
                     return Err("This folder cannot be archived".into());
                 }
                 if n["inArchive"] == true {
@@ -379,9 +380,12 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
             };
             if args["confirm"] != true {
                 if let Some(plan) = archive_plan {
-                    return Ok(
-                        json!({"plan":plan["ops"],"destination":plan["dest"],"checks":plan["checks"],"hint":"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."}),
-                    );
+                    let mut preview = json!({"plan":plan["ops"],"destination":plan["dest"],"checks":plan["checks"],"hint":"Nothing has changed yet. Show this plan to the user; if they agree, call again with confirm: true."});
+                    if n["kind"] == "folder" {
+                        // A group: how many projects go with it. Each of its checks names its project.
+                        preview["projects"] = n["projectCount"].clone();
+                    }
+                    return Ok(preview);
                 }
                 let s = service.snapshot()?;
                 return Ok(
@@ -397,8 +401,9 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
         "restore_project" => {
             service.rescan()?;
             let n = project(service, string(args, "project"))?;
-            // A folder goes back only as an archived group: in the archive, with status: archived in its .laci.md.
-            if n["kind"] == "folder" && !scan::archived_group(&n) {
+            // A folder goes back as an archived group: in the archive, with status: archived in its .laci.md. One
+            // outside the archive marked that way only has that status cleared.
+            if n["kind"] == "folder" && !scan::restorable(&n) {
                 return Err("This folder isn't an archived group".into());
             }
             if n["kind"] != "folder" && (n["kind"] != "project" || n["archived"] != true) {
@@ -410,7 +415,9 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                 if args["confirm"] == true {
                     return Err(error.into());
                 }
-                let hint = if plan["reason"] == "linked" && plan["group"].is_string() {
+                let hint = if plan["reason"] == "inGroup" {
+                    "Nothing has changed. It is in an archived group that goes back whole: offer to restore that group with restore_project, project: group, or ask the user where else to put it, outside the place the group goes back to, and call again with that destination."
+                } else if plan["reason"] == "linked" && plan["group"].is_string() {
                     "Nothing has changed. Its group is linked back from the archive: offer to restore that whole group with restore_project, project: group, or ask the user to remove the link first."
                 } else if plan["reason"] == "linked" {
                     "Nothing has changed. Its folder is linked back from the archive and isn't an archived group: ask the user to remove the link first, or to mark that folder status: archived so it goes back whole."
@@ -1157,13 +1164,13 @@ fn tools() -> Vec<Tool> {
         ),
         (
             "archive_project",
-            "Archive a project with its agent history; requires confirm after preview. With an archive folder in Settings, it keeps its place below the scan location that holds it: ~/tugas/course/demo goes to <archive>/tugas/course/demo",
+            "Archive a project with its agent history; requires confirm after preview. With an archive folder in Settings, it keeps its place below the scan location that holds it: ~/tugas/course/demo goes to <archive>/tugas/course/demo. A folder of projects is archived whole as a group, with the history of every project in it, and goes back whole with restore_project (the preview's checks name their project); not a scan location, home, or a folder holding the archive folder or the copy of AI chats",
             json!({"project":project,"destination":text,"trash_heavy":boolean,"confirm":boolean}),
             vec!["project"],
         ),
         (
             "restore_project",
-            "Put an archived project back where it came from (or at destination) with its agent history; requires confirm after preview. An archived group (a folder in the archive whose .laci.md says status: archived) goes back whole, with every project in it. A link left where it was, leading to it in the archive, is removed first; a project inside a group that is linked back that way can't go back alone (reason linked; group then names the archived group to restore instead, when the link leads to one)",
+            "Put an archived project back where it came from (or at destination) with its agent history; requires confirm after preview. An archived group (a folder in the archive whose .laci.md says status: archived) goes back whole, with every project in it, and the folders and projects in it marked archived are cleared too. A project or group inside an archived group goes back with it, not alone, unless given a destination outside the place the group goes back to (reason inGroup, with no destination; group names the archived group to restore instead). A link left where it was, leading to it in the archive, is removed first; a project inside a group that is linked back that way can't go back alone (reason linked; group then names the archived group to restore instead, when the link leads to one). A folder outside the archive marked status: archived only has that status cleared",
             json!({"project":project,"destination":text,"confirm":boolean}),
             vec!["project"],
         ),

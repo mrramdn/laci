@@ -162,9 +162,39 @@ fn chosen_folder(env: &Env, value: &Value, key: &str, missing: &str) -> Result<O
     }))
 }
 
+/// The archive folder, or `""` for none. It can't be the folder of the copy of AI chats, nor inside it: the copy may
+/// sit in the archive folder, not the other way round.
+/// The stored archive folder, kept unchanged, is let through, so a setup from before this rule goes on as it was.
 pub fn validate_archive_dir(env: &Env, value: &Value) -> Result<Value> {
     let path = chosen_folder(env, value, "archiveDir", "Pick an archive folder")?;
+    let cfg = load(env);
+    let stored =
+        cfg["archiveDir"].as_str().filter(|raw| !raw.trim().is_empty()).map(|raw| paths::expand(raw.trim(), &env.home));
+    if let Some(path) = &path
+        && !stored.is_some_and(|stored| same_path(&stored, path))
+    {
+        archive_copy_refusal(env, path, &cfg).map_err(|why| format!("{why} Choose another archive folder."))?;
+    }
     Ok(json!(path.map(|p| paths::tilde(&p, &env.home)).unwrap_or_default()))
+}
+
+/// Why `path` can't be the archive folder while `cfg` keeps the copy of AI chats where it does: it is that folder,
+/// or inside it.
+pub(crate) fn archive_copy_refusal(env: &Env, path: &Path, cfg: &Value) -> Result<()> {
+    let copy = crate::backup::chosen(env, cfg).unwrap_or_else(|| env.data_dir.join("history"));
+    let forms = |p: &Path| [paths::normalize(p), real(p)];
+    let in_copy = |same: bool| {
+        forms(&copy).iter().any(|copy| {
+            forms(path).iter().any(|path| if same { same_path(copy, path) } else { may_contain(copy, path) })
+        })
+    };
+    if in_copy(true) {
+        return Err("That is the folder of Laci's copy of AI chats.".into());
+    }
+    if in_copy(false) {
+        return Err(format!("That folder is inside Laci's copy of AI chats ({}).", paths::tilde(&copy, &env.home)));
+    }
+    Ok(())
 }
 
 /// The folder agents write session reports to. Laci only reads it, and it grants no project actions.
@@ -196,7 +226,9 @@ pub fn validate_backup_dir(env: &Env, value: &Value) -> Result<Option<std::path:
     if same_path(&path, &real(&default)) {
         return Ok(None);
     }
-    backup_dir_refusal(env, &path, &load(env))?;
+    let cfg = load(env);
+    backup_dir_refusal(env, &path, &cfg)?;
+    archive_overlap(env, &path, &cfg)?;
     Ok(Some(path))
 }
 
@@ -207,7 +239,9 @@ fn real(path: &Path) -> std::path::PathBuf {
 
 /// Why `path` can't hold the copy of AI chats, asked when a folder is chosen and again before each use of it
 /// (`backup::check`), as config.json can be edited by hand: not home or one above it, not one of Laci's own folders or
-/// anything inside them, and nothing that holds the history of an agent `cfg` connects or lies inside it.
+/// anything inside them, and nothing that holds the history of an agent `cfg` connects or lies inside it. How it
+/// stands to the archive folder is asked only when a folder is chosen ([`archive_overlap`]), so a copy kept since
+/// before that rule goes on being made.
 pub(crate) fn backup_dir_refusal(env: &Env, path: &Path, cfg: &Value) -> Result<()> {
     let forms = [paths::normalize(path), real(path)];
     let overlaps = |other: &Path| {
@@ -232,6 +266,22 @@ pub(crate) fn backup_dir_refusal(env: &Env, path: &Path, cfg: &Value) -> Result<
                 c["name"].as_str().unwrap_or("an AI helper")
             ));
         }
+    }
+    Ok(())
+}
+
+/// Why `path`, chosen for the copy of AI chats, can't be next to the archive folder in `cfg`: the copy may be a folder
+/// of its own in the archive folder, not the archive folder itself or one that holds it.
+fn archive_overlap(env: &Env, path: &Path, cfg: &Value) -> Result<()> {
+    let Some(archive) = cfg["archiveDir"].as_str().filter(|raw| !raw.trim().is_empty()) else { return Ok(()) };
+    let forms = [paths::normalize(path), real(path)];
+    let archive = paths::expand(archive.trim(), &env.home);
+    let archive = [paths::normalize(&archive), real(&archive)];
+    if archive.iter().any(|archive| forms.iter().any(|path| same_path(archive, path))) {
+        return Err("That is the archive folder. Choose a folder of its own for the copy, such as one in it.".into());
+    }
+    if archive.iter().any(|archive| forms.iter().any(|path| may_contain(path, archive))) {
+        return Err("That folder holds the archive folder. Choose a folder of its own for the copy.".into());
     }
     Ok(())
 }

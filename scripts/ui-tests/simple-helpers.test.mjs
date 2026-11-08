@@ -1047,6 +1047,33 @@ export async function theCopyOfChatsMovesToAnotherFolderOnlyOnceAskedWhere() {
   assert.deepEqual(page.toasts.at(-1), [said.copyMoved(said.copyPlaceOwnName), said.copyMoveNote]);
 }
 
+export async function aCopyOnADriveThatIsntConnectedSaysSoWhereItIsKept() {
+  const s = scan();
+  const dir = "/media/backup/ai-chats";
+  const why = `The folder for the copy of AI chats isn't there: ${dir}. Connect its drive, or choose another folder for the copy.`;
+  const snapshot = {
+    ...s,
+    backup: { ...s.backup, chosen: true, dest: dir, error: why },
+    copyStatus: { path: dir, available: false, reason: why },
+  };
+  const page = helpersPage({ snapshot });
+  const place = () => page.find((n) => n.props["data-ui"] === "copy-place");
+  const offline = place().descendants().find((n) => n.props["data-ui"] === "copy-offline");
+  assert.ok(offline, place().textContent);
+  // That nothing is copied until the drive is back, and why, in Simple's words.
+  assert.ok(offline.textContent.includes(said.copyOffline(dir)), offline.textContent);
+  assert.ok(offline.textContent.includes(words.engineWords.simple.copyMissing(dir)), offline.textContent);
+  assert.equal(said.copyOffline(dir), `The drive with ${dir} isn’t connected. Nothing is copied until it is back.`);
+  // Said once: the card above doesn't say it again.
+  assert.equal(page.all((n) => n.props["data-tone"] === "act").length, 1);
+  // Reached again, nothing is said.
+  page.app.setState({
+    snapshot: { ...snapshot, copyStatus: { path: dir, available: true }, backup: { ...snapshot.backup, error: undefined } },
+  });
+  await page.settle();
+  assert.equal(place().descendants().find((n) => n.props["data-ui"] === "copy-offline"), undefined);
+}
+
 export async function aCopyLaciCantReachIsNotMovedButANewOneCanStart() {
   const replies = { "backup/move": ({ dir }) => ({ dest: dir, moved: false }) };
   const s = scan();

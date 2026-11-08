@@ -739,6 +739,92 @@ export async function theDetailsPanelOfAProjectThatWaitsForItsGroupOffersTheGrou
     // goes on to the project in its new place.
     assert.deepEqual(app.state().modal, { kind: "restore", id: group });
     assert.equal(app.state().selected, batik);
+    // Restore alone opens the project's own dialog, where a place of its own is chosen.
+    const [alone, ...more] = app.buttons("Restore alone");
+    assert.deepEqual(more, []);
+    assert.equal(alone.getAttribute("title"), "Put batik-shop back alone, in a place you choose");
+    await app.fire(alone, "onClick");
+    assert.deepEqual(app.state().modal, { kind: "restore", id: batik });
+  } finally {
+    await app.close();
+  }
+}
+
+export async function theDetailsPanelOfAProjectInsideAnArchivedGroupOffersTheGroupAndRestoreAlone() {
+  // In an archived group with no link at its old place, the engine refuses it alone without a place
+  // (reason "inGroup") and names the group: the panel offers it, as for a linked one.
+  const group = "/home/demo/project/_archive/old-clients";
+  const batik = `${group}/batik-shop`;
+  const app = await detailed();
+  try {
+    const plan = app.state().snapshot.nodes[batik].restorePlan;
+    Object.assign(plan, { reason: "inGroup", error: "batik-shop is in the archived group old-clients" });
+    // The engine names no place: the one it came from is the group's.
+    delete plan.dest;
+    await app.set({ selected: batik, tab: "health" });
+    await app.draw({ inspector: h(app.Shown) });
+    assert.deepEqual(app.buttons("Restore"), []);
+    assert.equal(app.buttons("Restore group").length, 1);
+    const [alone] = app.buttons("Restore alone");
+    await app.fire(alone, "onClick");
+    assert.deepEqual(app.state().modal, { kind: "restore", id: batik });
+  } finally {
+    await app.close();
+  }
+}
+
+export async function theDetailsPanelOfAFolderOfProjectsOffersArchiveGroup() {
+  // clients holds acme-store and kopi-landing, and the engine planned to archive it whole.
+  const clients = "/home/demo/project/clients";
+  const app = await detailed();
+  try {
+    assert.ok(app.state().snapshot.nodes[clients].archivePlan, "the scan plans the group");
+    await app.set({ selected: clients, tab: "health" });
+    await app.draw({ inspector: h(app.Shown) });
+    assert.equal(app.buttons("Archive").length, 0, "no project Archive on a folder");
+    const [archive, ...more] = app.buttons("Archive group");
+    assert.equal(more.length, 0);
+    assert.equal(archive.getAttribute("title"), "Archive the group clients with every project in it");
+    await app.fire(archive, "onClick");
+    assert.deepEqual(app.state().modal, { kind: "archive", id: clients });
+    // The scan location has no plan, so its panel has no Archive group.
+    await app.set({ selected: "/home/demo/project", modal: null });
+    await app.draw({ inspector: h(app.Shown) });
+    assert.equal(app.buttons("Archive group").length, 0);
+  } finally {
+    await app.close();
+  }
+}
+
+export async function theDetailsPanelOfAFolderOnlyMarkedArchivedOffersUnarchive() {
+  // thesis says archived in its own .laci.md, but never moved: its plan clears that in place.
+  const thesis = "/home/demo/project/thesis";
+  const app = await detailed({
+    edit: (scan) => {
+      const n = scan.nodes[thesis];
+      delete n.archivePlan;
+      Object.assign(n, {
+        archived: true,
+        inArchive: false,
+        meta: { ...n.meta, status: "archived" },
+        status: { value: "archived", auto: false },
+        restorePlan: {
+          dest: thesis,
+          checks: [],
+          ops: [{ kind: "write", label: "Clear status: archived", to: "~/project/thesis/.laci.md" }],
+        },
+      });
+    },
+  });
+  try {
+    await app.set({ selected: thesis, tab: "health" });
+    await app.draw({ inspector: h(app.Shown) });
+    assert.equal(app.buttons("Archive group").length, 0);
+    assert.equal(app.buttons("Restore group").length, 0, "it is not an archived group");
+    const [unarchive] = app.buttons("Unarchive");
+    assert.ok(unarchive, "the panel offers Unarchive");
+    await app.fire(unarchive, "onClick");
+    assert.deepEqual(app.state().modal, { kind: "restore", id: thesis });
   } finally {
     await app.close();
   }

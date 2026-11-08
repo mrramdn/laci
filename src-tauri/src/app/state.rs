@@ -2,7 +2,7 @@ use laci_core::{
     Result,
     env::Env,
     ops::{COPYING, MOVING},
-    service::{Refresh, RequestOutcome, Service, changes_history, mutates, runs_long},
+    service::{Refresh, RequestOutcome, Service, changes_history, moves_copy, mutates, runs_long},
 };
 use serde_json::{Value, json};
 use std::sync::{Condvar, Mutex};
@@ -72,14 +72,14 @@ impl Engine {
     /// Counts the long action `name` as running, until [`Engine::end_long`].
     pub fn begin_long(&mut self, name: &str) {
         self.long_running += 1;
-        if name == "backup/move" {
+        if moves_copy(name) {
             self.moves_running += 1;
         }
     }
     /// Stops counting the long action `name` that [`Engine::begin_long`] counted.
     pub fn end_long(&mut self, name: &str) {
         self.long_running = self.long_running.saturating_sub(1);
-        if name == "backup/move" {
+        if moves_copy(name) {
             self.moves_running = self.moves_running.saturating_sub(1);
         }
     }
@@ -301,6 +301,14 @@ mod tests {
         assert_eq!(engine.admit("theme"), Err(MOVING.into()));
         engine.end_long("backup/move");
         assert!(engine.admit("theme").is_ok());
+        assert_eq!((engine.long_running, engine.moves_running), (0, 0));
+        // The Undo of a move of the copy runs outside the engine too, and is told as a move.
+        for undo in ["undo", "log/undo"] {
+            engine.begin_long(undo);
+            assert_eq!(engine.admit("theme"), Err(MOVING.into()), "{undo}");
+            assert_eq!(engine.admit("undo"), Err(MOVING.into()), "{undo}");
+            engine.end_long(undo);
+        }
         assert_eq!((engine.long_running, engine.moves_running), (0, 0));
     }
 

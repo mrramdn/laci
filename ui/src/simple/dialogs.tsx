@@ -9,9 +9,11 @@ import type { Dispatch, Ref, SetStateAction } from "react";
 import { api, errorText } from "../api";
 import { restoreFocus } from "../common";
 import {
-  archivedGroupOf,
   bytes,
+  checkTitle,
   expandHome,
+  groupOfPlan,
+  groupSize,
   isAbsolutePath,
   isArchivedGroup,
   placeAfterRestore,
@@ -21,9 +23,9 @@ import {
 } from "../helpers";
 import { changed, run, selectWhenReady, useApp } from "../store";
 import type { Modal } from "../store";
-import type { ArchivePlan, Change, DeletePlan, Issue, Node, Op } from "../types";
+import type { ArchivePlan, Change, DeletePlan, Issue, Node, Op, PlanCheck } from "../types";
 import { blocks, dialogs as said, fix, project, safety } from "../words";
-import { fixable, issueCount, safetyIssues, toneOf } from "./model";
+import { checkCount, fixable, issueCount, safetyIssues, toneOf } from "./model";
 import { openFix } from "./state";
 import { Button, Callout, Countdown, Disclosure, Sheet, StatusChip } from "./ui";
 
@@ -95,18 +97,29 @@ function ProjectSheet({ kind, node }: { kind: Kind; node: Node }) {
   const body = { node, stage, setStage, opener };
   // An archived group goes back whole, with every project in it.
   const group = kind === "restore" && isArchivedGroup(node);
+  // A folder of projects goes to the archive whole, with every project in it.
+  const nodes = useApp((s) => s.snapshot!.nodes);
+  const whole = kind === "archive" && node.kind === "folder";
   return (
     <Sheet
-      title={group ? said.restore.titleGroup(node.label) : said[kind].title(node.label)}
+      title={
+        group
+          ? said.restore.titleGroup(node.label)
+          : whole
+            ? said.archive.titleGroup(node.label)
+            : said[kind].title(node.label)
+      }
       // A project in the archive already has no Archive instead to recommend.
       description={
         kind === "delete" && node.archived
           ? said.delete.introArchived
           : group
             ? said.restore.introGroup
-            : kind === "restore" && !node.inArchive
-              ? said.restore.introInPlace
-              : said[kind].intro
+            : whole
+              ? said.archive.introGroup(groupSize(nodes, node))
+              : kind === "restore" && !node.inArchive
+                ? said.restore.introInPlace
+                : said[kind].intro
       }
       onClose={close}
       // While a Countdown runs, its own Cancel is the one to use.
@@ -377,9 +390,11 @@ function leave(id: string) {
  * Archive: what the engine's plan and the project's own checks say about its safety, then the way
  * on. A project that isn't safe gets "Back up first" (the fix sheet for its worst problem) as the
  * filled button, and "Archive anyway" beside it. Where it goes can be changed under Show details,
- * as in Detailed.
+ * as in Detailed. A folder of projects (a group) goes whole: the plan's checks gather those of its
+ * projects, each naming its project, and each is fixed on its project's own page.
  */
 function ArchiveBody({ node, stage, setStage, opener }: Body) {
+  const group = node.kind === "folder";
   const home = useApp((s) => s.snapshot!.home);
   const historyPending = useApp((s) => s.historyPending);
   const [destination, setDestination] = useState(() =>
@@ -446,16 +461,21 @@ function ArchiveBody({ node, stage, setStage, opener }: Body) {
   const checks = (plan ?? last)?.checks;
   // The plan's checks, and the problems of the project's own that the plan leaves out (out of
   // sync, no version history): what its "Is it safe?" card warns about is never called safe here.
-  const issues = checks && [
-    ...checks,
-    ...node.issues.filter(
-      (issue) => RISK.has(issue.code) && !checks.some((check) => check.code === issue.code),
-    ),
-  ];
+  const issues =
+    checks &&
+    (group
+      ? checks
+      : [
+          ...checks,
+          ...node.issues.filter(
+            (issue) => RISK.has(issue.code) && !checks.some((check) => check.code === issue.code),
+          ),
+        ]);
   // A warning the user hid doesn't hold the archive up; Show details lists it.
   const warnings = (issues ?? []).filter((issue) => !issue.muted).sort(worstFirst);
   const hidden = (issues ?? []).filter((issue) => issue.muted);
-  const first = warnings.find((issue) => fixable(issue.code));
+  // A group's problems are its projects': there is no one fix sheet for them here.
+  const first = group ? undefined : warnings.find((issue) => fixable(issue.code));
   const problem = failure || current?.error || "";
   const remote = node.git?.remotes[0];
   // The focus goes on to the filled button once the plan has drawn one, if it is still where the
@@ -533,13 +553,26 @@ function ArchiveBody({ node, stage, setStage, opener }: Body) {
         {!checks ? (
           problem ? null : <Working text={said.archive.checking} status />
         ) : warnings.length ? (
-          <>
-            <Problems node={node} issues={warnings} />
-            <p>{said.archive.unsafe}</p>
-          </>
+          group ? (
+            <>
+              <GroupProblems issues={warnings} />
+              <p>{said.archive.unsafeGroup}</p>
+            </>
+          ) : (
+            <>
+              <Problems node={node} issues={warnings} />
+              <p>{said.archive.unsafe}</p>
+            </>
+          )
         ) : hidden.length ? (
           // Not called safe: the warnings the user hid may still hold.
-          <Callout tone="fyi">{said.archive.onlyHidden(hidden.length)}</Callout>
+          <Callout tone="fyi">
+            {group
+              ? said.archive.onlyHiddenGroup(hidden.length)
+              : said.archive.onlyHidden(hidden.length)}
+          </Callout>
+        ) : group ? (
+          <Callout tone="safe">{said.archive.safeGroup}</Callout>
         ) : node.git ? (
           <Callout tone="safe">
             {remote?.host ? safety.safeOnline(remote.host) : safety.safeHere}
@@ -624,8 +657,11 @@ function ArchiveBody({ node, stage, setStage, opener }: Body) {
               <dt>{said.details.hidden}</dt>
               <dd>
                 <ul className="s-files">
-                  {hidden.map((issue) => (
-                    <li key={issue.code}>{safety.issues[issue.code]?.title ?? issue.title}</li>
+                  {hidden.map((issue, i) => (
+                    <li key={i}>
+                      {/* A group's names the project in it that it is about. */}
+                      {checkTitle(issue, safety.issues[issue.code]?.title ?? issue.title)}
+                    </li>
                   ))}
                 </ul>
               </dd>
@@ -707,19 +743,28 @@ function RestoreBody({ node, stage, setStage }: Body) {
   // Why the engine can't put it back there: another place has to be chosen, under Show details.
   const reason = moves && !failure && current?.plan?.error ? current.plan.reason : undefined;
   const where = tilde(current?.plan?.dest ?? expandHome(destination.trim(), home), home);
-  // A place reached through a link into the archive: the project's archived group goes back whole.
-  const group = reason === "linked" ? archivedGroupOf(nodes, node) : undefined;
+  // A place reached through a link into the archive, or a project inside an archived group: the
+  // archived group the engine names goes back whole. Without one, the link has to go first, or, in a
+  // group, the group the scan doesn't list goes back. Either way a place of its own can be chosen.
+  const group =
+    reason === "linked" || reason === "inGroup" ? groupOfPlan(nodes, current?.plan) : undefined;
   const why = !reason
     ? ""
     : reason === "unknown"
-      ? said.restore.unknown
-      : !where
-        ? ""
-        : reason === "linked"
-          ? group
-            ? said.restore.linked(where, group.label)
-            : said.restore.linkedAny(where)
-          : said.restore.why[reason](where);
+      ? node.kind === "folder"
+        ? said.restore.unknownGroup
+        : said.restore.unknown
+      : reason === "inGroup"
+        ? group
+          ? said.restore.inGroup(group.label)
+          : said.restore.inGroupAny
+        : !where
+          ? ""
+          : reason === "linked"
+            ? group
+              ? said.restore.linked(where, group.label)
+              : said.restore.linkedAny(where)
+            : said.restore.why[reason](where);
   const choose = Boolean(why);
   // The focus goes on to Restore once the plan has drawn it, or to the place to choose when the
   // engine can't go on, if it is still where the sheet put it.
@@ -1059,6 +1104,36 @@ function Problems({ node, issues }: { node: Node; issues: Issue[] }) {
               <b>{words?.title ?? issue.title}</b>
             </div>
             <p>{words ? words.body(issueCount(node, issue)) : (issue.detail ?? "")}</p>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * A group's problems: those of the projects in it, each after the name of its project (the check's
+ * `project`), in Simple's words, as the project's own "Is it safe?" card says them: never the
+ * engine's Git words. They are fixed on each project's page.
+ */
+function GroupProblems({ issues }: { issues: PlanCheck[] }) {
+  const nodes = useApp((s) => s.snapshot!.nodes);
+  if (!issues.length) return null;
+  return (
+    <ul className="s-issues" style={{ justifySelf: "stretch" }}>
+      {issues.map((issue, i) => {
+        const tone = toneOf(issue.severity);
+        const words = safety.issues[issue.code];
+        // Counted from the project the check names (`projectId`), as its card counts it.
+        const about = issue.projectId ? nodes[issue.projectId] : undefined;
+        return (
+          <li key={i} className="s-issue" data-project={issue.projectId}>
+            <div className="s-issue-title">
+              <StatusChip tone={tone}>{safety.tones[tone]}</StatusChip>
+              {/* The project in the group it is about, then the problem in plain words. */}
+              <b>{checkTitle(issue, words?.title ?? issue.title)}</b>
+            </div>
+            {words ? <p>{words.body(checkCount(about, issue))}</p> : null}
           </li>
         );
       })}

@@ -278,8 +278,95 @@ function notes(body: Body): Node {
   });
 }
 
+const JOURNAL: Op = {
+  kind: "write",
+  label: "Write undo journal",
+  to: "~/.local/share/laci/journal/",
+};
+/**
+ * Archives a folder of projects as a group, as the engine does it: the folder and everything in it
+ * goes to the archive, its own `.laci.md` says archived, where it came from and when, and it goes
+ * back whole. The preview moves no folder: everything in it is marked as being in the archive where
+ * it is. Undo takes every mark away again.
+ */
+function archiveGroup(n: Node): Change {
+  const home = fixtures.meta.home;
+  const plan = n.archivePlan;
+  if (!plan || plan.error) fail(plan?.error ?? "This folder can't be archived as a group");
+  const inside = Object.values(snapshot.nodes).filter((o) => within(o.path, n.path));
+  const was = inside.map((o) => ({
+    o,
+    fields: {
+      archived: o.archived,
+      inArchive: o.inArchive,
+      status: { ...o.status },
+      meta: { ...o.meta },
+      restorePlan: o.restorePlan,
+    },
+  }));
+  const from = tilde(n.path, home);
+  const dest = plan.dest ? tilde(plan.dest, home) : from;
+  for (const o of inside) {
+    const group = o === n;
+    // A folder in it whose own .laci.md says archived is an archived group inside this one: like a
+    // project, the engine puts it back only with the whole group, or alone to a place of its own.
+    const alone = o.kind === "project" || (o.kind === "folder" && o.meta.status === "archived");
+    Object.assign(o, {
+      archived: true,
+      inArchive: true,
+      // A status of its own still wins, as in the engine; else being in the archive says archived.
+      status:
+        group || !o.meta.status
+          ? { value: "archived", auto: !group }
+          : { value: o.meta.status, auto: false },
+      meta: group
+        ? {
+            ...o.meta,
+            status: "archived",
+            archivedFrom: from,
+            archivedAt: new Date().toISOString().slice(0, 10),
+          }
+        : o.meta,
+      // The group goes back whole. A project, or a group, in it goes back with it, as the engine says
+      // it (reason "inGroup", naming the group), or alone to a place of its own: `restoreTo` plans
+      // that. Any other folder in it has no plan of its own.
+      restorePlan: !group
+        ? alone
+          ? {
+              // No place: the one it came from is the group's.
+              error: `${o.name} is in the archived group ${n.name}, which goes back whole. Restore ${n.name}, or choose another place for it.`,
+              reason: "inGroup",
+              group: n.path,
+              checks: [],
+              ops: [],
+            }
+          : undefined
+        : {
+            dest: o.path,
+            checks: [],
+            ops: [
+              { kind: "move", label: "Move folder", from: dest, to: from },
+              { kind: "write", label: "Clear status: archived", to: `${from}/.laci.md` },
+              JOURNAL,
+            ],
+          },
+    });
+  }
+  const steps: Op[] = [
+    { kind: "move", label: "Moved", from, to: dest },
+    { kind: "write", label: "Edited .laci.md", from: dest },
+  ];
+  return changed(
+    `Archived ${n.name}`,
+    () => {
+      for (const { o, fields } of was) Object.assign(o, fields);
+    },
+    { steps },
+  );
+}
 function archive(body: Body): Change {
   const n = node(text(body, "id"));
+  if (n.kind === "folder") return archiveGroup(n);
   const was = {
     archived: n.archived,
     status: { ...n.status },
@@ -324,41 +411,24 @@ function restore(body: Body): Change {
     },
   }));
   const home = fixtures.meta.home;
+  // Every folder and project in the group that says archived in its own .laci.md loses the mark
+  // with it, in the same change, as the engine does it: one Undo brings every mark back.
   for (const o of moved) {
     const meta = { ...o.meta };
-    if (o === n) {
+    if (o === n || meta.status === "archived") {
       delete meta.status;
       delete meta.archivedFrom;
       delete meta.archivedAt;
     }
-    // Only the restored folder's own .laci.md loses its mark, as the engine does it: a project in
-    // the group marked archived in its own .laci.md stays marked, where it now is.
-    const marked = o !== n && meta.status === "archived";
     Object.assign(o, {
-      archived: marked,
+      archived: false,
       inArchive: false,
-      status: marked
-        ? { value: "archived", auto: false }
+      // A status of its own that wasn't the archived mark stays.
+      status: meta.status
+        ? { value: meta.status, auto: false }
         : { value: "idle", auto: true },
       meta,
-      restorePlan: marked
-        ? {
-            dest: o.path,
-            checks: [],
-            ops: [
-              {
-                kind: "write",
-                label: "Clear status: archived",
-                to: `${tilde(o.path, home)}/.laci.md`,
-              },
-              {
-                kind: "write",
-                label: "Write undo journal",
-                to: "~/.local/share/laci/journal/",
-              },
-            ],
-          }
-        : undefined,
+      restorePlan: undefined,
     });
   }
   const to = tilde(plan?.dest ?? n.path, home);
@@ -407,13 +477,31 @@ function restoreTo(n: Node, plan: ArchivePlan, destination: string): ArchivePlan
   const archive = `${home}/project/_archive`;
   const inside = (path: string, dir: string) =>
     path === dir || path.startsWith(`${dir}/`);
+  // In an archived group, a place inside the one the group goes back to would be in its way: the
+  // engine refuses it as it refuses no place at all, naming the group.
+  const group = plan.reason === "inGroup" && plan.group ? snapshot.nodes[plan.group] : undefined;
+  const back = group?.restorePlan?.dest;
+  if (group && back && inside(destination, back))
+    return {
+      error: `${n.name} is in the archived group ${group.name}, which goes back whole to ${short(back)}. Restore ${group.name}, or choose a place outside it.`,
+      reason: "inGroup",
+      group: group.path,
+      ops: [],
+      checks: [],
+    };
+  // A group the preview archived never moved: the place it came from is where it still is.
+  if (destination === n.path && plan.dest === n.path && !plan.error) return plan;
   if (!inside(destination, home))
     return cant("outside", "Path must be inside your home folder");
   if (through)
-    return cant(
-      "linked",
-      `${short(through.link)} is a link into the archive. Restore the whole group ${through.group.name}, or remove that link first.`,
-    );
+    return {
+      ...cant(
+        "linked",
+        `${short(through.link)} is a link into the archive. Restore the whole group ${through.group.name}, or remove that link first.`,
+      ),
+      // Where the group is, so the window can offer to restore it instead.
+      group: through.group.path,
+    };
   // The old link is free only for the group it points at.
   const link = links.find((l) => l.link === destination);
   if (snapshot.nodes[destination] || (link && link.group !== n))
@@ -694,18 +782,24 @@ function moveBackup(body: Body) {
   if (!state.error && dest === (state.dest ?? OWN_COPY)) fail("The copy of AI chats is in that folder already");
   const moved = !state.error && (state.bytes ?? 0) > 0;
   const was = { dest: state.dest, chosen: state.chosen, error: state.error };
+  const status = snapshot.copyStatus ?? null;
   const part = storage.parts.find((p) => p.id === "history");
-  const place = (where: { dest?: string | null; chosen?: boolean; error?: string }) => {
+  const place = (
+    where: { dest?: string | null; chosen?: boolean; error?: string },
+    copyStatus: Snapshot["copyStatus"],
+  ) => {
     if (snapshot.backup) snapshot.backup = { ...snapshot.backup, ...where };
+    // The engine tells a chosen folder as it tells a scan location; Laci's own folder, not at all.
+    snapshot.copyStatus = copyStatus;
     if (part) {
       part.dir = where.dest ?? OWN_COPY;
       part.elsewhere = Boolean(where.chosen);
     }
   };
-  place({ dest, chosen: Boolean(dir), error: undefined });
+  place({ dest, chosen: Boolean(dir), error: undefined }, dir ? { path: dir, available: true } : null);
   const change = changed(
     moved ? `Moved the copy of AI chats to ${dest}` : `The copy of AI chats is kept in ${dest} from now on`,
-    () => place(was),
+    () => place(was, status),
   );
   log[0].say = { form: moved ? "movedCopy" : "keptCopyIn", dir: dest, own: !dir };
   return { ...change, dest, moved, bytes: moved ? (state.bytes ?? 0) : 0 };
@@ -1029,7 +1123,10 @@ const reads: Record<string, Handler> = {
   log: () => ({ entries: log, file: fixtures.log.file }),
   "agent/mcp": () => ({ agents: mcp }),
   health: (body) => lookup(fixtures.health, text(body, "id"), "health data"),
+  // A folder's plan, as a group, is the one the scan holds: the recorded plans are the projects'.
   "archive/plan": (body) =>
+    fixtures["archive/plan"][text(body, "id")] ??
+    snapshot.nodes[text(body, "id")]?.archivePlan ??
     lookup(fixtures["archive/plan"], text(body, "id"), "archive plan"),
   "restore/plan": (body) => {
     const n = node(text(body, "id"));
@@ -1208,21 +1305,42 @@ const terminals: Record<string, (args: Body) => unknown> = {
 // same one the pretend update starts from.
 terminals["plugin:app|version"] = () => PREVIEW_VERSION;
 
+/** A folder for the copy of AI chats on a drive that isn't connected. */
+export const OFFLINE_COPY = "/run/media/demo/Backup/laci-copy";
+/**
+ * The copy of AI chats kept in a folder chosen on another drive, which isn't connected: the engine
+ * tells it unavailable, with why, and the copy can't be made there until it is back.
+ */
+function unplugCopy() {
+  const reason = `The folder for the copy of AI chats isn't there: ${OFFLINE_COPY}. Connect its drive, or choose another folder for the copy.`;
+  snapshot.copyStatus = { path: OFFLINE_COPY, available: false, reason };
+  if (snapshot.backup)
+    snapshot.backup = { ...snapshot.backup, dest: OFFLINE_COPY, chosen: true, error: reason };
+  const part = storage.parts.find((p) => p.id === "history");
+  if (part) {
+    part.dir = OFFLINE_COPY;
+    part.elsewhere = true;
+    part.error = reason;
+  }
+}
 /**
  * Stands in for the desktop. Call before the window's own code is loaded. The choice about new
  * versions is saved, as on any setup but one from before 3.0: `updates: null` plays that one, whose
- * Today and Home ask once.
+ * Today and Home ask once. `copy: "offline"` plays a copy of AI chats kept on a drive that isn't
+ * connected.
  */
 export function installIpc(options: {
   design: Design;
   theme: Theme;
   updates?: "daily" | "off" | null;
+  copy?: "offline";
 }) {
   snapshot = clone(fixtures.snapshot);
   log = clone(fixtures.log.entries);
   storage = clone(fixtures.storage);
   mcp = clone(fixtures["agent/mcp"].agents);
   keptOut = new Map();
+  if (options.copy === "offline") unplugCopy();
   const { design, theme, updates = "daily" } = options;
   settings = { design, theme, updates };
   update = {

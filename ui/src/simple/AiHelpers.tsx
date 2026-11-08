@@ -19,6 +19,7 @@ import {
   conversationIds,
   conversationKey,
   copyChangeSaid,
+  copyOffline,
   deletable,
   LOCALE,
   localDay,
@@ -804,7 +805,10 @@ function CopyCard({ snapshot }: { snapshot: Snapshot }) {
           ? said.copyLast(ago(backup.at), backup.sessions ?? 0, bytes(backup.bytes))
           : said.copyNone}
       </p>
-      {backup.error ? <Callout tone="act">{engineSays(backup.error, "simple")}</Callout> : null}
+      {/* Where Laci keeps the copy says why, when it is the drive that isn't connected. */}
+      {backup.error && backup.error !== copyOffline(snapshot)?.reason ? (
+        <Callout tone="act">{engineSays(backup.error, "simple")}</Callout>
+      ) : null}
       <div className="s-actions">
         <Button kind="outline" small icon="copy" onClick={copyNow}>
           {said.copyNow}
@@ -874,6 +878,8 @@ function CopyWhich({ snapshot, backup }: { snapshot: Snapshot; backup: Backup })
  */
 function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
   const historyPending = useApp((s) => s.historyPending);
+  // The folder chosen, while its drive isn't connected: nothing is copied until it is back.
+  const offline = useApp((s) => copyOffline(s.snapshot));
   const working = useApp((s) => s.working);
   // The folder picked, waiting for the question to be answered; "" is Laci's own folder.
   const [asking, setAsking] = useState<string | null>(null);
@@ -942,6 +948,14 @@ function CopyPlace({ backup, home }: { backup: Backup; home: string }) {
         </span>
         <span className="s-quiet">{said.copyPlaceNote}</span>
       </p>
+      {offline ? (
+        <div data-ui="copy-offline">
+          <Callout tone="act">
+            {said.copyOffline(tilde(offline.path, home))}
+            {offline.reason ? ` ${engineSays(offline.reason, "simple")}` : ""}
+          </Callout>
+        </div>
+      ) : null}
       {asking !== null ? (
         <div ref={question} role="group" aria-label={act} aria-describedby={told} tabIndex={-1}>
           <p id={told}>

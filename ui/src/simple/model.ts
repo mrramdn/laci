@@ -3,10 +3,12 @@
 // helpers.ts, selectors.ts and words.ts, so the tests run it as it is.
 import {
   APP_NAMES,
+  archivedGroupOf,
   base,
   cap,
   deadlineInfo,
   deletable,
+  isMarkedFolder,
   liveIssues,
   recency,
   RISK,
@@ -79,9 +81,12 @@ export function safetyOf(n: Node): Safety {
   return { tone: n.git ? "safe" : "fyi", noHistory: !n.git };
 }
 
-/** The number a problem is about: saved versions, files or sets of changes. */
-export function issueCount(n: Node, issue: Issue): number {
-  const git = n.git;
+/**
+ * The number a problem is about: saved versions, files or sets of changes. Without the project (a
+ * group's check about a project the scan doesn't list), the engine's own count in its title.
+ */
+export function issueCount(n: Node | undefined, issue: Issue): number {
+  const git = n?.git;
   const leading = Number(/^\s*(\d+)/.exec(issue.title)?.[1] ?? 0);
   switch (issue.code) {
     case "no-remote":
@@ -98,6 +103,16 @@ export function issueCount(n: Node, issue: Issue): number {
       // Unpushed versions may have no upstream to count from, so the engine's own count wins.
       return leading || git?.ahead || 0;
   }
+}
+
+/**
+ * The number a group's archive check is about: counted from the project it names (`projectId`), as
+ * its card counts it; without that project's history, the engine's count in the check's title, else
+ * in its detail ("3 commits exist only on this disk").
+ */
+export function checkCount(n: Node | undefined, check: Issue): number {
+  if (n?.git) return issueCount(n, check);
+  return issueCount(undefined, check) || Number(/(\d+)/.exec(check.detail ?? "")?.[1] ?? 0);
 }
 
 /** The fixes that `assistant/prompt {kind: "fix"}` writes a prompt for. */
@@ -245,7 +260,8 @@ const dueDays = (n: Node, now: Date) =>
 
 /**
  * Simple's project list. All leaves archived projects out; Needs you is the projects Home lists,
- * archived ones that can still lose work among them.
+ * archived ones that can still lose work among them. Archived also lists the projects in a folder
+ * only marked archived, under that folder.
  */
 export function projectsModel(
   snapshot: Snapshot,
@@ -256,11 +272,13 @@ export function projectsModel(
   const inFolder = Object.values(snapshot.nodes).filter(
     (n) => n.kind === "project" && (!folder || within(n.path, folder)),
   );
+  const marked = Object.values(snapshot.nodes).filter(isMarkedFolder);
   const shows: Record<ProjectFilter, (n: Node) => boolean> = {
     all: (n) => !n.archived,
     needs: (n) => needs.has(n.id),
     active: (n) => !n.archived && n.status.value === "active",
-    archived: (n) => n.archived,
+    archived: (n) =>
+      n.archived || marked.some((m) => n.path !== m.path && within(n.path, m.path)),
   };
   const counts = Object.fromEntries(
     PROJECT_FILTERS.map((key) => [key, inFolder.filter(shows[key]).length]),
@@ -275,7 +293,29 @@ export function projectsModel(
   const shown = inFolder
     .filter((n) => shows[filter](n) && matchesQuery(n, query))
     .sort(order[sort]);
-  return { shown, sections: projectSections(snapshot, shown, sort), counts };
+  return {
+    shown,
+    sections: projectSections(snapshot, shown, sort, filter === "archived"),
+    counts,
+  };
+}
+
+/**
+ * The archived folder above a project that goes back whole with it: the outermost archived group,
+ * which is the one the engine restores (one inside another goes back with the outer one), else the
+ * nearest folder only marked archived. None when it is in neither.
+ */
+function archivedFolderOf(snapshot: Snapshot, n: Node): Node | null {
+  const group = archivedGroupOf(snapshot.nodes, n);
+  if (group) return group;
+  const seen = new Set<string>([n.id]);
+  for (let at = n.parent; at && !seen.has(at); at = snapshot.nodes[at]?.parent) {
+    seen.add(at);
+    const above = snapshot.nodes[at];
+    if (!above) return null;
+    if (isMarkedFolder(above)) return above;
+  }
+  return null;
 }
 
 /** The nearest folder above a project, which is what holds it in the user's layout. */
@@ -311,11 +351,14 @@ function projectSections(
   snapshot: Snapshot,
   shown: Node[],
   sort: ProjectSort,
+  archived = false,
 ): ProjectSection[] {
   // A Map keeps the order each section was first met in, which is the order of `shown`.
   const found = new Map<string, ProjectSection>();
   for (const n of shown) {
-    const group = groupOf(snapshot, n);
+    // Under Archived, a project sits under the archived folder that goes back with it, so that its
+    // heading can put the whole folder back.
+    const group = (archived && archivedFolderOf(snapshot, n)) || groupOf(snapshot, n);
     const key = group?.id ?? "";
     const section = found.get(key) ?? {
       group,

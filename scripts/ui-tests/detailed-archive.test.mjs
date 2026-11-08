@@ -140,8 +140,11 @@ function rowsInOrder(html) {
 
 export function anArchivedGroupIsARowWithWhatItHoldsUnderIt() {
   const clients = group("old-clients");
-  const linked = (name) =>
-    cant("linked", `${HOME}/project/old-clients/${name}`);
+  // The engine names the group to restore instead: where it is in the archive.
+  const linked = (name) => ({
+    ...cant("linked", `${HOME}/project/old-clients/${name}`),
+    group: clients.path,
+  });
   const html = draw([
     project("old-portfolio", {
       restorePlan: { dest: `${HOME}/project/old-portfolio`, ops: [], checks: [] },
@@ -188,8 +191,241 @@ export function aLinkedProjectWithNoArchivedGroupSaysWhyAndKeepsItsRestore() {
   assert.deepEqual(rows(html), {
     "batik-shop": `${words.from("~/project/plain/batik-shop")} · ${words.why.linked}`,
   });
+  // It says to remove the link.
+  assert.match(words.why.linked, /remove the link first/);
   assert.match(html, />Restore<\/button>/);
   assert.doesNotMatch(html, new RegExp(words.restoreGroup));
+}
+
+export function onlyThePlanPicksTheGroupALinkedProjectGoesBackWith() {
+  // Both projects are in the archived group old-clients. The engine names it for warung-pos; for
+  // batik-shop it names none, so batik-shop says to remove the link, and has no group's Restore.
+  const clients = group("old-clients");
+  const linked = (name, more = {}) => ({
+    ...cant("linked", `${HOME}/project/old-clients/${name}`),
+    ...more,
+  });
+  const { linkedGroup, linkedAlone } = load("helpers.ts");
+  const warung = member(clients, "warung-pos", linked("warung-pos", { group: clients.path }));
+  const batik = member(clients, "batik-shop", linked("batik-shop"));
+  // A group the plan names that the scan doesn't list as an archived group is none either.
+  const elsewhere = member(clients, "kopi", linked("kopi", { group: `${HOME}/project/_archive/gone` }));
+  const nodes = Object.fromEntries([clients, warung, batik, elsewhere].map((n) => [n.id, n]));
+  assert.equal(linkedGroup(nodes, warung)?.id, clients.id);
+  assert.equal(linkedGroup(nodes, batik), undefined);
+  assert.equal(linkedGroup(nodes, elsewhere), undefined);
+  assert.deepEqual([warung, batik, elsewhere].map((n) => linkedAlone(nodes, n)), [false, true, true]);
+  // A plan that isn't refused for a link names no group, whatever it holds.
+  assert.equal(linkedGroup(nodes, { ...warung, restorePlan: { ...warung.restorePlan, reason: "occupied" } }), undefined);
+  const html = draw([clients, warung, batik]);
+  const said = Object.fromEntries(rowsInOrder(html).map(({ name, said }) => [name, said]));
+  assert.equal(said["warung-pos"], words.inside("old-clients"));
+  assert.equal(said["batik-shop"], `${words.from("~/project/old-clients/batik-shop")} · ${words.why.linked}`);
+  assert.equal(html.split(`>${words.restoreGroup}</button>`).length - 1, 1, "warung-pos's only");
+}
+
+export function aProjectInsideAnArchivedGroupOffersTheGroupAsALinkedOneDoes() {
+  // No link here: the engine refuses each project alone without a place (reason "inGroup") and names
+  // the outermost archived group it is in.
+  const clients = group("old-clients");
+  // No place: the one it came from is the group's.
+  const inGroup = (name, at = clients.path) => ({ ...cant("inGroup"), group: at });
+  const warung = member(clients, "warung-pos", inGroup("warung-pos"));
+  // A group the scan doesn't list: the row says why, and keeps its own Restore.
+  const kopi = member(clients, "kopi", inGroup("kopi", `${HOME}/project/_archive/gone`));
+  const { linkedGroup, linkedAlone } = load("helpers.ts");
+  const nodes = Object.fromEntries([clients, warung, kopi].map((n) => [n.id, n]));
+  assert.equal(linkedGroup(nodes, warung)?.id, clients.id);
+  assert.equal(linkedGroup(nodes, kopi), undefined);
+  // Not a link to remove: a place of its own puts it back alone.
+  assert.deepEqual([warung, kopi].map((n) => linkedAlone(nodes, n)), [false, false]);
+  const html = draw([clients, warung, kopi]);
+  const said = Object.fromEntries(rowsInOrder(html).map(({ name, said }) => [name, said]));
+  assert.equal(said["warung-pos"], words.inside("old-clients"));
+  assert.equal(said.kopi, words.inGroupAny);
+  // With a place the engine names, the place comes first, as for the other reasons.
+  const { restoreFrom } = load("views/archive.tsx", {
+    "../store": { useApp: none, external: none },
+    "../api": { api: none },
+    "../common": { Icon: none, Group: none },
+  });
+  const placed = { ...kopi, restorePlan: { ...kopi.restorePlan, dest: `${HOME}/project/kopi` } };
+  assert.equal(restoreFrom(placed, HOME), `${words.from("~/project/kopi")} · ${words.why.inGroup}`);
+  assert.equal(html.split(`>${words.restoreGroup}</button>`).length - 1, 1, "warung-pos's only");
+  assert.equal(html.split(">Restore</button>").length - 1, 2, "the group's and kopi's");
+  assert.doesNotMatch(words.why.inGroup, /agent/i);
+}
+
+export function anArchivedGroupInsideAnotherOffersTheOuterGroup() {
+  const outer = group("old-clients");
+  const inner = group("old-clients/2024", {
+    name: "2024",
+    label: "2024",
+    parent: outer.id,
+    restorePlan: { ...cant("inGroup"), group: outer.path },
+  });
+  const html = draw([outer, inner]);
+  const rows = rowsInOrder(html);
+  assert.deepEqual(
+    rows.map(({ classes, kind, name, said }) => [classes, kind, name, said]),
+    [
+      ["item", "group", "old-clients", words.from("~/project/old-clients")],
+      ["item in-group", "group", "2024", words.inside("old-clients")],
+    ],
+  );
+  assert.equal(html.split(`>${words.restoreGroup}</button>`).length - 1, 1);
+}
+
+export function aProjectInAnArchivedGroupInsideAnotherIsListedUnderTheOuterGroup() {
+  // old-clients holds the archived group 2024, which holds warung-pos. The engine puts back the
+  // outermost group for both (reason "inGroup", group old-clients): they are listed under it, the
+  // inner group just before what it holds, and each row's Restore group is old-clients'.
+  const outer = group("old-clients");
+  const inGroup = () => ({ ...cant("inGroup"), group: outer.path });
+  const inner = group("old-clients/2024", {
+    name: "2024",
+    label: "2024",
+    parent: outer.id,
+    restorePlan: inGroup("2024"),
+  });
+  const warung = project("old-clients/2024/warung-pos", {
+    name: "warung-pos",
+    label: "warung-pos",
+    parent: inner.id,
+    meta: { status: "archived" },
+    restorePlan: inGroup("2024/warung-pos"),
+  });
+  const batik = member(outer, "batik-shop", inGroup("batik-shop"));
+  const nodes = Object.fromEntries([outer, inner, warung, batik].map((n) => [n.id, n]));
+  const { archivedGroupOf } = load("helpers.ts");
+  assert.equal(archivedGroupOf(nodes, warung)?.id, outer.id, "the outermost group, not 2024");
+  assert.equal(archivedGroupOf(nodes, inner)?.id, outer.id);
+  assert.equal(archivedGroupOf(nodes, outer), undefined);
+  const html = draw([warung, batik, inner, outer]);
+  assert.deepEqual(
+    rowsInOrder(html).map(({ classes, kind, name, said }) => [classes, kind, name, said]),
+    [
+      ["item", "group", "old-clients", words.from("~/project/old-clients")],
+      ["item in-group", "group", "2024", words.inside("old-clients")],
+      ["item in-group", "project", "warung-pos", words.inside("old-clients")],
+      ["item in-group", "project", "batik-shop", words.inside("old-clients")],
+    ],
+  );
+  assert.equal(html.split(`title="${words.restoreGroupFor("old-clients")}"`).length - 1, 3);
+  assert.doesNotMatch(html, new RegExp(`title="${words.restoreGroupFor("2024")}"`));
+  // The inner group's "Group of 1 project" follows its words, as the outer group's does.
+  assert.match(
+    html,
+    /<span class="name">2024<\/span><span class="d whole"[^>]*>[^<]*<\/span><span class="note">Group of 1 project<\/span>/,
+  );
+}
+
+export function aGroupsArchiveChecksNameTheirProject() {
+  const { checkTitle } = load("helpers.ts");
+  const check = { code: "unpushed", severity: "med", title: "8 commits not pushed" };
+  assert.equal(checkTitle(check), "8 commits not pushed");
+  assert.equal(
+    checkTitle({ ...check, project: "acme-store", projectId: `${HOME}/project/clients/acme-store` }),
+    "acme-store: 8 commits not pushed",
+  );
+  // A design's own words for the title keep the project in front.
+  assert.equal(
+    checkTitle(
+      { ...check, project: "acme-store", projectId: `${HOME}/project/clients/acme-store` },
+      "Not uploaded yet",
+    ),
+    "acme-store: Not uploaded yet",
+  );
+  // Detailed's Archive dialog draws them that way.
+  const source = readFileSync(new URL("../../ui/src/dialogs.tsx", import.meta.url), "utf8");
+  assert.match(source, /<p>\{checkTitle\(check\)\}<\/p>/);
+}
+
+export function detailedsRestoreDialogAsksAPlaceOfItsOwnForAProjectInAGroup() {
+  const clients = group("old-clients");
+  const warung = member(clients, "warung-pos", {
+    ...cant("inGroup"),
+    group: clients.path,
+  });
+  const { Dialogs } = dialogs({ kind: "restore", id: warung.id }, [clients, warung]);
+  const html = renderToStaticMarkup(h(Dialogs));
+  assert.match(html, /Restore warung-pos\?/);
+  assert.match(html, /aria-label="Restore destination"[^>]*required=""|required=""[^>]*aria-label="Restore destination"/);
+  assert.match(html, /Required: the full project folder path, including its name\./);
+}
+
+export function aFolderOnlyMarkedArchivedIsListedInPlaceWithUnarchive() {
+  // thesis says archived in its own .laci.md, but never moved; campus-lms in it isn't archived.
+  const thesis = {
+    id: `${HOME}/project/thesis`,
+    path: `${HOME}/project/thesis`,
+    kind: "folder",
+    name: "thesis",
+    label: "thesis",
+    children: [`${HOME}/project/thesis/campus-lms`],
+    archived: true,
+    inArchive: false,
+    meta: { status: "archived" },
+    restorePlan: {
+      dest: `${HOME}/project/thesis`,
+      ops: [{ kind: "write", label: "Clear status: archived", to: "~/project/thesis/.laci.md" }],
+      checks: [],
+    },
+  };
+  const lms = {
+    ...project("campus-lms"),
+    id: `${HOME}/project/thesis/campus-lms`,
+    path: `${HOME}/project/thesis/campus-lms`,
+    parent: thesis.id,
+    archived: false,
+    inArchive: false,
+    meta: {},
+    restorePlan: undefined,
+  };
+  const html = draw([thesis, lms]);
+  // Not in the archive: no row there, and no "No archived projects".
+  assert.doesNotMatch(html, /data-title="In the archive"/);
+  assert.doesNotMatch(html, /No archived projects/);
+  assert.match(html, /data-title="Marked archived, still in place"/);
+  const row = html.slice(html.indexOf(`data-id="${thesis.id}"`));
+  assert.match(row, /^data-id="[^"]+" data-kind="group"/);
+  // "Group of 1 project" follows where it is, as an archived group's follows where it came from:
+  // the place keeps its width (`whole`), and the note takes what is left, not the middle of the row.
+  assert.match(
+    row,
+    /<span class="name">thesis<\/span><span class="d mono whole">~\/project\/thesis<\/span><span class="note">Group of 1 project<\/span>/,
+  );
+  // Unarchive clears its mark; it isn't moved to the archive from here.
+  assert.match(row, new RegExp(`title="${words.unarchiveFolder}"[^>]*>Unarchive</button>`));
+  assert.doesNotMatch(row, />Move to archive</);
+  const { isArchivedGroup, isMarkedFolder } = load("helpers.ts");
+  assert.deepEqual([isArchivedGroup(thesis), isMarkedFolder(thesis)], [false, true]);
+}
+
+export function detailedsArchiveDialogSpeaksOfTheGroup() {
+  const clients = {
+    id: `${HOME}/project/clients`,
+    path: `${HOME}/project/clients`,
+    kind: "folder",
+    name: "clients",
+    label: "clients",
+    children: [],
+    archived: false,
+    inArchive: false,
+    meta: {},
+    projectCount: 2,
+    archivePlan: { dest: `${HOME}/project/_archive/clients`, ops: [], checks: [] },
+  };
+  const { Dialogs, groupMoves } = dialogs({ kind: "archive", id: clients.id }, [clients]);
+  const html = renderToStaticMarkup(h(Dialogs));
+  assert.match(html, /Archive the group clients\?/);
+  assert.equal(words.archiveGroupTitle("clients"), "Archive the group clients?");
+  assert.match(
+    html,
+    /Moves the whole folder to the archive\. 2 projects move with their agent history, so sessions and memory still open from the new place\./,
+  );
+  assert.match(html, /The full folder path, including its name\./);
+  assert.equal(groupMoves(1), "1 project moves with its agent history");
 }
 
 export function theUnlinkStepHasItsIconAndTheEnginesWordsInBothDesigns() {
@@ -227,12 +463,38 @@ export function theUnlinkStepHasItsIconAndTheEnginesWordsInBothDesigns() {
   assert.match(simple, />~\/project\/old-clients → ~\/project\/_archive\/old-clients</);
 }
 
-export function detailedsRestoreDialogNamesTheGroup() {
-  const clients = group("old-clients");
+export function aPlanStepIsDrawnWithTheEnginesOwnLabel() {
+  // A group archived into a folder that is in the archive already joins it: a step of kind "move"
+  // whose label the engine writes. Both designs draw it as given, never a label of their own.
+  const op = {
+    kind: "move",
+    label: "Join the folder already in the archive (~/project/_archive/clients)",
+    from: "~/project/clients",
+    to: "~/project/_archive/clients",
+  };
+  const { Ops } = load("common.tsx", {
+    "./api": { api: none, errorText: String },
+    "./store": { useApp: none, changed: none, run: none, toggleExpanded: none },
+    "./clock": { useNow: () => 0 },
+    "./terminal-api": { openTerminal: none },
+    "./dialogs": { DialogFrame: none },
+  });
+  const detailed = renderToStaticMarkup(h(Ops, { ops: [op] }));
+  assert.match(detailed, /class="k-move"/);
+  assert.ok(detailed.includes(`>${op.label}</div>`), detailed);
+  const { Steps } = load("simple/steps.tsx", {
+    "../common": { Icon: ({ name }) => h("i", { "data-icon": name }) },
+  });
+  const simple = renderToStaticMarkup(h(Steps, { ops: [op] }));
+  assert.ok(simple.includes(`>${op.label}</span>`), simple);
+}
+
+/** Detailed's dialogs module, loaded with `modal` open over a scan of `nodes`. */
+function dialogs(modal, nodes) {
   const state = {
     design: "detailed",
-    modal: { kind: "restore", id: clients.id },
-    snapshot: { home: HOME, nodes: { [clients.id]: clients }, proposals: [] },
+    modal,
+    snapshot: { home: HOME, nodes: Object.fromEntries(nodes.map((n) => [n.id, n])), proposals: [] },
     historyPending: false,
     working: "",
     palette: false,
@@ -241,7 +503,7 @@ export function detailedsRestoreDialogNamesTheGroup() {
     getState: () => state,
     setState: none,
   });
-  const { Dialogs } = load(
+  return load(
     "dialogs.tsx",
     {
       "./api": { api: () => new Promise(none), errorText: String },
@@ -262,6 +524,11 @@ export function detailedsRestoreDialogNamesTheGroup() {
       HTMLElement: class {},
     },
   );
+}
+
+export function detailedsRestoreDialogNamesTheGroup() {
+  const clients = group("old-clients");
+  const { Dialogs } = dialogs({ kind: "restore", id: clients.id }, [clients]);
   const html = renderToStaticMarkup(h(Dialogs));
   assert.match(html, /Restore the group old-clients\?/);
   assert.equal(words.restoreGroupTitle("old-clients"), "Restore the group old-clients?");

@@ -6,7 +6,9 @@ import {
   archivedGroupOf,
   bytes,
   groupProjectCount,
+  groupSize,
   isArchivedGroup,
+  isMarkedFolder,
   linkedGroup,
   LOCALE,
   plural,
@@ -26,10 +28,12 @@ function archivedOn(day?: string) {
 }
 /**
  * Where a project in the archive came from, and why it can't go back there by itself: "From
- * <place>", "From <place> · something is there now", or "Origin unknown".
+ * <place>", "From <place> · something is there now", or "Origin unknown". Inside an archived group
+ * the engine names no place, as the place it came from is the group's: the row says that instead.
  */
 export function restoreFrom(n: Node, home: string) {
   const plan = n.restorePlan;
+  if (plan?.error && plan.reason === "inGroup" && !plan.dest) return said.inGroupAny;
   if (!plan?.dest || plan.reason === "unknown") return said.unknown;
   const from = said.from(tilde(plan.dest, home));
   if (!plan.error) return from;
@@ -47,7 +51,9 @@ interface Row {
 }
 /**
  * The archived groups and the projects in the archive, as rows: newest first, and after each group
- * what it holds, by name.
+ * what it holds, by its place in the group. What an archived group holds, an archived group inside it
+ * and what that one holds too, is listed under the outermost one: that is the group the engine puts
+ * back with it.
  */
 export function archiveRows(nodes: Record<string, Node>): Row[] {
   const listed = Object.values(nodes).filter(
@@ -64,8 +70,9 @@ export function archiveRows(nodes: Record<string, Node>): Row[] {
   const rows: Row[] = [];
   const add = (n: Node, depth: number) => {
     rows.push({ n, depth });
+    // By path, so that a group inside comes just before what it holds.
     for (const inside of (inGroup.get(n.id) ?? []).sort((a, b) =>
-      a.label.localeCompare(b.label),
+      a.path.localeCompare(b.path),
     ))
       add(inside, depth + 1);
   };
@@ -97,8 +104,13 @@ export function ArchiveView() {
     (n) => n.kind === "project" && n.archived,
   );
   const stored = archiveRows(nodes);
-  const marked = projects
-    .filter((n) => !n.inArchive)
+  // Projects, and folders, whose .laci.md says archived but which never moved.
+  const marked = Object.values(nodes)
+    .filter(
+      (n) =>
+        (n.kind === "project" && n.archived && !n.inArchive) ||
+        isMarkedFolder(n),
+    )
     .sort((a, b) => a.label.localeCompare(b.label));
   const select = (id: string) => useApp.getState().select(id);
   const open = (id: string) =>
@@ -145,10 +157,12 @@ export function ArchiveView() {
           >
             {stored.map(({ n, depth }) => {
               const group = isArchivedGroup(n);
-              // A project that goes back only with its archived group (the engine's reason "linked")
-              // offers the group in place of its own Restore, when the scan lists the group. Without
-              // one, the row says where it came from and why it can't go back, as for any reason.
-              const whole = group ? undefined : linkedGroup(nodes, n);
+              // A project, or a group, that goes back only with its archived group (the engine's
+              // reason "linked", or "inGroup" for one inside it) offers that group in place of its own
+              // Restore, when the scan lists the group. Without one, the row says where it came from
+              // and why it can't go back, as for any reason. Alone, it goes back to a place chosen in
+              // the Restore dialog, from the details panel.
+              const whole = linkedGroup(nodes, n);
               const inside = whole ? said.inside(whole.label) : "";
               const from = restoreFrom(n, home);
               const day = archivedOn(n.meta.archivedAt);
@@ -165,7 +179,7 @@ export function ArchiveView() {
                   {group ? <Icon name="folder" className="sm" /> : null}
                   <span className="name">{n.label}</span>
                   {inside ? (
-                    <span className="d" title={inside}>
+                    <span className={group ? "d whole" : "d"} title={inside}>
                       {inside}
                     </span>
                   ) : (
@@ -235,46 +249,59 @@ export function ArchiveView() {
             hint="Their status says archived, but the folder hasn’t moved"
             order="By name"
           >
-            {marked.map((n) => (
-              <div
-                className="item"
-                key={n.id}
-                tabIndex={0}
-                data-id={n.id}
-                aria-selected={selected === n.id}
-                onClick={() => select(n.id)}
-              >
-                <span className="name">{n.label}</span>
-                <span className="d mono">{tilde(n.path, home)}</span>
-                <span className="meta">
-                  <button
-                    className="btn sm"
-                    disabled={historyPending}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      useApp.setState({ modal: { kind: "archive", id: n.id } });
-                    }}
-                  >
-                    <Icon name="archive" className="sm" />
-                    Move to archive
-                  </button>
-                  <button
-                    className="btn sm ghost"
-                    disabled={historyPending}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      open(n.id);
-                    }}
-                  >
-                    <Icon name="undo-2" className="sm" />
-                    Unarchive
-                  </button>
-                </span>
-              </div>
-            ))}
+            {marked.map((n) => {
+              // A folder only marked archived: Unarchive clears its mark; it has no archive plan.
+              const folder = n.kind === "folder";
+              return (
+                <div
+                  className="item"
+                  key={n.id}
+                  tabIndex={0}
+                  data-id={n.id}
+                  data-kind={folder ? "group" : "project"}
+                  aria-selected={selected === n.id}
+                  onClick={() => select(n.id)}
+                >
+                  {folder ? <Icon name="folder" className="sm" /> : null}
+                  <span className="name">{n.label}</span>
+                  {/* A folder's "Group of N projects" follows its place, as an archived group's does. */}
+                  <span className={folder ? "d mono whole" : "d mono"}>{tilde(n.path, home)}</span>
+                  {folder ? (
+                    <span className="note">{said.group(groupSize(nodes, n))}</span>
+                  ) : null}
+                  <span className="meta">
+                    {folder ? null : (
+                      <button
+                        className="btn sm"
+                        disabled={historyPending}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          useApp.setState({ modal: { kind: "archive", id: n.id } });
+                        }}
+                      >
+                        <Icon name="archive" className="sm" />
+                        Move to archive
+                      </button>
+                    )}
+                    <button
+                      className="btn sm ghost"
+                      title={folder ? said.unarchiveFolder : undefined}
+                      disabled={historyPending}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        open(n.id);
+                      }}
+                    >
+                      <Icon name="undo-2" className="sm" />
+                      Unarchive
+                    </button>
+                  </span>
+                </div>
+              );
+            })}
           </Group>
         ) : null}
-        {!projects.length && !stored.length ? (
+        {!projects.length && !stored.length && !marked.length ? (
           <div className="empty">
             {historyPending
               ? "Updating…"

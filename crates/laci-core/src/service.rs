@@ -220,11 +220,42 @@ pub fn runs_long(name: &str) -> bool {
     matches!(name, "backup" | "backup/move")
 }
 
-/// Runs one of the actions [`runs_long`] names. `snap` is the scan a backup copies the histories of. A move of the
-/// copy that stopped part-way, finished first, is told in the Log then.
+/// Whether the request `name` with the body `b` is one [`long_action`] runs: an action [`runs_long`] names, or an Undo
+/// of a move of the copy of AI chats (`undo` by its journal, `log/undo` by its Log entry), which can copy the copy
+/// back to another drive.
+pub fn runs_long_request(env: &Env, name: &str, b: &Value) -> bool {
+    if runs_long(name) {
+        return true;
+    }
+    let journal = match name {
+        "undo" => string(b, "id").to_owned(),
+        "log/undo" => {
+            let Some(entry) = activity::read_log(env, 2000).into_iter().find(|a| a["id"] == b["id"]) else {
+                return false;
+            };
+            if entry["undo"]["type"] != "journal" {
+                return false;
+            }
+            string(&entry["undo"], "id").to_owned()
+        }
+        _ => return false,
+    };
+    ops::is_copy_move(env, &journal)
+}
+
+/// Whether the long action `name` moves the copy of AI chats, which a change asked for meanwhile is told: a move of it,
+/// or the Undo of one.
+pub fn moves_copy(name: &str) -> bool {
+    matches!(name, "backup/move" | "undo" | "log/undo")
+}
+
+/// Runs one of the actions [`runs_long_request`] tells. `snap` is the scan a backup copies the histories of. A move of
+/// the copy that stopped part-way, finished first, is told in the Log then.
 pub fn long_action(env: &Env, snap: &Value, name: &str, b: &Value, by: &str) -> Result<RequestOutcome> {
-    let _long = ops::LongRun::start(env, name == "backup/move");
+    let _long = ops::LongRun::start(env, moves_copy(name));
     match name {
+        "undo" => Ok(RequestOutcome { value: undo_journal(env, string(b, "id"), by)?, refresh: Refresh::full() }),
+        "log/undo" => Ok(RequestOutcome { value: undo_logged(env, string(b, "id"), by)?, refresh: Refresh::full() }),
         "backup" => {
             let auto = b["auto"] == true;
             // An automatic run is opt-in, at most hourly, and only when a session changed since the last one.
@@ -253,6 +284,34 @@ pub fn long_action(env: &Env, snap: &Value, name: &str, b: &Value, by: &str) -> 
         }
         _ => Err(format!("Unknown action: {name}")),
     }
+}
+
+/// `undo`: takes back the change the journal `id` holds, told in the Log by `by`.
+fn undo_journal(env: &Env, id: &str, by: &str) -> Result<Value> {
+    // A move of the copy that stopped part-way and that this finished first is told, also when the Undo is then
+    // refused.
+    let mut settled = None;
+    let undone = ops::undo_settling(env, id, &mut settled);
+    if let Some(journal) = &settled {
+        activity::record_journal(env, journal, None, by);
+    }
+    let j = undone?;
+    let entry = activity::read_log(env, 300).into_iter().find(|e| e["journal"] == j["id"]);
+    activity::record(
+        env,
+        json!({"by":by,"title":format!("Undid: {}",string(&j,"title")),"say":{"form":"undid"},"undoes":entry.map(|e|e["id"].clone()).unwrap_or_else(||json!(format!("j:{}",string(&j,"id"))))}),
+    );
+    let mut out = json!({"journal":j});
+    // What the Undo left out is told with it.
+    if let Some(warnings) = out["journal"].as_object_mut().and_then(|j| j.remove("warnings")) {
+        out["warnings"] = warnings;
+    }
+    Ok(out)
+}
+/// `log/undo`: takes back the change the Log entry `id` tells, by `by`.
+fn undo_logged(env: &Env, id: &str, by: &str) -> Result<Value> {
+    let undone = activity::undo_activity(env, id, by)?;
+    Ok(if undone["warnings"].is_array() { json!({"warnings":undone["warnings"]}) } else { json!({}) })
 }
 
 /// Copies the agent histories `snap` connects into the copy of AI chats, and tells the Log, by `by`, when it packed
@@ -557,8 +616,9 @@ impl Service {
     }
     /// Executes the action without waiting for a scan. Desktop refreshes run outside its service lock.
     pub fn execute(&mut self, name: &str, b: &Value, by: &str) -> Result<RequestOutcome> {
-        if runs_long(name) {
-            let snap = self.snapshot()?;
+        if runs_long_request(&self.env, name, b) {
+            // An Undo needs no scan.
+            let snap = if runs_long(name) { self.snapshot()? } else { json!({}) };
             let outcome = long_action(&self.env, &snap, name, b, by)?;
             if changes_history(name)
                 && let Some(snapshot) = self.current.as_mut()
@@ -936,34 +996,11 @@ impl Service {
                     ops::apply_action_saying(&self.env, &snap, &title, say, &json!({"type":"clear","paths":parts}))?;
                 self.journaled(j, node["path"].as_str(), by)
             }
-            "undo" => {
-                // A move of the copy that stopped part-way and that this finished first is told, also when the Undo
-                // is then refused.
-                let mut settled = None;
-                let undone = ops::undo_settling(&self.env, id, &mut settled);
-                if let Some(journal) = &settled {
-                    activity::record_journal(&self.env, journal, None, by);
-                }
-                let j = undone?;
-                let entry = activity::read_log(&self.env, 300).into_iter().find(|e| e["journal"] == j["id"]);
-                activity::record(
-                    &self.env,
-                    json!({"by":by,"title":format!("Undid: {}",string(&j,"title")),"say":{"form":"undid"},"undoes":entry.map(|e|e["id"].clone()).unwrap_or_else(||json!(format!("j:{}",string(&j,"id"))))}),
-                );
-                let mut out = json!({"journal":j});
-                // What the Undo left out is told with it.
-                if let Some(warnings) = out["journal"].as_object_mut().and_then(|j| j.remove("warnings")) {
-                    out["warnings"] = warnings;
-                }
-                Ok(out)
-            }
+            "undo" => undo_journal(&self.env, id, by),
             "log" => Ok(
                 json!({"entries":activity::read_log(&self.env,300),"file":paths::tilde(&self.env.data_dir.join("laci.log"),&self.env.home)}),
             ),
-            "log/undo" => {
-                let undone = activity::undo_activity(&self.env, id, by)?;
-                Ok(if undone["warnings"].is_array() { json!({"warnings":undone["warnings"]}) } else { json!({}) })
-            }
+            "log/undo" => undo_logged(&self.env, id, by),
             "log/open" => {
                 platform::open(&self.env.data_dir.join("laci.log").to_string_lossy(), &self.env.home)?;
                 Ok(json!({"ok":true}))

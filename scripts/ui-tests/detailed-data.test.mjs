@@ -193,6 +193,30 @@ export async function todayIsWorkedOutOnceForEachScan() {
   assert.ok(app.calls.risksOf > first.risksOf);
 }
 
+export async function todaySaysWhenTheBackupsDriveIsntConnected() {
+  const app = today([]);
+  const notice = () => app.page.find((n) => n.props["data-ui"] === "copy-offline");
+  // The fixtures' copy is in Laci's own folder: nothing to say.
+  assert.equal(notice(), undefined);
+  const dir = "/run/media/demo/Backup/laci-copy";
+  const why = `The folder for the copy of AI chats isn't there: ${dir}. Connect its drive, or choose another folder for the copy.`;
+  app.page.act(() =>
+    app.store.useApp.setState({
+      snapshot: { ...scan(2), copyStatus: { path: dir, available: false, reason: why } },
+    }),
+  );
+  const said = shared.words.detailedSettings;
+  const text = notice().textContent;
+  assert.ok(text.includes(said.backupOfflineTitle), text);
+  assert.ok(text.includes(said.backupOffline(dir)), text);
+  assert.ok(text.includes(shared.words.engineWords.detailed.copyMissing(dir)), text);
+  // Reached again, the notice goes.
+  app.page.act(() =>
+    app.store.useApp.setState({ snapshot: { ...scan(3), copyStatus: { path: dir, available: true } } }),
+  );
+  assert.equal(notice(), undefined);
+}
+
 export async function todaysToDoBoxGoesThroughTheSharedAction() {
   const app = today([]);
   const box = app.page.find((n) => n.type === "input" && n.props.type === "checkbox");

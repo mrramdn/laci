@@ -571,6 +571,22 @@ impl<'a> Tx<'a> {
         self.log(json!({"kind":"rmdir","path":src}))?;
         fs::remove_dir(src).map_err(|e| e.to_string())
     }
+    /// Moves each entry of the folder `src` into the folder `dest`, which holds nothing by those names, and removes
+    /// `src`: a group joining the place in the archive that an earlier archive of a project in it made
+    /// (`scan::joining`). Undo makes `src` again, moves each entry back and leaves what was in `dest` before.
+    fn join(&mut self, src: &Path, dest: &Path) -> Result<()> {
+        sidecar::plain_path(src)?;
+        sidecar::plain_path(dest)?;
+        if !fs::symlink_metadata(dest).is_ok_and(|meta| meta.is_dir()) {
+            return Err(format!("{} is no longer a folder. Rescan and try again.", paths::tilde(dest, &self.env.home)));
+        }
+        guard(&[src.to_owned()])?;
+        for e in files::entries(src) {
+            self.move_to(&e.path(), &dest.join(e.file_name()))?;
+        }
+        self.log(json!({"kind":"rmdir","path":src}))?;
+        fs::remove_dir(src).map_err(|e| e.to_string())
+    }
     fn backup(&mut self, file: &Path) -> Result<PathBuf> {
         self.n += 1;
         let backup = data(self.env, "backup")?.join(self.journal["id"].as_str().unwrap()).join(format!(
@@ -605,6 +621,22 @@ impl<'a> Tx<'a> {
         let backup = self.backup(file)?;
         preserve(&meta, &backup)?;
         self.log(json!({"kind":"rewrite","path":file,"backup":backup}))?;
+        files::replace(file, output.as_bytes())?;
+        preserve(&meta, file)?;
+        self.wrote(file, output.as_bytes());
+        Ok(())
+    }
+    /// Rewrites the folder `from` to `to` in the Claude Code memory file `file` (`agents::moved_paths`), keeping it
+    /// first so Undo puts its bytes back. A file Laci can't read as text, or that doesn't name `from`, stays as it is.
+    fn rewrite_memory(&mut self, file: &Path, from: &Path, to: &Path) -> Result<()> {
+        sidecar::plain_path(file)?;
+        let Some(source) = files::text(file) else { return Ok(()) };
+        let Some(output) = crate::agents::moved_paths(&source, from, to, &self.env.home) else { return Ok(()) };
+        let meta = fs::metadata(file).map_err(|e| e.to_string())?;
+        let backup = self.backup(file)?;
+        preserve(&meta, &backup)?;
+        // The Log counts memory files apart from logs.
+        self.log(json!({"kind":"rewrite","what":"memory","path":file,"backup":backup}))?;
         files::replace(file, output.as_bytes())?;
         preserve(&meta, file)?;
         self.wrote(file, output.as_bytes());
@@ -1019,6 +1051,13 @@ pub fn journals(env: &Env, limit: usize) -> Vec<Value> {
         .filter_map(|e| read_journal(&e.path()).ok())
         .collect()
 }
+/// Whether the journal `id` is of a move of the copy of AI chats, whose Undo can copy it back to another drive.
+pub fn is_copy_move(env: &Env, id: &str) -> bool {
+    valid_id(id)
+        && data(env, "journal")
+            .and_then(|dir| read_journal(&dir.join(format!("{id}.json"))))
+            .is_ok_and(|journal| journal["copyMove"].is_object())
+}
 pub fn undo(env: &Env, id: &str) -> Result<Value> {
     with_lock(env, || undo_unlocked(env, id, &mut None))
 }
@@ -1218,6 +1257,11 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
     if contains(&src, &dest) {
         return Err("Can't move a folder into itself".into());
     }
+    // A group archived into the place an earlier archive of a project in it made joins that folder.
+    let join = opts["join"] == true;
+    if join && (opts["status"] != "archived" || node["kind"] != "folder") {
+        return Err("Only a group being archived joins a folder in the archive".into());
+    }
     let name = node["name"].as_str().unwrap_or("project");
     let title = opts["title"]
         .as_str()
@@ -1255,7 +1299,13 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
                 Some((item, newcwd, inside))
             })
             .collect();
-        tx.move_to(&src, &dest)?;
+        if join {
+            // Asked again under the lock: something may have come into that folder since the plan.
+            crate::scan::joining(env, &src, &dest)?;
+            tx.join(&src, &dest)?;
+        } else {
+            tx.move_to(&src, &dest)?;
+        }
         if unlink {
             tx.took_place(&dest)?;
         }
@@ -1279,6 +1329,10 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
             pairs.extend(stale.into_iter().map(|s| (s, now.to_string_lossy().into_owned())));
             for f in jsonl(&target) {
                 tx.rewrite(&f, &pairs, "cwd")?;
+            }
+            // The project's own memory names the folder where it was. Other projects' memory and global files stay.
+            for f in crate::agents::memory_files(&target) {
+                tx.rewrite_memory(&f, &src, &dest)?;
             }
         }
         let connectors = snap["connectors"].as_array().cloned().unwrap_or_default();
@@ -1325,6 +1379,19 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
         }
         if opts["restore"] == true {
             tx.clear_archived(&dest)?;
+            // A group puts back the archived folders and projects in it too, so none of them stays archived.
+            if node["kind"] == "folder" {
+                let from = Path::new(node["path"].as_str().unwrap_or(""));
+                for inner in crate::scan::archived_inside(snap, node) {
+                    let Some(dir) = inner["path"].as_str().and_then(|p| relocate(from, &dest, Path::new(p))) else {
+                        continue;
+                    };
+                    let text = files::text(&dir.join(sidecar::SIDECAR)).unwrap_or_default();
+                    if crate::readers::parse_meta(&text)["status"] == "archived" {
+                        tx.clear_archived(&dir)?;
+                    }
+                }
+            }
             // A place outside the scan locations is added to them, so the project stays in view.
             tx.remember_archive(&dest)?;
         }
@@ -1359,7 +1426,7 @@ pub fn archive_project_to(
         id,
         plan["dest"].as_str().ok_or("Missing archive destination")?,
         &json!({"status":"archived","trashHeavy":trash_heavy,"title":format!("Archive {name}"),
-            "say":{"form":"archived","name":name}}),
+            "say":{"form":"archived","name":name},"join":plan["join"] == true}),
     )
 }
 /// Puts an archived project or group back: out of the archive with its agent history, and for a group every project

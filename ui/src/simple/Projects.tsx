@@ -3,7 +3,16 @@
 import { useId, useMemo } from "react";
 import { useNow } from "../clock";
 import { Icon } from "../common";
-import { deadlineInfo, isArchivedGroup, linkedGroup, tilde } from "../helpers";
+import {
+  canArchiveGroup,
+  deadlineInfo,
+  groupSize,
+  isArchivedGroup,
+  isMarkedFolder,
+  linkedAlone,
+  linkedGroup,
+  tilde,
+} from "../helpers";
 import { external, goToProject, useApp } from "../store";
 import type { Node, Snapshot } from "../types";
 import { ago, blocks, projects as said } from "../words";
@@ -130,16 +139,16 @@ export function Projects() {
       </div>
       {model.shown.length &&
       grouped &&
-      (model.sections.length > 1 ||
-        model.sections.some((section) => isArchivedGroup(section.group ?? undefined))) ? (
+      (model.sections.length > 1 || model.sections.some(restorable)) ? (
         // One section alone needs no header, its cards are the whole list, unless it is an archived
-        // group: its heading has the group's Restore.
+        // folder: its heading has the folder's Restore.
         <div className="s-groups">
           {model.sections.map((section) => (
             <Section
               key={sectionKey(section)}
               section={section}
               open={!collapsed.includes(sectionKey(section))}
+              archiving={filter !== "archived"}
               snapshot={snapshot}
               now={now}
             />
@@ -173,6 +182,15 @@ export function Projects() {
   );
 }
 
+/**
+ * Whether a section's folder goes back whole from its heading: an archived group, or a folder only
+ * marked archived.
+ */
+function restorable(section: ProjectSection) {
+  const group = section.group ?? undefined;
+  return isArchivedGroup(group) || isMarkedFolder(group);
+}
+
 /** The cards in a grid. Under a group's heading they are one level lower than in the flat list. */
 function Cards({
   label,
@@ -202,17 +220,29 @@ function Cards({
 function Section({
   section,
   open,
+  archiving,
   snapshot,
   now,
 }: {
   section: ProjectSection;
   open: boolean;
+  /** Whether a folder the engine can archive whole offers it: not among what is archived already. */
+  archiving: boolean;
   snapshot: Snapshot;
   now: Date;
 }) {
   const region = useId();
-  // An archived group goes back whole: its heading offers Restore.
-  const archived = isArchivedGroup(section.group ?? undefined) ? section.group : null;
+  // An archived group goes back whole, and a folder only marked archived loses the mark: its
+  // heading offers Restore. A folder the engine can archive whole offers Archive group.
+  const group = section.group;
+  const archived = group && restorable(section) ? group : null;
+  const archivable = archiving && group && canArchiveGroup(group) ? group : null;
+  // The count says how many cards are here. When the heading moves the whole folder and that holds
+  // more (a filter or a search left some out, or a folder inside it has a heading of its own), it
+  // says both: those shown, of all that Archive group… or Restore… moves.
+  const moves = archived ?? archivable;
+  const shown = section.projects.length;
+  const all = moves ? groupSize(snapshot.nodes, moves) : shown;
   return (
     <section className="s-group">
       <div className="s-group-bar">
@@ -227,7 +257,7 @@ function Section({
             <Icon name="chevron-down" />
             <span className="s-group-name">{section.label}</span>
             <span className="s-group-count">
-              {said.groupCount(section.projects.length)}
+              {all > shown ? said.groupCountOf(shown, all) : said.groupCount(shown)}
             </span>
           </button>
         </h2>
@@ -235,12 +265,27 @@ function Section({
           <Button
             kind="text"
             icon="undo-2"
-            aria-label={said.restoreGroupFor(archived.label)}
+            aria-label={
+              archived.inArchive
+                ? said.restoreGroupFor(archived.label)
+                : said.unmarkGroupFor(archived.label)
+            }
             onClick={() =>
               useApp.setState({ modal: { kind: "restore", id: archived.id } })
             }
           >
             {said.restore}
+          </Button>
+        ) : archivable ? (
+          <Button
+            kind="text"
+            icon="archive"
+            aria-label={said.archiveGroupFor(archivable.label)}
+            onClick={() =>
+              useApp.setState({ modal: { kind: "archive", id: archivable.id } })
+            }
+          >
+            {said.archiveGroup}
           </Button>
         ) : null}
       </div>
@@ -322,6 +367,17 @@ function ProjectCard({
                   onSelect: () =>
                     useApp.setState({ modal: { kind: "archive", id: n.id } }),
                 },
+            // Alone, it needs a place of its own: its sheet opens on it.
+            ...(n.archived && group
+              ? [
+                  {
+                    label: said.restoreAlone,
+                    icon: "move",
+                    onSelect: () =>
+                      useApp.setState({ modal: { kind: "restore", id: n.id } }),
+                  },
+                ]
+              : []),
           ]}
         />
       </div>
@@ -330,6 +386,8 @@ function ProjectCard({
       </p>
       {group ? (
         <p className="s-pcard-from">{said.inGroup(group.label)}</p>
+      ) : linkedAlone(snapshot.nodes, n) ? (
+        <p className="s-pcard-from">{said.linkedAlone}</p>
       ) : from ? (
         <p className="s-pcard-from">{said.from(from)}</p>
       ) : null}

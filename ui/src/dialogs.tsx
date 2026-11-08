@@ -12,7 +12,9 @@ import { useApp, changed, run, selectWhenReady } from "./store";
 import {
   base,
   bytes,
+  checkTitle,
   expandHome,
+  groupSize,
   isAbsolutePath,
   isArchivedGroup,
   joinPath,
@@ -494,6 +496,10 @@ export function ShortcutGrid() {
     </div>
   );
 }
+/** What a group's Archive dialog says moves with it: "3 projects move with their agent history". */
+export function groupMoves(projects: number) {
+  return `${plural(projects, "project")} ${projects === 1 ? "moves with its" : "move with their"} agent history`;
+}
 function Archive({ id }: { id: string }) {
   const s = useApp();
   const n = s.snapshot!.nodes[id];
@@ -565,14 +571,28 @@ function Archive({ id }: { id: string }) {
       },
     );
   }
+  // A folder of projects goes whole, with the agent history of every project in it.
+  const group = n.kind === "folder";
   return (
     <DialogFrame
-      title={`Archive ${n.name}?`}
+      title={
+        group
+          ? detailedArchive.archiveGroupTitle(n.name)
+          : `Archive ${n.name}?`
+      }
       description={
-        <>
-          Moves the project and takes its agent history along, so sessions and
-          memory still open from the new place.
-        </>
+        group ? (
+          <>
+            Moves the whole folder to the archive.{" "}
+            {groupMoves(groupSize(s.snapshot!.nodes, n))}, so sessions and
+            memory still open from the new place.
+          </>
+        ) : (
+          <>
+            Moves the project and takes its agent history along, so sessions and
+            memory still open from the new place.
+          </>
+        )
       }
       footer={
         <>
@@ -620,7 +640,7 @@ function Archive({ id }: { id: string }) {
                 : "Default archive destination"
             }
           />
-          {/* The folder chosen takes the project inside, under its own name. */}
+          {/* The folder chosen takes the project, or the group, inside, under its own name. */}
           <ChooseFolder
             label={said.choose}
             name={said.destinationTitle(n.name)}
@@ -634,7 +654,11 @@ function Archive({ id }: { id: string }) {
             }}
           />
         </div>
-        <small>The full project folder path, including its name.</small>
+        <small>
+          {group
+            ? "The full folder path, including its name."
+            : "The full project folder path, including its name."}
+        </small>
       </label>
       {n.archivePlan?.error ? (
         <p className="err">Default destination: {n.archivePlan.error}</p>
@@ -646,7 +670,8 @@ function Archive({ id }: { id: string }) {
             <div className="issue" key={i}>
               <SeverityGlyph severity={check.severity} />
               <div className="txt">
-                <p>{check.title}</p>
+                {/* A group's check names the project in it that it is about. */}
+                <p>{checkTitle(check)}</p>
                 <p className="d">
                   {[
                     check.detail,

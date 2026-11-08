@@ -512,6 +512,32 @@ try {
   assert.equal(await exists(path.join(labGroup, 'one', 'package.json')), true);
   checks++;
 
+  // A folder of projects is archived whole as a group, its projects go back with it, and Undo takes both back.
+  const crew = path.join(home, 'project', 'crew');
+  for (const name of ['one', 'two']) await write(path.join(crew, name, 'package.json'), '{}\n');
+  await client.rejects('archive_project', { project: path.join(home, 'project') }, /scan location can't be archived/);
+  const crewPlan = await client.call('archive_project', { project: crew });
+  const crewArchive = path.join(home, 'project', '_archive', 'crew');
+  assert.equal(crewPlan.destination, crewArchive);
+  assert.equal(crewPlan.projects, 2);
+  assert.ok(crewPlan.plan.some(op => op.label === 'Set status: archived'), JSON.stringify(crewPlan.plan));
+  assert.equal(await exists(crewArchive), false);
+  const crewArchived = await client.call('archive_project', { project: crew, confirm: true });
+  assert.equal(await exists(crew), false);
+  assert.match(await readFile(path.join(crewArchive, '.laci.md'), 'utf8'), /status: archived/);
+  const inCrew = await client.call('restore_project', { project: path.join(crewArchive, 'one') });
+  assert.equal(inCrew.reason, 'inGroup');
+  assert.equal(inCrew.group, crewArchive);
+  assert.match(inCrew.hint, /restore that group/);
+  const crewBack = await client.call('restore_project', { project: crewArchive, confirm: true });
+  assert.equal(await exists(path.join(crew, 'two', 'package.json')), true);
+  assert.doesNotMatch(await readFile(path.join(crew, '.laci.md'), 'utf8'), /status:/);
+  await client.call('undo_change', { id: crewBack.journal.id, confirm: true });
+  await client.call('undo_change', { id: crewArchived.journal.id, confirm: true });
+  assert.equal(await exists(path.join(crew, 'one', 'package.json')), true);
+  assert.equal(await exists(crewArchive), false);
+  checks++;
+
   await stop(client);
 
   // Protocol 2026-07-28 has no initialize: each request carries its version and client context in _meta,

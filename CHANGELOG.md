@@ -4,6 +4,19 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 2.0.1, 2.1.0, 2.2.0 and 2.3.0 were released from `main` without git tags or GitHub releases. They are the merges of pull requests #4 (`bf845a1`), #5 (`538da4e`), #6 (`8098403`) and #8 (`66956b2`).
 
+## [Unreleased]
+
+### Added
+
+- **Archive a group from Laci.** A folder that holds projects can be archived whole, like a project: it moves into the archive with every project in it and the agent history of each, and its `.laci.md` says `status: archived`, where it came from and when (the file is made when it has none). It is then an archived group, which Restore puts back whole; Undo works for both. The archive plan of a group lists the risky checks of the projects in it (uncommitted, unpushed, no remote, stashes), each naming its project. A scan location, home, and a folder holding the archive folder or the copy of AI chats can't be archived. Folders carry `projectCount`, the projects below them, and those that can be archived `archivePlan`. Agents can do it with `archive_project` and a folder; its preview says how many projects go along.
+- **A folder marked archived outside the archive can be restored where it is**, like a project archived by its status only: Restore clears its `status: archived`. It shows with those projects in the Archive view.
+
+### Changed
+
+- **Restoring a group puts back what is archived in it too.** Folders and projects inside an archived group whose `.laci.md` says `status: archived` have it cleared, with `archivedFrom` and `archivedAt`, in the same change, so one Undo brings all of them back. A project or group inside an archived group goes back with the whole group: alone, it is refused (`reason: "inGroup"`, with `group`, the archived group to restore instead) unless you choose a place for it.
+- **`_archive` folders and an archive folder inside a scan location are looked through deeper**, as the archive folder elsewhere already was: a project keeps the depth it had where it came from. The archive folder adds one level (the name of the scan location), an `_archive` folder one; an `_archive` inside the archive or another `_archive` adds nothing more.
+- **The copy of AI chats and the archive folder stay apart.** Settings refuse a folder for the copy that is the archive folder or holds it, and an archive folder that is the copy's folder or inside it; the copy may still be a folder of its own in the archive folder. Archiving refuses clearly when the place the archive keeps a scan location's projects (`<archive>/<name>`) is the copy's folder.
+
 ## [3.3.2] - 2026-11-08
 
 Only dependencies change.

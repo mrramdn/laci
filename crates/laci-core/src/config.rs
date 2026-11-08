@@ -162,8 +162,28 @@ fn chosen_folder(env: &Env, value: &Value, key: &str, missing: &str) -> Result<O
     }))
 }
 
+/// The archive folder, or `""` for none. It can't be the folder of the copy of AI chats, nor inside it: the copy may
+/// sit in the archive folder, not the other way round.
 pub fn validate_archive_dir(env: &Env, value: &Value) -> Result<Value> {
     let path = chosen_folder(env, value, "archiveDir", "Pick an archive folder")?;
+    if let Some(path) = &path {
+        let copy = crate::backup::chosen(env, &load(env)).unwrap_or_else(|| env.data_dir.join("history"));
+        let forms = |p: &Path| [paths::normalize(p), real(p)];
+        let in_copy = |same: bool| {
+            forms(&copy).iter().any(|copy| {
+                forms(path).iter().any(|path| if same { same_path(copy, path) } else { may_contain(copy, path) })
+            })
+        };
+        if in_copy(true) {
+            return Err("That is the folder of Laci's copy of AI chats. Choose another archive folder.".into());
+        }
+        if in_copy(false) {
+            return Err(format!(
+                "That folder is inside Laci's copy of AI chats ({}). Choose another archive folder.",
+                paths::tilde(&copy, &env.home)
+            ));
+        }
+    }
     Ok(json!(path.map(|p| paths::tilde(&p, &env.home)).unwrap_or_default()))
 }
 
@@ -223,6 +243,21 @@ pub(crate) fn backup_dir_refusal(env: &Env, path: &Path, cfg: &Value) -> Result<
     }
     if [&env.config_dir, &env.data_dir, &env.cache_dir].iter().any(|own| overlaps(own)) {
         return Err("That folder belongs to Laci itself. Choose another one.".into());
+    }
+    // The copy may be a folder of its own in the archive folder, not the archive folder itself or one that holds it.
+    if let Some(archive) = cfg["archiveDir"].as_str().filter(|raw| !raw.trim().is_empty()) {
+        let archive = paths::expand(archive.trim(), &env.home);
+        let same = [paths::normalize(&archive), real(&archive)]
+            .iter()
+            .any(|archive| forms.iter().any(|path| same_path(archive, path)));
+        if same {
+            return Err(
+                "That is the archive folder. Choose a folder of its own for the copy, such as one in it.".into()
+            );
+        }
+        if holds(&archive) {
+            return Err("That folder holds the archive folder. Choose a folder of its own for the copy.".into());
+        }
     }
     for c in crate::agents::connectors(env, cfg) {
         let Some(store) = c["link"]["dir"].as_str().map(|raw| paths::expand(raw, &env.home)) else { continue };

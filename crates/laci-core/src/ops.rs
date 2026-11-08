@@ -1325,6 +1325,19 @@ pub fn move_project(env: &Env, snap: &Value, id: &str, dest: &str, opts: &Value)
         }
         if opts["restore"] == true {
             tx.clear_archived(&dest)?;
+            // A group puts back the archived folders and projects in it too, so none of them stays archived.
+            if node["kind"] == "folder" {
+                let from = Path::new(node["path"].as_str().unwrap_or(""));
+                for inner in crate::scan::archived_inside(snap, node) {
+                    let Some(dir) = inner["path"].as_str().and_then(|p| relocate(from, &dest, Path::new(p))) else {
+                        continue;
+                    };
+                    let text = files::text(&dir.join(sidecar::SIDECAR)).unwrap_or_default();
+                    if crate::readers::parse_meta(&text)["status"] == "archived" {
+                        tx.clear_archived(&dir)?;
+                    }
+                }
+            }
             // A place outside the scan locations is added to them, so the project stays in view.
             tx.remember_archive(&dest)?;
         }

@@ -1164,7 +1164,7 @@ fn tools() -> Vec<Tool> {
         ),
         (
             "archive_project",
-            "Archive a project with its agent history; requires confirm after preview. With an archive folder in Settings, it keeps its place below the scan location that holds it: ~/tugas/course/demo goes to <archive>/tugas/course/demo. A folder of projects is archived whole as a group, with the history of every project in it, and goes back whole with restore_project (the preview's checks name their project); not a scan location, home, or a folder holding the archive folder or the copy of AI chats",
+            "Archive a project with its agent history; requires confirm after preview. With an archive folder in Settings, it keeps its place below the scan location that holds it: ~/study/course/demo goes to <archive>/study/course/demo. A folder of projects is archived whole as a group, with the history of every project in it, and goes back whole with restore_project (the preview's checks name their project); not a scan location, home, or a folder holding the archive folder or the copy of AI chats",
             json!({"project":project,"destination":text,"trash_heavy":boolean,"confirm":boolean}),
             vec!["project"],
         ),

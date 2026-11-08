@@ -13,15 +13,15 @@ fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
 }
-/// Scan locations ~/project and ~/tugas, and an archive folder on another disk.
+/// Scan locations ~/project and ~/study, and an archive folder on another disk.
 fn fixture() -> (support::TempDir, Env, PathBuf) {
     let temp = support::tempdir();
     let env = Env::for_home(temp.path().join("home"));
     let archive = temp.path().join("archive");
     fs::create_dir_all(&archive).unwrap();
     fs::create_dir_all(env.home.join("project")).unwrap();
-    fs::create_dir_all(env.home.join("tugas")).unwrap();
-    config::save(&env, &json!({"roots":["~/project","~/tugas"],"presets":["claude"],"archiveDir":archive})).unwrap();
+    fs::create_dir_all(env.home.join("study")).unwrap();
+    config::save(&env, &json!({"roots":["~/project","~/study"],"presets":["claude"],"archiveDir":archive})).unwrap();
     (temp, env, archive)
 }
 fn store(env: &Env, dir: &Path) -> PathBuf {
@@ -37,13 +37,13 @@ fn sidecar_text(dir: &Path) -> String {
 #[test]
 fn archive_keeps_the_place_below_its_scan_location_and_restore_puts_it_back() {
     let (_temp, env, archive) = fixture();
-    let project = env.home.join("tugas").join("venture-creation").join("pet-pals-project");
+    let project = env.home.join("study").join("design-course").join("term-project");
     write(&project.join("package.json"), "{}");
     write(&store(&env, &project).join("first.jsonl"), &session(&project));
     let mut service = Service::new(env.clone());
     let id = project.to_str().unwrap();
     let snap = service.snapshot().unwrap();
-    let dest = archive.join("tugas").join("venture-creation").join("pet-pals-project");
+    let dest = archive.join("study").join("design-course").join("term-project");
     assert_eq!(snap["nodes"][id]["inArchive"], false);
     assert_eq!(snap["nodes"][id]["archivePlan"]["dest"], json!(dest));
     assert!(snap["nodes"][id]["restorePlan"].is_null());
@@ -53,7 +53,7 @@ fn archive_keeps_the_place_below_its_scan_location_and_restore_puts_it_back() {
     assert!(dest.join("package.json").is_file());
     let text = sidecar_text(&dest);
     assert!(text.contains("status: archived"), "{text}");
-    assert!(text.contains("archivedFrom: ~/tugas/venture-creation/pet-pals-project"), "{text}");
+    assert!(text.contains("archivedFrom: ~/study/design-course/term-project"), "{text}");
     let at = chrono::Local::now().format("%Y-%m-%d").to_string();
     assert!(text.contains(&format!("archivedAt: {at}")), "{text}");
 
@@ -80,7 +80,7 @@ fn archive_keeps_the_place_below_its_scan_location_and_restore_puts_it_back() {
     assert!(!store(&env, &dest).exists());
     assert_eq!(
         activity::read_log(&env, 5)[0]["say"],
-        json!({"form":"restored","name":"pet-pals-project","to":"~/tugas/venture-creation/pet-pals-project"})
+        json!({"form":"restored","name":"term-project","to":"~/study/design-course/term-project"})
     );
     let snap = service.snapshot().unwrap();
     assert_eq!(snap["nodes"][id]["archived"], false);
@@ -89,7 +89,7 @@ fn archive_keeps_the_place_below_its_scan_location_and_restore_puts_it_back() {
     service.request("undo", &json!({"id":restored["journal"]["id"]})).unwrap();
     assert!(!project.exists());
     assert!(dest.join("package.json").is_file());
-    assert!(sidecar_text(&dest).contains("archivedFrom: ~/tugas/venture-creation/pet-pals-project"));
+    assert!(sidecar_text(&dest).contains("archivedFrom: ~/study/design-course/term-project"));
     assert_eq!(fs::read_to_string(store(&env, &dest).join("later.jsonl")).unwrap(), session(&dest));
 
     service.request("undo", &json!({"id":archived["journal"]["id"]})).unwrap();
@@ -101,11 +101,11 @@ fn archive_keeps_the_place_below_its_scan_location_and_restore_puts_it_back() {
 #[test]
 fn restore_finds_the_origin_from_the_archive_layout_and_refuses_an_occupied_place() {
     let (temp, env, archive) = fixture();
-    let archived = archive.join("tugas").join("course").join("old");
+    let archived = archive.join("study").join("course").join("old");
     write(&archived.join("package.json"), "{}");
     let loose = archive.join("loose");
     write(&loose.join("package.json"), "{}");
-    let origin = env.home.join("tugas").join("course").join("old");
+    let origin = env.home.join("study").join("course").join("old");
     let mut service = Service::new(env.clone());
     let snap = service.snapshot().unwrap();
     let id = archived.to_str().unwrap();
@@ -127,7 +127,7 @@ fn restore_finds_the_origin_from_the_archive_layout_and_refuses_an_occupied_plac
     );
     let plan = service.request("restore/plan", &json!({"id":id})).unwrap();
     let error = plan["error"].as_str().unwrap();
-    assert!(error.contains("Something is already at ~/tugas/course/old"), "{error}");
+    assert!(error.contains("Something is already at ~/study/course/old"), "{error}");
     assert_eq!((&plan["reason"], &plan["dest"]), (&json!("occupied"), &json!(origin)));
     let error = service.request("restore", &json!({"id":id})).unwrap_err();
     assert!(error.contains("Something is already at"), "{error}");
@@ -210,17 +210,17 @@ fn restore_keeps_a_status_other_than_archived() {
     assert!(!text.contains("archivedFrom") && !text.contains("archivedAt"), "{text}");
 }
 
-/// A project archived from ~/tugas/course/demo with a Claude session: the service, the project, the place the
+/// A project archived from ~/study/course/demo with a Claude session: the service, the project, the place the
 /// archive keeps it and the journal id of the Archive.
 fn archived_demo() -> (support::TempDir, Env, Service, PathBuf, PathBuf, String) {
     let (temp, env, archive) = fixture();
-    let project = env.home.join("tugas").join("course").join("demo");
+    let project = env.home.join("study").join("course").join("demo");
     write(&project.join("package.json"), "{}");
     write(&store(&env, &project).join("first.jsonl"), &session(&project));
     let mut service = Service::new(env.clone());
     service.snapshot().unwrap();
     let archived = service.request("archive", &json!({"id":project})).unwrap();
-    let dest = archive.join("tugas").join("course").join("demo");
+    let dest = archive.join("study").join("course").join("demo");
     assert!(dest.join("package.json").is_file());
     let id = archived["journal"]["id"].as_str().unwrap().to_owned();
     (temp, env, service, project, dest, id)
@@ -263,20 +263,20 @@ fn undo_of_an_archive_that_was_restored_since_changes_nothing() {
 #[test]
 fn a_path_laci_md_would_read_back_otherwise_is_not_kept_as_archived_from() {
     let (_temp, env, archive) = fixture();
-    let project = env.home.join("tugas").join("Lab #2").join("demo");
+    let project = env.home.join("study").join("Lab #2").join("demo");
     write(&project.join("package.json"), "{}");
     let mut service = Service::new(env.clone());
     service.snapshot().unwrap();
     service.request("archive", &json!({"id":project})).unwrap();
-    let dest = archive.join("tugas").join("Lab #2").join("demo");
+    let dest = archive.join("study").join("Lab #2").join("demo");
     let text = sidecar_text(&dest);
     assert!(text.contains("status: archived") && !text.contains("archivedFrom"), "{text}");
     // The archive's layout still tells where it came from.
     let snap = service.rescan().unwrap();
     assert_eq!(snap["nodes"][dest.to_str().unwrap()]["restorePlan"]["dest"], json!(project));
-    let error = sidecar::set_meta(&dest, "archivedFrom", "~/tugas/Lab #2/demo").unwrap_err();
+    let error = sidecar::set_meta(&dest, "archivedFrom", "~/study/Lab #2/demo").unwrap_err();
     assert!(error.contains("invalid value"), "{error}");
-    for value in ["~/tugas/demo ", "~/tugas/demo'", "~/tugas/demo\""] {
+    for value in ["~/study/demo ", "~/study/demo'", "~/study/demo\""] {
         assert!(sidecar::set_meta(&dest, "archivedFrom", value).is_err(), "{value}");
     }
 }
@@ -330,7 +330,7 @@ fn the_archive_fields_of_laci_md_take_a_path_and_a_date() {
 fn the_archive_is_looked_through_one_folder_deeper_than_a_scan_location() {
     let (_temp, env, archive) = fixture();
     // Seven folders below the archive, six below ~/project where it came from.
-    let deep = archive.join("project/freelance/client/site/web/site/site-wp");
+    let deep = archive.join("project/work/clients/site/web/site/site-wp");
     write(&deep.join("package.json"), "{}");
     let deeper = archive.join("project/a/b/c/d/e/f/g");
     write(&deeper.join("package.json"), "{}");
@@ -341,20 +341,20 @@ fn the_archive_is_looked_through_one_folder_deeper_than_a_scan_location() {
     let snap = Service::new(env.clone()).snapshot().unwrap();
     let node = &snap["nodes"][deep.to_str().unwrap()];
     assert_eq!((&node["kind"], &node["inArchive"]), (&json!("project"), &json!(true)), "{node}");
-    assert_eq!(node["restorePlan"]["dest"], json!(env.home.join("project/freelance/client/site/web/site/site-wp")));
+    assert_eq!(node["restorePlan"]["dest"], json!(env.home.join("project/work/clients/site/web/site/site-wp")));
     assert!(snap["nodes"][deeper.to_str().unwrap()].is_null(), "eight folders below the archive is too deep");
     assert_eq!(snap["nodes"][at_home.to_str().unwrap()]["kind"], "project");
     assert!(snap["nodes"][too_deep.to_str().unwrap()].is_null(), "other scan locations keep their depth");
 }
 
-/// A project moved into the archive by hand from ~/project/gabut/dummy2, with a link left there that leads to it and
+/// A project moved into the archive by hand from ~/project/side/old-site, with a link left there that leads to it and
 /// a Claude session from while it was in the archive.
 fn linked_back() -> (support::TempDir, Env, Service, PathBuf, PathBuf) {
     let (temp, env, archive) = fixture();
-    let archived = archive.join("project").join("gabut").join("dummy2");
+    let archived = archive.join("project").join("side").join("old-site");
     write(&archived.join("package.json"), "{}");
     write(&store(&env, &archived).join("first.jsonl"), &session(&archived));
-    let origin = env.home.join("project").join("gabut").join("dummy2");
+    let origin = env.home.join("project").join("side").join("old-site");
     fs::create_dir_all(origin.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(&archived, &origin).unwrap();
     let service = Service::new(env.clone());
@@ -371,7 +371,7 @@ fn restore_removes_the_old_link_to_it_and_undo_makes_the_link_again() {
     assert_eq!(plan["dest"], json!(origin));
     assert_eq!(
         plan["ops"][0],
-        json!({"kind":"unlink","label":"Remove the old link","from":"~/project/gabut/dummy2","to":archived})
+        json!({"kind":"unlink","label":"Remove the old link","from":"~/project/side/old-site","to":archived})
     );
     assert_eq!(plan["ops"][1]["kind"], "move", "{plan}");
 
@@ -389,7 +389,7 @@ fn restore_removes_the_old_link_to_it_and_undo_makes_the_link_again() {
     let log = activity::read_log(&env, 5).remove(0);
     assert_eq!(
         log["steps"][0],
-        json!({"kind":"unlink","label":"Removed the old link","from":"~/project/gabut/dummy2","to":archived})
+        json!({"kind":"unlink","label":"Removed the old link","from":"~/project/side/old-site","to":archived})
     );
     assert_eq!(log["canUndo"], true);
     let snap = service.snapshot().unwrap();
@@ -407,13 +407,13 @@ fn undo_of_a_restore_refuses_when_something_else_took_the_place_of_the_link() {
     let (_temp, env, mut service, archived, origin) = linked_back();
     service.snapshot().unwrap();
     let restored = service.request("restore", &json!({"id":archived})).unwrap();
-    let away = env.home.join("project").join("gabut").join("dummy2-kept");
+    let away = env.home.join("project").join("side").join("old-site-kept");
     fs::rename(&origin, &away).unwrap();
     write(&origin.join("other.txt"), "made since");
     let error = service.request("undo", &json!({"id":restored["journal"]["id"]})).unwrap_err();
     assert!(
         error.contains(
-            "Something else is at ~/project/gabut/dummy2 since this change, so Undo can't put the old link back"
+            "Something else is at ~/project/side/old-site since this change, so Undo can't put the old link back"
         ),
         "{error}"
     );
@@ -429,7 +429,7 @@ fn undo_of_a_restore_leaves_out_the_old_link_once_the_folder_moved_on_by_hand() 
         let (_temp, env, mut service, archived, origin) = linked_back();
         service.snapshot().unwrap();
         let restored = service.request("restore", &json!({"id":archived})).unwrap();
-        let away = env.home.join("project").join("gabut").join("dummy2-kept");
+        let away = env.home.join("project").join("side").join("old-site-kept");
         fs::rename(&origin, &away).unwrap();
         let undone = if via_log {
             let entry = activity::read_log(&env, 5).remove(0);
@@ -443,7 +443,7 @@ fn undo_of_a_restore_leaves_out_the_old_link_once_the_folder_moved_on_by_hand() 
         assert_eq!(
             undone["warnings"],
             json!([format!(
-                "The old link at ~/project/gabut/dummy2 isn't back: {}, where it led, is gone",
+                "The old link at ~/project/side/old-site isn't back: {}, where it led, is gone",
                 paths::tilde(&archived, &env.home)
             )]),
             "{undone}"
@@ -455,11 +455,11 @@ fn undo_of_a_restore_leaves_out_the_old_link_once_the_folder_moved_on_by_hand() 
 #[test]
 fn a_link_at_the_origin_that_leads_anywhere_else_is_in_the_way() {
     let (_temp, env, archive) = fixture();
-    let archived = archive.join("project").join("gabut").join("dummy2");
+    let archived = archive.join("project").join("side").join("old-site");
     write(&archived.join("package.json"), "{}");
-    let other = archive.join("project").join("gabut").join("other");
+    let other = archive.join("project").join("side").join("other");
     write(&other.join("keep.txt"), "kept");
-    let origin = env.home.join("project").join("gabut").join("dummy2");
+    let origin = env.home.join("project").join("side").join("old-site");
     fs::create_dir_all(origin.parent().unwrap()).unwrap();
     let mut service = Service::new(env.clone());
     for target in [other.clone(), env.home.join("nowhere")] {
@@ -468,7 +468,7 @@ fn a_link_at_the_origin_that_leads_anywhere_else_is_in_the_way() {
         let snap = service.rescan().unwrap();
         let plan = &snap["nodes"][archived.to_str().unwrap()]["restorePlan"];
         assert_eq!((&plan["reason"], &plan["dest"], &plan["ops"]), (&json!("occupied"), &json!(origin), &json!([])));
-        assert!(plan["error"].as_str().unwrap().contains("Something is already at ~/project/gabut/dummy2"), "{plan}");
+        assert!(plan["error"].as_str().unwrap().contains("Something is already at ~/project/side/old-site"), "{plan}");
         let error = service.request("restore", &json!({"id":archived})).unwrap_err();
         assert!(error.contains("Something is already at"), "{error}");
         assert_eq!(fs::read_link(&origin).unwrap(), target);
@@ -479,13 +479,13 @@ fn a_link_at_the_origin_that_leads_anywhere_else_is_in_the_way() {
 #[test]
 fn a_group_linked_back_from_the_archive_goes_back_whole_and_its_projects_not_alone() {
     let (_temp, env, archive) = fixture();
-    let group = archive.join("project").join("freelance").join("client").join("ecobiz");
+    let group = archive.join("project").join("work").join("clients").join("acme");
     let (one, two) = (group.join("one"), group.join("two"));
     write(&one.join("package.json"), "{}");
     write(&two.join("package.json"), "{}");
     write(&group.join("penting").join("list.txt"), "a plain folder");
     write(&store(&env, &one).join("first.jsonl"), &session(&one));
-    let origin = env.home.join("project").join("freelance").join("client").join("ecobiz");
+    let origin = env.home.join("project").join("work").join("clients").join("acme");
     fs::create_dir_all(origin.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(&group, &origin).unwrap();
     let mut service = Service::new(env.clone());
@@ -499,8 +499,8 @@ fn a_group_linked_back_from_the_archive_goes_back_whole_and_its_projects_not_alo
     let error = service.request("restore/plan", &json!({"id":group})).unwrap_err();
     assert!(error.contains("isn't an archived group"), "{error}");
     // Nothing there goes back whole yet, so the refusal doesn't offer it.
-    let linked = "~/project/freelance/client/ecobiz is a link into the archive. Remove that link first, or mark \
-                  ecobiz status: archived to restore it whole.";
+    let linked = "~/project/work/clients/acme is a link into the archive. Remove that link first, or mark \
+                  acme status: archived to restore it whole.";
     let plan = &snap["nodes"][one.to_str().unwrap()]["restorePlan"];
     assert_eq!(
         (&plan["error"], &plan["reason"], &plan["dest"], &plan["ops"], &plan["group"]),
@@ -523,7 +523,7 @@ fn a_group_linked_back_from_the_archive_goes_back_whole_and_its_projects_not_alo
     assert_eq!(plan["dest"], json!(origin));
     assert_eq!(
         plan["ops"][0],
-        json!({"kind":"unlink","label":"Remove the old link","from":"~/project/freelance/client/ecobiz","to":group})
+        json!({"kind":"unlink","label":"Remove the old link","from":"~/project/work/clients/acme","to":group})
     );
     let ops = plan["ops"].as_array().unwrap();
     assert!(ops.iter().any(|op| op["kind"] == "rename"), "the sessions of a project in it go along: {plan}");
@@ -534,7 +534,7 @@ fn a_group_linked_back_from_the_archive_goes_back_whole_and_its_projects_not_alo
         (&plan["error"], &plan["reason"], &plan["group"]),
         (
             &json!(
-                "~/project/freelance/client/ecobiz is a link into the archive. Restore the whole group ecobiz, or \
+                "~/project/work/clients/acme is a link into the archive. Restore the whole group acme, or \
                  remove that link first."
             ),
             &json!("linked"),
@@ -556,7 +556,7 @@ fn a_group_linked_back_from_the_archive_goes_back_whole_and_its_projects_not_alo
     assert!(!text.contains("status:") && text.contains("priority: low"), "{text}");
     assert_eq!(
         activity::read_log(&env, 5)[0]["say"],
-        json!({"form":"restored","name":"ecobiz","to":"~/project/freelance/client/ecobiz"})
+        json!({"form":"restored","name":"acme","to":"~/project/work/clients/acme"})
     );
     let snap = service.snapshot().unwrap();
     let node = &snap["nodes"][origin.to_str().unwrap()];
@@ -887,7 +887,7 @@ fn a_scan_location_home_or_a_folder_holding_the_archive_or_the_copy_is_not_archi
     let copy = team.join("ai-chats");
     fs::create_dir_all(&copy).unwrap();
     let settings = |extra: serde_json::Value| {
-        let mut cfg = json!({"roots":["~/project","~/tugas"],"presets":["claude"],"archiveDir":archive});
+        let mut cfg = json!({"roots":["~/project","~/study"],"presets":["claude"],"archiveDir":archive});
         for (key, value) in extra.as_object().unwrap() {
             cfg[key] = value.clone();
         }
@@ -1150,21 +1150,21 @@ fn a_group_plan_names_a_git_worktree_that_lies_across_its_edge() {
 #[test]
 fn a_scan_location_named_like_the_copy_in_the_archive_folder_is_refused_clearly() {
     let (_temp, env, archive) = fixture();
-    let copy = archive.join("tugas");
+    let copy = archive.join("study");
     fs::create_dir_all(&copy).unwrap();
     config::save(
         &env,
-        &json!({"roots":["~/project","~/tugas"],"presets":["claude"],"archiveDir":archive,"backupDir":copy}),
+        &json!({"roots":["~/project","~/study"],"presets":["claude"],"archiveDir":archive,"backupDir":copy}),
     )
     .unwrap();
-    let project = env.home.join("tugas/course/demo");
+    let project = env.home.join("study/course/demo");
     write(&project.join("package.json"), "{}");
     let other = env.home.join("project/app");
     write(&other.join("package.json"), "{}");
     let mut service = Service::new(env.clone());
     let snap = service.snapshot().unwrap();
     let said =
-        format!("The archive keeps what comes from ~/tugas in {}, the folder of the copy of AI chats.", copy.display());
+        format!("The archive keeps what comes from ~/study in {}, the folder of the copy of AI chats.", copy.display());
     let error = snap["nodes"][path(&project)]["archivePlan"]["error"].as_str().unwrap();
     assert!(error.contains(&said), "{error}");
     let error = service.request("archive", &json!({"id":project})).unwrap_err();

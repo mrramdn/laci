@@ -113,6 +113,16 @@ fn record(home: &Path, project_folders: Vec<PathBuf>) -> Result<Value> {
         }
     }
     fixtures["assistant/prompt"]["tasks"] = json!(tasks);
+    // A folder the scan plans to archive whole, as a group: its plan, which gathers its projects' checks.
+    for folder in nodes.values().filter(|n| {
+        n["kind"] == "folder"
+            && n["archived"] != true
+            && n["archivePlan"].is_object()
+            && n["archivePlan"]["error"].is_null()
+    }) {
+        let id = folder["id"].clone();
+        fixtures["archive/plan"][id.as_str().unwrap_or_default()] = ask("archive/plan", json!({"id":id}))?;
+    }
 
     let mut folders = vec![home.to_owned(), home.join("Documents"), home.join("Documents/agent-reports")];
     folders.extend(project_folders);

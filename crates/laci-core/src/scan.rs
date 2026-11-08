@@ -138,7 +138,7 @@ const DEPTH: usize = 6;
 /// How deep a scan looks below `child`, a folder `depth` folders below its scan location reached while looking
 /// through `max` folders, and whether the archive's extra level is granted from there on. Archiving keeps a project's
 /// depth: the archive folder adds one level, the name of the scan location it came from
-/// (`<archive>/tugas/course/demo`), and an `_archive`-style folder adds itself (`~/project/_archive/course/demo`).
+/// (`<archive>/study/course/demo`), and an `_archive`-style folder adds itself (`~/project/_archive/course/demo`).
 /// It is granted once: an `_archive` inside the archive, or inside another `_archive`, adds nothing more.
 fn deeper(skip: &Skip<'_>, child: &Path, depth: usize, max: usize, granted: bool) -> (usize, bool) {
     if granted {
@@ -316,7 +316,7 @@ fn find(env: &Env, cfg: &Value, agent_paths: &BTreeSet<PathBuf>) -> Vec<Found> {
         .iter()
         .filter_map(|r| {
             // The archive's first level is the name of the scan location a project came from
-            // (`<archive>/tugas/course/demo`), so it is looked through one folder deeper and a project keeps the depth
+            // (`<archive>/study/course/demo`), so it is looked through one folder deeper and a project keeps the depth
             // it had there. So is an archive folder inside a scan location, and an `_archive` folder ([`deeper`]).
             let (max, granted) = if skip.archive.as_deref().is_some_and(|dir| platform::path::same_path(dir, r)) {
                 (DEPTH + 1, true)
@@ -1123,7 +1123,7 @@ fn issues(env: &Env, n: &Value, claude: &Value) -> Vec<Value> {
 }
 
 /// Where a project or a group is archived to. With an archive folder in Settings, it keeps its place below the scan
-/// location that holds it: `~/tugas/course/demo` goes to `<archive>/tugas/course/demo`. Refused when that place is in
+/// location that holds it: `~/study/course/demo` goes to `<archive>/study/course/demo`. Refused when that place is in
 /// the copy of AI chats, kept in the archive folder under the name of a scan location.
 pub fn archive_dest(env: &Env, node: &Value, roots: &[PathBuf]) -> Result<PathBuf> {
     let path = Path::new(string(node, "path"));

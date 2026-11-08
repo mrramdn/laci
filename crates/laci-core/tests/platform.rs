@@ -323,9 +323,11 @@ mod linux {
         let log = history.join("session.jsonl");
         fs::write(&log, "{}\n").unwrap();
         let sources = std::slice::from_ref(&history);
-        platform::ensure_idle(sources).unwrap();
+        // A program another test starts holds this process's open files until it runs, as below, so a file opened
+        // here a moment ago can still look open by another process for that moment.
+        soon("idle with nothing open", || platform::ensure_idle(sources).ok());
         let reader = File::open(&log).unwrap();
-        platform::ensure_idle(sources).unwrap();
+        soon("idle with a reader open", || platform::ensure_idle(sources).ok());
         drop(reader);
         let writer = OpenOptions::new().append(true).open(&log).unwrap();
         let error = platform::ensure_idle(sources).unwrap_err();

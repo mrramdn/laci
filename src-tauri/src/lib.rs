@@ -3,11 +3,16 @@ mod mcp;
 
 use clap::{Parser, Subcommand};
 use laci_core::{
+    config,
     env::Env,
-    service::{Service, array, string},
+    paths, scan,
+    service::{self, Service, array, string},
 };
-use serde_json::Value;
-use std::io::{self, Write};
+use serde_json::{Value, json};
+use std::{
+    io::{self, Write},
+    path::Path,
+};
 
 #[derive(Parser)]
 #[command(version, about = "Projects, agent history and safe moves")]
@@ -23,6 +28,26 @@ enum Action {
     Mcp,
     /// Copy new and changed AI chats into Laci's copy of them, as "Back up now" does, without the window
     Backup,
+    /// Show where Laci looks for projects and keeps the archive, the copy of AI chats and reports, or change one
+    Settings {
+        #[command(subcommand)]
+        change: Option<Setting>,
+    },
+}
+/// A folder `laci settings` changes as Settings in the window does: the same checks, Log entry and Undo.
+#[derive(Subcommand)]
+enum Setting {
+    /// Keep archived projects in DIR ("" for an _archive folder beside each scan location)
+    Archive { dir: String },
+    /// Move the copy of AI chats to DIR, an empty folder or one that holds a copy Laci made ("" for Laci's own folder)
+    Copy {
+        dir: String,
+        /// Start a new copy in DIR when the one kept now can't be reached, as on a drive that isn't connected
+        #[arg(long)]
+        fresh: bool,
+    },
+    /// Read the reports agents write from DIR ("" for none)
+    Reports { dir: String },
 }
 
 /// Does what the command line asks, opening the window with `open` without a command, and exits with 1 after saying
@@ -40,12 +65,18 @@ fn run(action: Option<Action>, open: fn(Env) -> laci_core::Result<()>) -> laci_c
         None => open(Env::from_process()?),
         Some(Action::Mcp) => mcp::run(Env::from_process()?),
         // No scan: the copy needs only the agents Laci connects and their history folders.
-        Some(Action::Backup) => {
-            let said = laci_core::service::backup_now(&Env::from_process()?, "cli")?;
-            match writeln!(io::stdout().lock(), "{said}") {
-                Err(e) if e.kind() != io::ErrorKind::BrokenPipe => Err(e.to_string()),
-                _ => Ok(()),
-            }
+        Some(Action::Backup) => say(&service::backup_now(&Env::from_process()?, "cli")?),
+        // No scan either: a change goes through the request the window sends, and the next scan reads it.
+        Some(Action::Settings { change }) => {
+            let env = Env::from_process()?;
+            let said = match change {
+                None => settings(&env),
+                Some(change) => {
+                    let here = std::env::current_dir().map_err(|e| e.to_string())?;
+                    change_setting(&env, change, &here)?
+                }
+            };
+            say(&said)
         }
         Some(action) => {
             let mut snapshot = Service::new(Env::from_process()?).rescan()?;
@@ -63,6 +94,92 @@ fn run(action: Option<Action>, open: fn(Env) -> laci_core::Result<()>) -> laci_c
             }
         }
     }
+}
+
+/// Prints `said`, which a closed pipe cuts short without an error.
+fn say(said: &str) -> laci_core::Result<()> {
+    match writeln!(io::stdout().lock(), "{said}") {
+        Err(e) if e.kind() != io::ErrorKind::BrokenPipe => Err(e.to_string()),
+        _ => Ok(()),
+    }
+}
+
+/// `laci settings`: the scan locations, and the folders of the archive, the copy of AI chats and the reports, each
+/// with why it can't be used now when its drive isn't there.
+fn settings(env: &Env) -> String {
+    let cfg = config::load(env);
+    let shown = |path: &Path| paths::tilde(path, &env.home);
+    let away = |status: &Value| {
+        status["reason"].as_str().filter(|_| status["available"] == false).map(|why| format!(" (unavailable: {why})"))
+    };
+    let mut lines = vec!["Scan locations:".to_owned()];
+    if !cfg["roots"].is_array() {
+        lines.push("  none yet: open Laci to choose them".to_owned());
+    }
+    for root in scan::root_status(env, &cfg) {
+        lines.push(format!("  {}{}", shown(Path::new(string(&root, "path"))), away(&root).unwrap_or_default()));
+    }
+    let chosen =
+        |key: &str| cfg[key].as_str().filter(|dir| !dir.trim().is_empty()).map(|dir| paths::expand(dir, &env.home));
+    let archive =
+        chosen("archiveDir").map_or_else(|| "an _archive folder beside each scan location".into(), |d| shown(&d));
+    lines.push(format!("Archive folder: {archive}"));
+    let copy = match scan::copy_status(env, &cfg) {
+        Some(status) => format!("{}{}", shown(Path::new(string(&status, "path"))), away(&status).unwrap_or_default()),
+        None => shown(&env.data_dir.join("history")),
+    };
+    lines.push(format!("Copy of AI chats: {copy}"));
+    let reports = chosen("reportsDir").map_or_else(|| "none".into(), |d| shown(&d));
+    lines.push(format!("Reports folder: {reports}"));
+    lines.join("\n")
+}
+
+/// `dir` as typed in the folder `here`: a path from `~/` or a full one as it is, another one from `here`, and `""` as
+/// it is, which each setting takes as its default.
+fn typed_folder(dir: &str, here: &Path) -> String {
+    let dir = dir.trim();
+    if dir.is_empty() || dir.starts_with('~') || Path::new(dir).is_absolute() {
+        dir.to_owned()
+    } else {
+        here.join(dir).to_string_lossy().into_owned()
+    }
+}
+
+/// `laci settings archive|copy|reports DIR`: the change through the request the window sends for it, `setup/save` or
+/// `backup/move`, told in the Log as made from the command line. Gives what it prints.
+fn change_setting(env: &Env, change: Setting, here: &Path) -> laci_core::Result<String> {
+    let (key, label, dir) = match &change {
+        Setting::Archive { dir } => ("archiveDir", "Archive folder", typed_folder(dir, here)),
+        Setting::Reports { dir } => ("reportsDir", "Reports folder", typed_folder(dir, here)),
+        Setting::Copy { dir, fresh } => {
+            let body = json!({"dir":typed_folder(dir, here),"fresh":fresh});
+            let moved = service::long_action(env, &json!({}), "backup/move", &body, "cli")?.value;
+            let dest = string(&moved, "dest");
+            return Ok(if moved["moved"] == true {
+                format!("Moved the copy of AI chats to {dest} ({})", string(&moved, "size"))
+            } else {
+                format!("The copy of AI chats is kept in {dest} from now on")
+            });
+        }
+    };
+    let mut service = Service::new(env.clone());
+    // Every other setting as it is saved, as the window's Settings sends them.
+    let info = service.setup_info()?;
+    if info["configured"] != true {
+        return Err("Laci isn't set up yet. Open it once and choose the folders to scan first.".into());
+    }
+    let mut body = json!({"roots":info["roots"],"archiveDir":info["archiveDir"],"reportsDir":info["reportsDir"],
+        "presets":info["presets"],"apps":info["apps"],"terminalTarget":info["terminalTarget"]});
+    let before = config::load(env)[key].clone();
+    body[key] = json!(dir);
+    service.execute("setup/save", &body, "cli")?;
+    let after = config::load(env)[key].clone();
+    let now =
+        after.as_str().filter(|dir| !dir.is_empty()).map(|dir| paths::tilde(&paths::expand(dir, &env.home), &env.home));
+    let now = now.unwrap_or_else(|| {
+        if key == "archiveDir" { "an _archive folder beside each scan location".into() } else { "none".into() }
+    });
+    Ok(if before == after { format!("{label} is {now} already") } else { format!("{label}: {now}") })
 }
 
 fn list(s: &Value, out: &mut impl Write) -> io::Result<()> {
@@ -124,11 +241,35 @@ mod tests {
         assert!(matches!(public(&["laci", "json"]), Some(Action::Json)));
         assert!(matches!(public(&["laci", "mcp"]), Some(Action::Mcp)));
         assert!(matches!(public(&["laci", "backup"]), Some(Action::Backup)));
-        for wrong in [&["laci", "nothing"][..], &["laci", "ls", "extra"], &["laci", "backup", "now"]] {
+        assert!(matches!(public(&["laci", "settings"]), Some(Action::Settings { change: None })));
+        assert!(matches!(
+            public(&["laci", "settings", "archive", "~/old"]),
+            Some(Action::Settings { change: Some(Setting::Archive { dir }) }) if dir == "~/old"
+        ));
+        assert!(matches!(
+            public(&["laci", "settings", "copy", "/mnt/disk/chats"]),
+            Some(Action::Settings { change: Some(Setting::Copy { dir, fresh: false }) }) if dir == "/mnt/disk/chats"
+        ));
+        assert!(matches!(
+            public(&["laci", "settings", "copy", "--fresh", ""]),
+            Some(Action::Settings { change: Some(Setting::Copy { dir, fresh: true }) }) if dir.is_empty()
+        ));
+        assert!(matches!(
+            public(&["laci", "settings", "reports", "notes"]),
+            Some(Action::Settings { change: Some(Setting::Reports { dir }) }) if dir == "notes"
+        ));
+        for wrong in [
+            &["laci", "nothing"][..],
+            &["laci", "ls", "extra"],
+            &["laci", "backup", "now"],
+            &["laci", "settings", "archive"],
+            &["laci", "settings", "theme", "dark"],
+            &["laci", "settings", "reports", "a", "b"],
+        ] {
             assert!(Cli::try_parse_from(wrong).is_err(), "{wrong:?}");
         }
         let help = Cli::command().render_long_help().to_string();
-        for shown in ["ls", "doctor", "json", "mcp", "backup"] {
+        for shown in ["ls", "doctor", "json", "mcp", "backup", "settings"] {
             assert!(help.contains(shown), "{help}");
         }
         // The version reads `laci 2.5.2`; package-smoke reads it.
@@ -159,6 +300,67 @@ mod tests {
             serde_json::json!({"proposals":[{"id":"space:inactive","title":"Free 1 MB"},{"id":"dup:x","title":"x exists in 2 places"}],
                 "nodes":{"/p/a":{"say":"kept"}}})
         );
+    }
+
+    /// Each change goes through the request the window sends, so its checks, the Log and Undo are the window's.
+    #[test]
+    fn laci_settings_changes_each_folder_as_the_window_does_and_the_log_tells_it() {
+        use laci_core::activity;
+        let temp = tempfile::tempdir().unwrap();
+        let root = laci_core::platform::path::canonical(temp.path()).unwrap();
+        let env = Env::for_home(root.join("home"));
+        for dir in ["home/project", "archive", "reports", "disk/chats"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        let logged = |title: &str| activity::read_log(&env, 50).into_iter().find(|e| e["title"] == title);
+        let refused = change_setting(&env, Setting::Archive { dir: "archive".into() }, &root).unwrap_err();
+        assert!(refused.contains("Open it once"), "{refused}");
+        assert!(config::load(&env)["archiveDir"].is_null(), "nothing is saved before the setup");
+        config::save(&env, &json!({"roots":["~/project"],"presets":["claude"]})).unwrap();
+
+        // A folder typed from where the command runs.
+        let archive = root.join("archive");
+        let said = change_setting(&env, Setting::Archive { dir: "archive".into() }, &root).unwrap();
+        assert_eq!(said, format!("Archive folder: {}", archive.display()));
+        let entry = logged("Changed settings").unwrap();
+        assert_eq!(
+            (&entry["by"], &entry["detail"]),
+            (&json!("cli"), &json!(format!("Archive folder: {}", archive.display())))
+        );
+        assert_eq!(config::load(&env)["roots"], json!(["~/project"]), "the other settings stay as they were");
+        let again = change_setting(&env, Setting::Archive { dir: archive.to_string_lossy().into() }, &root).unwrap();
+        assert_eq!(again, format!("Archive folder is {} already", archive.display()));
+        // Undo in the Log puts the archive folder back.
+        let mut service = Service::new(env.clone());
+        service.execute("log/undo", &json!({"id":entry["id"]}), "app").unwrap();
+        assert_eq!(config::load(&env)["archiveDir"].as_str().unwrap_or(""), "");
+        // The window's checks: a folder that isn't there is refused.
+        assert!(change_setting(&env, Setting::Reports { dir: "nowhere".into() }, &root).is_err());
+        let reports = root.join("reports");
+        change_setting(&env, Setting::Reports { dir: reports.to_string_lossy().into() }, &root).unwrap();
+        assert_eq!(config::load(&env)["reportsDir"], json!(reports));
+
+        // The copy moves as "Move the copy" does, a change of its own in the Log.
+        let chats = root.join("disk/chats");
+        let said =
+            change_setting(&env, Setting::Copy { dir: chats.to_string_lossy().into(), fresh: false }, &root).unwrap();
+        assert_eq!(said, format!("The copy of AI chats is kept in {} from now on", chats.display()));
+        let entry = logged(&format!("The copy of AI chats is kept in {} from now on", chats.display())).unwrap();
+        assert_eq!((&entry["by"], &entry["say"]["form"]), (&json!("cli"), &json!("keptCopyIn")));
+        assert_eq!(config::load(&env)["backupDir"], json!(chats));
+
+        let shown = settings(&env);
+        for line in [
+            "Scan locations:\n  ~/project\n",
+            "Archive folder: an _archive folder beside each scan location\n",
+            &format!("Copy of AI chats: {}\n", chats.display()),
+            &format!("Reports folder: {}", reports.display()),
+        ] {
+            assert!(shown.contains(line), "{line:?} in {shown}");
+        }
+        // A copy folder whose drive was taken out says so, as a scan location does.
+        std::fs::rename(&chats, root.join("disk/away")).unwrap();
+        assert!(settings(&env).contains(&format!("Copy of AI chats: {} (unavailable: ", chats.display())));
     }
 
     #[test]

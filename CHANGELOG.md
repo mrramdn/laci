@@ -10,12 +10,19 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 - **Archive a group from Laci.** A folder that holds projects can be archived whole, like a project: it moves into the archive with every project in it and the agent history of each, and its `.laci.md` says `status: archived`, where it came from and when (the file is made when it has none). It is then an archived group, which Restore puts back whole; Undo works for both. The archive plan of a group lists the risky checks of the projects in it (uncommitted, unpushed, no remote, stashes), each naming its project. A scan location, home, and a folder holding the archive folder or the copy of AI chats can't be archived. Folders carry `projectCount`, the projects below them, and those that can be archived `archivePlan`. Agents can do it with `archive_project` and a folder; its preview says how many projects go along.
 - **A folder marked archived outside the archive can be restored where it is**, like a project archived by its status only: Restore clears its `status: archived`. It shows with those projects in the Archive view.
+- **`laci settings`** prints the scan locations and the archive, backup and reports folders, and which of them can't be used now. `laci settings archive DIR`, `laci settings copy DIR` (with `--fresh` to start a new backup when the old one can't be reached) and `laci settings reports DIR` change one through the same steps as Settings in the window: the same checks and drive identity, a Log entry by the command line, and Undo. `copy` moves the whole backup, also across drives, as **Change…** does.
 
 ### Changed
 
 - **Restoring a group puts back what is archived in it too.** Folders and projects inside an archived group whose `.laci.md` says `status: archived` have it cleared, with `archivedFrom` and `archivedAt`, in the same change, so one Undo brings all of them back. A project or group inside an archived group goes back with the whole group: alone, it is refused (`reason: "inGroup"`, with `group`, the archived group to restore instead) unless you choose a place for it.
 - **`_archive` folders and an archive folder inside a scan location are looked through deeper**, as the archive folder elsewhere already was: a project keeps the depth it had where it came from. The archive folder adds one level (the name of the scan location), an `_archive` folder one; an `_archive` inside the archive or another `_archive` adds nothing more.
 - **The copy of AI chats and the archive folder stay apart.** Settings refuse a folder for the copy that is the archive folder or holds it, and an archive folder that is the copy's folder or inside it; the copy may still be a folder of its own in the archive folder. Archiving refuses clearly when the place the archive keeps a scan location's projects (`<archive>/<name>`) is the copy's folder.
+- **The moved project's Claude Code memory names its new place.** A move, an archive or a restore rewrites the old path in the project's own memory files (`memory/*.md` in its Claude session folder), written in full or from `~/`, wherever it is a whole path: `~/project/laci` never touches `~/project/laci-old`. The plan shows it as *Update the old path in N memory files*, and Undo puts each file back byte for byte. Other projects' memory and global files stay as they are.
+- **A backup folder on a drive that was taken out is noticed without a rescan.** The scan tells it like a scan location that isn't there (`copyStatus`, with the reason), and the open window reads it again when the drive's mount point goes away or comes back.
+
+### Fixed
+
+- **Undo of a move of the backup no longer freezes the window.** Like the move itself, it runs beside the window, which stays usable while the backup is copied back across drives; other changes asked for meanwhile are refused at once with *Laci is moving the copy of your AI chats*.
 
 ## [3.3.2] - 2026-11-08
 

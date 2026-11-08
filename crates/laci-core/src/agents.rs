@@ -995,6 +995,74 @@ fn claude_log(dir: &Path, path: &Path) -> bool {
     !relative.components().any(|c| c.as_os_str() == "memory") && path.extension().is_some_and(|e| e == "jsonl")
 }
 
+/// The memory files of Claude Code's project folder `dir`: the Markdown files in its `memory` folder, which must be a
+/// folder there and not a link to one elsewhere. Links among the files are left out too.
+pub fn memory_files(dir: &Path) -> Vec<PathBuf> {
+    let memory = dir.join("memory");
+    if !fs::symlink_metadata(&memory).is_ok_and(|meta| meta.is_dir()) {
+        return Vec::new();
+    }
+    files::entries(&memory)
+        .into_iter()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
+        .collect()
+}
+
+/// `text`, a memory file Claude Code wrote, with the folder `from` replaced by `to` wherever it is written as a whole
+/// path: as a full path, and from `~/` when it is in `home`, which becomes `to` from `~/` too when that is in `home`.
+/// Only a whole name counts, so `~/project/laci` leaves `~/project/laci-old` and `~/x/project/laci` as they are, while
+/// `~/project/laci/src` and `~/project/laci.` at the end of a sentence change. `None` when nothing changes.
+pub fn moved_paths(text: &str, from: &Path, to: &Path, home: &Path) -> Option<String> {
+    let full = (from.to_string_lossy().into_owned(), to.to_string_lossy().into_owned());
+    let short = |path: &Path| {
+        path.strip_prefix(home)
+            .ok()
+            .filter(|rest| !rest.as_os_str().is_empty())
+            .map(|rest| format!("~/{}", rest.to_string_lossy()))
+    };
+    let mut pairs = vec![full.clone()];
+    if let Some(old) = short(from) {
+        pairs.push((old, short(to).unwrap_or(full.1)));
+    }
+    let name = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
+    // A name goes on past a dot only when one more of its characters follows: `laci.` ends a sentence, `laci.old` is
+    // another folder.
+    let ends = |after: &str| {
+        let mut chars = after.chars();
+        match chars.next() {
+            None => true,
+            Some('.') => !chars.next().is_some_and(name),
+            Some(c) => !name(c),
+        }
+    };
+    let starts = |before: Option<char>| before.is_none_or(|c| !name(c) && !matches!(c, '/' | '~' | '.' | '\\'));
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut before = None;
+    let mut changed = false;
+    'text: while let Some(c) = rest.chars().next() {
+        if starts(before) {
+            for (old, new) in &pairs {
+                if let Some(after) = rest.strip_prefix(old.as_str())
+                    && ends(after)
+                {
+                    out.push_str(new);
+                    rest = after;
+                    before = old.chars().last();
+                    changed = true;
+                    continue 'text;
+                }
+            }
+        }
+        out.push(c);
+        rest = &rest[c.len_utf8()..];
+        before = Some(c);
+    }
+    changed.then_some(out)
+}
+
 /// The logs `read_all` reads, as `claude_dirs`, the `cwd` stores and `read_backup` find them.
 fn jobs(env: &Env, on: &[Value]) -> Vec<Job> {
     let mut jobs = Vec::new();
@@ -1846,5 +1914,23 @@ mod tests {
         fs::create_dir(&project).unwrap();
         symlink(outside.path(), project.join(".history")).unwrap();
         assert!(read_inside(&env, &json!({"id":"custom-test","link":{"path":".history"}}), &project).is_none());
+    }
+    #[test]
+    fn memory_text_follows_a_moved_folder_only_on_whole_names() {
+        let home = Path::new("/home/u");
+        let (from, to) = (Path::new("/home/u/project/laci"), Path::new("/home/u/opensource/laci"));
+        let text = "Repo at ~/project/laci and /home/u/project/laci/src.\nNot ~/project/laci-old, /home/u/project/laci.old \
+                    or /mnt/home/u/project/laci. See `~/project/laci`.";
+        assert_eq!(
+            moved_paths(text, from, to, home).unwrap(),
+            "Repo at ~/opensource/laci and /home/u/opensource/laci/src.\nNot ~/project/laci-old, \
+             /home/u/project/laci.old or /mnt/home/u/project/laci. See `~/opensource/laci`."
+        );
+        assert_eq!(moved_paths("Only ~/project/laci-old here", from, to, home), None);
+        // Out of home, the short form becomes the full path.
+        assert_eq!(
+            moved_paths("cd ~/project/laci", from, Path::new("/mnt/archive/laci"), home).unwrap(),
+            "cd /mnt/archive/laci"
+        );
     }
 }

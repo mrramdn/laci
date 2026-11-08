@@ -56,9 +56,41 @@ fn git_directories(project: &Path) -> Vec<PathBuf> {
     directories
 }
 
+/// The folder chosen for the copy of AI chats, as the last scan told it (`scan::copy_status`).
+fn copy_folder(snapshot: &Value) -> Option<&Path> {
+    snapshot["copyStatus"]["path"].as_str().filter(|path| !path.is_empty()).map(Path::new)
+}
+
+/// The folders to watch so that the drive of the copy folder `copy` going away or coming back is noticed: the folder
+/// itself while it is there, and the folder that holds its drive's mount point, where the system takes that mount
+/// point away and makes it again; while it isn't there, the nearest folder above it that is, and the one above that.
+/// A drive that holds home never comes and goes, so nothing at home or above it is watched.
+fn copy_watches(env: &Env, copy: &Path) -> Vec<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let mut out = Vec::new();
+    let device = |path: &Path| std::fs::metadata(path).ok().filter(|meta| meta.is_dir()).map(|meta| meta.dev());
+    let mut top = copy.to_path_buf();
+    if let Some(dev) = device(copy) {
+        out.push(copy.to_path_buf());
+        // Up to the mount point: the last folder on the same drive.
+        while let Some(parent) = top.parent().filter(|parent| device(parent) == Some(dev)) {
+            top = parent.to_path_buf();
+        }
+    } else {
+        while device(&top).is_none() && top.pop() {}
+        out.push(top.clone());
+    }
+    if let Some(parent) = top.parent() {
+        out.push(parent.to_path_buf());
+    }
+    out.retain(|dir| !env.home.starts_with(dir) && dir.parent().is_some());
+    out
+}
+
 /// Session content changes do not invalidate unrelated project metadata.
 pub fn refresh_for(env: &Env, snapshot: &Value, changes: &Changes) -> Refresh {
     let mut refresh = Refresh::default();
+    let copy = copy_folder(snapshot);
     let projects: Vec<_> = snapshot["nodes"]
         .as_object()
         .into_iter()
@@ -75,6 +107,18 @@ pub fn refresh_for(env: &Env, snapshot: &Value, changes: &Changes) -> Refresh {
         if path.starts_with(&env.config_dir) {
             refresh.merge(Refresh::full());
             continue;
+        }
+        if let Some(copy) = copy {
+            // The copy folder, or a folder on the way to it, came or went, as when its drive was taken out or put
+            // back: what the window says of the copy is read again, and the watches follow it.
+            if copy.starts_with(path) {
+                if changes.structural {
+                    refresh.merge(Refresh { watches: true, ..Refresh::agents() });
+                }
+            } else if path.starts_with(copy) {
+                // What a backup writes in the copy changes no project.
+                continue;
+            }
         }
         if let Some(dir) = reports_dir {
             if path.parent() == Some(dir)
@@ -238,6 +282,10 @@ impl Watches {
         {
             want.insert(PathBuf::from(dir));
         }
+        // So is the copy of AI chats, whose drive can be taken out and put back.
+        if let Some(copy) = copy_folder(snapshot) {
+            want.extend(copy_watches(env, copy));
+        }
         want
     }
     pub fn install(&self, want: BTreeSet<PathBuf>) {
@@ -306,6 +354,35 @@ mod tests {
         snapshot["nodes"] = json!({});
         snapshot["reportsDir"]["error"] = json!("Folder not found");
         assert!(!Watches::desired(&env, &snapshot, &BTreeSet::new()).contains(&reports));
+    }
+    #[test]
+    fn the_copy_folder_coming_or_going_rereads_the_copy_and_its_watches() {
+        let temp = tempfile::tempdir().unwrap();
+        let env = Env::for_home(temp.path().join("home"));
+        let media = temp.path().join("media");
+        let drive = media.join("drive");
+        let copy = drive.join("copy");
+        fs::create_dir_all(copy.join("claude")).unwrap();
+        fs::create_dir_all(&env.home).unwrap();
+        let snapshot = json!({"roots":[],"connectors":[],"nodes":{},"copyStatus":{"path":copy,"available":true}});
+        assert!(Watches::desired(&env, &snapshot, &BTreeSet::new()).contains(&copy));
+        let gone = Changes { paths: BTreeSet::from([copy.clone()]), structural: true };
+        assert_eq!(refresh_for(&env, &snapshot, &gone), Refresh { watches: true, ..Refresh::agents() });
+        // What a backup writes in it, or a file touched beside it, reads nothing again.
+        let written = Changes { paths: BTreeSet::from([copy.join("claude/x.jsonl.zst")]), structural: true };
+        assert!(!refresh_for(&env, &snapshot, &written).needed());
+        let beside = Changes { paths: BTreeSet::from([drive.join("notes.txt")]), structural: true };
+        assert!(!refresh_for(&env, &snapshot, &beside).needed());
+        // Taken out: the nearest folder above it that is still there is watched, so its return is seen. Home and the
+        // folders above it are never watched for it.
+        fs::remove_dir_all(&drive).unwrap();
+        let desired = Watches::desired(&env, &snapshot, &BTreeSet::new());
+        assert!(desired.contains(&media), "{desired:?}");
+        assert!(!desired.contains(&copy) && !desired.contains(&env.home) && !desired.contains(temp.path()));
+        let back = Changes { paths: BTreeSet::from([drive.clone()]), structural: true };
+        assert_eq!(refresh_for(&env, &snapshot, &back), Refresh { watches: true, ..Refresh::agents() });
+        let without = json!({"roots":[],"connectors":[],"nodes":{}});
+        assert!(!refresh_for(&env, &without, &back).needed());
     }
     #[test]
     fn continuous_changes_flush_at_the_batch_deadline() {

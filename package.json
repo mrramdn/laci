@@ -1,6 +1,6 @@
 {
   "name": "laci",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "private": true,
   "description": "A file manager that knows which folders are projects, and keeps their agent history attached when they move.",
   "type": "module",
@@ -29,7 +29,7 @@
     "build:binary": "pnpm -C ui build && cargo build -p laci --features custom-protocol --release"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.0"
+    "@tauri-apps/cli": "^2.12.4"
   },
   "packageManager": "pnpm@12.8.1"
 }

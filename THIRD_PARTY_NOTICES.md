@@ -10,7 +10,7 @@ It is made by `node scripts/notices.mjs` from the lockfiles. Please don't edit i
 - [Icons](#icons)
 - [Fonts](#fonts)
 - [Interface packages](#interface-packages): 47 npm packages
-- [Rust crates](#rust-crates): 400 crates for `x86_64-unknown-linux-gnu`
+- [Rust crates](#rust-crates): 398 crates for `x86_64-unknown-linux-gnu`
 
 ## Icons
 
@@ -1640,7 +1640,6 @@ Crates that only run while building are included. Crates that only tests need ar
 | `atk-sys` | 0.18.2 | MIT | [source](https://github.com/gtk-rs/gtk3-rs) |
 | `atomic-waker` | 1.1.2 | Apache-2.0 OR MIT | [source](https://github.com/smol-rs/atomic-waker) |
 | `autocfg` | 1.5.1 | Apache-2.0 OR MIT | [source](https://github.com/cuviper/autocfg) |
-| `base64` | 0.22.1 | MIT OR Apache-2.0 | [source](https://github.com/marshallpierce/rust-base64) |
 | `base64` | 0.23.1 | MIT OR Apache-2.0 | [source](https://github.com/marshallpierce/rust-base64) |
 | `bit-set` | 0.8.0 | Apache-2.0 OR MIT | [source](https://github.com/contain-rs/bit-set) |
 | `bit-vec` | 0.8.0 | Apache-2.0 OR MIT | [source](https://github.com/contain-rs/bit-vec) |
@@ -1770,7 +1769,7 @@ Crates that only run while building are included. Crates that only tests need ar
 | `hyper-rustls` | 0.27.10 | Apache-2.0 OR ISC OR MIT | [source](https://github.com/rustls/hyper-rustls) |
 | `hyper-util` | 0.1.21 | MIT | [source](https://github.com/hyperium/hyper-util) |
 | `iana-time-zone` | 0.1.65 | MIT OR Apache-2.0 | [source](https://github.com/strawlab/iana-time-zone) |
-| `ico` | 0.5.0 | MIT | [source](https://github.com/mdsteele/rust-ico) |
+| `ico` | 0.6.0 | MIT | [source](https://github.com/mdsteele/rust-ico) |
 | `icu_collections` | 2.3.0 | Unicode-3.0 | [source](https://github.com/unicode-org/icu4x) |
 | `icu_locale_core` | 2.3.0 | Unicode-3.0 | [source](https://github.com/unicode-org/icu4x) |
 | `icu_normalizer` | 2.3.0 | Unicode-3.0 | [source](https://github.com/unicode-org/icu4x) |
@@ -1841,7 +1840,6 @@ Crates that only run while building are included. Crates that only tests need ar
 | `piper` | 0.2.5 | MIT OR Apache-2.0 | [source](https://github.com/smol-rs/piper) |
 | `pkg-config` | 0.3.34 | MIT OR Apache-2.0 | [source](https://github.com/rust-lang/pkg-config-rs) |
 | `plist` | 1.10.1 | MIT | [source](https://github.com/ebarnard/rust-plist/) |
-| `png` | 0.17.16 | MIT OR Apache-2.0 | [source](https://github.com/image-rs/image-png) |
 | `png` | 0.18.1 | MIT OR Apache-2.0 | [source](https://github.com/image-rs/image-png) |
 | `polling` | 3.11.0 | Apache-2.0 OR MIT | [source](https://github.com/smol-rs/polling) |
 | `portable-pty` | 0.9.0 | MIT | [source](https://github.com/wezterm/wezterm) |
@@ -1865,7 +1863,7 @@ Crates that only run while building are included. Crates that only tests need ar
 | `regex-automata` | 0.4.18 | MIT OR Apache-2.0 | [source](https://github.com/rust-lang/regex) |
 | `regex-syntax` | 0.8.11 | MIT OR Apache-2.0 | [source](https://github.com/rust-lang/regex) |
 | `reqwest` | 0.13.5 | MIT OR Apache-2.0 | [source](https://github.com/seanmonstar/reqwest) |
-| `rfd` | 0.16.0 | MIT | [source](https://github.com/PolyMeilex/rfd) |
+| `rfd` | 0.17.2 | MIT | [source](https://github.com/PolyMeilex/rfd) |
 | `ring` | 0.17.14 | Apache-2.0 AND ISC | [source](https://github.com/briansmith/ring) |
 | `rmcp` | 3.8.0 | Apache-2.0 | [source](https://github.com/modelcontextprotocol/rust-sdk/) |
 | `rmcp-macros` | 3.8.0 | Apache-2.0 | [source](https://github.com/modelcontextprotocol/rust-sdk/) |
@@ -1928,17 +1926,17 @@ Crates that only run while building are included. Crates that only tests need ar
 | `system-deps` | 6.2.2 | MIT OR Apache-2.0 | [source](https://github.com/gdesmott/system-deps) |
 | `tao` | 0.37.1 | Apache-2.0 | [source](https://github.com/tauri-apps/tao) |
 | `target-lexicon` | 0.12.16 | Apache-2.0 WITH LLVM-exception | [source](https://github.com/bytecodealliance/target-lexicon) |
-| `tauri` | 2.12.4 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
-| `tauri-build` | 2.7.3 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
-| `tauri-codegen` | 2.7.3 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
-| `tauri-macros` | 2.7.3 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
+| `tauri` | 2.12.5 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
+| `tauri-build` | 2.7.4 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
+| `tauri-codegen` | 2.7.4 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
+| `tauri-macros` | 2.7.4 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
 | `tauri-plugin` | 2.7.2 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
-| `tauri-plugin-dialog` | 2.8.3 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/plugins-workspace) |
+| `tauri-plugin-dialog` | 2.8.4 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/plugins-workspace) |
 | `tauri-plugin-fs` | 2.7.1 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/plugins-workspace) |
-| `tauri-plugin-single-instance` | 2.5.2 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/plugins-workspace) |
-| `tauri-plugin-updater` | 2.14.0 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/plugins-workspace) |
+| `tauri-plugin-single-instance` | 2.5.5 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/plugins-workspace) |
+| `tauri-plugin-updater` | 2.14.1 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/plugins-workspace) |
 | `tauri-runtime` | 2.12.2 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
-| `tauri-runtime-wry` | 2.12.2 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
+| `tauri-runtime-wry` | 2.12.3 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
 | `tauri-utils` | 2.10.2 | Apache-2.0 OR MIT | [source](https://github.com/tauri-apps/tauri) |
 | `tauri-winres` | 0.3.6 | MIT | [source](https://github.com/tauri-apps/winres) |
 | `tempfile` | 3.27.0 | MIT OR Apache-2.0 | [source](https://github.com/Stebalien/tempfile) |
@@ -2835,8 +2833,8 @@ Used by: `async-broadcast` 0.7.2
 
 Used by: `async-channel` 2.5.0, `async-executor` 1.14.0, `async-io` 2.6.0, `async-lock` 3.4.2,
 `async-process` 2.5.0, `async-recursion` 1.1.1, `async-signal` 0.2.14, `async-task` 4.7.1,
-`atomic-waker` 1.1.2, `autocfg` 1.5.1, `base64` 0.22.1, `base64` 0.23.1, `bitflags` 1.3.2,
-`bitflags` 2.13.2, `blocking` 1.7.0, `bs58` 0.5.1, `camino` 1.2.6, `cc` 1.5.1, `cfg-if` 1.0.5,
+`atomic-waker` 1.1.2, `autocfg` 1.5.1, `base64` 0.23.1, `bitflags` 1.3.2, `bitflags` 2.13.2,
+`blocking` 1.7.0, `bs58` 0.5.1, `camino` 1.2.6, `cc` 1.5.1, `cfg-if` 1.0.5,
 `concurrent-queue` 2.5.0, `crossbeam-channel` 0.5.17, `crossbeam-deque` 0.8.8,
 `crossbeam-epoch` 0.9.21, `crossbeam-utils` 0.8.23, `defmt-parser` 1.0.0*, `displaydoc` 0.2.7,
 `either` 1.18.0, `equivalent` 1.0.2, `errno` 0.3.14, `event-listener` 5.4.2,
@@ -2848,15 +2846,15 @@ Used by: `async-channel` 2.5.0, `async-executor` 1.14.0, `async-io` 2.6.0, `asyn
 `linux-raw-sys` 0.12.1, `lock_api` 0.4.14, `log` 0.4.34, `markup5ever` 0.39.0, `mime` 0.3.17,
 `muda` 0.20.0, `num-traits` 0.2.19, `once_cell` 1.21.4, `openssl-probe` 0.2.1,
 `ordered-stream` 0.2.0, `parking` 2.2.1, `parking_lot` 0.12.5, `parking_lot_core` 0.9.12,
-`percent-encoding` 2.3.2, `piper` 0.2.5, `pkg-config` 0.3.34, `png` 0.17.16, `png` 0.18.1,
-`polling` 3.11.0, `rayon` 1.12.0, `rayon-core` 1.13.0, `regex` 1.13.1, `regex-automata` 0.4.18,
-`regex-syntax` 0.8.11, `rustc_version` 0.4.1, `rustix` 1.1.5, `rustls` 0.23.46,
-`rustls-native-certs` 0.8.5, `scopeguard` 1.2.0, `serde_with` 3.24.0, `serde_with_macros` 3.24.0,
-`servo_arc` 0.4.3, `signal-hook-registry` 1.4.8, `smallvec` 1.16.2, `socket2` 0.6.5,
-`stable_deref_trait` 1.2.1, `string_cache` 0.9.0, `string_cache_codegen` 0.6.1, `syn` 1.0.109,
-`system-deps` 6.2.2, `tauri-plugin` 2.7.2*, `tempfile` 3.27.0, `tendril` 0.5.1,
-`toml_datetime` 0.6.3, `tray-icon` 0.25.1, `url` 2.5.8, `uuid` 1.26.1, `version_check` 0.9.5,
-`web_atoms` 0.2.6, `wry` 0.57.0
+`percent-encoding` 2.3.2, `piper` 0.2.5, `pkg-config` 0.3.34, `png` 0.18.1, `polling` 3.11.0,
+`rayon` 1.12.0, `rayon-core` 1.13.0, `regex` 1.13.1, `regex-automata` 0.4.18, `regex-syntax` 0.8.11,
+`rustc_version` 0.4.1, `rustix` 1.1.5, `rustls` 0.23.46, `rustls-native-certs` 0.8.5,
+`scopeguard` 1.2.0, `serde_with` 3.24.0, `serde_with_macros` 3.24.0, `servo_arc` 0.4.3,
+`signal-hook-registry` 1.4.8, `smallvec` 1.16.2, `socket2` 0.6.5, `stable_deref_trait` 1.2.1,
+`string_cache` 0.9.0, `string_cache_codegen` 0.6.1, `syn` 1.0.109, `system-deps` 6.2.2,
+`tauri-plugin` 2.7.2*, `tempfile` 3.27.0, `tendril` 0.5.1, `toml_datetime` 0.6.3,
+`tray-icon` 0.25.1, `url` 2.5.8, `uuid` 1.26.1, `version_check` 0.9.5, `web_atoms` 0.2.6,
+`wry` 0.57.0
 
 ```text
                               Apache License
@@ -4856,9 +4854,9 @@ limitations under the License.
 
 Used by: `fdeflate` 0.3.7, `field-offset` 0.3.6, `miniz_oxide` 0.8.9, `miniz_oxide` 0.9.1,
 `num-conv` 0.2.2, `pin-project-lite` 0.2.17, `raw-window-handle` 0.6.2, `sync_wrapper` 1.0.2,
-`tauri` 2.12.4, `tauri-build` 2.7.3, `tauri-codegen` 2.7.3, `tauri-macros` 2.7.3,
-`tauri-plugin-dialog` 2.8.3, `tauri-plugin-fs` 2.7.1, `tauri-plugin-single-instance` 2.5.2,
-`tauri-plugin-updater` 2.14.0, `tauri-runtime` 2.12.2, `tauri-runtime-wry` 2.12.2,
+`tauri` 2.12.5, `tauri-build` 2.7.4, `tauri-codegen` 2.7.4, `tauri-macros` 2.7.4,
+`tauri-plugin-dialog` 2.8.4, `tauri-plugin-fs` 2.7.1, `tauri-plugin-single-instance` 2.5.5,
+`tauri-plugin-updater` 2.14.1, `tauri-runtime` 2.12.2, `tauri-runtime-wry` 2.12.3,
 `tauri-utils` 2.10.2, `time` 0.3.55, `time-core` 0.1.9, `time-macros` 0.2.32
 
 ```text
@@ -9426,34 +9424,6 @@ DEALINGS IN THE SOFTWARE.
 
 #### MIT License
 
-Used by: `base64` 0.22.1
-
-```text
-The MIT License (MIT)
-
-Copyright (c) 2015 Alice Maz
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-```
-
-#### MIT License
-
 Used by: `base64` 0.23.1
 
 ```text
@@ -11275,7 +11245,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### MIT License
 
-Used by: `ico` 0.5.0
+Used by: `ico` 0.6.0
 
 ```text
 MIT License
@@ -12134,7 +12104,7 @@ SOFTWARE.
 
 #### MIT License
 
-Used by: `png` 0.17.16, `png` 0.18.1
+Used by: `png` 0.18.1
 
 ```text
 Copyright (c) 2015 nwin
@@ -12364,7 +12334,7 @@ THE SOFTWARE.
 
 #### MIT License
 
-Used by: `rfd` 0.16.0
+Used by: `rfd` 0.17.2
 
 ```text
 MIT License
@@ -12911,9 +12881,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #### MIT License
 
-Used by: `tauri` 2.12.4, `tauri-build` 2.7.3, `tauri-codegen` 2.7.3, `tauri-macros` 2.7.3,
-`tauri-plugin-dialog` 2.8.3, `tauri-plugin-fs` 2.7.1, `tauri-plugin-updater` 2.14.0,
-`tauri-runtime` 2.12.2, `tauri-runtime-wry` 2.12.2, `tauri-utils` 2.10.2
+Used by: `tauri` 2.12.5, `tauri-build` 2.7.4, `tauri-codegen` 2.7.4, `tauri-macros` 2.7.4,
+`tauri-plugin-dialog` 2.8.4, `tauri-plugin-fs` 2.7.1, `tauri-plugin-updater` 2.14.1,
+`tauri-runtime` 2.12.2, `tauri-runtime-wry` 2.12.3, `tauri-utils` 2.10.2
 
 ```text
 MIT License
@@ -12969,7 +12939,7 @@ SOFTWARE.
 
 #### MIT License
 
-Used by: `tauri-plugin-single-instance` 2.5.2
+Used by: `tauri-plugin-single-instance` 2.5.5
 
 ```text
 MIT License

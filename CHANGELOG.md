@@ -4,6 +4,17 @@ What changed in laci, newest first. The format follows [Keep a Changelog](https:
 
 2.0.1, 2.1.0, 2.2.0 and 2.3.0 were released from `main` without git tags or GitHub releases. They are the merges of pull requests #4 (`bf845a1`), #5 (`538da4e`), #6 (`8098403`) and #8 (`66956b2`).
 
+## [3.4.1] - 2026-11-08
+
+Only dependencies change.
+
+### Changed
+
+- Tauri 2.12.4 -> 2.12.5 (tauri-build 2.7.3 -> 2.7.4, tauri-runtime-wry 2.12.2 -> 2.12.3) with its plugins: single-instance 2.5.2 -> 2.5.5, dialog 2.8.3 -> 2.8.4, updater 2.14.0 -> 2.14.1, and wdio-webdriver 1.5.0 -> 1.5.1 in test builds. The Tauri CLI 2.12.1 -> 2.12.4 is a build tool only.
+- **A second start of Laci that can't hand over to the one running now says why** (``laci: failed to initialize plugin `single-instance`: failed to forward arguments to the running instance: …``) and exits with 1, instead of quitting as if it had worked. A session bus address that can't be read no longer stops Laci at start: it opens without the check for a Laci already running.
+- **The single-instance lock is released right before Laci exits or restarts**, after its terminals are closed, rather than as soon as it starts to quit.
+- rfd 0.16.0 -> 0.17.2, the library behind the folder picker. On Linux it still opens the GTK dialog.
+
 ## [3.4.0] - 2026-11-08
 
 ### Added

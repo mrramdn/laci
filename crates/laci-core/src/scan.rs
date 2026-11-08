@@ -1311,24 +1311,40 @@ pub fn archive_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
     }
     let source = paths::workspace_path(string(n, "path"), env)?;
     let roots: Vec<_> = array(&snapshot["roots"]).iter().filter_map(Value::as_str).map(PathBuf::from).collect();
-    let dest = if let Some(raw) = destination.filter(|raw| !raw.trim().is_empty()) {
-        paths::workspace_path(raw, env)?
+    let place = || paths::workspace_path(&archive_dest(env, n, &roots)?.to_string_lossy(), env);
+    // Whether it goes to the place the archive keeps it, which an earlier archive of a project in it may have made.
+    let (dest, by_default) = if let Some(raw) = destination.filter(|raw| !raw.trim().is_empty()) {
+        let dest = paths::workspace_path(raw, env)?;
+        let by_default = place().is_ok_and(|place| place == dest);
+        (dest, by_default)
     } else {
         if let Some(dir) = configured_archive(env, &config::load(env))
             && !dir.is_dir()
         {
             return Err("The archive folder is unavailable. Check Settings first.".into());
         }
-        paths::workspace_path(&archive_dest(env, n, &roots)?.to_string_lossy(), env)?
+        (place()?, true)
     };
     check_archive_destination(env, &dest)?;
     if dest.starts_with(&source) {
         return Err("Can't move a folder into itself".into());
     }
-    if dest.exists() {
+    // A group whose place is a plain folder already joins it ([`joining`]).
+    let join = if group && by_default && std::fs::symlink_metadata(&dest).is_ok_and(|meta| meta.is_dir()) {
+        Some(joining(env, &source, &dest)?)
+    } else {
+        None
+    };
+    if join.is_none() && dest.exists() {
         return Err("The archive destination already exists".into());
     }
     let mut ops = move_ops(env, Path::new(string(n, "path")), &dest, snapshot);
+    if let Some(earlier) = join {
+        ops[0]["label"] = json!(format!(
+            "Join the folder already in the archive (it holds {})",
+            plural(earlier, "earlier archived item")
+        ));
+    }
     let inside = if group { projects_below(snapshot, n) } else { Vec::new() };
     let mut travels: Vec<_> = if group {
         vec![format!("{} and everything else in it", plural(inside.len() as u64, "project"))]
@@ -1384,10 +1400,11 @@ pub fn archive_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
             .collect()
     };
     let checks: Vec<_> = if group {
+        let folder = Path::new(string(n, "path"));
         inside
             .iter()
             .flat_map(|p| {
-                risky(p).into_iter().map(move |mut check| {
+                risky(p).into_iter().chain(worktrees_apart(env, p, folder)).map(move |mut check| {
                     check["project"] = p["label"].clone();
                     check["projectId"] = p["id"].clone();
                     check
@@ -1397,7 +1414,81 @@ pub fn archive_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
     } else {
         risky(n)
     };
-    Ok(json!({"dest":dest,"checks":checks,"ops":ops}))
+    let mut plan = json!({"dest":dest,"checks":checks,"ops":ops});
+    if join.is_some() {
+        plan["join"] = json!(true);
+    }
+    Ok(plan)
+}
+
+/// How many entries the folder `dest` holds besides its .laci.md, when the folder `source`, archived as a group, can
+/// join it: `dest` is the place the archive keeps the group, made by an earlier archive of a project in it. It must
+/// not be archived itself, as an archived group or project is, nor hold anything by the name of something in
+/// `source`. Each entry of `source` then moves into it, and Undo moves each back, leaving what was there before.
+pub(crate) fn joining(env: &Env, source: &Path, dest: &Path) -> Result<u64> {
+    let earlier = |at: &Path, name: &std::ffi::OsStr| {
+        format!(
+            "{} already holds {} from an earlier archive. Choose another place.",
+            paths::tilde(at, &env.home),
+            name.to_string_lossy()
+        )
+    };
+    let own = files::text(&dest.join(crate::sidecar::SIDECAR)).map(|text| readers::parse_meta(&text));
+    if own.is_some_and(|meta| meta["status"] == "archived") {
+        return Err(earlier(dest.parent().unwrap_or(dest), dest.file_name().unwrap_or_default()));
+    }
+    for entry in files::entries(source) {
+        if std::fs::symlink_metadata(dest.join(entry.file_name())).is_ok() {
+            return Err(earlier(dest, entry.file_name().as_os_str()));
+        }
+    }
+    Ok(files::entries(dest).iter().filter(|e| e.file_name() != crate::sidecar::SIDECAR).count() as u64)
+}
+
+/// The folder a git `gitdir` line or file names, read from `file`: relative to the folder `file` is in.
+fn gitdir(file: &Path, text: &str) -> Option<PathBuf> {
+    let raw = text.trim().strip_prefix("gitdir:").unwrap_or(text.trim()).trim();
+    if raw.is_empty() {
+        return None;
+    }
+    Some(paths::normalize(&file.parent()?.join(raw)))
+}
+
+/// The checks that a git repository of the project `p`, archived with the group `folder`, has a worktree outside
+/// it, or that `p` is a worktree of a repository outside it: their links to each other break when the group moves,
+/// until `git worktree repair`. Read from `.git/worktrees/*/gitdir` and a worktree's `.git` file.
+fn worktrees_apart(env: &Env, p: &Value, folder: &Path) -> Vec<Value> {
+    let path = Path::new(string(p, "path"));
+    let git = path.join(".git");
+    let outside = |place: &Path| !paths::within(place, folder);
+    let mut apart = Vec::new();
+    if git.is_dir() {
+        for entry in files::entries(&git.join("worktrees")) {
+            let file = entry.path().join("gitdir");
+            // It names the worktree's .git file.
+            let Some(tree) = files::text(&file).and_then(|text| gitdir(&file, &text)) else { continue };
+            let tree = tree.parent().map(Path::to_owned).unwrap_or(tree);
+            if outside(&tree) {
+                apart.push(format!("a git worktree outside the group ({})", paths::tilde(&tree, &env.home)));
+            }
+        }
+    } else if let Some(linked) = files::text(&git).and_then(|text| gitdir(&git, &text)) {
+        // A worktree's .git file names `<repository>/.git/worktrees/<name>`; a submodule's names its modules folder.
+        let repo = linked
+            .parent()
+            .filter(|dir| dir.file_name().is_some_and(|name| name == "worktrees"))
+            .and_then(Path::parent)
+            .and_then(Path::parent);
+        if let Some(repo) = repo.filter(|&repo| outside(repo)) {
+            apart.push(format!("a git worktree of a repository outside the group ({})", paths::tilde(repo, &env.home)));
+        }
+    }
+    apart
+        .into_iter()
+        .map(|what| {
+            issue("worktree", "med", format!("{}: {what} will need git worktree repair", string(p, "label")), None)
+        })
+        .collect()
 }
 
 /// Where an archived project goes back to when nothing says so: below the scan location the archive keeps it under,
@@ -1575,21 +1666,32 @@ pub fn restore_plan(env: &Env, snapshot: &Value, id: &str, destination: Option<&
     }
     // In an archived group, a project or a group goes back with the whole of it, unless it is given a place of its own:
     // alone, it would take the group's place where it came from.
-    if destination.is_none()
-        && let Some(group) = outer_group(snapshot, n)
-    {
-        let mut plan = refused_restore(
-            format!(
-                "{} is in the archived group {}, which goes back whole. Restore {}, or choose another place for it.",
-                string(n, "name"),
-                string(group, "name"),
-                string(group, "name")
-            ),
-            "inGroup",
-            place.as_deref(),
-        );
-        plan["group"] = group["path"].clone();
-        return Ok(plan);
+    // A place of its own inside the place the group goes back to would be in the group's way: it is refused the
+    // same. Neither refusal names a place, as the one it came from is the group's.
+    if let Some(group) = outer_group(snapshot, n) {
+        let (name, group_name) = (string(n, "name"), string(group, "name"));
+        let back = group["meta"]["archivedFrom"]
+            .as_str()
+            .filter(|raw| !raw.trim().is_empty())
+            .map(|raw| paths::expand(raw.trim(), &env.home))
+            .or_else(|| origin(env, snapshot, Path::new(string(group, "path"))));
+        let error = match (destination, &place, &back) {
+            (None, _, _) => Some(format!(
+                "{name} is in the archived group {group_name}, which goes back whole. Restore {group_name}, or choose \
+                 another place for it."
+            )),
+            (Some(_), Some(place), Some(back)) if paths::within(place, back) => Some(format!(
+                "{name} is in the archived group {group_name}, which goes back whole to {}. Restore {group_name}, or \
+                 choose a place outside it.",
+                paths::tilde(back, &env.home)
+            )),
+            _ => None,
+        };
+        if let Some(error) = error {
+            let mut plan = refused_restore(error, "inGroup", None);
+            plan["group"] = group["path"].clone();
+            return Ok(plan);
+        }
     }
     let Some(raw) = raw else {
         return Ok(refused_restore(

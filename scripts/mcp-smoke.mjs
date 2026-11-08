@@ -528,7 +528,13 @@ try {
   const inCrew = await client.call('restore_project', { project: path.join(crewArchive, 'one') });
   assert.equal(inCrew.reason, 'inGroup');
   assert.equal(inCrew.group, crewArchive);
+  assert.equal(inCrew.destination, undefined, 'the place it came from is the group\'s');
   assert.match(inCrew.hint, /restore that group/);
+  // A place of its own inside the group's place is in the group's way, so it is refused the same.
+  const intoCrew = await client.call('restore_project', { project: path.join(crewArchive, 'one'), destination: path.join(crew, 'one') });
+  assert.equal(intoCrew.reason, 'inGroup');
+  assert.equal(intoCrew.destination, undefined);
+  assert.equal(await exists(crew), false);
   const crewBack = await client.call('restore_project', { project: crewArchive, confirm: true });
   assert.equal(await exists(path.join(crew, 'two', 'package.json')), true);
   assert.doesNotMatch(await readFile(path.join(crew, '.laci.md'), 'utf8'), /status:/);

@@ -1,6 +1,6 @@
 //! A move, an archive or a restore rewrites the old place in the moved project's own Claude Code memory, and Undo puts
 //! the bytes back.
-use laci_core::{config, env::Env, paths, service::Service};
+use laci_core::{activity, config, env::Env, paths, service::Service};
 use serde_json::json;
 use std::{
     fs,
@@ -81,6 +81,15 @@ fn memory_names_the_new_place_after_a_move_and_undo_puts_the_bytes_back() {
     let entries = moved["journal"]["entries"].as_array().unwrap();
     let rewrite = entries.iter().find(|e| e["kind"] == "rewrite" && e["path"] == json!(memory)).unwrap();
     assert!(rewrite["backup"].is_string() && rewrite["afterHash"].is_string(), "{rewrite}");
+    assert_eq!(rewrite["what"], "memory");
+    // The Log tells the memory files apart from the logs.
+    let steps = activity::read_log(&env, 5)[0]["steps"].clone();
+    let labels: Vec<_> =
+        steps.as_array().unwrap().iter().filter(|s| s["kind"] == "rewrite").map(|s| &s["label"]).collect();
+    assert_eq!(
+        labels,
+        [&json!("Rewrote the folder path in 1 log file"), &json!("Updated the old path in 1 memory file")]
+    );
 
     service.request("undo", &json!({"id":moved["journal"]["id"]})).unwrap();
     assert_eq!(read(&store(&env, &laci).join("memory/MEMORY.md")), own);

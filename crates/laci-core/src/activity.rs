@@ -103,9 +103,14 @@ fn steps(env: &Env, j: &Value) -> Value {
     {
         out.push(json!({"kind":"write","label":"Kept it chosen for the copy of AI chats","from":tilde(&pair[0]),"to":tilde(&pair[1])}));
     }
-    let rewrites = entries.iter().filter(|e| e["kind"] == "rewrite").count();
-    if rewrites > 0 {
-        out.push(json!({"kind":"rewrite","label":format!("Rewrote the folder path in {rewrites} log file{}",if rewrites==1{""}else{"s"})}));
+    // Memory files Laci updated are told apart from the logs whose folder path it rewrote.
+    let (memory, rewrites): (Vec<&Value>, Vec<&Value>) =
+        entries.iter().filter(|e| e["kind"] == "rewrite").partition(|e| e["what"] == "memory");
+    if !rewrites.is_empty() {
+        out.push(json!({"kind":"rewrite","label":format!("Rewrote the folder path in {}",crate::scan::plural(rewrites.len() as u64,"log file"))}));
+    }
+    if !memory.is_empty() {
+        out.push(json!({"kind":"rewrite","label":format!("Updated the old path in {}",crate::scan::plural(memory.len() as u64,"memory file"))}));
     }
     for e in entries.iter().filter(|e| e["kind"] == "trash") {
         out.push(json!({"kind":"delete","label":"Moved to the trash","from":tilde(&e["path"])}));
@@ -291,6 +296,25 @@ pub fn undo_activity(env: &Env, id: &str, by: &str) -> Result<Value> {
                             };
                         }
                     }
+                }
+                // The archive folder it puts back may be the folder of the copy of AI chats by now, or inside it.
+                // One it leaves as it is goes on as it was.
+                let archive = |cfg: &Value| {
+                    cfg["archiveDir"]
+                        .as_str()
+                        .filter(|dir| !dir.trim().is_empty())
+                        .map(|dir| paths::expand(dir.trim(), &env.home))
+                };
+                if let Some(dir) = archive(&c)
+                    && !archive(&config::load(env)).is_some_and(|now| crate::platform::path::same_path(&now, &dir))
+                {
+                    config::archive_copy_refusal(env, &dir, &c).map_err(|why| {
+                        format!(
+                            "Undo would make {} the archive folder again. {why} Choose the archive folder in Settings \
+                             instead.",
+                            paths::tilde(&dir, &env.home)
+                        )
+                    })?;
                 }
             } else if let Some(remove) = undo["remove"].as_str() {
                 if let Some(p) = c["presets"].as_array_mut() {

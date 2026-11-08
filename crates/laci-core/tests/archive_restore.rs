@@ -1,5 +1,5 @@
 //! The archive folder keeps each project below the scan location it came from, and Restore puts it back.
-use laci_core::{activity, config, env::Env, paths, service::Service, sidecar};
+use laci_core::{activity, backup, config, env::Env, ops, paths, service::Service, sidecar};
 use serde_json::json;
 use std::{
     fs,
@@ -715,8 +715,22 @@ fn restoring_a_group_clears_the_folders_and_projects_marked_archived_in_it() {
         plan["error"],
         "site is in the archived group clients, which goes back whole. Restore clients, or choose another place for it."
     );
-    assert_eq!(plan["dest"], json!(origin.join("site")));
+    // The place it came from is the group's: none is given.
+    assert!(plan.get("dest").is_none(), "{plan}");
     assert!(service.request("restore", &json!({"id":site})).unwrap_err().contains("goes back whole"));
+    // A place of its own inside the group's would be in its way, so it is refused the same.
+    for inside in [origin.join("api"), origin.join("later/api")] {
+        let plan = service.request("restore/plan", &json!({"id":api,"destination":inside})).unwrap();
+        assert_eq!((&plan["reason"], &plan["group"], &plan["ops"]), (&json!("inGroup"), &json!(group), &json!([])));
+        assert!(plan.get("dest").is_none(), "{plan}");
+        assert_eq!(
+            plan["error"],
+            "api is in the archived group clients, which goes back whole to ~/project/clients. Restore clients, or \
+             choose a place outside it."
+        );
+        assert!(service.request("restore", &json!({"id":api,"destination":inside})).is_err());
+        assert!(!inside.exists());
+    }
     // A place of its own takes it out alone.
     let elsewhere = env.home.join("project/api");
     let alone = service.request("restore/plan", &json!({"id":api,"destination":elsewhere})).unwrap();
@@ -843,7 +857,7 @@ fn a_folder_of_projects_is_archived_as_a_group_and_goes_back_whole() {
     assert!(node["archivePlan"].is_null());
     assert_eq!(node["restorePlan"]["dest"], json!(group));
     let alone = &snap["nodes"][path(&dest.join("one"))]["restorePlan"];
-    assert_eq!((&alone["reason"], &alone["group"], &alone["dest"]), (&json!("inGroup"), &json!(dest), &json!(one)));
+    assert_eq!((&alone["reason"], &alone["group"], &alone["dest"]), (&json!("inGroup"), &json!(dest), &json!(null)));
 
     let restored = service.request("restore", &json!({"id":dest})).unwrap();
     assert!(one.join(".git/HEAD").is_file() && two.join("package.json").is_file() && !dest.exists());
@@ -927,6 +941,210 @@ fn the_copy_of_ai_chats_and_the_archive_folder_stay_apart() {
     fs::create_dir_all(&inside).unwrap();
     let error = config::validate_archive_dir(&env, &json!(inside)).unwrap_err();
     assert!(error.contains("inside Laci's copy of AI chats (~/shelf/archive/ai-chats)"), "{error}");
+
+    // A setup from before the rule, its archive folder inside the copy, goes on: the copy is still made, and the
+    // settings saved with the archive folder unchanged keep it. Choosing such a folder is what is refused.
+    write(&copy.join(backup::MARKER), "a copy Laci made");
+    let identities = config::root_identities(&env, &json!([copy]), &json!({}));
+    config::save(
+        &env,
+        &json!({"roots":["~/project"],"presets":["claude"],"backupDir":copy,"archiveDir":inside,"rootIdentities":identities}),
+    )
+    .unwrap();
+    assert_eq!(backup::dir(&env).unwrap(), copy);
+    assert_eq!(config::validate_archive_dir(&env, &json!(inside)).unwrap(), json!("~/shelf/archive/ai-chats/old"));
+    assert!(config::validate_archive_dir(&env, &json!(copy)).unwrap_err().contains("That is the folder"));
+    // The copy kept in the archive folder itself goes on too.
+    let identities = config::root_identities(&env, &json!([archive]), &json!({}));
+    write(&archive.join(backup::MARKER), "a copy Laci made");
+    config::save(
+        &env,
+        &json!({"roots":["~/project"],"presets":["claude"],"backupDir":archive,"archiveDir":archive,"rootIdentities":identities}),
+    )
+    .unwrap();
+    assert_eq!(backup::dir(&env).unwrap(), archive);
+}
+
+#[test]
+fn undo_of_a_settings_change_does_not_make_the_copy_of_ai_chats_the_archive_folder() {
+    let temp = support::tempdir();
+    let env = Env::for_home(temp.path().join("home"));
+    let (old, new) = (env.home.join("shelf/old-archive"), env.home.join("shelf/archive"));
+    for dir in [&old, &new, &env.home.join("project")] {
+        fs::create_dir_all(dir).unwrap();
+    }
+    config::save(&env, &json!({"roots":["~/project"],"presets":["claude"],"archiveDir":old})).unwrap();
+    let mut service = Service::new(env.clone());
+    service
+        .request("setup/save", &json!({"roots":["~/project"],"presets":["claude"],"apps":{},"archiveDir":new}))
+        .unwrap();
+    let changed = activity::read_log(&env, 10).into_iter().find(|a| a["title"] == "Changed settings").unwrap();
+    // The folder that was the archive folder holds the copy of AI chats now.
+    ops::move_backup(&env, old.to_str().unwrap(), false).unwrap();
+    let error = service.request("log/undo", &json!({"id":changed["id"]})).unwrap_err();
+    assert_eq!(
+        error,
+        "Undo would make ~/shelf/old-archive the archive folder again. That is the folder of Laci's copy of AI chats. \
+         Choose the archive folder in Settings instead."
+    );
+    assert_eq!(config::load(&env)["archiveDir"], "~/shelf/archive");
+    // Once the copy is elsewhere, the Undo goes ahead.
+    ops::move_backup(&env, "", false).unwrap();
+    service.request("log/undo", &json!({"id":changed["id"]})).unwrap();
+    assert_eq!(config::load(&env)["archiveDir"], "~/shelf/old-archive");
+}
+
+/// A group whose place in the archive an earlier archive of one of its projects made.
+fn course_with_p1_archived() -> (support::TempDir, Env, Service, PathBuf, PathBuf) {
+    let (temp, env, archive) = fixture();
+    let course = env.home.join("project/course");
+    for name in ["p1", "p2"] {
+        write(&course.join(name).join("package.json"), "{}");
+    }
+    write(&store(&env, &course.join("p2")).join("first.jsonl"), &session(&course.join("p2")));
+    write(&course.join("brief.txt"), "notes");
+    let mut service = Service::new(env.clone());
+    service.snapshot().unwrap();
+    service.request("archive", &json!({"id":course.join("p1")})).unwrap();
+    let place = archive.join("project/course");
+    assert!(place.join("p1/package.json").is_file() && !course.join("p1").exists());
+    service.rescan().unwrap();
+    (temp, env, service, course, place)
+}
+
+#[test]
+fn a_group_joins_the_folder_in_the_archive_an_earlier_archive_of_its_project_made() {
+    let (_temp, env, mut service, course, place) = course_with_p1_archived();
+    let (p1, p2) = (place.join("p1"), course.join("p2"));
+    let snap = service.rescan().unwrap();
+    let plan = &snap["nodes"][path(&course)]["archivePlan"];
+    assert!(plan["error"].is_null(), "{plan}");
+    assert_eq!((&plan["dest"], &plan["join"]), (&json!(place), &json!(true)));
+    assert_eq!(
+        (&plan["ops"][0]["kind"], &plan["ops"][0]["label"]),
+        (&json!("move"), &json!("Join the folder already in the archive (it holds 1 earlier archived item)"))
+    );
+
+    let archived = service.request("archive", &json!({"id":course})).unwrap();
+    assert!(!course.exists());
+    for file in ["p1/package.json", "p2/package.json", "brief.txt"] {
+        assert!(place.join(file).is_file(), "{file}");
+    }
+    let text = sidecar_text(&place);
+    assert!(text.contains("status: archived") && text.contains("archivedFrom: ~/project/course"), "{text}");
+    assert!(sidecar_text(&p1).contains("archivedFrom: ~/project/course/p1"));
+    assert_eq!(
+        fs::read_to_string(store(&env, &place.join("p2")).join("first.jsonl")).unwrap(),
+        session(&place.join("p2"))
+    );
+    // One archived group, with p1 in it.
+    let snap = service.rescan().unwrap();
+    let node = &snap["nodes"][path(&place)];
+    assert_eq!((&node["kind"], &node["inArchive"], &node["archived"]), (&json!("folder"), &json!(true), &json!(true)));
+    assert_eq!(node["restorePlan"]["dest"], json!(course));
+    assert_eq!(snap["nodes"][path(&p1)]["restorePlan"]["reason"], "inGroup");
+
+    // Undo takes back only what the group archive moved: p1 stays archived where it was.
+    service.request("undo", &json!({"id":archived["journal"]["id"]})).unwrap();
+    assert!(p2.join("package.json").is_file() && course.join("brief.txt").is_file());
+    assert_eq!(fs::read_to_string(store(&env, &p2).join("first.jsonl")).unwrap(), session(&p2));
+    assert!(!place.join("p2").exists() && !place.join("brief.txt").exists() && !place.join(".laci.md").exists());
+    assert!(p1.join("package.json").is_file() && sidecar_text(&p1).contains("status: archived"));
+
+    // Archived again, the group goes back whole, and p1's own mark is cleared with it.
+    service.rescan().unwrap();
+    service.request("archive", &json!({"id":course})).unwrap();
+    service.rescan().unwrap();
+    service.request("restore", &json!({"id":place})).unwrap();
+    assert!(!place.exists());
+    for file in ["p1/package.json", "p2/package.json", "brief.txt"] {
+        assert!(course.join(file).is_file(), "{file}");
+    }
+    for dir in [course.clone(), course.join("p1")] {
+        let text = sidecar_text(&dir);
+        assert!(!text.contains("status:") && !text.contains("archivedFrom:"), "{text}");
+    }
+    let snap = service.rescan().unwrap();
+    for dir in [&course, &course.join("p1"), &p2] {
+        assert_eq!(snap["nodes"][path(dir)]["archived"], false, "{}", dir.display());
+    }
+}
+
+#[test]
+fn a_group_does_not_join_a_folder_in_the_archive_holding_the_same_name_or_archived_whole() {
+    let (_temp, _env, mut service, course, place) = course_with_p1_archived();
+    // A new p1 since.
+    write(&course.join("p1/package.json"), "{}");
+    let said = format!("{} already holds p1 from an earlier archive. Choose another place.", place.display());
+    let snap = service.rescan().unwrap();
+    assert_eq!(snap["nodes"][path(&course)]["archivePlan"]["error"], json!(said));
+    assert_eq!(service.request("archive", &json!({"id":course})).unwrap_err(), said);
+    assert!(course.join("p1/package.json").is_file() && course.join("p2/package.json").is_file());
+
+    // A place archived as a whole is not joined either.
+    fs::remove_dir_all(course.join("p1")).unwrap();
+    write(&place.join(".laci.md"), "---\nstatus: archived\n---\n");
+    let said = format!(
+        "{} already holds course from an earlier archive. Choose another place.",
+        place.parent().unwrap().display()
+    );
+    service.rescan().unwrap();
+    assert_eq!(service.request("archive", &json!({"id":course})).unwrap_err(), said);
+    assert!(course.join("p2/package.json").is_file() && !place.join("p2").exists());
+}
+
+/// `git` in `dir`, as a test's own: no settings of the machine's.
+fn git(dir: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn a_group_plan_names_a_git_worktree_that_lies_across_its_edge() {
+    let (_temp, env, _archive) = fixture();
+    let team = env.home.join("project/team");
+    let (one, two, base) = (team.join("one"), team.join("two"), env.home.join("project/base"));
+    for dir in [&one, &base] {
+        write(&dir.join("package.json"), "{}");
+        committed(dir);
+    }
+    // A worktree of one outside the group, and two a worktree of a repository outside it.
+    git(&one, &["worktree", "add", "-q", "../../wt-one"]);
+    git(&base, &["worktree", "add", "-q", "../team/two"]);
+    let mut service = Service::new(env.clone());
+    let snap = service.snapshot().unwrap();
+    let plan = &snap["nodes"][path(&team)]["archivePlan"];
+    let apart: Vec<_> = plan["checks"].as_array().unwrap().iter().filter(|c| c["code"] == "worktree").collect();
+    assert_eq!(apart.len(), 2, "{plan}");
+    let of = |name: &str| *apart.iter().find(|c| c["project"] == name).unwrap_or_else(|| panic!("{name}: {plan}"));
+    let (first, second) = (of("one"), of("two"));
+    assert_eq!(
+        (&first["severity"], &first["project"], &first["projectId"]),
+        (&json!("med"), &json!("one"), &json!(one))
+    );
+    let title = first["title"].as_str().unwrap();
+    assert!(
+        title.starts_with("one: a git worktree outside the group (")
+            && title.ends_with("wt-one) will need git worktree repair"),
+        "{title}"
+    );
+    assert_eq!((&second["project"], &second["projectId"]), (&json!("two"), &json!(two)));
+    let title = second["title"].as_str().unwrap();
+    assert!(
+        title.starts_with("two: a git worktree of a repository outside the group (")
+            && title.ends_with("base) will need git worktree repair"),
+        "{title}"
+    );
+    // A project archived alone has no such check: it is the group's.
+    assert!(
+        snap["nodes"][path(&one)]["archivePlan"]["checks"].as_array().unwrap().iter().all(|c| c["code"] != "worktree")
+    );
 }
 
 #[test]

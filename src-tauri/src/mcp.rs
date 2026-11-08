@@ -416,7 +416,7 @@ fn call(service: &mut Service, name: &str, args: &Value) -> Result<Value, String
                     return Err(error.into());
                 }
                 let hint = if plan["reason"] == "inGroup" {
-                    "Nothing has changed. It is in an archived group that goes back whole: offer to restore that group with restore_project, project: group, or ask the user where else to put it and call again with that destination."
+                    "Nothing has changed. It is in an archived group that goes back whole: offer to restore that group with restore_project, project: group, or ask the user where else to put it, outside the place the group goes back to, and call again with that destination."
                 } else if plan["reason"] == "linked" && plan["group"].is_string() {
                     "Nothing has changed. Its group is linked back from the archive: offer to restore that whole group with restore_project, project: group, or ask the user to remove the link first."
                 } else if plan["reason"] == "linked" {
@@ -1170,7 +1170,7 @@ fn tools() -> Vec<Tool> {
         ),
         (
             "restore_project",
-            "Put an archived project back where it came from (or at destination) with its agent history; requires confirm after preview. An archived group (a folder in the archive whose .laci.md says status: archived) goes back whole, with every project in it, and the folders and projects in it marked archived are cleared too. A project or group inside an archived group goes back with it, not alone, unless given a destination (reason inGroup; group names the archived group to restore instead). A link left where it was, leading to it in the archive, is removed first; a project inside a group that is linked back that way can't go back alone (reason linked; group then names the archived group to restore instead, when the link leads to one). A folder outside the archive marked status: archived only has that status cleared",
+            "Put an archived project back where it came from (or at destination) with its agent history; requires confirm after preview. An archived group (a folder in the archive whose .laci.md says status: archived) goes back whole, with every project in it, and the folders and projects in it marked archived are cleared too. A project or group inside an archived group goes back with it, not alone, unless given a destination outside the place the group goes back to (reason inGroup, with no destination; group names the archived group to restore instead). A link left where it was, leading to it in the archive, is removed first; a project inside a group that is linked back that way can't go back alone (reason linked; group then names the archived group to restore instead, when the link leads to one). A folder outside the archive marked status: archived only has that status cleared",
             json!({"project":project,"destination":text,"confirm":boolean}),
             vec!["project"],
         ),

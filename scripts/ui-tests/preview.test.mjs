@@ -331,7 +331,7 @@ export async function theArchivedGroupGoesBackWholeAndItsProjectsWaitForIt() {
   });
 }
 
-export async function aProjectMarkedArchivedInARestoredGroupKeepsItsOwnMark() {
+export async function aRestoredGroupClearsTheArchivedMarkOfEverythingInIt() {
   const group = "/home/demo/project/_archive/old-clients";
   const batik = `${group}/batik-shop`;
   const warung = `${group}/warung-pos`;
@@ -340,19 +340,114 @@ export async function aProjectMarkedArchivedInARestoredGroupKeepsItsOwnMark() {
     await request("archive", { id: warung });
     await request("restore", { id: group, destination: "/home/demo/project/old-clients" });
     const after = (await request("snapshot")).nodes;
-    // The engine clears the group's own .laci.md only: warung-pos stays marked, out of the archive.
+    // As the engine does it: the group's .laci.md and every one in it that says archived lose the
+    // mark in the same change, so nothing in the group stays archived where it now is.
     assert.deepEqual(
-      [batik, warung].map((id) => [after[id].archived, after[id].inArchive, after[id].status.value]),
+      [group, batik, warung].map((id) => [
+        after[id].archived,
+        after[id].inArchive,
+        after[id].status.value,
+        after[id].meta.status,
+        after[id].restorePlan,
+      ]),
       [
-        [false, false, "idle"],
-        [true, false, "archived"],
+        [false, false, "idle", undefined, undefined],
+        [false, false, "idle", undefined, undefined],
+        [false, false, "idle", undefined, undefined],
       ],
     );
-    assert.equal(after[warung].meta.status, "archived");
+    // One Undo brings every mark back.
+    const [entry] = (await request("log")).entries;
+    await request("undo", { id: entry.id });
+    const undone = (await request("snapshot")).nodes;
     assert.deepEqual(
-      after[warung].restorePlan.ops.map((op) => op.label),
-      ["Clear status: archived", "Write undo journal"],
+      [group, warung].map((id) => [undone[id].archived, undone[id].meta.status]),
+      [
+        [true, "archived"],
+        [true, "archived"],
+      ],
     );
+  });
+}
+
+export async function aFolderOfProjectsIsArchivedAsAGroupAndComesBackWhole() {
+  const clients = "/home/demo/project/clients";
+  const acme = `${clients}/acme-store`;
+  const kopi = `${clients}/kopi-landing`;
+  await onPreview(async ({ request }) => {
+    const nodes = (await request("snapshot")).nodes;
+    // Each folder of projects has a plan as a group; a scan location, the archive and an archived
+    // group have none.
+    const planned = Object.values(nodes)
+      .filter((n) => n.kind === "folder" && n.archivePlan)
+      .map((n) => n.path)
+      .sort();
+    assert.deepEqual(planned, ["clients", "side", "thesis"].map((name) => `/home/demo/project/${name}`));
+    assert.equal(nodes[clients].projectCount, 2);
+    // Its checks are those of its projects, each naming its project.
+    assert.deepEqual(
+      nodes[clients].archivePlan.checks.map((c) => [c.code, c.title.split(":")[0]]),
+      [
+        ["dirty", "acme-store"],
+        ["unpushed", "acme-store"],
+        ["no-remote", "kopi-landing"],
+        ["dirty", "kopi-landing"],
+      ],
+    );
+    const plan = await request("archive/plan", { id: clients });
+    assert.equal(plan.dest, "/home/demo/project/_archive/clients");
+    assert.equal(plan.ops.at(-2).label, "Set status: archived");
+    // Archived: an archived group, with everything in it in the archive and its own .laci.md saying
+    // where it came from.
+    await request("archive", { id: clients, destination: plan.dest, trashHeavy: false });
+    const after = (await request("snapshot")).nodes;
+    assert.deepEqual(
+      [after[clients].archived, after[clients].inArchive, after[clients].meta.status],
+      [true, true, "archived"],
+    );
+    assert.equal(after[clients].meta.archivedFrom, "~/project/clients");
+    assert.equal(after[clients].restorePlan.dest, clients);
+    assert.deepEqual(
+      [acme, kopi].map((id) => [after[id].archived, after[id].inArchive]),
+      [
+        [true, true],
+        [true, true],
+      ],
+    );
+    const { isArchivedGroup, archivedGroupOf } = load("helpers.ts");
+    assert.equal(isArchivedGroup(after[clients]), true);
+    assert.equal(archivedGroupOf(after, after[acme])?.id, clients);
+    const [entry] = (await request("log")).entries;
+    assert.equal(entry.title, "Archived clients");
+    // Restored, the group and every one in it leave the archive, and none says archived.
+    await request("restore", { id: clients, destination: clients });
+    const back = (await request("snapshot")).nodes;
+    // acme-store's own status, active, was never an archived mark: it stays.
+    assert.deepEqual(
+      [clients, acme, kopi].map((id) => [back[id].archived, back[id].inArchive, back[id].meta.status]),
+      [
+        [false, false, undefined],
+        [false, false, "active"],
+        [false, false, undefined],
+      ],
+    );
+    assert.deepEqual(
+      [acme, kopi].map((id) => [back[id].status.value, back[id].status.auto]),
+      [
+        ["active", false],
+        ["idle", true],
+      ],
+    );
+    // Undo of the archive, after Undo of the restore, gives the folder back as it was.
+    const [restored, archived] = (await request("log")).entries;
+    await request("undo", { id: restored.id });
+    await request("undo", { id: archived.id });
+    const undone = (await request("snapshot")).nodes;
+    assert.deepEqual(
+      [undone[clients].archived, undone[clients].inArchive, undone[clients].meta.status],
+      [false, false, undefined],
+    );
+    assert.equal(undone[acme].meta.status, "active");
   });
 }
 

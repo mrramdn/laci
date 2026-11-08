@@ -345,6 +345,16 @@ export const projects = {
   restoreGroup: "Restore its group…",
   /** Beside the heading of an archived group under Archived: it goes back whole. */
   restoreGroupFor: (group: string) => `Restore the group ${group}`,
+  /** Beside the heading of a folder only marked archived: the mark goes, the folder stays. */
+  unmarkGroupFor: (group: string) => `Take the archived mark off ${group}`,
+  /** Beside a folder's heading: the folder goes to the archive whole, with every project in it. */
+  archiveGroup: "Archive group…",
+  archiveGroupFor: (group: string) => `Archive the group ${group}`,
+  /**
+   * A project whose old place is reached through a link into the archive, with no archived group to
+   * put back with it: the link has to go first.
+   */
+  linkedAlone: "Its old place is a link into your archive: remove that link to put it back there",
   noneTitle: "No projects here",
   none: {
     all: "Laci found no projects in your project folders yet.",
@@ -1956,9 +1966,17 @@ export const dialogs = {
   archive: {
     title: (name: string) => `Archive ${name}?`,
     intro: "Laci moves it, with its AI chats, to your archive folder.",
+    /** For a folder of projects: it goes whole, and comes back whole. */
+    titleGroup: (name: string) => `Archive the group ${name}?`,
+    introGroup: (projects: number) =>
+      `Laci moves the whole folder to your archive folder. ${count(projects, "project")} ${projects === 1 ? "moves with its" : "move with their"} AI chats.`,
     checking: "Checking where it goes…",
     unsafe:
       "Back it up first. Archiving moves it as it is, and an archived project is easy to forget.",
+    unsafeGroup:
+      "Back these projects up first. Archiving moves them as they are, and an archived group is easy to forget.",
+    /** A group whose projects have nothing the plan warns about. */
+    safeGroup: "Laci found nothing in its projects that could be lost.",
     onlyHidden: (n: number) =>
       `You hid ${count(n, "warning")} about this project. Show details lists ${n === 1 ? "it" : "them"}.`,
     backUpFirst: "Back up first",
@@ -2050,7 +2068,8 @@ export const detailedArchive = {
     occupied: "something is there now",
     inArchive: "inside the archive",
     outside: "outside your locations",
-    linked: "reached through a link into the archive",
+    /** No archived group goes back with it: the link has to go first. */
+    linked: "reached through a link into the archive: remove the link first",
   },
   /** A plan that can't run without saying why. */
   cant: "can’t go back there",
@@ -2063,6 +2082,14 @@ export const detailedArchive = {
   restoreGroupFor: (group: string) => `Restore the group ${group}`,
   /** The Restore dialog's title for an archived group. */
   restoreGroupTitle: (name: string) => `Restore the group ${name}?`,
+  /** A folder of projects goes to the archive whole: the details panel's button, and its dialog. */
+  archiveGroup: "Archive group",
+  archiveGroupFor: (group: string) => `Archive the group ${group} with every project in it`,
+  archiveGroupTitle: (name: string) => `Archive the group ${name}?`,
+  /** A folder whose .laci.md says archived, though it never moved: Unarchive clears that. */
+  unarchiveFolder: "Clear the folder’s archived status",
+  /** A project whose old place is a link into the archive, with no archived group to put back. */
+  linkedAlone: "Its old place is a link into the archive: remove the link first, or choose another place",
 };
 
 /**

@@ -2860,6 +2860,7 @@
           "checks": [],
           "dest": "/home/demo/project/old-clients/batik-shop",
           "error": "~/project/old-clients is a link into the archive. Restore the whole group old-clients, or remove that link first.",
+          "group": "/home/demo/project/_archive/old-clients",
           "ops": [],
           "reason": "linked"
         },
@@ -3020,6 +3021,7 @@
           "checks": [],
           "dest": "/home/demo/project/old-clients/warung-pos",
           "error": "~/project/old-clients is a link into the archive. Restore the whole group old-clients, or remove that link first.",
+          "group": "/home/demo/project/_archive/old-clients",
           "ops": [],
           "reason": "linked"
         },
@@ -3263,6 +3265,80 @@
           "claude": [],
           "items": []
         },
+        "archivePlan": {
+          "checks": [
+            {
+              "code": "dirty",
+              "severity": "med",
+              "title": "acme-store: 1 uncommitted change"
+            },
+            {
+              "code": "unpushed",
+              "detail": "main has no upstream, and no remote has them",
+              "severity": "med",
+              "title": "acme-store: 8 commits not pushed"
+            },
+            {
+              "code": "no-remote",
+              "detail": "3 commits exist only on this disk",
+              "severity": "high",
+              "title": "kopi-landing: No remote"
+            },
+            {
+              "code": "dirty",
+              "severity": "med",
+              "title": "kopi-landing: 1 uncommitted change"
+            }
+          ],
+          "dest": "/home/demo/project/_archive/clients",
+          "ops": [
+            {
+              "from": "~/project/clients",
+              "kind": "move",
+              "label": "Move folder",
+              "to": "~/project/_archive/clients"
+            },
+            {
+              "detail": "2 sessions · 3 memory files · 532 B",
+              "from": "~/project/clients/acme-store",
+              "kind": "rename",
+              "label": "Move Claude sessions + memory",
+              "to": "~/project/_archive/clients/acme-store"
+            },
+            {
+              "detail": "2 lines → ~/project/_archive/clients/acme-store",
+              "kind": "rewrite",
+              "label": "Rewrite cwd in Claude logs"
+            },
+            {
+              "detail": "1 sessions · 0 memory files · 217 B",
+              "from": "~/project/clients/kopi-landing",
+              "kind": "rename",
+              "label": "Move Claude sessions + memory",
+              "to": "~/project/_archive/clients/kopi-landing"
+            },
+            {
+              "detail": "1 line → ~/project/_archive/clients/kopi-landing",
+              "kind": "rewrite",
+              "label": "Rewrite cwd in Claude logs"
+            },
+            {
+              "detail": "1 line in 1 file",
+              "kind": "rewrite",
+              "label": "Rewrite paths in Codex logs"
+            },
+            {
+              "kind": "write",
+              "label": "Set status: archived",
+              "to": "~/project/_archive/clients/.laci.md"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
         "archived": false,
         "children": [
           "/home/demo/project/clients/acme-store",
@@ -3285,6 +3361,7 @@
         "name": "clients",
         "parent": "/home/demo/project",
         "path": "/home/demo/project/clients",
+        "projectCount": 2,
         "sidecar": false,
         "stableId": "p:a30e6a37abb2",
         "status": {
@@ -3921,6 +3998,41 @@
           "claude": [],
           "items": []
         },
+        "archivePlan": {
+          "checks": [
+            {
+              "code": "unpushed",
+              "detail": "main has no upstream, and no remote has them",
+              "severity": "med",
+              "title": "dotfiles: 2 commits not pushed"
+            },
+            {
+              "code": "no-remote",
+              "detail": "3 commits exist only on this disk",
+              "severity": "high",
+              "title": "habit-app: No remote"
+            }
+          ],
+          "dest": "/home/demo/project/_archive/side",
+          "ops": [
+            {
+              "from": "~/project/side",
+              "kind": "move",
+              "label": "Move folder",
+              "to": "~/project/_archive/side"
+            },
+            {
+              "kind": "write",
+              "label": "Set status: archived",
+              "to": "~/project/_archive/side/.laci.md"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
         "archived": false,
         "children": [
           "/home/demo/project/side/dotfiles",
@@ -3944,6 +4056,7 @@
         "name": "side",
         "parent": "/home/demo/project",
         "path": "/home/demo/project/side",
+        "projectCount": 3,
         "sidecar": false,
         "stableId": "p:c6426af13a4f",
         "status": {
@@ -4417,6 +4530,53 @@
           "claude": [],
           "items": []
         },
+        "archivePlan": {
+          "checks": [
+            {
+              "code": "unpushed",
+              "detail": "main has no upstream, and no remote has them",
+              "severity": "med",
+              "title": "campus-lms: 5 commits not pushed"
+            },
+            {
+              "code": "stash",
+              "detail": "Stashes are easy to lose and never pushed",
+              "severity": "med",
+              "title": "campus-lms: 1 forgotten stash"
+            }
+          ],
+          "dest": "/home/demo/project/_archive/thesis",
+          "ops": [
+            {
+              "from": "~/project/thesis",
+              "kind": "move",
+              "label": "Move folder",
+              "to": "~/project/_archive/thesis"
+            },
+            {
+              "detail": "1 sessions · 0 memory files · 207 B",
+              "from": "~/project/thesis/campus-lms",
+              "kind": "rename",
+              "label": "Move Claude sessions + memory",
+              "to": "~/project/_archive/thesis/campus-lms"
+            },
+            {
+              "detail": "1 line → ~/project/_archive/thesis/campus-lms",
+              "kind": "rewrite",
+              "label": "Rewrite cwd in Claude logs"
+            },
+            {
+              "kind": "write",
+              "label": "Set status: archived",
+              "to": "~/project/_archive/thesis/.laci.md"
+            },
+            {
+              "kind": "write",
+              "label": "Write undo journal",
+              "to": "~/.local/share/laci/journal/"
+            }
+          ]
+        },
         "archived": false,
         "children": [
           "/home/demo/project/thesis/campus-lms"
@@ -4438,6 +4598,7 @@
         "name": "thesis",
         "parent": "/home/demo/project",
         "path": "/home/demo/project/thesis",
+        "projectCount": 1,
         "sidecar": false,
         "stableId": "p:2188a8bba1a2",
         "status": {

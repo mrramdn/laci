@@ -500,6 +500,93 @@ export async function aProjectThatGoesBackWithItsGroupSaysSoAndRestoresTheGroup(
   assert.deepEqual(app.getState().modal, { kind: "restore", id: GROUP });
 }
 
+// ── Archive a group, and a folder only marked archived ────────────────────────────────────────────
+
+const groupArchives = (page) =>
+  page.all(
+    (n) =>
+      n.type === "button" &&
+      String(n.props["aria-label"] ?? "").startsWith(words.projects.archiveGroupFor("")),
+  );
+
+export async function aFoldersHeadingArchivesTheWholeGroup() {
+  const { page, app } = projectsPage();
+  // clients, side and thesis have a plan to archive them whole; ~/project, a scan location, has none.
+  assert.deepEqual(
+    groupArchives(page).map((n) => n.props["aria-label"]),
+    ["clients", "side", "thesis"].map(words.projects.archiveGroupFor),
+  );
+  const [clients] = groupArchives(page);
+  assert.equal(clients.textContent, words.projects.archiveGroup);
+  assert.equal(words.projects.archiveGroup, "Archive group…");
+  click(page, clients);
+  assert.deepEqual(app.getState().modal, { kind: "archive", id: `${ROOT}/clients` });
+  // Among what is archived already, no heading offers Archive group: side holds zine there.
+  const archived = projectsPage(scan(), { filter: "archived" });
+  assert.equal(groupArchives(archived.page).length, 0);
+}
+
+/** The demo home with thesis marked archived in its own .laci.md, where it is. */
+function markedThesis() {
+  const s = scan();
+  const thesis = node(s, "thesis");
+  delete thesis.archivePlan;
+  Object.assign(thesis, {
+    archived: true,
+    inArchive: false,
+    meta: { ...thesis.meta, status: "archived" },
+    status: { value: "archived", auto: false },
+    restorePlan: {
+      dest: thesis.path,
+      checks: [],
+      ops: [{ kind: "write", label: "Clear status: archived", to: "~/project/thesis/.laci.md" }],
+    },
+  });
+  return s;
+}
+
+export async function aFolderOnlyMarkedArchivedIsUnderArchivedWithItsRestore() {
+  const s = markedThesis();
+  // Its projects aren't archived themselves, and Archived lists them under the folder.
+  assert.deepEqual(sectionsOf(s, { filter: "archived", sort: "name" }), [
+    ["_archive", ["old-portfolio"]],
+    ["_archive / old-clients", ["batik-shop", "warung-pos"]],
+    ["side", ["zine"]],
+    ["thesis", ["campus-lms"]],
+  ]);
+  assert.equal(model.projectsModel(s, query({ filter: "archived" }), NOW).counts.archived, 5);
+  const { page, app } = projectsPage(s, { filter: "archived" });
+  const restore = page.find(
+    (n) => n.type === "button" && n.props["aria-label"] === words.projects.unmarkGroupFor("thesis"),
+  );
+  assert.ok(restore, "the folder's heading has Restore");
+  assert.equal(restore.textContent, words.projects.restore);
+  click(page, restore);
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: `${ROOT}/thesis` });
+  // Alone in the list, it keeps its heading, which holds its Restore.
+  const alone = projectsPage(s, { filter: "archived", query: "campus" });
+  assert.deepEqual(heads(alone.page).map(headName), ["thesis"]);
+  // A marked folder has no plan to archive it again.
+  assert.deepEqual(groupArchives(projectsPage(s).page).map((n) => n.props["aria-label"]), [
+    words.projects.archiveGroupFor("clients"),
+    words.projects.archiveGroupFor("side"),
+  ]);
+}
+
+export async function aLinkedProjectWhoseGroupTheEngineDoesntNameSaysToRemoveTheLink() {
+  // The engine names no group for batik-shop: its card says the link has to go, and its menu
+  // offers its own Restore, where another place can be chosen.
+  const s = scan();
+  delete s.nodes[`${GROUP}/batik-shop`].restorePlan.group;
+  const { page, app } = projectsPage(s, { filter: "archived", grouped: false });
+  const card = page.find((n) => n.props["data-id"] === `${GROUP}/batik-shop`);
+  assert.ok(card.textContent.includes(words.projects.linkedAlone), card.textContent);
+  assert.ok(!card.textContent.includes(words.projects.inGroup("old-clients")), card.textContent);
+  assert.equal(menuItem(card, words.projects.restoreGroup), undefined);
+  click(page, menuItem(card, words.projects.restore));
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: `${GROUP}/batik-shop` });
+}
+
 /** The declarations of the rule for `selector` in Simple's sheet. */
 function simpleRule(selector) {
   const css = readFileSync(new URL("../../ui/src/simple/simple.css", import.meta.url), "utf8");

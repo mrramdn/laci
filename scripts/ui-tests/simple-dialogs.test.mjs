@@ -1214,11 +1214,14 @@ const restorePlan = (dest = ORIGIN) => ({
     },
   ],
 });
-/** A plan that can't run, for `reason`: with the origin Laci would use, except when it knows none. */
+/**
+ * A plan that can't run, for `reason`: with the origin Laci would use, except when it knows none, or
+ * when the place it came from is that of the archived group it is in ("inGroup").
+ */
 const cantRestore = (reason, dest = ORIGIN) => ({
   error: `The engine's own words for ${reason}`,
   reason,
-  ...(reason === "unknown" ? {} : { dest }),
+  ...(reason === "unknown" || reason === "inGroup" ? {} : { dest }),
   checks: [],
   ops: [],
 });
@@ -1479,7 +1482,7 @@ export async function aProjectBehindALinkWithNoArchivedGroupSaysToRemoveTheLink(
 
 export async function aProjectInsideAnArchivedGroupOffersTheGroupOrAPlaceOfItsOwn() {
   // The engine refuses it alone without a place (reason "inGroup") and names the group it is in.
-  const inGroup = { ...cantRestore("inGroup", `${OLD_PLACE}/kopi-landing`), group: GROUP };
+  const inGroup = { ...cantRestore("inGroup"), group: GROUP };
   const away = `${HOME}/project/kopi-2`;
   const sheet = sheets({
     kind: "restore",

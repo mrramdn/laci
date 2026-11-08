@@ -2106,6 +2106,8 @@ export const detailedArchive = {
     /** Inside an archived group the scan doesn't list: that group goes back whole, or another place. */
     inGroup: "inside an archived group: restore the group, or choose another place",
   },
+  /** The same, when the engine names no place it came from: that place is the group's. */
+  inGroupAny: "Inside an archived group: restore the group, or choose another place",
   /** A plan that can't run without saying why. */
   cant: "can’t go back there",
   unknown: "Origin unknown",

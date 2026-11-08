@@ -422,14 +422,16 @@ export async function aFolderOfProjectsIsArchivedAsAGroupAndComesBackWhole() {
     assert.equal(isArchivedGroup(after[clients]), true);
     assert.equal(archivedGroupOf(after, after[acme])?.id, clients);
     // Each project in it goes back with it, as the engine says it: alone, only to a place of its own.
+    // The refusal names no place, as the one it came from is the group's.
     assert.deepEqual(
-      [after[acme].restorePlan.reason, after[acme].restorePlan.group, after[acme].restorePlan.dest],
-      ["inGroup", clients, acme],
+      [after[acme].restorePlan.reason, after[acme].restorePlan.group, "dest" in after[acme].restorePlan],
+      ["inGroup", clients, false],
     );
     assert.equal(linkedGroup(after, after[acme])?.id, clients);
+    // A place inside the one the group goes back to would be in its way: refused the same.
     const own = await request("restore/plan", { id: acme, destination: acme });
-    assert.equal(own.error, undefined);
-    assert.equal(own.dest, acme);
+    assert.deepEqual([own.reason, own.group, "dest" in own], ["inGroup", clients, false]);
+    assert.match(own.error, /goes back whole to ~\/project\/clients\. Restore clients, or choose a place outside it/);
     const [entry] = (await request("log")).entries;
     assert.equal(entry.title, "Archived clients");
     // Restored, the group and every one in it leave the archive, and none says archived.

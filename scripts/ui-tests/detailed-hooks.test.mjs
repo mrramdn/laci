@@ -759,6 +759,8 @@ export async function theDetailsPanelOfAProjectInsideAnArchivedGroupOffersTheGro
   try {
     const plan = app.state().snapshot.nodes[batik].restorePlan;
     Object.assign(plan, { reason: "inGroup", error: "batik-shop is in the archived group old-clients" });
+    // The engine names no place: the one it came from is the group's.
+    delete plan.dest;
     await app.set({ selected: batik, tab: "health" });
     await app.draw({ inspector: h(app.Shown) });
     assert.deepEqual(app.buttons("Restore"), []);

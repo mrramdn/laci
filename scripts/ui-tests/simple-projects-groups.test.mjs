@@ -597,7 +597,6 @@ function nestedArchive() {
     restorePlan: {
       error: "2024 is in the archived group old-clients, which goes back whole.",
       reason: "inGroup",
-      dest: `${ROOT}/old-clients/2024`,
       group: outer,
       ops: [],
       checks: [],
@@ -612,7 +611,7 @@ function nestedArchive() {
     path: mobile,
     name: "mobile",
     label: "mobile",
-    restorePlan: { ...s.nodes[inner].restorePlan, dest: `${ROOT}/old-clients/2024/mobile` },
+    restorePlan: { ...s.nodes[inner].restorePlan, error: "mobile is in the archived group old-clients" },
   });
   s.nodes[mobile].parent = inner;
   return s;
@@ -705,8 +704,8 @@ export async function aProjectInsideAnArchivedGroupRestoresTheGroupOrItselfInAPl
   const batik = s.nodes[`${GROUP}/batik-shop`];
   batik.restorePlan = {
     error: "batik-shop is in the archived group old-clients, which goes back whole. Restore old-clients, or choose another place for it.",
+    // No place: the one it came from is the group's.
     reason: "inGroup",
-    dest: `${ROOT}/old-clients/batik-shop`,
     group: GROUP,
     ops: [],
     checks: [],

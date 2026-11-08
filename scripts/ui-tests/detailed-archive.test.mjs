@@ -228,10 +228,8 @@ export function aProjectInsideAnArchivedGroupOffersTheGroupAsALinkedOneDoes() {
   // No link here: the engine refuses each project alone without a place (reason "inGroup") and names
   // the outermost archived group it is in.
   const clients = group("old-clients");
-  const inGroup = (name, at = clients.path) => ({
-    ...cant("inGroup", `${HOME}/project/old-clients/${name}`),
-    group: at,
-  });
+  // No place: the one it came from is the group's.
+  const inGroup = (name, at = clients.path) => ({ ...cant("inGroup"), group: at });
   const warung = member(clients, "warung-pos", inGroup("warung-pos"));
   // A group the scan doesn't list: the row says why, and keeps its own Restore.
   const kopi = member(clients, "kopi", inGroup("kopi", `${HOME}/project/_archive/gone`));
@@ -244,7 +242,15 @@ export function aProjectInsideAnArchivedGroupOffersTheGroupAsALinkedOneDoes() {
   const html = draw([clients, warung, kopi]);
   const said = Object.fromEntries(rowsInOrder(html).map(({ name, said }) => [name, said]));
   assert.equal(said["warung-pos"], words.inside("old-clients"));
-  assert.equal(said.kopi, `${words.from("~/project/old-clients/kopi")} · ${words.why.inGroup}`);
+  assert.equal(said.kopi, words.inGroupAny);
+  // With a place the engine names, the place comes first, as for the other reasons.
+  const { restoreFrom } = load("views/archive.tsx", {
+    "../store": { useApp: none, external: none },
+    "../api": { api: none },
+    "../common": { Icon: none, Group: none },
+  });
+  const placed = { ...kopi, restorePlan: { ...kopi.restorePlan, dest: `${HOME}/project/kopi` } };
+  assert.equal(restoreFrom(placed, HOME), `${words.from("~/project/kopi")} · ${words.why.inGroup}`);
   assert.equal(html.split(`>${words.restoreGroup}</button>`).length - 1, 1, "warung-pos's only");
   assert.equal(html.split(">Restore</button>").length - 1, 2, "the group's and kopi's");
   assert.doesNotMatch(words.why.inGroup, /agent/i);
@@ -256,7 +262,7 @@ export function anArchivedGroupInsideAnotherOffersTheOuterGroup() {
     name: "2024",
     label: "2024",
     parent: outer.id,
-    restorePlan: { ...cant("inGroup", `${HOME}/project/old-clients/2024`), group: outer.path },
+    restorePlan: { ...cant("inGroup"), group: outer.path },
   });
   const html = draw([outer, inner]);
   const rows = rowsInOrder(html);
@@ -275,10 +281,7 @@ export function aProjectInAnArchivedGroupInsideAnotherIsListedUnderTheOuterGroup
   // outermost group for both (reason "inGroup", group old-clients): they are listed under it, the
   // inner group just before what it holds, and each row's Restore group is old-clients'.
   const outer = group("old-clients");
-  const inGroup = (name) => ({
-    ...cant("inGroup", `${HOME}/project/old-clients/${name}`),
-    group: outer.path,
-  });
+  const inGroup = () => ({ ...cant("inGroup"), group: outer.path });
   const inner = group("old-clients/2024", {
     name: "2024",
     label: "2024",
@@ -341,7 +344,7 @@ export function aGroupsArchiveChecksNameTheirProject() {
 export function detailedsRestoreDialogAsksAPlaceOfItsOwnForAProjectInAGroup() {
   const clients = group("old-clients");
   const warung = member(clients, "warung-pos", {
-    ...cant("inGroup", `${HOME}/project/old-clients/warung-pos`),
+    ...cant("inGroup"),
     group: clients.path,
   });
   const { Dialogs } = dialogs({ kind: "restore", id: warung.id }, [clients, warung]);

@@ -333,9 +333,9 @@ function archiveGroup(n: Node): Change {
       restorePlan: !group
         ? alone
           ? {
+              // No place: the one it came from is the group's.
               error: `${o.name} is in the archived group ${n.name}, which goes back whole. Restore ${n.name}, or choose another place for it.`,
               reason: "inGroup",
-              dest: o.path,
               group: n.path,
               checks: [],
               ops: [],
@@ -477,6 +477,18 @@ function restoreTo(n: Node, plan: ArchivePlan, destination: string): ArchivePlan
   const archive = `${home}/project/_archive`;
   const inside = (path: string, dir: string) =>
     path === dir || path.startsWith(`${dir}/`);
+  // In an archived group, a place inside the one the group goes back to would be in its way: the
+  // engine refuses it as it refuses no place at all, naming the group.
+  const group = plan.reason === "inGroup" && plan.group ? snapshot.nodes[plan.group] : undefined;
+  const back = group?.restorePlan?.dest;
+  if (group && back && inside(destination, back))
+    return {
+      error: `${n.name} is in the archived group ${group.name}, which goes back whole to ${short(back)}. Restore ${group.name}, or choose a place outside it.`,
+      reason: "inGroup",
+      group: group.path,
+      ops: [],
+      checks: [],
+    };
   // A group the preview archived never moved: the place it came from is where it still is.
   if (destination === n.path && plan.dest === n.path && !plan.error) return plan;
   if (!inside(destination, home))
@@ -492,15 +504,12 @@ function restoreTo(n: Node, plan: ArchivePlan, destination: string): ArchivePlan
     };
   // The old link is free only for the group it points at.
   const link = links.find((l) => l.link === destination);
-  // A project in a group the preview archived never moved: where it came from is where it still is,
-  // and free for it alone.
-  const own = destination === n.path && plan.reason === "inGroup";
-  if (!own && (snapshot.nodes[destination] || (link && link.group !== n)))
+  if (snapshot.nodes[destination] || (link && link.group !== n))
     return cant(
       "occupied",
       `Something is already at ${short(destination)}. Choose another place.`,
     );
-  if (!own && inside(destination, n.path))
+  if (inside(destination, n.path))
     return cant("inArchive", "Can't move a folder into itself");
   if (inside(destination, archive))
     return cant(

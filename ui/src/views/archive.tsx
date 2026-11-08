@@ -28,10 +28,12 @@ function archivedOn(day?: string) {
 }
 /**
  * Where a project in the archive came from, and why it can't go back there by itself: "From
- * <place>", "From <place> · something is there now", or "Origin unknown".
+ * <place>", "From <place> · something is there now", or "Origin unknown". Inside an archived group
+ * the engine names no place, as the place it came from is the group's: the row says that instead.
  */
 export function restoreFrom(n: Node, home: string) {
   const plan = n.restorePlan;
+  if (plan?.error && plan.reason === "inGroup" && !plan.dest) return said.inGroupAny;
   if (!plan?.dest || plan.reason === "unknown") return said.unknown;
   const from = said.from(tilde(plan.dest, home));
   if (!plan.error) return from;

@@ -132,7 +132,17 @@ function Project({ n }: { n: Node }) {
   ];
   const more: MenuEntry[] = [
     ...(n.archived
-      ? []
+      ? group
+        ? [
+            // Restore puts its group back; alone, it needs a place of its own, chosen in its sheet.
+            {
+              label: said.restoreAlone,
+              icon: "move",
+              onSelect: () =>
+                useApp.setState({ modal: { kind: "restore", id: n.id } }),
+            },
+          ]
+        : []
       : [
           {
             label: said.archive,

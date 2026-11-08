@@ -10,6 +10,7 @@ import { api, errorText } from "../api";
 import { restoreFocus } from "../common";
 import {
   bytes,
+  checkTitle,
   expandHome,
   groupOfPlan,
   groupSize,
@@ -22,7 +23,7 @@ import {
 } from "../helpers";
 import { changed, run, selectWhenReady, useApp } from "../store";
 import type { Modal } from "../store";
-import type { ArchivePlan, Change, DeletePlan, Issue, Node, Op } from "../types";
+import type { ArchivePlan, Change, DeletePlan, Issue, Node, Op, PlanCheck } from "../types";
 import { blocks, dialogs as said, fix, project, safety } from "../words";
 import { fixable, issueCount, safetyIssues, toneOf } from "./model";
 import { openFix } from "./state";
@@ -654,7 +655,8 @@ function ArchiveBody({ node, stage, setStage, opener }: Body) {
                 <ul className="s-files">
                   {hidden.map((issue, i) => (
                     <li key={i}>
-                      {group ? issue.title : (safety.issues[issue.code]?.title ?? issue.title)}
+                      {/* A group's names the project in it that it is about. */}
+                      {checkTitle(issue, safety.issues[issue.code]?.title ?? issue.title)}
                     </li>
                   ))}
                 </ul>
@@ -737,20 +739,26 @@ function RestoreBody({ node, stage, setStage }: Body) {
   // Why the engine can't put it back there: another place has to be chosen, under Show details.
   const reason = moves && !failure && current?.plan?.error ? current.plan.reason : undefined;
   const where = tilde(current?.plan?.dest ?? expandHome(destination.trim(), home), home);
-  // A place reached through a link into the archive: the archived group the engine names goes back
-  // whole. Without one, the link has to go first.
-  const group = reason === "linked" ? groupOfPlan(nodes, current?.plan) : undefined;
+  // A place reached through a link into the archive, or a project inside an archived group: the
+  // archived group the engine names goes back whole. Without one, the link has to go first, or, in a
+  // group, the group the scan doesn't list goes back. Either way a place of its own can be chosen.
+  const group =
+    reason === "linked" || reason === "inGroup" ? groupOfPlan(nodes, current?.plan) : undefined;
   const why = !reason
     ? ""
     : reason === "unknown"
       ? said.restore.unknown
-      : !where
-        ? ""
-        : reason === "linked"
-          ? group
-            ? said.restore.linked(where, group.label)
-            : said.restore.linkedAny(where)
-          : said.restore.why[reason](where);
+      : reason === "inGroup"
+        ? group
+          ? said.restore.inGroup(group.label)
+          : said.restore.inGroupAny
+        : !where
+          ? ""
+          : reason === "linked"
+            ? group
+              ? said.restore.linked(where, group.label)
+              : said.restore.linkedAny(where)
+            : said.restore.why[reason](where);
   const choose = Boolean(why);
   // The focus goes on to Restore once the plan has drawn it, or to the place to choose when the
   // engine can't go on, if it is still where the sheet put it.
@@ -1098,20 +1106,21 @@ function Problems({ node, issues }: { node: Node; issues: Issue[] }) {
 }
 
 /**
- * A group's problems: those of the projects in it, as the engine names them, each with its own
- * project in its words. They are fixed on each project's page.
+ * A group's problems: those of the projects in it, each after the name of its project (the check's
+ * `project`), in Simple's words. They are fixed on each project's page.
  */
-function GroupProblems({ issues }: { issues: Issue[] }) {
+function GroupProblems({ issues }: { issues: PlanCheck[] }) {
   if (!issues.length) return null;
   return (
     <ul className="s-issues" style={{ justifySelf: "stretch" }}>
       {issues.map((issue, i) => {
         const tone = toneOf(issue.severity);
         return (
-          <li key={i} className="s-issue">
+          <li key={i} className="s-issue" data-project={issue.projectId}>
             <div className="s-issue-title">
               <StatusChip tone={tone}>{safety.tones[tone]}</StatusChip>
-              <b>{issue.title}</b>
+              {/* The project in the group it is about, then the problem in plain words. */}
+              <b>{checkTitle(issue, safety.issues[issue.code]?.title ?? issue.title)}</b>
             </div>
             {issue.detail ? <p>{issue.detail}</p> : null}
           </li>

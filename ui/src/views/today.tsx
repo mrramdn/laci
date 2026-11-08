@@ -15,20 +15,40 @@ import { BackupNotice } from "../backup";
 import { LookThumb } from "../looks";
 import { useUpdate } from "../update";
 import { useUpdatesUnset } from "../updates-unset";
-import { detailedSettings, firstRun, views } from "../words";
+import { detailedSettings, engineSays, firstRun, views } from "../words";
 import {
+  copyOffline,
   latestReport,
   LOCALE,
   plural,
   sessionsOf,
   shortDay,
+  tilde,
 } from "../helpers";
 import { todayModel } from "../selectors";
 import { DeadlinePill } from "../deadline";
 import { closeReportItem, toggleTodo } from "../actions";
 import { requestResume } from "../session-ui";
 import { askAgent } from "../agent-launch";
-import type { Node, Tab } from "../types";
+import type { Node, Snapshot, Tab } from "../types";
+/**
+ * Today's notice while the folder chosen for the history backup can't be reached, as when its drive
+ * isn't connected: nothing is backed up until it is back. Settings › Backup folder says it too.
+ */
+function CopyOfflineNotice({ snapshot }: { snapshot: Snapshot }) {
+  const offline = copyOffline(snapshot);
+  if (!offline) return null;
+  return (
+    <div className="callout" data-ui="copy-offline">
+      <Icon name="drive" />
+      <div className="txt">
+        <b>{detailedSettings.backupOfflineTitle}</b>
+        <p>{detailedSettings.backupOffline(tilde(offline.path, snapshot.home))}</p>
+        {offline.reason ? <p>{engineSays(offline.reason, "detailed")}</p> : null}
+      </div>
+    </div>
+  );
+}
 export function Today() {
   // Only what Today shows: news of a scan in progress doesn't draw it again.
   const snapshot = useApp((s) => s.snapshot!);
@@ -129,6 +149,7 @@ export function Today() {
         </button>
       </div>
       <div className="body">
+        <CopyOfflineNotice snapshot={snapshot} />
         <BackupNotice />
         {snapshot.warnings
           .filter((warning) => !warning.code.endsWith("-cleanup"))

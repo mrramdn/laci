@@ -69,8 +69,10 @@ export function Inspector({ node: n }: { node: Node }) {
   const parent = n.parent ? snapshot.nodes[n.parent] : null;
   const git = n.git;
   const isProject = n.kind === "project";
-  // A project that goes back only with its archived group offers the group's Restore.
-  const whole = isProject ? linkedGroup(snapshot.nodes, n) : undefined;
+  // A project, or a group inside an archived group, that goes back only with that group offers the
+  // group's Restore, and Restore alone, whose dialog asks for a place of its own.
+  const whole =
+    isProject || isArchivedGroup(n) ? linkedGroup(snapshot.nodes, n) : undefined;
   const tabs: [string, string, number][] = [
     ["health", "Health", 0],
     ["todo", "To-do", n.tasks.filter((t) => !t.done).length],
@@ -182,17 +184,29 @@ export function Inspector({ node: n }: { node: Node }) {
                 Archive
               </button>
             ) : whole ? (
-              <button
-                className="btn ghost sm"
-                title={detailedArchive.restoreGroupFor(whole.label)}
-                disabled={s.historyPending}
-                onClick={() =>
-                  useApp.setState({ modal: { kind: "restore", id: whole.id } })
-                }
-              >
-                <Icon name="undo-2" className="sm" />
-                {detailedArchive.restoreGroup}
-              </button>
+              <>
+                <button
+                  className="btn ghost sm"
+                  title={detailedArchive.restoreGroupFor(whole.label)}
+                  disabled={s.historyPending}
+                  onClick={() =>
+                    useApp.setState({ modal: { kind: "restore", id: whole.id } })
+                  }
+                >
+                  <Icon name="undo-2" className="sm" />
+                  {detailedArchive.restoreGroup}
+                </button>
+                <button
+                  className="btn ghost sm"
+                  title={detailedArchive.restoreAloneFor(n.name)}
+                  disabled={s.historyPending}
+                  onClick={() =>
+                    useApp.setState({ modal: { kind: "restore", id: n.id } })
+                  }
+                >
+                  {detailedArchive.restoreAlone}
+                </button>
+              </>
             ) : isProject ? (
               <button
                 className="btn ghost sm"

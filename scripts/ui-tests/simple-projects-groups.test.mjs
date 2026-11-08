@@ -587,6 +587,35 @@ export async function aLinkedProjectWhoseGroupTheEngineDoesntNameSaysToRemoveThe
   assert.deepEqual(app.getState().modal, { kind: "restore", id: `${GROUP}/batik-shop` });
 }
 
+export async function aProjectInsideAnArchivedGroupRestoresTheGroupOrItselfInAPlaceOfItsOwn() {
+  // The engine refuses batik-shop alone without a place (reason "inGroup"), naming its group.
+  const s = scan();
+  const batik = s.nodes[`${GROUP}/batik-shop`];
+  batik.restorePlan = {
+    error: "batik-shop is in the archived group old-clients, which goes back whole. Restore old-clients, or choose another place for it.",
+    reason: "inGroup",
+    dest: `${ROOT}/old-clients/batik-shop`,
+    group: GROUP,
+    ops: [],
+    checks: [],
+  };
+  const { page, app } = projectsPage(s, { filter: "archived", grouped: false });
+  const card = page.find((n) => n.props["data-id"] === `${GROUP}/batik-shop`);
+  assert.ok(card.textContent.includes(words.projects.inGroup("old-clients")), card.textContent);
+  assert.equal(menuItem(card, words.projects.restore), undefined);
+  click(page, menuItem(card, words.projects.restoreGroup));
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: GROUP });
+  // Alone: its own sheet, where a place of its own is chosen.
+  click(page, menuItem(card, words.projects.restoreAlone));
+  assert.deepEqual(app.getState().modal, { kind: "restore", id: `${GROUP}/batik-shop` });
+  // A project the engine puts back by itself has no Restore it alone.
+  const old = page.find((n) => n.props["data-id"] === `${ROOT}/_archive/old-portfolio`);
+  assert.equal(menuItem(old, words.projects.restoreAlone), undefined);
+  // Simple's words don't say "agent".
+  assert.doesNotMatch(words.projects.restoreAlone, /agent/i);
+  assert.doesNotMatch(words.dialogs.restore.inGroup("old-clients"), /agent/i);
+}
+
 /** The declarations of the rule for `selector` in Simple's sheet. */
 function simpleRule(selector) {
   const css = readFileSync(new URL("../../ui/src/simple/simple.css", import.meta.url), "utf8");

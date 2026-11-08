@@ -739,6 +739,33 @@ export async function theDetailsPanelOfAProjectThatWaitsForItsGroupOffersTheGrou
     // goes on to the project in its new place.
     assert.deepEqual(app.state().modal, { kind: "restore", id: group });
     assert.equal(app.state().selected, batik);
+    // Restore alone opens the project's own dialog, where a place of its own is chosen.
+    const [alone, ...more] = app.buttons("Restore alone");
+    assert.deepEqual(more, []);
+    assert.equal(alone.getAttribute("title"), "Put batik-shop back alone, in a place you choose");
+    await app.fire(alone, "onClick");
+    assert.deepEqual(app.state().modal, { kind: "restore", id: batik });
+  } finally {
+    await app.close();
+  }
+}
+
+export async function theDetailsPanelOfAProjectInsideAnArchivedGroupOffersTheGroupAndRestoreAlone() {
+  // In an archived group with no link at its old place, the engine refuses it alone without a place
+  // (reason "inGroup") and names the group: the panel offers it, as for a linked one.
+  const group = "/home/demo/project/_archive/old-clients";
+  const batik = `${group}/batik-shop`;
+  const app = await detailed();
+  try {
+    const plan = app.state().snapshot.nodes[batik].restorePlan;
+    Object.assign(plan, { reason: "inGroup", error: "batik-shop is in the archived group old-clients" });
+    await app.set({ selected: batik, tab: "health" });
+    await app.draw({ inspector: h(app.Shown) });
+    assert.deepEqual(app.buttons("Restore"), []);
+    assert.equal(app.buttons("Restore group").length, 1);
+    const [alone] = app.buttons("Restore alone");
+    await app.fire(alone, "onClick");
+    assert.deepEqual(app.state().modal, { kind: "restore", id: batik });
   } finally {
     await app.close();
   }

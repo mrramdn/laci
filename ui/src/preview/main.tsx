@@ -37,13 +37,20 @@ const choose = <T extends string>(key: string, allowed: readonly T[]): T => {
 const design = choose<Design>("design", ["detailed", "simple"]);
 const theme = choose<Theme>("theme", ["system", "light", "dark"]);
 const updates = choose("updates", ["daily", "off", "unset"]);
+// "?copy=offline": the copy of AI chats is on a drive that isn't connected.
+const copy = choose("copy", ["here", "offline"]);
 
 const root = document.documentElement;
 root.dataset.design = design;
 if (theme === "system") delete root.dataset.theme;
 else root.dataset.theme = theme;
 const clock = freezeClock(fixtureNow);
-installIpc({ design, theme, updates: updates === "unset" ? null : updates });
+installIpc({
+  design,
+  theme,
+  updates: updates === "unset" ? null : updates,
+  copy: copy === "offline" ? "offline" : undefined,
+});
 window.__preview = { emit: emitEvent, advance: clock.advance };
 
 // The window reads the theme when it loads, so it comes after the settings above.

@@ -305,14 +305,26 @@ export interface Op {
  * tell where the project came from. "inArchive": the place is inside the archive folder or inside
  * the project. "outside": the place isn't in the home folder or a scan location. "linked": the place
  * is reached through a link into the archive, the old place of the project's archived group; the
- * group goes back whole, or the link is removed first.
+ * group goes back whole, or the link is removed first. "inGroup": the project, or folder, is inside
+ * an archived group, which goes back whole; alone, it needs a place of its own (a destination).
  */
 export type PlanReason =
   | "occupied"
   | "unknown"
   | "inArchive"
   | "outside"
-  | "linked";
+  | "linked"
+  | "inGroup";
+
+/**
+ * A check of an archive plan: one of the project's own issues. A group's plan gathers those of the
+ * projects in it, each naming its project (`project`, its label, and `projectId`); the title is the
+ * issue's own.
+ */
+export interface PlanCheck extends Issue {
+  project?: string;
+  projectId?: string;
+}
 
 export interface ArchivePlan {
   /**
@@ -325,14 +337,15 @@ export interface ArchivePlan {
   /**
    * With reason "linked": where the archived group is that the link leads to, in the archive. Restoring
    * that group puts the project back with it. Missing when the scan lists no such group: the link has to be
-   * removed first.
+   * removed first. With reason "inGroup": the outermost archived group it is in, in the archive, which
+   * goes back whole with it.
    */
   group?: string;
   /**
    * What could be lost, as for the project's own checks. A group's plan gathers those of the projects in
    * it, each one naming its project.
    */
-  checks: Issue[];
+  checks: PlanCheck[];
   ops: Op[];
 }
 
@@ -587,6 +600,11 @@ export interface Snapshot {
   host: string;
   roots: string[];
   rootStatus?: RootStatus[];
+  /**
+   * The folder chosen for the copy of AI chats, told as a scan location is: unavailable, with why, while its drive
+   * isn't connected. Nothing is copied then. Null for Laci's own folder.
+   */
+  copyStatus?: CopyStatus | null;
   terminalTarget?: TerminalTarget;
   /** False until the user saves their selections, which may be empty. */
   configured: boolean;
@@ -624,6 +642,15 @@ export interface Apps {
 }
 export type TerminalTarget = "internal" | "external";
 export interface RootStatus {
+  path: string;
+  available: boolean;
+  reason?: string;
+}
+/**
+ * The folder chosen for the copy of AI chats (`snapshot.copyStatus`): its path, whether it can be reached, and the
+ * engine's reason when it can't, as backup.rs writes it (`engineSays` puts it in each design's words).
+ */
+export interface CopyStatus {
   path: string;
   available: boolean;
   reason?: string;

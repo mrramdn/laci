@@ -360,6 +360,17 @@ function ProjectCard({
                   onSelect: () =>
                     useApp.setState({ modal: { kind: "archive", id: n.id } }),
                 },
+            // Alone, it needs a place of its own: its sheet opens on it.
+            ...(n.archived && group
+              ? [
+                  {
+                    label: said.restoreAlone,
+                    icon: "move",
+                    onSelect: () =>
+                      useApp.setState({ modal: { kind: "restore", id: n.id } }),
+                  },
+                ]
+              : []),
           ]}
         />
       </div>

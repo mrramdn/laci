@@ -324,28 +324,28 @@ function archiveGroup(n: Node): Change {
             archivedAt: new Date().toISOString().slice(0, 10),
           }
         : o.meta,
-      // The group goes back whole; a project in it can go back by itself, to where it was.
-      restorePlan:
-        group || o.kind === "project"
+      // The group goes back whole. A project in it goes back with it, as the engine says it (reason
+      // "inGroup", naming the group), or alone to a place of its own: `restoreTo` plans that.
+      restorePlan: !group
+        ? o.kind === "project"
           ? {
+              error: `${o.name} is in the archived group ${n.name}, which goes back whole. Restore ${n.name}, or choose another place for it.`,
+              reason: "inGroup",
               dest: o.path,
+              group: n.path,
               checks: [],
-              ops: [
-                {
-                  kind: "move",
-                  label: "Move folder",
-                  from: dest + o.path.slice(n.path.length),
-                  to: tilde(o.path, home),
-                },
-                {
-                  kind: "write",
-                  label: "Clear status: archived",
-                  to: `${tilde(o.path, home)}/.laci.md`,
-                },
-                JOURNAL,
-              ],
+              ops: [],
             }
-          : undefined,
+          : undefined
+        : {
+            dest: o.path,
+            checks: [],
+            ops: [
+              { kind: "move", label: "Move folder", from: dest, to: from },
+              { kind: "write", label: "Clear status: archived", to: `${from}/.laci.md` },
+              JOURNAL,
+            ],
+          },
     });
   }
   const steps: Op[] = [
@@ -488,12 +488,15 @@ function restoreTo(n: Node, plan: ArchivePlan, destination: string): ArchivePlan
     };
   // The old link is free only for the group it points at.
   const link = links.find((l) => l.link === destination);
-  if (snapshot.nodes[destination] || (link && link.group !== n))
+  // A project in a group the preview archived never moved: where it came from is where it still is,
+  // and free for it alone.
+  const own = destination === n.path && plan.reason === "inGroup";
+  if (!own && (snapshot.nodes[destination] || (link && link.group !== n)))
     return cant(
       "occupied",
       `Something is already at ${short(destination)}. Choose another place.`,
     );
-  if (inside(destination, n.path))
+  if (!own && inside(destination, n.path))
     return cant("inArchive", "Can't move a folder into itself");
   if (inside(destination, archive))
     return cant(
@@ -766,18 +769,24 @@ function moveBackup(body: Body) {
   if (!state.error && dest === (state.dest ?? OWN_COPY)) fail("The copy of AI chats is in that folder already");
   const moved = !state.error && (state.bytes ?? 0) > 0;
   const was = { dest: state.dest, chosen: state.chosen, error: state.error };
+  const status = snapshot.copyStatus ?? null;
   const part = storage.parts.find((p) => p.id === "history");
-  const place = (where: { dest?: string | null; chosen?: boolean; error?: string }) => {
+  const place = (
+    where: { dest?: string | null; chosen?: boolean; error?: string },
+    copyStatus: Snapshot["copyStatus"],
+  ) => {
     if (snapshot.backup) snapshot.backup = { ...snapshot.backup, ...where };
+    // The engine tells a chosen folder as it tells a scan location; Laci's own folder, not at all.
+    snapshot.copyStatus = copyStatus;
     if (part) {
       part.dir = where.dest ?? OWN_COPY;
       part.elsewhere = Boolean(where.chosen);
     }
   };
-  place({ dest, chosen: Boolean(dir), error: undefined });
+  place({ dest, chosen: Boolean(dir), error: undefined }, dir ? { path: dir, available: true } : null);
   const change = changed(
     moved ? `Moved the copy of AI chats to ${dest}` : `The copy of AI chats is kept in ${dest} from now on`,
-    () => place(was),
+    () => place(was, status),
   );
   log[0].say = { form: moved ? "movedCopy" : "keptCopyIn", dir: dest, own: !dir };
   return { ...change, dest, moved, bytes: moved ? (state.bytes ?? 0) : 0 };
@@ -1283,21 +1292,42 @@ const terminals: Record<string, (args: Body) => unknown> = {
 // same one the pretend update starts from.
 terminals["plugin:app|version"] = () => PREVIEW_VERSION;
 
+/** A folder for the copy of AI chats on a drive that isn't connected. */
+export const OFFLINE_COPY = "/run/media/demo/Backup/laci-copy";
+/**
+ * The copy of AI chats kept in a folder chosen on another drive, which isn't connected: the engine
+ * tells it unavailable, with why, and the copy can't be made there until it is back.
+ */
+function unplugCopy() {
+  const reason = `The folder for the copy of AI chats isn't there: ${OFFLINE_COPY}. Connect its drive, or choose another folder for the copy.`;
+  snapshot.copyStatus = { path: OFFLINE_COPY, available: false, reason };
+  if (snapshot.backup)
+    snapshot.backup = { ...snapshot.backup, dest: OFFLINE_COPY, chosen: true, error: reason };
+  const part = storage.parts.find((p) => p.id === "history");
+  if (part) {
+    part.dir = OFFLINE_COPY;
+    part.elsewhere = true;
+    part.error = reason;
+  }
+}
 /**
  * Stands in for the desktop. Call before the window's own code is loaded. The choice about new
  * versions is saved, as on any setup but one from before 3.0: `updates: null` plays that one, whose
- * Today and Home ask once.
+ * Today and Home ask once. `copy: "offline"` plays a copy of AI chats kept on a drive that isn't
+ * connected.
  */
 export function installIpc(options: {
   design: Design;
   theme: Theme;
   updates?: "daily" | "off" | null;
+  copy?: "offline";
 }) {
   snapshot = clone(fixtures.snapshot);
   log = clone(fixtures.log.entries);
   storage = clone(fixtures.storage);
   mcp = clone(fixtures["agent/mcp"].agents);
   keptOut = new Map();
+  if (options.copy === "offline") unplugCopy();
   const { design, theme, updates = "daily" } = options;
   settings = { design, theme, updates };
   update = {

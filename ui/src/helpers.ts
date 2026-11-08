@@ -1,5 +1,7 @@
 import type {
   ArchivePlan,
+  CopyStatus,
+  PlanCheck,
   ReadyPlan,
   Node,
   Snapshot,
@@ -121,23 +123,26 @@ export function archivedGroupOf(
   return undefined;
 }
 /**
- * The archived group a restore plan refused with reason "linked" names (`plan.group`, its place in
- * the archive), when the scan lists it as one. None for any other plan, and for a linked one that
- * names no group: then the link has to be removed first.
+ * The archived group a restore plan refused with reason "linked" or "inGroup" names (`plan.group`, its
+ * place in the archive), when the scan lists it as one. None for any other plan, and for a linked one
+ * that names no group: then the link has to be removed first.
  */
 export function groupOfPlan(
   nodes: Snapshot["nodes"],
   plan: ArchivePlan | undefined,
 ): Node | undefined {
-  if (!plan?.error || plan.reason !== "linked" || !plan.group) return undefined;
+  if (!plan?.error || !plan.group) return undefined;
+  if (plan.reason !== "linked" && plan.reason !== "inGroup") return undefined;
   const at = trimSep(plan.group);
   const group =
     nodes[at] ?? Object.values(nodes).find((n) => trimSep(n.path) === at);
   return isArchivedGroup(group) ? group : undefined;
 }
 /**
- * For a project that can't go back alone because its place is reached through a link into the archive
- * (the plan's reason "linked"): the archived group to restore instead, as its restore plan names it.
+ * For a project, or a folder, that can't go back alone because its place is reached through a link
+ * into the archive (the plan's reason "linked"), or because it is inside an archived group that goes
+ * back whole ("inGroup"): the archived group to restore instead, as its restore plan names it. A
+ * place of its own, chosen in the restore dialog, still puts it back alone.
  */
 export function linkedGroup(nodes: Snapshot["nodes"], n: Node) {
   return groupOfPlan(nodes, n.restorePlan);
@@ -152,6 +157,21 @@ export function linkedAlone(nodes: Snapshot["nodes"], n: Node) {
       n.restorePlan.reason === "linked" &&
       !linkedGroup(nodes, n),
   );
+}
+/**
+ * A check of an archive plan as a line: for a group's plan, the project it is about before its own
+ * title ("acme-store: 8 commits not pushed"); else the title alone.
+ */
+export function checkTitle(check: PlanCheck, title = check.title) {
+  return check.project ? `${check.project}: ${title}` : title;
+}
+/**
+ * The folder chosen for the copy of AI chats when it can't be reached now, as when its drive isn't
+ * connected: nothing is copied until it is back. None while it can, and for Laci's own folder.
+ */
+export function copyOffline(snapshot: Snapshot | null | undefined): CopyStatus | undefined {
+  const status = snapshot?.copyStatus;
+  return status && status.available === false ? status : undefined;
 }
 /**
  * What to select once `n` went back to `dest`: when `n` is an archived group and the selection

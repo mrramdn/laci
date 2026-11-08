@@ -1099,13 +1099,16 @@ const groupArchivePlan = (checks) => ({
     { kind: "write", label: "Set status: archived", to: "~/project/_archive/clients/.laci.md" },
   ],
 });
+// The engine keeps each check's own title and names its project beside it.
 const ACME_UNPUSHED = {
   code: "unpushed",
   severity: "med",
-  title: "acme-store: 8 commits not pushed",
+  title: "8 commits not pushed",
   detail: "main has no upstream, and no remote has them",
+  project: "acme-store",
+  projectId: `${HOME}/project/clients/acme-store`,
 };
-const KOPI_NO_REMOTE = { ...NO_REMOTE, title: "kopi-landing: No remote" };
+const KOPI_NO_REMOTE = { ...NO_REMOTE, project: "kopi-landing", projectId: KOPI };
 
 export async function aFolderOfProjectsArchivesAsAGroupAndNamesEachProjectsProblem() {
   const sheet = sheets({
@@ -1126,9 +1129,19 @@ export async function aFolderOfProjectsArchivesAsAGroupAndNamesEachProjectsProbl
   );
   assert.equal(said.archive.introGroup(1).endsWith("1 project moves with its AI chats."), true);
   await sheet.wait(0);
-  // Each problem names its project, worst first, as the engine wrote it.
+  // Each problem names its project, worst first, in Simple's words.
   const text = sheet.text();
-  assert.ok(text.indexOf("kopi-landing: No remote") < text.indexOf("acme-store: 8 commits not pushed"), text);
+  const kopi = `kopi-landing: ${words.safety.issues["no-remote"].title}`;
+  const acme = `acme-store: ${words.safety.issues.unpushed.title}`;
+  assert.equal(kopi, "kopi-landing: Only on this computer");
+  assert.ok(text.includes(kopi) && text.includes(acme), text);
+  assert.ok(text.indexOf(kopi) < text.indexOf(acme), text);
+  assert.doesNotMatch(text, /commits not pushed|No remote/, "not the engine's Git words");
+  // Each line knows its project.
+  assert.deepEqual(
+    sheet.all((n) => n.props.className === "s-issue").map((n) => n.props["data-project"]),
+    [KOPI, `${HOME}/project/clients/acme-store`],
+  );
   assert.ok(text.includes(said.archive.unsafeGroup), text);
   // Each is fixed on its project's own page: no one Back up first for the group.
   assert.ok(!sheet.button(said.archive.backUpFirst));
@@ -1429,6 +1442,48 @@ export async function aProjectBehindALinkWithNoArchivedGroupSaysToRemoveTheLink(
   await sheet.wait(0);
   assert.ok(sheet.text().includes(said.restore.linkedAny("~/project/old-clients/kopi-landing")));
   assert.equal(sheet.button(said.restore.restoreGroup("old-clients")), undefined);
+}
+
+export async function aProjectInsideAnArchivedGroupOffersTheGroupOrAPlaceOfItsOwn() {
+  // The engine refuses it alone without a place (reason "inGroup") and names the group it is in.
+  const inGroup = { ...cantRestore("inGroup", `${OLD_PLACE}/kopi-landing`), group: GROUP };
+  const away = `${HOME}/project/kopi-2`;
+  const sheet = sheets({
+    kind: "restore",
+    node: { ...archived(inGroup), parent: GROUP },
+    nodes: { [GROUP]: groupNode() },
+    replies: { "restore/plan": [inGroup, restorePlan(away)], restore: [{ revision: 3 }] },
+  });
+  await sheet.wait(0);
+  assert.deepEqual(sheet.asked("restore/plan"), [{ id: KOPI }]);
+  assert.ok(sheet.text().includes(said.restore.inGroup("old-clients")), sheet.text());
+  assert.equal(sheet.button(said.restore.restore).disabled, true);
+  assert.ok(sheet.button(said.restore.restoreGroup("old-clients")), "the group's sheet is offered");
+  // Alone, it goes to a place of its own: Show details opened by itself, on the place to choose.
+  const field = goesTo(sheet);
+  assert.ok(field, "the Goes to field is shown");
+  assert.equal(field.props.required, true);
+  sheet.type("~/project/kopi-2");
+  await sheet.wait(200);
+  assert.deepEqual(sheet.asked("restore/plan").at(-1), { id: KOPI, destination: away });
+  assert.ok(sheet.text().includes(said.restore.goesBack("~/project/kopi-2")));
+  sheet.click(sheet.button(said.restore.restore));
+  await sheet.settle();
+  assert.deepEqual(sheet.asked("restore"), [{ id: KOPI, destination: away }]);
+  assert.deepEqual(sheet.selected, [away]);
+}
+
+export async function aProjectInAnArchivedGroupTheScanDoesntListStillSaysWhy() {
+  const inGroup = { ...cantRestore("inGroup"), group: `${HOME}/project/_archive/gone` };
+  const sheet = sheets({
+    kind: "restore",
+    node: archived(inGroup),
+    replies: { "restore/plan": [inGroup] },
+  });
+  await sheet.wait(0);
+  assert.ok(sheet.text().includes(said.restore.inGroupAny), sheet.text());
+  assert.equal(sheet.button(said.restore.restoreGroup("gone")), undefined);
+  assert.ok(goesTo(sheet), "a place of its own can be chosen");
 }
 
 // ── Detailed leaves them to Simple ─────────────────────────────────────────────────────────────────

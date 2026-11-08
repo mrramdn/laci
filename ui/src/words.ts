@@ -288,6 +288,11 @@ export const home = {
   comingUp: "Coming up",
   copied: (when: string) => `AI chats copied ${when}`,
   notCopied: "AI chats aren’t copied yet",
+  /** The folder chosen for the copy of AI chats can't be reached now, as when its drive isn't connected. */
+  copyOfflineTitle: "The drive with the copy of your AI chats isn’t connected",
+  copyOfflineBody: (dir: string) =>
+    `Laci can’t reach ${dir}. Nothing is copied until it is back.`,
+  copyOfflineOpen: "See where Laci keeps the copy",
   noFoldersTitle: "Where do you keep your projects?",
   noFoldersBody:
     "Pick the folder where you keep projects. Laci only reads it, and changes nothing until you ask.",
@@ -343,6 +348,8 @@ export const projects = {
   /** A project that goes back only with its archived group, under its name and in its menu. */
   inGroup: (group: string) => `In the archived group ${group}: restore the group`,
   restoreGroup: "Restore its group…",
+  /** The same project put back alone, in a place of its own chosen in the sheet. */
+  restoreAlone: "Restore it alone…",
   /** Beside the heading of an archived group under Archived: it goes back whole. */
   restoreGroupFor: (group: string) => `Restore the group ${group}`,
   /** Beside the heading of a folder only marked archived: the mark goes, the folder stays. */
@@ -394,6 +401,8 @@ export const project = {
   restoreButton: "Restore…",
   /** The same, for a project that goes back only with its archived group. */
   restoreGroupButton: "Restore its group…",
+  /** In More actions of such a project: back alone, in a place of its own chosen in the sheet. */
+  restoreAlone: "Restore it alone…",
   delete: "Delete project…",
   freeSpace: "Free up space here…",
   terminal: "Open terminal here",
@@ -1596,6 +1605,9 @@ export const aiHelpers = {
   copyPlaceTitle: "Choose where Laci keeps the copy of your AI chats",
   copyPlaceBack: "Use Laci’s own folder",
   copyPlaceOwnName: "Laci’s own folder",
+  /** The folder chosen can't be reached now, as when its drive isn't connected. */
+  copyOffline: (dir: string) =>
+    `The drive with ${dir} isn’t connected. Nothing is copied until it is back.`,
   /** The question before a move; the size only once every file is packed, as after a backup by Laci 3.1. */
   copyMoveAsk: (where: string, size?: string) =>
     size
@@ -2011,6 +2023,14 @@ export const dialogs = {
     linkedAny: (where: string) =>
       `${where} is reached through a link into your archive. Remove that link first, or choose another place under Show details.`,
     restoreGroup: (group: string) => `Restore the group ${group}…`,
+    /**
+     * A project, or a folder, inside an archived group: the group goes back whole, or another place
+     * can be chosen for it alone.
+     */
+    inGroup: (group: string) =>
+      `It is inside the archived group ${group}, which goes back whole. Restore the whole group, or choose a place of its own under Show details.`,
+    inGroupAny:
+      "It is inside an archived group, which goes back whole. Restore that group, or choose a place of its own under Show details.",
     /** For a project only marked archived: its folder never moved. */
     introInPlace: "Laci takes away its archived mark. The folder stays where it is.",
     goesBack: (where: string) => `It goes back to ${where}.`,
@@ -2070,6 +2090,8 @@ export const detailedArchive = {
     outside: "outside your locations",
     /** No archived group goes back with it: the link has to go first. */
     linked: "reached through a link into the archive: remove the link first",
+    /** Inside an archived group the scan doesn't list: that group goes back whole, or another place. */
+    inGroup: "inside an archived group: restore the group, or choose another place",
   },
   /** A plan that can't run without saying why. */
   cant: "can’t go back there",
@@ -2080,6 +2102,9 @@ export const detailedArchive = {
   inside: (group: string) => `Inside ${group} · restore the group`,
   restoreGroup: "Restore group",
   restoreGroupFor: (group: string) => `Restore the group ${group}`,
+  /** Beside Restore group in the details panel: the project goes back alone, to a place chosen for it. */
+  restoreAlone: "Restore alone",
+  restoreAloneFor: (name: string) => `Put ${name} back alone, in a place you choose`,
   /** The Restore dialog's title for an archived group. */
   restoreGroupTitle: (name: string) => `Restore the group ${name}?`,
   /** A folder of projects goes to the archive whole: the details panel's button, and its dialog. */
@@ -2263,6 +2288,10 @@ export const detailedSettings = {
   /** The row beside the automatic backup switch: where the backup is, and moving it. */
   backupFolder: "Backup folder",
   backupFolderDefault: "Laci's data folder",
+  /** The folder chosen for the backup can't be reached now, as when its drive isn't connected. */
+  backupOffline: (dir: string) =>
+    `The drive with ${dir} isn't connected. Nothing is backed up until it is back.`,
+  backupOfflineTitle: "The history backup's drive isn't connected",
   backupFolderNote:
     "The backup is compressed with zstd. It can be on another drive. Laci never makes a chosen folder and never removes anything from the backup.",
   backupFolderChange: "Change…",

@@ -989,3 +989,73 @@ export async function homeKeepsTheCardFirstInItsSideColumnAndTheOneFilledButtonI
   assert.ok(!page.find((n) => n.props["data-ui"] === "update-card"));
   assert.ok(page.text().includes(words.home.needsYou));
 }
+
+export async function homeSaysWhenTheDriveWithTheCopyIsntConnected() {
+  const page = standIn();
+  const d = desktop();
+  const dir = "/run/media/demo/Backup/laci-copy";
+  const why = `The folder for the copy of AI chats isn't there: ${dir}. Connect its drive, or choose another folder for the copy.`;
+  const navigated = [];
+  const app = page.store({
+    snapshot: { ...structuredClone(fixtures.snapshot), copyStatus: { path: dir, available: false, reason: why } },
+    busy: false,
+    historyPending: false,
+    error: null,
+    navigate: (view) => void navigated.push(view),
+  });
+  const { Home } = load(
+    "simple/Home.tsx",
+    {
+      react: page.react,
+      "../words": words,
+      "../actions": { closeReportItem: nothing, toggleTodo: nothing },
+      "../agent-launch": { askAgent: nothing },
+      "../clock": { useNow: () => Date.parse(fixtures.meta.now) },
+      "../common": { Icon: nothing, restoreFocus: nothing },
+      "../pick": { chooseFolder: nothing },
+      "../store": {
+        goToProject: nothing,
+        run: nothing,
+        toast: nothing,
+        useApp: app,
+        pref: (_key, fallback) => fallback,
+        savePref: nothing,
+      },
+      "../update": d.module,
+      "./act": { addProjectFolder: nothing, aiName: () => "Claude Code", askFix: nothing, continueWithAi: nothing },
+      "./art": { Art: nothing },
+      "./fix": { fixIcon: () => "cloud-upload", startFix: nothing },
+      "./state": {
+        clearNotNow: nothing,
+        hideUntilTomorrow: nothing,
+        readNotNow: () => new Set(),
+        showProjects: nothing,
+        useSimple: page.store({ notNow: 0 }),
+      },
+      "./ui": simpleBlocks(),
+    },
+    { document: { documentElement: { dataset: {} } } },
+  );
+  page.mount(createElement(Home));
+  await page.settle();
+  const card = () => page.find((n) => n.props["data-ui"] === "copy-offline");
+  // In the side column, in the style of its other cards, without "agent".
+  assert.ok(card(), "Home says the drive isn't connected");
+  assert.equal(card().props.className, "s-card");
+  assert.ok(card().textContent.includes(words.home.copyOfflineTitle), card().textContent);
+  assert.ok(card().textContent.includes(words.home.copyOfflineBody(dir)), card().textContent);
+  assert.match(words.home.copyOfflineBody(dir), /Nothing is copied until it is back\./);
+  for (const text of [words.home.copyOfflineTitle, words.home.copyOfflineBody(dir), words.home.copyOfflineOpen])
+    assert.doesNotMatch(text, /agent/i);
+  // Its button goes to AI helpers, where the copy is kept; it isn't Home's one filled button.
+  const open = card().descendants().find((n) => n.type === "button" && n.textContent === words.home.copyOfflineOpen);
+  assert.equal(open.props["data-kind"], "outline");
+  page.act(() => open.props.onClick());
+  assert.deepEqual(navigated, ["agents"]);
+  // Back again: the card goes.
+  page.act(() =>
+    app.setState({ snapshot: { ...app.getState().snapshot, copyStatus: { path: dir, available: true } } }),
+  );
+  await page.settle();
+  assert.equal(card(), undefined);
+}

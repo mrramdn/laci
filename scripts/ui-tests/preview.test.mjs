@@ -13,12 +13,13 @@ const ACME = "/home/demo/project/clients/acme-store";
  * interface's `api`, `invoke` its direct commands. The Tauri API finds the desktop through the
  * page's `window`, so there is a stand-in for it while `body` runs.
  */
-async function onPreview(body) {
+async function onPreview(body, options = {}) {
   globalThis.window = { crypto: globalThis.crypto };
   try {
     load("preview/ipc.ts").installIpc({
       design: "detailed",
       theme: "light",
+      ...options,
     });
     const invoke = (command, args) =>
       window.__TAURI_INTERNALS__.invoke(command, args);
@@ -384,17 +385,20 @@ export async function aFolderOfProjectsIsArchivedAsAGroupAndComesBackWhole() {
       .sort();
     assert.deepEqual(planned, ["clients", "side", "thesis"].map((name) => `/home/demo/project/${name}`));
     assert.equal(nodes[clients].projectCount, 2);
-    // Its checks are those of its projects, each naming its project.
+    // Its checks are those of its projects, each naming its project beside its own title.
     assert.deepEqual(
-      nodes[clients].archivePlan.checks.map((c) => [c.code, c.title.split(":")[0]]),
+      nodes[clients].archivePlan.checks.map((c) => [c.code, c.project, c.projectId, c.title]),
       [
-        ["dirty", "acme-store"],
-        ["unpushed", "acme-store"],
-        ["no-remote", "kopi-landing"],
-        ["dirty", "kopi-landing"],
+        ["dirty", "acme-store", acme, "1 uncommitted change"],
+        ["unpushed", "acme-store", acme, "8 commits not pushed"],
+        ["no-remote", "kopi-landing", kopi, "No remote"],
+        ["dirty", "kopi-landing", kopi, "1 uncommitted change"],
       ],
     );
     const plan = await request("archive/plan", { id: clients });
+    // The recorded plan of each folder planned as a group is the one its scan holds.
+    for (const id of ["clients", "side", "thesis"].map((name) => `/home/demo/project/${name}`))
+      assert.deepEqual(await request("archive/plan", { id }), nodes[id].archivePlan);
     assert.equal(plan.dest, "/home/demo/project/_archive/clients");
     assert.equal(plan.ops.at(-2).label, "Set status: archived");
     // Archived: an archived group, with everything in it in the archive and its own .laci.md saying
@@ -414,9 +418,18 @@ export async function aFolderOfProjectsIsArchivedAsAGroupAndComesBackWhole() {
         [true, true],
       ],
     );
-    const { isArchivedGroup, archivedGroupOf } = load("helpers.ts");
+    const { isArchivedGroup, archivedGroupOf, linkedGroup } = load("helpers.ts");
     assert.equal(isArchivedGroup(after[clients]), true);
     assert.equal(archivedGroupOf(after, after[acme])?.id, clients);
+    // Each project in it goes back with it, as the engine says it: alone, only to a place of its own.
+    assert.deepEqual(
+      [after[acme].restorePlan.reason, after[acme].restorePlan.group, after[acme].restorePlan.dest],
+      ["inGroup", clients, acme],
+    );
+    assert.equal(linkedGroup(after, after[acme])?.id, clients);
+    const own = await request("restore/plan", { id: acme, destination: acme });
+    assert.equal(own.error, undefined);
+    assert.equal(own.dest, acme);
     const [entry] = (await request("log")).entries;
     assert.equal(entry.title, "Archived clients");
     // Restored, the group and every one in it leave the archive, and none says archived.
@@ -449,6 +462,50 @@ export async function aFolderOfProjectsIsArchivedAsAGroupAndComesBackWhole() {
     );
     assert.equal(undone[acme].meta.status, "active");
   });
+}
+
+export async function aProjectInAGroupThePreviewArchivedGoesBackAloneToAPlaceOfItsOwn() {
+  const clients = "/home/demo/project/clients";
+  const acme = `${clients}/acme-store`;
+  await onPreview(async ({ request }) => {
+    const plan = await request("archive/plan", { id: clients });
+    await request("archive", { id: clients, destination: plan.dest, trashHeavy: false });
+    // Without a place, the engine's refusal; with one, a plan, and the restore.
+    await assert.rejects(request("restore", { id: acme }), /in the archived group clients/);
+    const away = "/home/demo/project/acme-store";
+    assert.equal((await request("restore/plan", { id: acme, destination: away })).dest, away);
+    await request("restore", { id: acme, destination: away });
+    const after = (await request("snapshot")).nodes;
+    assert.deepEqual([after[acme].archived, after[clients].archived], [false, true]);
+  });
+}
+
+export async function theCopyOfChatsIsToldAsTheEngineTellsIt() {
+  await onPreview(async ({ request }) => {
+    // Laci's own folder: no status.
+    assert.equal((await request("snapshot")).copyStatus, null);
+    await request("backup/move", { dir: "/home/demo/Backups" });
+    assert.deepEqual((await request("snapshot")).copyStatus, { path: "/home/demo/Backups", available: true });
+    const [entry] = (await request("log")).entries;
+    await request("undo", { id: entry.id });
+    assert.equal((await request("snapshot")).copyStatus, null);
+  });
+  // "?copy=offline": a folder on a drive that isn't connected, unavailable with why.
+  await onPreview(
+    async ({ request }) => {
+      const snapshot = await request("snapshot");
+      const { OFFLINE_COPY } = load("preview/ipc.ts");
+      assert.deepEqual(
+        [snapshot.copyStatus.path, snapshot.copyStatus.available],
+        [OFFLINE_COPY, false],
+      );
+      assert.match(snapshot.copyStatus.reason, /Connect its drive/);
+      assert.equal(snapshot.backup.error, snapshot.copyStatus.reason);
+      const { copyOffline } = load("helpers.ts");
+      assert.equal(copyOffline(snapshot)?.path, OFFLINE_COPY);
+    },
+    { copy: "offline" },
+  );
 }
 
 export async function aReportIsFoundByTheWordsInIt() {

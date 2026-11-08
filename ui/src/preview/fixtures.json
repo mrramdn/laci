@@ -148,6 +148,88 @@
     "terminal": "kitty"
   },
   "archive/plan": {
+    "/home/demo/project/clients": {
+      "checks": [
+        {
+          "code": "dirty",
+          "project": "acme-store",
+          "projectId": "/home/demo/project/clients/acme-store",
+          "severity": "med",
+          "title": "1 uncommitted change"
+        },
+        {
+          "code": "unpushed",
+          "detail": "main has no upstream, and no remote has them",
+          "project": "acme-store",
+          "projectId": "/home/demo/project/clients/acme-store",
+          "severity": "med",
+          "title": "8 commits not pushed"
+        },
+        {
+          "code": "no-remote",
+          "detail": "3 commits exist only on this disk",
+          "project": "kopi-landing",
+          "projectId": "/home/demo/project/clients/kopi-landing",
+          "severity": "high",
+          "title": "No remote"
+        },
+        {
+          "code": "dirty",
+          "project": "kopi-landing",
+          "projectId": "/home/demo/project/clients/kopi-landing",
+          "severity": "med",
+          "title": "1 uncommitted change"
+        }
+      ],
+      "dest": "/home/demo/project/_archive/clients",
+      "ops": [
+        {
+          "from": "~/project/clients",
+          "kind": "move",
+          "label": "Move folder",
+          "to": "~/project/_archive/clients"
+        },
+        {
+          "detail": "2 sessions · 3 memory files · 532 B",
+          "from": "~/project/clients/acme-store",
+          "kind": "rename",
+          "label": "Move Claude sessions + memory",
+          "to": "~/project/_archive/clients/acme-store"
+        },
+        {
+          "detail": "2 lines → ~/project/_archive/clients/acme-store",
+          "kind": "rewrite",
+          "label": "Rewrite cwd in Claude logs"
+        },
+        {
+          "detail": "1 sessions · 0 memory files · 217 B",
+          "from": "~/project/clients/kopi-landing",
+          "kind": "rename",
+          "label": "Move Claude sessions + memory",
+          "to": "~/project/_archive/clients/kopi-landing"
+        },
+        {
+          "detail": "1 line → ~/project/_archive/clients/kopi-landing",
+          "kind": "rewrite",
+          "label": "Rewrite cwd in Claude logs"
+        },
+        {
+          "detail": "1 line in 1 file",
+          "kind": "rewrite",
+          "label": "Rewrite paths in Codex logs"
+        },
+        {
+          "kind": "write",
+          "label": "Set status: archived",
+          "to": "~/project/_archive/clients/.laci.md"
+        },
+        {
+          "kind": "write",
+          "label": "Write undo journal",
+          "to": "~/.local/share/laci/journal/"
+        }
+      ]
+    },
     "/home/demo/project/clients/acme-store": {
       "checks": [
         {
@@ -294,6 +376,45 @@
         }
       ]
     },
+    "/home/demo/project/side": {
+      "checks": [
+        {
+          "code": "unpushed",
+          "detail": "main has no upstream, and no remote has them",
+          "project": "dotfiles",
+          "projectId": "/home/demo/project/side/dotfiles",
+          "severity": "med",
+          "title": "2 commits not pushed"
+        },
+        {
+          "code": "no-remote",
+          "detail": "3 commits exist only on this disk",
+          "project": "habit-app",
+          "projectId": "/home/demo/project/side/habit-app",
+          "severity": "high",
+          "title": "No remote"
+        }
+      ],
+      "dest": "/home/demo/project/_archive/side",
+      "ops": [
+        {
+          "from": "~/project/side",
+          "kind": "move",
+          "label": "Move folder",
+          "to": "~/project/_archive/side"
+        },
+        {
+          "kind": "write",
+          "label": "Set status: archived",
+          "to": "~/project/_archive/side/.laci.md"
+        },
+        {
+          "kind": "write",
+          "label": "Write undo journal",
+          "to": "~/.local/share/laci/journal/"
+        }
+      ]
+    },
     "/home/demo/project/side/dotfiles": {
       "checks": [
         {
@@ -386,6 +507,57 @@
           "kind": "write",
           "label": "Set status: archived",
           "to": "~/project/_archive/side/zine/.laci.md"
+        },
+        {
+          "kind": "write",
+          "label": "Write undo journal",
+          "to": "~/.local/share/laci/journal/"
+        }
+      ]
+    },
+    "/home/demo/project/thesis": {
+      "checks": [
+        {
+          "code": "unpushed",
+          "detail": "main has no upstream, and no remote has them",
+          "project": "campus-lms",
+          "projectId": "/home/demo/project/thesis/campus-lms",
+          "severity": "med",
+          "title": "5 commits not pushed"
+        },
+        {
+          "code": "stash",
+          "detail": "Stashes are easy to lose and never pushed",
+          "project": "campus-lms",
+          "projectId": "/home/demo/project/thesis/campus-lms",
+          "severity": "med",
+          "title": "1 forgotten stash"
+        }
+      ],
+      "dest": "/home/demo/project/_archive/thesis",
+      "ops": [
+        {
+          "from": "~/project/thesis",
+          "kind": "move",
+          "label": "Move folder",
+          "to": "~/project/_archive/thesis"
+        },
+        {
+          "detail": "1 sessions · 0 memory files · 207 B",
+          "from": "~/project/thesis/campus-lms",
+          "kind": "rename",
+          "label": "Move Claude sessions + memory",
+          "to": "~/project/_archive/thesis/campus-lms"
+        },
+        {
+          "detail": "1 line → ~/project/_archive/thesis/campus-lms",
+          "kind": "rewrite",
+          "label": "Rewrite cwd in Claude logs"
+        },
+        {
+          "kind": "write",
+          "label": "Set status: archived",
+          "to": "~/project/_archive/thesis/.laci.md"
         },
         {
           "kind": "write",
@@ -2578,6 +2750,7 @@
         "where": "~/.codex/sessions"
       }
     ],
+    "copyStatus": null,
     "dismissed": [],
     "global": {
       "claude": [],
@@ -3269,25 +3442,33 @@
           "checks": [
             {
               "code": "dirty",
+              "project": "acme-store",
+              "projectId": "/home/demo/project/clients/acme-store",
               "severity": "med",
-              "title": "acme-store: 1 uncommitted change"
+              "title": "1 uncommitted change"
             },
             {
               "code": "unpushed",
               "detail": "main has no upstream, and no remote has them",
+              "project": "acme-store",
+              "projectId": "/home/demo/project/clients/acme-store",
               "severity": "med",
-              "title": "acme-store: 8 commits not pushed"
+              "title": "8 commits not pushed"
             },
             {
               "code": "no-remote",
               "detail": "3 commits exist only on this disk",
+              "project": "kopi-landing",
+              "projectId": "/home/demo/project/clients/kopi-landing",
               "severity": "high",
-              "title": "kopi-landing: No remote"
+              "title": "No remote"
             },
             {
               "code": "dirty",
+              "project": "kopi-landing",
+              "projectId": "/home/demo/project/clients/kopi-landing",
               "severity": "med",
-              "title": "kopi-landing: 1 uncommitted change"
+              "title": "1 uncommitted change"
             }
           ],
           "dest": "/home/demo/project/_archive/clients",
@@ -4003,14 +4184,18 @@
             {
               "code": "unpushed",
               "detail": "main has no upstream, and no remote has them",
+              "project": "dotfiles",
+              "projectId": "/home/demo/project/side/dotfiles",
               "severity": "med",
-              "title": "dotfiles: 2 commits not pushed"
+              "title": "2 commits not pushed"
             },
             {
               "code": "no-remote",
               "detail": "3 commits exist only on this disk",
+              "project": "habit-app",
+              "projectId": "/home/demo/project/side/habit-app",
               "severity": "high",
-              "title": "habit-app: No remote"
+              "title": "No remote"
             }
           ],
           "dest": "/home/demo/project/_archive/side",
@@ -4535,14 +4720,18 @@
             {
               "code": "unpushed",
               "detail": "main has no upstream, and no remote has them",
+              "project": "campus-lms",
+              "projectId": "/home/demo/project/thesis/campus-lms",
               "severity": "med",
-              "title": "campus-lms: 5 commits not pushed"
+              "title": "5 commits not pushed"
             },
             {
               "code": "stash",
               "detail": "Stashes are easy to lose and never pushed",
+              "project": "campus-lms",
+              "projectId": "/home/demo/project/thesis/campus-lms",
               "severity": "med",
-              "title": "campus-lms: 1 forgotten stash"
+              "title": "1 forgotten stash"
             }
           ],
           "dest": "/home/demo/project/_archive/thesis",

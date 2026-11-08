@@ -152,10 +152,12 @@ export function ArchiveView() {
           >
             {stored.map(({ n, depth }) => {
               const group = isArchivedGroup(n);
-              // A project that goes back only with its archived group (the engine's reason "linked")
-              // offers the group in place of its own Restore, when the scan lists the group. Without
-              // one, the row says where it came from and why it can't go back, as for any reason.
-              const whole = group ? undefined : linkedGroup(nodes, n);
+              // A project, or a group, that goes back only with its archived group (the engine's
+              // reason "linked", or "inGroup" for one inside it) offers that group in place of its own
+              // Restore, when the scan lists the group. Without one, the row says where it came from
+              // and why it can't go back, as for any reason. Alone, it goes back to a place chosen in
+              // the Restore dialog, from the details panel.
+              const whole = linkedGroup(nodes, n);
               const inside = whole ? said.inside(whole.label) : "";
               const from = restoreFrom(n, home);
               const day = archivedOn(n.meta.archivedAt);

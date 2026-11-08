@@ -224,6 +224,80 @@ export function onlyThePlanPicksTheGroupALinkedProjectGoesBackWith() {
   assert.equal(html.split(`>${words.restoreGroup}</button>`).length - 1, 1, "warung-pos's only");
 }
 
+export function aProjectInsideAnArchivedGroupOffersTheGroupAsALinkedOneDoes() {
+  // No link here: the engine refuses each project alone without a place (reason "inGroup") and names
+  // the outermost archived group it is in.
+  const clients = group("old-clients");
+  const inGroup = (name, at = clients.path) => ({
+    ...cant("inGroup", `${HOME}/project/old-clients/${name}`),
+    group: at,
+  });
+  const warung = member(clients, "warung-pos", inGroup("warung-pos"));
+  // A group the scan doesn't list: the row says why, and keeps its own Restore.
+  const kopi = member(clients, "kopi", inGroup("kopi", `${HOME}/project/_archive/gone`));
+  const { linkedGroup, linkedAlone } = load("helpers.ts");
+  const nodes = Object.fromEntries([clients, warung, kopi].map((n) => [n.id, n]));
+  assert.equal(linkedGroup(nodes, warung)?.id, clients.id);
+  assert.equal(linkedGroup(nodes, kopi), undefined);
+  // Not a link to remove: a place of its own puts it back alone.
+  assert.deepEqual([warung, kopi].map((n) => linkedAlone(nodes, n)), [false, false]);
+  const html = draw([clients, warung, kopi]);
+  const said = Object.fromEntries(rowsInOrder(html).map(({ name, said }) => [name, said]));
+  assert.equal(said["warung-pos"], words.inside("old-clients"));
+  assert.equal(said.kopi, `${words.from("~/project/old-clients/kopi")} · ${words.why.inGroup}`);
+  assert.equal(html.split(`>${words.restoreGroup}</button>`).length - 1, 1, "warung-pos's only");
+  assert.equal(html.split(">Restore</button>").length - 1, 2, "the group's and kopi's");
+  assert.doesNotMatch(words.why.inGroup, /agent/i);
+}
+
+export function anArchivedGroupInsideAnotherOffersTheOuterGroup() {
+  const outer = group("old-clients");
+  const inner = group("old-clients/2024", {
+    name: "2024",
+    label: "2024",
+    parent: outer.id,
+    restorePlan: { ...cant("inGroup", `${HOME}/project/old-clients/2024`), group: outer.path },
+  });
+  const html = draw([outer, inner]);
+  const rows = rowsInOrder(html);
+  assert.deepEqual(
+    rows.map(({ classes, kind, name, said }) => [classes, kind, name, said]),
+    [
+      ["item", "group", "old-clients", words.from("~/project/old-clients")],
+      ["item in-group", "group", "2024", words.inside("old-clients")],
+    ],
+  );
+  assert.equal(html.split(`>${words.restoreGroup}</button>`).length - 1, 1);
+}
+
+export function aGroupsArchiveChecksNameTheirProject() {
+  const { checkTitle } = load("helpers.ts");
+  const check = { code: "unpushed", severity: "med", title: "8 commits not pushed" };
+  assert.equal(checkTitle(check), "8 commits not pushed");
+  assert.equal(
+    checkTitle({ ...check, project: "acme-store", projectId: `${HOME}/project/clients/acme-store` }),
+    "acme-store: 8 commits not pushed",
+  );
+  // A design's own words for the title keep the project in front.
+  assert.equal(checkTitle({ ...check, project: "acme-store" }, "Not uploaded yet"), "acme-store: Not uploaded yet");
+  // Detailed's Archive dialog draws them that way.
+  const source = readFileSync(new URL("../../ui/src/dialogs.tsx", import.meta.url), "utf8");
+  assert.match(source, /<p>\{checkTitle\(check\)\}<\/p>/);
+}
+
+export function detailedsRestoreDialogAsksAPlaceOfItsOwnForAProjectInAGroup() {
+  const clients = group("old-clients");
+  const warung = member(clients, "warung-pos", {
+    ...cant("inGroup", `${HOME}/project/old-clients/warung-pos`),
+    group: clients.path,
+  });
+  const { Dialogs } = dialogs({ kind: "restore", id: warung.id }, [clients, warung]);
+  const html = renderToStaticMarkup(h(Dialogs));
+  assert.match(html, /Restore warung-pos\?/);
+  assert.match(html, /aria-label="Restore destination"[^>]*required=""|required=""[^>]*aria-label="Restore destination"/);
+  assert.match(html, /Required: the full project folder path, including its name\./);
+}
+
 export function aFolderOnlyMarkedArchivedIsListedInPlaceWithUnarchive() {
   // thesis says archived in its own .laci.md, but never moved; campus-lms in it isn't archived.
   const thesis = {

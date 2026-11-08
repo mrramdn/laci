@@ -4,6 +4,7 @@
 import { useId, useState } from "react";
 import type { ReactNode } from "react";
 import { closeReportItem, toggleTodo } from "../actions";
+import { copyOffline, tilde } from "../helpers";
 import { askAgent } from "../agent-launch";
 import { useNow } from "../clock";
 import { Icon } from "../common";
@@ -131,6 +132,7 @@ export function Home() {
             {/* First in the side column, where it is seen on a wide window and moves none of the main one. */}
             <UpdateCard />
             <UpdatesOffer />
+            <CopyOfflineCard snapshot={snapshot} />
             {model.comingUp.length ? (
               <section className="s-section" aria-labelledby="home-coming">
                 <div className="s-section-head">
@@ -479,6 +481,35 @@ function NextUp({ todos }: { todos: ReturnType<typeof homeModel>["nextUp"] }) {
       ) : (
         <p className="s-quiet">{home.noTodos}</p>
       )}
+    </section>
+  );
+}
+
+/**
+ * A quiet card while the folder chosen for the copy of AI chats can't be reached, as when its drive
+ * isn't connected: nothing is copied until it is back. AI helpers says where the copy is kept.
+ */
+function CopyOfflineCard({ snapshot }: { snapshot: Snapshot }) {
+  const heading = useId();
+  const offline = copyOffline(snapshot);
+  if (!offline) return null;
+  return (
+    <section className="s-card" aria-labelledby={heading} data-ui="copy-offline">
+      <header className="s-card-head">
+        <Icon name="hard-drive" />
+        <h2 id={heading}>{home.copyOfflineTitle}</h2>
+      </header>
+      <p>{home.copyOfflineBody(tilde(offline.path, snapshot.home))}</p>
+      <div className="s-actions">
+        <Button
+          kind="outline"
+          small
+          icon="folder-open"
+          onClick={() => useApp.getState().navigate("agents")}
+        >
+          {home.copyOfflineOpen}
+        </Button>
+      </div>
     </section>
   );
 }

@@ -311,6 +311,37 @@ export async function theHistoryBackupMovesOnlyOnceSettingsHasAskedWhere() {
   assert.deepEqual(p.toasts.at(-1), [said.backupMoved("/media/backup/ai-chats"), said.backupMoveNote]);
 }
 
+export async function aBackupFolderOnADriveThatIsntConnectedSaysNothingIsBackedUp() {
+  const p = await settingsPage();
+  const dir = "/media/backup/ai-chats";
+  const why = `The folder for the copy of AI chats isn't there: ${dir}. Connect its drive, or choose another folder for the copy.`;
+  const snapshot = structuredClone(fixtures.snapshot);
+  // The fixtures' copy is in Laci's own folder: the engine tells no status for it.
+  assert.equal(snapshot.copyStatus, null);
+  snapshot.backup = { ...snapshot.backup, chosen: true, dest: dir, error: why };
+  snapshot.copyStatus = { path: dir, available: false, reason: why };
+  p.app.setState({ snapshot });
+  await p.settle();
+  const row = () => p.find((n) => n.props["data-ui"] === "backup-folder");
+  // That the drive isn't connected and nothing is backed up, then why, in Detailed's words.
+  assert.deepEqual(
+    row().descendants().filter((n) => n.props.role === "alert").map((n) => n.textContent),
+    [said.backupOffline(dir), words.engineWords.detailed.copyMissing(dir)],
+  );
+  assert.equal(said.backupOffline(dir), `The drive with ${dir} isn't connected. Nothing is backed up until it is back.`);
+  // Back again: nothing is said.
+  p.app.setState({
+    snapshot: {
+      ...snapshot,
+      copyStatus: { path: dir, available: true },
+      backup: { ...snapshot.backup, error: undefined },
+    },
+  });
+  await p.settle();
+  assert.equal(row().descendants().find((n) => n.props["data-ui"] === "backup-offline"), undefined);
+  assert.equal(row().descendants().find((n) => n.props.role === "alert"), undefined);
+}
+
 export async function aHistoryBackupLaciCantReachIsNotMovedButANewOneCanStart() {
   const p = await settingsPage();
   const why =

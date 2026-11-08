@@ -12,6 +12,7 @@ import { useApp, changed, run, selectWhenReady } from "./store";
 import {
   base,
   bytes,
+  checkTitle,
   expandHome,
   groupSize,
   isAbsolutePath,
@@ -669,7 +670,8 @@ function Archive({ id }: { id: string }) {
             <div className="issue" key={i}>
               <SeverityGlyph severity={check.severity} />
               <div className="txt">
-                <p>{check.title}</p>
+                {/* A group's check names the project in it that it is about. */}
+                <p>{checkTitle(check)}</p>
                 <p className="d">
                   {[
                     check.detail,

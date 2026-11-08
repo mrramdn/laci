@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { api, errorText } from "./api";
 import { Icon } from "./common";
-import { bytes, copyChangeSaid, plural, tilde, when } from "./helpers";
+import { bytes, copyChangeSaid, copyOffline, plural, tilde, when } from "./helpers";
 import { ChooseFolder } from "./pick";
 import { copyProjects } from "./selectors";
 import { acknowledge, backup, chooseCopy, moveCopy, openCopy, run, useApp } from "./store";
@@ -38,9 +38,12 @@ export function BackupNotice() {
         Open backup folder
       </button>
     ) : null;
-  const unusable = state?.error ? (
+  // Why the folder can't take the backup, unless the notice of the drive that isn't connected says it.
+  const error =
+    state?.error && state.error !== copyOffline(snapshot)?.reason ? state.error : undefined;
+  const unusable = error ? (
     <p className="err" role="alert">
-      {engineSays(state.error, "detailed")}
+      {engineSays(error, "detailed")}
     </p>
   ) : null;
   if (warning) {
@@ -77,7 +80,7 @@ export function BackupNotice() {
       <div className="backup-ok">
         <Icon name={state.error ? "alert" : "check"} />
         <span className="txt">
-          {(state.error && engineSays(state.error, "detailed")) ??
+          {(error && engineSays(error, "detailed")) ??
             `Agent history backed up ${when(state.at)}${
               state.sessions !== undefined
                 ? ` · ${plural(state.sessions, "session")} kept (${bytes(state.bytes)})`
@@ -104,6 +107,8 @@ export function BackupNotice() {
  */
 export function BackupFolder({ state, home }: { state: Backup; home: string }) {
   const working = useApp((s) => s.working);
+  // The folder chosen, while its drive isn't connected: nothing is backed up until it is back.
+  const offline = useApp((s) => copyOffline(s.snapshot));
   const historyPending = useApp((s) => s.historyPending);
   // The folder the user picked, waiting for the question to be answered; "" is Laci's data folder.
   const [asking, setAsking] = useState<string | null>(null);
@@ -190,6 +195,11 @@ export function BackupFolder({ state, home }: { state: Backup; home: string }) {
           </button>
         ) : null}
       </div>
+      {offline ? (
+        <p className="err" role="alert" data-ui="backup-offline">
+          {said.backupOffline(tilde(offline.path, home))}
+        </p>
+      ) : null}
       {state.error ? (
         <p className="err" role="alert">
           {engineSays(state.error, "detailed")}
